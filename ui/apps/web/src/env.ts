@@ -1,5 +1,5 @@
 import { defineEnvVars } from '@sveltejs/kit/env';
-import { devTrafficOrigin, gatewayOrigin } from '#lib/server/config.ts';
+import { gatewayOrigin } from '#lib/server/config.ts';
 import { RunsAccessConfig } from '#lib/server/control.ts';
 import { Briefing } from '#lib/briefing.ts';
 
@@ -11,11 +11,6 @@ export const variables = defineEnvVars({
   REN_PUBLIC_GATEWAY_URL: {
     description: 'Optional daemon origin shown in client launch commands, e.g. its Tailscale URL.',
     schema: (value) => (value === undefined ? undefined : gatewayOrigin(value)),
-  },
-  REN_DEV_TRAFFIC_URL: {
-    description:
-      'Dev slot only (`cargo xtask dev`): the loopback origin of its fake traffic controls, which the dev toolbar uses.',
-    schema: (value) => (value === undefined ? undefined : devTrafficOrigin(value)),
   },
   REN_CONTROL_TOKEN_FILE: {
     description:

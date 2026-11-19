@@ -1120,6 +1120,16 @@ export class RunsClient {
     } satisfies WireCreateRequest;
     return (await this.#send('POST', '/control/sessions', body, createdSession)).session;
   }
+  /** A session for the registered `project`, in a workspace of its own in
+   * the project's repository. */
+  async createProjectSession(harness: Drivable, project: string): Promise<SessionId> {
+    const body = {
+      harness,
+      project,
+      workspace: 'worktree',
+    } satisfies WireCreateRequest;
+    return (await this.#send('POST', '/control/sessions', body, createdSession)).session;
+  }
   /** One command to a session: through its process, or a new one for a prompt. */
   async toSession(
     session: SessionId,

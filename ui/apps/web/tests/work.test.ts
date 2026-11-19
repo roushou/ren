@@ -151,3 +151,43 @@ test('a change to an item not yet stored is tried again', async () => {
   );
   assert.equal(refused, 1);
 });
+
+test("an item for another project is briefed as that project's page", async () => {
+  const [item] = await new WorkApi(pinned).list();
+  assert.ok(item);
+  const ren = Work.brief(item.id, Work.wire(item.order), 'workspace', { kind: 'ren' });
+  assert.match(
+    ren,
+    /In Ren's UI this page is `ui\/apps\/web\/src\/routes\/recordings\/\+page\.svelte`\./,
+  );
+  const other = Work.batch([item], 'workspace', { kind: 'other', name: 'acme-web' });
+  assert.doesNotMatch(other, /Ren's UI this page is|ui\/apps\/web/);
+  assert.doesNotMatch(other, /served by a build of commit/);
+  assert.match(other, /It is a page of the project `acme-web`, not of Ren's own UI\./);
+  assert.match(other, /run `ren project preview up --publish` in the workspace/);
+  assert.doesNotMatch(other, /cargo xtask preview/);
+});
+
+test("an item's project decides its brief, and a batch is one project's", () => {
+  const project = (id: string, name: string, factory: 'ren' | 'contract') =>
+    ({ id, name, factory }) as never;
+  const projects = [project('ren-id', 'ren', 'ren'), project('acme-id', 'acme-web', 'contract')];
+  const item = (id: string, owner: string | null) =>
+    ({ id, project: owner }) as unknown as WorkItem;
+  assert.deepEqual(Work.projectOf(item('a', 'acme-id'), projects), {
+    kind: 'other',
+    name: 'acme-web',
+  });
+  // Ren's own, none, and one not listed are all Ren's.
+  for (const owner of ['ren-id', null, 'gone-id']) {
+    assert.deepEqual(Work.projectOf(item('b', owner), projects), { kind: 'ren' });
+  }
+  assert.deepEqual(Work.oneProject([item('a', 'acme-id'), item('c', 'acme-id')], projects), {
+    kind: 'other',
+    name: 'acme-web',
+  });
+  assert.deepEqual(Work.oneProject([item('b', null), item('d', 'ren-id')], projects), {
+    kind: 'ren',
+  });
+  assert.equal(Work.oneProject([item('a', 'acme-id'), item('b', null)], projects), null);
+});

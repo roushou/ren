@@ -219,7 +219,13 @@
       </div>
       {#if failed}<p class="error" role="alert">{failed}</p>{/if}
       <div class="drawer-body">
-        <WorkItemDetail item={shown} ondismiss={(item) => void dismiss(item)} />
+        <WorkItemDetail
+          item={shown}
+          project={project.factory === 'ren'
+            ? { kind: 'ren' }
+            : { kind: 'other', name: project.name }}
+          ondismiss={(item) => void dismiss(item)}
+        />
       </div>
     </aside>
   {/if}

@@ -68,18 +68,35 @@
       : [...picked, item.id];
   }
 
+  /** Whose pages the picked items are about: one project, or null when
+   * they mix and go one project at a time. */
+  const batchProject = $derived(Work.oneProject(batch, data.projects));
+  /** Why the picked items cannot go as one brief, if they cannot. */
+  const unsendable = $derived(
+    batchProject === null
+      ? 'The picked items are for different projects: send one project’s at a time'
+      : batchProject.kind === 'ren' && !page.data.redlineSource
+        ? 'Set REN_SOURCE_DIR to send work to Ren’s checkout'
+        : null,
+  );
+
   /** The picked items, as one brief, to a new session in a workspace of
-   * its own; each item is sent to it. */
+   * its own in their project's repository (Ren's own checkout for Ren's);
+   * each item is sent to it. */
   async function send() {
     const source = page.data.redlineSource;
-    if (!batch.length || !harness || !source) return;
+    if (!batch.length || !harness || !batchProject) return;
+    if (batchProject.kind === 'ren' && !source) return;
     error = null;
     busy = true;
     try {
-      const session = await runs.createSession(harness, source, {}, 'worktree');
+      const session =
+        batchProject.kind === 'ren'
+          ? await runs.createSession(harness, source, {}, 'worktree')
+          : await runs.createProjectSession(harness, batchProject.name);
       await runs.toSession(session, {
         kind: 'prompt',
-        text: Work.batch(batch, 'workspace'),
+        text: Work.batch(batch, 'workspace', batchProject),
         delivery: 'start',
       });
       for (const item of batch) await work.move(item.id, { kind: 'send', session });
@@ -203,17 +220,14 @@
             value={harness}
             placeholder="New session"
             search={false}
-            disabled={!page.data.redlineSource
-              ? 'Set REN_SOURCE_DIR to send work to Ren’s checkout'
-              : ready.length
-                ? null
-                : 'No client is ready'}
+            disabled={unsendable ?? (ready.length ? null : 'No client is ready')}
             onchange={(value) => (harness = DRIVABLE.find((entry) => entry === value) ?? harness)}
           />
         </span>
         <button
           class="button primary"
-          disabled={busy || !harness || !page.data.redlineSource}
+          disabled={busy || !harness || unsendable !== null}
+          title={unsendable ?? undefined}
           onclick={() => void send()}>{busy ? 'Sending…' : 'Send as one brief'}</button
         >
       </div>
@@ -221,7 +235,11 @@
   </div>
   <aside class="work-detail" aria-label="Work item">
     {#if shown}
-      <WorkItemDetail item={shown} ondismiss={(item) => void dismiss(item)} />
+      <WorkItemDetail
+        item={shown}
+        project={Work.projectOf(shown, data.projects)}
+        ondismiss={(item) => void dismiss(item)}
+      />
     {:else}
       <p class="empty">Pick a work item to see what was marked.</p>
     {/if}

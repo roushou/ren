@@ -183,10 +183,15 @@ Records outside the tree stay, and each says why it is outside:
    address: Escape, the scrim, or Back close it), with the same detail the
    Work view shows beside its list (`WorkItemDetail`).
 
+   A work item's brief names its own project: Ren's (and every item from
+   before projects) names its route's file and build and previews with
+   `cargo xtask preview`; another project's says whose page it is and
+   previews with `ren project preview`. Work sends a batch to a new session
+   in its project's repository (`"project"` on session create), one
+   project's items at a time.
+
    Left for later rounds: Inspect scoped to a project (calls are tied to
-   runs only through their conversation), a project's workspaces, and a
-   brief that names the item's own project: it still reads every marked
-   page as one of Ren's own.
+   runs only through their conversation), and a project's workspaces.
 
 Each phase is verified in the dev slot, whose fake projects are registered
 as projects (and the slot's checkout as `Ren`), and by the compatibility

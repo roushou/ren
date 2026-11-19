@@ -18,7 +18,6 @@
   import { ReleaseLine } from '#lib/release.ts';
   import { PageEvidence } from '#lib/work.ts';
   import CopyButton from '#lib/CopyButton.svelte';
-  import DevToolbar from '#lib/DevToolbar.svelte';
   import RedlineLayer from 'redline/RedlineLayer.svelte';
   import BriefingPanel from '#lib/BriefingPanel.svelte';
   import { RedlineDesk } from 'redline/desk';
@@ -73,9 +72,8 @@
   });
   const gateway = createSnapshot(() => data.gateway);
   const health = $derived(gateway.current.value?.health);
-  // The gateway says what kind of instance it is; the UI only shows it.
-  const development = $derived(health?.instance.environment === 'development');
-  /** The tag on the wordmark of an instance that is not production. */
+  /** The tag on the wordmark of an instance that is not production: the
+   * gateway says what kind of instance it is; the UI only shows it. */
   const marked = $derived.by(() => {
     switch (health?.instance.environment) {
       case 'development':
@@ -389,7 +387,6 @@
           >{/if}</button
       >{/if}
   </footer>
-  {#if development && page.data.devTraffic}<DevToolbar />{/if}
   {#if page.data.runsControl}<RedlineLayer desk={redline} />{#if redline.open}<BriefingPanel
         desk={redline}
         {recipients}

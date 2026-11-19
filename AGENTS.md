@@ -650,9 +650,6 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `src/lib/server/runsStart.ts` makes the Sessions page's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the
   page renders as it will stay.
-  The dev slot's: with `REN_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic`
-  forwards the dev toolbar's three JSON requests to the slot's fake traffic
-  generator, never to the daemon.
 - `ui/packages/redline`: Redline, a Bun workspace package of the UI with
   `Redline` as its primary type (`src/redline.ts`: what a mark points at,
   and the Markdown brief its marks make, with the lines a host adds as a

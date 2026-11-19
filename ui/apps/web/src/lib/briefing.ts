@@ -17,6 +17,15 @@ import {
   type SessionBody,
 } from './runs.ts';
 
+/**
+ * Whose page a brief is about: Ren's own UI (every page Redline marks, and
+ * every item from before projects), or another registered project's, by
+ * name. Only Ren's has a route file and a build to name, and a preview by
+ * `cargo xtask preview`; another project's is previewed by
+ * `ren project preview`.
+ */
+export type BriefProject = { kind: 'ren' } | { kind: 'other'; name: string };
+
 /** Where a brief goes: a new session in the checkout, or one running there. */
 export type Destination = { kind: 'new' } | { kind: 'session'; session: DeskSession };
 
@@ -191,13 +200,32 @@ export class Briefing {
   /** What Ren adds to a brief: the route's file and the build, and how to
    * work: questions are answered in place, and only a change gets a
    * branch, made where `place` says. */
-  static framing(ren: RenPage, marks: readonly Mark[], place: WorkPlace): Framing {
+  static framing(
+    ren: RenPage,
+    marks: readonly Mark[],
+    place: WorkPlace,
+    project: BriefProject = { kind: 'ren' },
+  ): Framing {
     const about: string[] = [];
-    if (ren.route) {
-      about.push(`In Ren's UI this page is ${Redline.code(Briefing.routeFile(ren.route))}.`);
+    switch (project.kind) {
+      case 'ren': {
+        if (ren.route) {
+          about.push(`In Ren's UI this page is ${Redline.code(Briefing.routeFile(ren.route))}.`);
+        }
+        const built = Briefing.built(ren.revision);
+        if (built) about.push(built);
+        break;
+      }
+      case 'other':
+        about.push(
+          `It is a page of the project ${Redline.code(project.name)}, not of Ren's own UI.`,
+        );
+        break;
+      default: {
+        const never: never = project;
+        return never;
+      }
     }
-    const built = Briefing.built(ren.revision);
-    if (built) about.push(built);
     const branch = Redline.branch(Redline.noted(marks));
     return {
       about,
@@ -208,5 +236,19 @@ export class Briefing {
   /** The brief an agent gets in Ren. */
   static brief(page: PageContext, ren: RenPage, marks: readonly Mark[], place: WorkPlace): string {
     return Redline.brief(page, marks, Briefing.framing(ren, marks, place));
+  }
+
+  /** The command that previews a change to `project`'s pages. */
+  static preview(project: BriefProject): string {
+    switch (project.kind) {
+      case 'ren':
+        return 'cargo xtask preview up --publish';
+      case 'other':
+        return 'ren project preview up --publish';
+      default: {
+        const never: never = project;
+        return never;
+      }
+    }
   }
 }

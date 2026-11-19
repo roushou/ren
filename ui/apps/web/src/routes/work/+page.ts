@@ -1,3 +1,4 @@
+import { ManagementApi } from '#lib/api.ts';
 import { WorkApi, type WorkItem } from '#lib/work.ts';
 import type { PageLoad } from './$types';
 
@@ -8,12 +9,16 @@ export type WorkListing =
 export const load: PageLoad = async ({ fetch, parent, url }) => {
   await parent();
   const shelf = url.searchParams.get('shelf') === 'archived' ? 'archived' : 'current';
-  const listing: WorkListing = await new WorkApi(fetch)
-    .list(shelf)
-    .then((items): WorkListing => ({ kind: 'ready', items }))
-    .catch((failure: unknown): WorkListing => ({
-      kind: 'failed',
-      message: failure instanceof Error ? failure.message : 'The work items did not read.',
-    }));
-  return { listing, shelf, selected: url.searchParams.get('item') };
+  const [listing, projects] = await Promise.all([
+    new WorkApi(fetch)
+      .list(shelf)
+      .then((items): WorkListing => ({ kind: 'ready', items }))
+      .catch((failure: unknown): WorkListing => ({
+        kind: 'failed',
+        message: failure instanceof Error ? failure.message : 'The work items did not read.',
+      })),
+    // Whose page each item is about, for its brief and where it is sent.
+    new ManagementApi(fetch).projects().catch(() => []),
+  ]);
+  return { listing, projects, shelf, selected: url.searchParams.get('item') };
 };

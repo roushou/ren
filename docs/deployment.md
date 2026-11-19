@@ -315,12 +315,8 @@ through the dev gateway as `~/.config/ren-dev/traffic.toml` says (running or
 paused, calls a minute, the fake provider's pace, and weights over replies,
 harnesses, and callers). The generator and the fake provider read the file again
 for every call, so `dev traffic set`, `pause`, and `resume` apply at once; an
-invalid file falls back to the defaults. The dev UI also has them in a floating
-toolbar (bottom right; it folds into a small tab): pause, rate, pace, a burst, the
-mix, and single slow, tool, error, or rate-limited calls. The generator serves them
-on `127.0.0.1:13001`, never published; the UI server forwards the toolbar's
-requests there only when `REN_DEV_TRAFFIC_URL` is set, as the slot sets it, and
-only a development gateway's UI shows the toolbar.
+invalid file falls back to the defaults. The generator serves its controls on
+`127.0.0.1:13001`, never published, for `dev traffic`.
 
 The slot's daemon has runs on, with `~/.local/share/ren-dev/work` as its root
 (`acme-api` and `acme-web` in it), and the dev UI drives them. Its `codex`,

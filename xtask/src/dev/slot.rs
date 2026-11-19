@@ -471,7 +471,6 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                 ("REN_GATEWAY_URL", format!("http://{}", Self::DAEMON)),
                 ("REN_PUBLIC_GATEWAY_URL", public_gateway),
                 ("ORIGIN", origin.clone()),
-                ("REN_DEV_TRAFFIC_URL", format!("http://{}", Self::CONTROL)),
                 (
                     "REN_CONTROL_TOKEN_FILE",
                     self.data_dir.join(ControlToken::FILE).display().to_string(),

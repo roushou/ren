@@ -5,7 +5,7 @@
  * view lists them and sends queued ones together. Pure but for `WorkApi`,
  * which reads and writes through a capability-supplied `fetch`.
  */
-import { API_VERSION, revision, type Revision, type Shelf } from './api.ts';
+import { API_VERSION, revision, type Project, type Revision, type Shelf } from './api.ts';
 import {
   Uuid,
   array,
@@ -22,7 +22,7 @@ import {
   type Stored,
 } from './decode.ts';
 import { Redline, type Mark, type PageContext } from 'redline';
-import { Briefing, type RenPage, type WorkPlace } from './briefing.ts';
+import { Briefing, type BriefProject, type RenPage, type WorkPlace } from './briefing.ts';
 import { Refusals, type Refusal } from './refusal.ts';
 import { SessionId } from './runs.ts';
 import type { EvidenceBody as WireEvidence } from './wire/EvidenceBody.ts';
@@ -369,16 +369,21 @@ export class Work {
   /** One item's brief, as Redline would write it for its page, with its id
    * (none before it is queued, as the pane previews it) and what else was
    * on screen, and how the change is to be made. */
-  static brief(id: WorkItemId | null, order: WireWorkOrder, place: WorkPlace): string {
+  static brief(
+    id: WorkItemId | null,
+    order: WireWorkOrder,
+    place: WorkPlace,
+    project: BriefProject = { kind: 'ren' },
+  ): string {
     const { page, ren, marks } = Work.#parts(order);
-    const framing = Briefing.framing(ren, marks, place);
+    const framing = Briefing.framing(ren, marks, place, project);
     return Redline.brief(page, marks, {
       about: [
         ...framing.about,
         ...(id ? [`This is work item ${Redline.code(id)}.`] : []),
         ...Work.evidence(order.evidence),
       ],
-      closing: Work.closing(framing.closing, id ? [id] : []),
+      closing: Work.closing(framing.closing, id ? [id] : [], project),
     });
   }
 
@@ -386,24 +391,32 @@ export class Work {
    * so Ren knows when it lands on main: a `Work-Item:` trailer per item,
    * in each commit and in the pull request's description, which a squash
    * merge keeps. Before an item is queued, its id is not known yet. */
-  static closing(closing: string | null, ids: readonly WorkItemId[]): string | null {
+  static closing(
+    closing: string | null,
+    ids: readonly WorkItemId[],
+    project: BriefProject = { kind: 'ren' },
+  ): string | null {
     if (!closing) return null;
     const lines = ids.length
       ? ids.map((id) => Redline.code(`Work-Item: ${id}`)).join(' and ')
       : `the work item's ${Redline.code('Work-Item:')} line`;
-    return `${closing} End each commit message with ${lines}, and put the same in the pull request's description: that is how Ren knows when the change lands. Once the change is ready to look at, run ${Redline.code('cargo xtask preview up --publish')} in the workspace: it shows the marked page on your branch beside production's.`;
+    return `${closing} End each commit message with ${lines}, and put the same in the pull request's description: that is how Ren knows when the change lands. Once the change is ready to look at, run ${Redline.code(Briefing.preview(project))} in the workspace: it shows the marked page on your branch beside production's.`;
   }
 
   /** One brief for several queued items: each item's marks under its page,
    * and how the change is to be made, once. */
-  static batch(items: readonly WorkItem[], place: WorkPlace): string {
+  static batch(
+    items: readonly WorkItem[],
+    place: WorkPlace,
+    project: BriefProject = { kind: 'ren' },
+  ): string {
     if (items.length === 1 && items[0]) {
       const [item] = items;
-      return Work.brief(item.id, Work.wire(item.order), place);
+      return Work.brief(item.id, Work.wire(item.order), place, project);
     }
     const sections = items.map((item, index) => {
       const { page, ren, marks } = Work.#parts(Work.wire(item.order));
-      const framing = Briefing.framing(ren, marks, place);
+      const framing = Briefing.framing(ren, marks, place, project);
       const body = Redline.brief(page, marks, {
         about: [...framing.about, ...Work.evidence(item.order.evidence)],
         closing: null,
@@ -419,8 +432,9 @@ export class Work {
     const first = items[0];
     const closing = first
       ? Work.closing(
-          Briefing.framing(Work.#parts(Work.wire(first.order)).ren, all, place).closing,
+          Briefing.framing(Work.#parts(Work.wire(first.order)).ren, all, place, project).closing,
           items.map((item) => item.id),
+          project,
         )
       : null;
     return [
@@ -429,6 +443,28 @@ export class Work {
       ...sections.flatMap((section) => [section, '']),
       ...(closing ? [closing] : []),
     ].join('\n');
+  }
+
+  /** Whose page `item` is about, by the project it is for among
+   * `projects`: Ren itself for none, or for a project not listed. */
+  static projectOf(item: WorkItem, projects: readonly Project[]): BriefProject {
+    const project = projects.find((entry) => entry.id === item.project);
+    return project && project.factory !== 'ren'
+      ? { kind: 'other', name: project.name }
+      : { kind: 'ren' };
+  }
+
+  /** The one project `items` are all for, or null when they mix. */
+  static oneProject(items: readonly WorkItem[], projects: readonly Project[]): BriefProject | null {
+    const each = items.map((item) => Work.projectOf(item, projects));
+    const first = each[0];
+    if (!first) return { kind: 'ren' };
+    const same = each.every((project) =>
+      project.kind === 'ren'
+        ? first.kind === 'ren'
+        : first.kind === 'other' && first.name === project.name,
+    );
+    return same ? first : null;
   }
 
   /** An item's order as the daemon takes one. */

@@ -8,12 +8,16 @@
   import Icon from '#lib/Icon.svelte';
   import Markdown from 'markdown/Markdown.svelte';
   import { Work, type WorkItem } from '#lib/work.ts';
+  import type { BriefProject } from '#lib/briefing.ts';
 
   let {
     item,
+    project,
     ondismiss,
   }: {
     item: WorkItem;
+    /** Whose page it is about, for its brief. */
+    project: BriefProject;
     /** Dismiss it; offered while it is queued or sent. */
     ondismiss: (item: WorkItem) => void;
   } = $props();
@@ -78,7 +82,7 @@
   </ul>
 {/if}
 <h3>Brief</h3>
-<div class="brief"><Markdown text={Work.batch([item], 'workspace')} /></div>
+<div class="brief"><Markdown text={Work.batch([item], 'workspace', project)} /></div>
 
 <style>
   .detail-head {
