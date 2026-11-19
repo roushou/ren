@@ -50,6 +50,7 @@ pub use task::listing::ListingError;
 pub use task::login::SignInError;
 use task::{listing, login};
 pub use workdir::{Bounds, Roots, Workdir, WorkdirError};
+pub use workspace::{Slot, Workspace};
 
 use attachments::AttachmentFolders;
 use ren_harness::{

@@ -135,8 +135,6 @@ pub enum CanaryError {
     NothingToPromote(&'static str),
     #[error("the dev slot is never promoted into")]
     DevPromotion,
-    #[error("production's work items: {0}")]
-    WorkAnswer(String),
     #[error(transparent)]
     Replica(#[from] ReplicaError),
     #[error(transparent)]

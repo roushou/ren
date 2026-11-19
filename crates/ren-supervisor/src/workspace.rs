@@ -100,6 +100,15 @@ impl Workspace {
         format!("ren/{}-{id}", self.name)
     }
 
+    /// The transient units its preview runs as (`cargo xtask preview`),
+    /// stopped when the workspace is removed: its UI's, then its daemon's.
+    pub fn preview_units(&self) -> [String; 2] {
+        [
+            format!("ren-preview-{}-ui", self.name),
+            format!("ren-preview-{}-daemon", self.name),
+        ]
+    }
+
     /// What its runs are told of it.
     pub fn env(&self) -> Vec<(&'static str, String)> {
         let (first, last) = self.slot.ports();
@@ -123,6 +132,10 @@ mod tests {
         assert_eq!(workspace.folder(), Path::new("/data/worktrees/ren-3"));
         assert_eq!(workspace.data(), Path::new("/data/worktrees/.data/ren-3"));
         assert_eq!(workspace.branch("1a2b3c4d"), "ren/ren-3-1a2b3c4d");
+        assert_eq!(
+            workspace.preview_units(),
+            ["ren-preview-ren-3-ui", "ren-preview-ren-3-daemon"]
+        );
         assert_eq!(
             workspace.env(),
             [

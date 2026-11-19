@@ -184,6 +184,18 @@ impl std::str::FromStr for PreviewUrl {
     }
 }
 
+impl PreviewUrl {
+    /// Its port, when it names one.
+    pub fn port(&self) -> Option<u16> {
+        let host = self
+            .0
+            .split_once("://")
+            .map_or(self.0.as_str(), |(_, host)| host);
+        let (_, port) = host.rsplit_once(':')?;
+        port.parse().ok()
+    }
+}
+
 impl std::fmt::Display for PreviewUrl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -441,6 +453,10 @@ mod tests {
                 .to_string(),
             "http://127.0.0.1:20201"
         );
+        let port = |text: &str| text.parse::<PreviewUrl>().unwrap().port();
+        assert_eq!(port("https://ren.example.ts.net:20201"), Some(20_201));
+        assert_eq!(port("http://[::1]:8"), Some(8));
+        assert_eq!(port("https://ren.example.ts.net"), None);
         for text in [
             "",
             "ftp://x",

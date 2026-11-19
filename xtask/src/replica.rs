@@ -4,7 +4,8 @@
 //! production's: its own loopback ports and data folder, its own
 //! `[instance] environment`, no runs, and a placeholder for each operator
 //! key, so it forwards no operator-keyed call. Its UI only reads. The
-//! canary is one (`cargo xtask canary`).
+//! canary is one (`cargo xtask canary`); each workspace's preview is
+//! another (`cargo xtask preview`).
 
 use crate::{
     dev::{DevError, slot::Slot},
@@ -16,11 +17,21 @@ use crate::{
     unit::{KillMode, Listener, TransientUnit},
 };
 use ren_daemon::config::{Config, ConfigError, RunsOptions};
-use ren_gateway::{Environment, InstanceOptions};
+use ren_gateway::{
+    ControlToken, Environment, InstanceOptions,
+    api::control::request::{ControlRequest, WorkChange},
+};
 use ren_harness::host::HostEnv;
-use ren_release::{Release, Revision};
+use ren_protocol::label::Stored;
+use ren_recorder::{
+    id::WorkItemId,
+    work::{PreviewUrl, WorkStateKind},
+};
+use ren_release::{Commit, Release, Revision};
+use serde::Deserialize;
 use std::{
     fs,
+    io::Write as _,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
@@ -82,6 +93,8 @@ pub enum ReplicaError {
     NoDnsName,
     #[error("cannot write the release: {0}")]
     Json(serde_json::Error),
+    #[error("production's work items: {0}")]
+    WorkAnswer(String),
     #[error(transparent)]
     Invocation(#[from] InvocationError),
     #[error(transparent)]
@@ -98,6 +111,27 @@ impl From<DevError> for ReplicaError {
     fn from(error: DevError) -> Self {
         Self::Dev(Box::new(error))
     }
+}
+
+/// One work item, as production's `/api/work` lists it, as far as xtask
+/// needs.
+#[derive(Debug, Deserialize)]
+pub struct ListedWork {
+    pub id: WorkItemId,
+    pub state: Stored<WorkStateKind>,
+    pub landed: Option<Commit>,
+    pub preview: Option<ListedPreview>,
+}
+
+/// A listed item's preview.
+#[derive(Debug, Deserialize)]
+pub struct ListedPreview {
+    pub ui: PreviewUrl,
+}
+
+#[derive(Deserialize)]
+struct WorkListing {
+    work: Vec<ListedWork>,
 }
 
 /// Where a started replica is reached.
@@ -143,11 +177,6 @@ impl ProductionPlace {
         }
     }
 
-    /// Where production's daemon listens.
-    pub fn listen(&self) -> SocketAddr {
-        self.listen
-    }
-
     fn ren(&self) -> Invocation {
         Invocation::new(&self.binary)
             .arg("--config")
@@ -182,6 +211,87 @@ impl ProductionPlace {
             return Err(ReplicaError::Backup(self.data_dir.clone()));
         }
         Ok(self.data_dir.join("backup"))
+    }
+
+    /// The work items under way, or none when production's daemon does
+    /// not serve work items.
+    pub fn work_items(&self) -> Result<Option<Vec<ListedWork>>, ReplicaError> {
+        let answer = Invocation::new("curl")
+            .args([
+                "--silent",
+                "--max-time",
+                "20",
+                "--write-out",
+                "\n%{http_code}",
+            ])
+            .arg(format!("http://{}/api/work?limit=1000", self.listen))
+            .capture()?;
+        let (body, status) = answer.rsplit_once('\n').unwrap_or(("", answer.as_str()));
+        match status.trim() {
+            "200" => serde_json::from_str::<WorkListing>(body)
+                .map(|listing| Some(listing.work))
+                .map_err(|_| ReplicaError::WorkAnswer("/api/work".to_owned())),
+            "404" => Ok(None),
+            other => Err(ReplicaError::WorkAnswer(format!(
+                "/api/work answered {other}"
+            ))),
+        }
+    }
+
+    /// Moves `item` on through production's control API, with its control
+    /// token, as an operator would; production checks it against the
+    /// item's state.
+    pub fn move_work(&self, item: WorkItemId, change: WorkChange) -> Result<(), ReplicaError> {
+        let request = ControlRequest::Work { item, change };
+        let path = self.data_dir.join(ControlToken::FILE);
+        let token = fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| ControlToken::parse(&text))
+            .ok_or_else(|| {
+                ReplicaError::WorkAnswer(format!("no control token in {}", path.display()))
+            })?;
+        // The token goes in a private file curl reads, never on its command
+        // line, where any process could read it.
+        let mut header = tempfile::Builder::new()
+            .prefix(".ren-work.")
+            .tempfile()
+            .map_err(FileError::at(&path))?;
+        writeln!(header, "authorization: Bearer {}", token.expose())
+            .map_err(FileError::at(&path))?;
+        let body = request
+            .body()
+            .map_err(ReplicaError::Json)?
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_default();
+        let answer = Invocation::new("curl")
+            .args([
+                "--silent",
+                "--max-time",
+                "20",
+                "--write-out",
+                "\n%{http_code}",
+            ])
+            .args(["-X", "POST", "-H", "content-type: application/json"])
+            .arg("-H")
+            .arg(format!("@{}", header.path().display()))
+            .arg("--data")
+            .arg(body)
+            .arg(format!(
+                "http://{}/control/v1/{}",
+                self.listen,
+                request.path()
+            ))
+            .capture()?;
+        let status = answer
+            .rsplit_once('\n')
+            .map_or(answer.as_str(), |(_, status)| status);
+        match status.trim() {
+            "202" => Ok(()),
+            other => Err(ReplicaError::WorkAnswer(format!(
+                "{} answered {other}",
+                request.path()
+            ))),
+        }
     }
 
     /// The release the factory last wrote here, if it reads.
@@ -224,6 +334,20 @@ impl Replica {
             config: home.join(".config/ren-canary/ren.toml"),
             data_dir: home.join(".local/state/ren-canary"),
         })
+    }
+
+    /// The preview of the workspace `name`: its daemon on the workspace's
+    /// first port and its UI on the next, in `<data>/preview`.
+    pub fn preview(name: &str, first_port: u16, data: &Path) -> Self {
+        let root = data.join("preview");
+        Self {
+            name: format!("preview-{name}"),
+            environment: Environment::Preview,
+            daemon: SocketAddr::new(Self::LOOPBACK, first_port),
+            ui: SocketAddr::new(Self::LOOPBACK, first_port.saturating_add(1)),
+            config: root.join("ren.toml"),
+            data_dir: root.join("data"),
+        }
     }
 
     pub fn daemon(&self) -> SocketAddr {
@@ -462,17 +586,37 @@ operator_key_env = "ACME_ANTHROPIC_KEY"
         assert!(config.runs.roots.is_empty());
         assert_eq!(config.upstreams[0].operator_key_env, "ACME_ANTHROPIC_KEY");
         config.check().unwrap();
+
+        let preview = Replica::preview("ren-3", 20_200, Path::new("/data/worktrees/.data/ren-3"));
+        let config = preview.derive(production());
+        assert_eq!(config.listen.port(), 20_200);
+        assert_eq!(preview.ui().port(), 20_201);
+        assert_eq!(config.instance.environment, Environment::Preview);
+        assert_eq!(
+            preview.data_dir,
+            Path::new("/data/worktrees/.data/ren-3/preview/data")
+        );
+    }
+
+    #[test]
+    fn a_preview_runs_as_the_units_its_workspace_stops() {
+        let workspace = ren_supervisor::Workspace::of(
+            Path::new("/data/worktrees"),
+            Path::new("/data/worktrees/ren-3"),
+        )
+        .unwrap();
+        let preview = Replica::preview("ren-3", 20_200, &workspace.data());
+        let names = preview.units().map(|unit| unit.name);
+        assert_eq!(names, workspace.preview_units());
     }
 
     #[test]
     fn every_unit_is_named_for_its_replica() {
-        let env = ren_harness::host::HostEnv::from_pairs([("HOME", "/home/op")]);
-        let names: Vec<String> = Replica::canary(&env)
-            .unwrap()
-            .units()
-            .into_iter()
-            .map(|unit| unit.name)
-            .collect();
-        assert_eq!(names, ["ren-canary-ui", "ren-canary-daemon"]);
+        let preview = Replica::preview("acme-web-2", 20_100, Path::new("/tmp/acme"));
+        let names: Vec<String> = preview.units().into_iter().map(|unit| unit.name).collect();
+        assert_eq!(
+            names,
+            ["ren-preview-acme-web-2-ui", "ren-preview-acme-web-2-daemon"]
+        );
     }
 }

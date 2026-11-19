@@ -7,6 +7,7 @@ mod dev;
 mod file;
 mod install;
 mod invocation;
+mod preview;
 mod progress;
 mod replica;
 mod tailscale;
@@ -25,6 +26,7 @@ enum Xtask {
     Dev(dev::Dev),
     Compat(compat::Compat),
     Canary(canary::Canary),
+    Preview(preview::Preview),
 }
 
 /// Why a task failed.
@@ -38,6 +40,8 @@ enum TaskError {
     Compat(#[from] compat::CompatError),
     #[error(transparent)]
     Canary(#[from] canary::CanaryError),
+    #[error(transparent)]
+    Preview(#[from] preview::PreviewError),
 }
 
 impl Xtask {
@@ -47,6 +51,7 @@ impl Xtask {
             Self::Dev(task) => Ok(task.run(env)?),
             Self::Compat(task) => Ok(task.run()?),
             Self::Canary(task) => Ok(task.run(env)?),
+            Self::Preview(task) => Ok(task.run(env)?),
         }
     }
 }

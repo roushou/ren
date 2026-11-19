@@ -7,6 +7,7 @@ use crate::{
     project::Look,
     run::ProcessExit,
     workdir::Workdir,
+    workspace::Workspace,
 };
 use futures_util::future::BoxFuture;
 use ren_depot::toolset::Generation;
@@ -125,11 +126,11 @@ pub trait AgentHost: Send + Sync + 'static {
         Err(io::ErrorKind::Unsupported.into())
     }
 
-    /// Remove the worktree at `folder` and its data folder `data`, and its
-    /// branch once merged. A worktree holding changes not committed is
-    /// kept, and the error says so.
-    fn remove_worktree(&self, folder: &Path, data: &Path, tools: &RunTools) -> io::Result<()> {
-        let _ = (folder, data, tools);
+    /// Remove `workspace`: stop its preview's units, then remove its
+    /// worktree and its data folder, and its branch once merged. A worktree
+    /// holding changes not committed is kept, and the error says so.
+    fn remove_worktree(&self, workspace: &Workspace, tools: &RunTools) -> io::Result<()> {
+        let _ = (workspace, tools);
         Err(io::ErrorKind::Unsupported.into())
     }
 

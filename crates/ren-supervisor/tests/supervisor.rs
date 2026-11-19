@@ -33,7 +33,7 @@ use ren_supervisor::{
     PathKind, ProcessExit, RunCommand, RunRefused, RunState, RunTools, RunUpdate, StartError,
     Supervisor, SupervisorOptions, Tenure, WalkLimits, Workdir,
 };
-use ren_supervisor::{ProjectGit, Scratch};
+use ren_supervisor::{ProjectGit, Scratch, Workspace};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -383,11 +383,12 @@ impl AgentHost for FakeHost {
         Ok(())
     }
 
-    fn remove_worktree(&self, folder: &Path, _data: &Path, _tools: &RunTools) -> io::Result<()> {
+    fn remove_worktree(&self, workspace: &Workspace, _tools: &RunTools) -> io::Result<()> {
+        let folder = workspace.folder();
         self.worktrees
             .lock()
             .unwrap()
-            .retain(|(made, _)| made != folder);
+            .retain(|(made, _)| *made != folder);
         Ok(())
     }
 

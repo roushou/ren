@@ -10,7 +10,7 @@ use ren_harness::{launch::LaunchPlan, pi::PiCache, sign_in::LocalRedirect};
 use ren_recorder::id::RunId;
 use ren_supervisor::{
     AgentHost, AgentProcess, ClientStamp, FoundPath, HeldRun, KillSwitch, Look, PathKind,
-    ProcessExit, ProjectGit, RunTools, Scratch, Tenure, Untracked, WalkLimits, Workdir,
+    ProcessExit, ProjectGit, RunTools, Scratch, Tenure, Untracked, WalkLimits, Workdir, Workspace,
 };
 use std::io;
 use std::path::{Path, PathBuf};
@@ -422,7 +422,10 @@ impl AgentHost for ProcessHost {
         std::fs::create_dir_all(data)
     }
 
-    fn remove_worktree(&self, folder: &Path, data: &Path, tools: &RunTools) -> io::Result<()> {
+    fn remove_worktree(&self, workspace: &Workspace, tools: &RunTools) -> io::Result<()> {
+        Self::stop_preview(workspace);
+        let (folder, data) = (workspace.folder(), workspace.data());
+        let (folder, data) = (folder.as_path(), data.as_path());
         let git = Git::find(&self.search_dirs(tools))
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no git on the runs' path"))?;
         let branch = match Git::repository(folder) {
@@ -645,6 +648,28 @@ where
             Poll::Ready(Ok(()))
         } else {
             Poll::Pending
+        }
+    }
+}
+
+impl ProcessHost {
+    /// Stops a workspace's preview (`cargo xtask preview`), if one runs:
+    /// its units are named for the workspace, and stopping one that does
+    /// not exist (or a host without systemd) changes nothing.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "stopping a removed workspace's preview units, by their exact names"
+    )]
+    fn stop_preview(workspace: &Workspace) {
+        let stopped = std::process::Command::new("systemctl")
+            .args(["--user", "stop"])
+            .args(workspace.preview_units())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        if let Err(error) = stopped {
+            tracing::debug!(%error, "no systemctl to stop a workspace's preview");
         }
     }
 }

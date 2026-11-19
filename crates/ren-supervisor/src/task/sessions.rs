@@ -154,14 +154,12 @@ impl<H: AgentHost> SupervisorTask<H> {
         let workspace = served.sessions.get(&session).and_then(|serving| {
             Workspace::of(self.bounds.worktrees()?, serving.workdir().as_path())
         });
-        if let Some(workspace) = workspace {
-            let (folder, data) = (workspace.folder(), workspace.data());
-            if let Err(error) = self
-                .off_task(move |host| host.remove_worktree(&folder, &data, &host.tools()))
+        if let Some(workspace) = workspace
+            && let Err(error) = self
+                .off_task(move |host| host.remove_worktree(&workspace, &host.tools()))
                 .await
-            {
-                tracing::warn!(%session, %error, "a deleted session's workspace was kept");
-            }
+        {
+            tracing::warn!(%session, %error, "a deleted session's workspace was kept");
         }
         // Its attachments go with it, served or not.
         if let Some(folders) = &self.attachments {

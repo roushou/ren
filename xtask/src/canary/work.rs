@@ -7,35 +7,22 @@
 
 use super::{CanaryError, Factory};
 use crate::{
-    file::FileError, invocation::Invocation, progress::Progress, replica::ProductionPlace,
+    progress::Progress,
+    replica::{ProductionPlace, ReplicaError},
 };
-use ren_gateway::ControlToken;
+use ren_gateway::api::control::request::{LandWorkRequest, ShipWorkRequest, WorkChange};
 use ren_git::CommitId;
 use ren_protocol::label::Stored;
 use ren_recorder::{
     id::WorkItemId,
     work::{Landing, WorkStateKind},
 };
-use ren_release::{Commit, Revision, Tree};
-use serde::Deserialize;
-use std::{fs, io::Write as _, thread, time::Duration};
+use ren_release::{Revision, Tree};
+use std::{thread, time::Duration};
 
 /// Production's work items, as far as closing them needs.
 pub struct WorkLedger<'a> {
     production: &'a ProductionPlace,
-}
-
-/// One work item, as `/api/work` lists it.
-#[derive(Debug, Deserialize)]
-struct Listed {
-    id: WorkItemId,
-    state: Stored<WorkStateKind>,
-    landed: Option<Commit>,
-}
-
-#[derive(Deserialize)]
-struct Listing {
-    work: Vec<Listed>,
 }
 
 /// What a pass did to the work items.
@@ -60,7 +47,7 @@ impl<'a> WorkLedger<'a> {
     /// landed items production's build holds. A production whose daemon
     /// keeps no work items yet is left alone.
     pub fn close(&self, factory: &Factory, main: &CommitId) -> Result<Closed, CanaryError> {
-        let Some(items) = self.items()? else {
+        let Some(items) = self.production.work_items()? else {
             Progress("Production keeps no work items yet; none to close").show();
             return Ok(Closed::default());
         };
@@ -83,12 +70,13 @@ impl<'a> WorkLedger<'a> {
                 let Ok(release_commit) = Factory::commit(&commit) else {
                     continue;
                 };
-                for item in Landing::read(release_commit, &message).items {
+                for item in Landing::read(release_commit.clone(), &message).items {
                     if sent.contains(&item) && !landed.iter().any(|(id, _)| *id == item) {
-                        self.move_on(
+                        self.production.move_work(
                             item,
-                            "land",
-                            &serde_json::json!({ "commit": commit.as_str() }),
+                            WorkChange::Land(LandWorkRequest {
+                                commit: release_commit.clone(),
+                            }),
                         )?;
                         Progress(&format!(
                             "Work item {item} landed as {}",
@@ -110,18 +98,25 @@ impl<'a> WorkLedger<'a> {
             Revision::Commit {
                 commit,
                 tree: Tree::Clean,
-            } => Factory::id(&commit).ok(),
+            } => Factory::id(&commit).ok().map(|id| (id, commit)),
             Revision::Commit {
                 tree: Tree::Modified,
                 ..
             }
             | Revision::Unknown => None,
         };
-        if let Some(running) = running {
+        if let Some((running, built)) = running {
             for (item, commit) in &landed {
                 if factory.git.contains(&factory.repo, &running, commit)? {
-                    let revision = running.as_str();
-                    self.move_on(*item, "ship", &serde_json::json!({ "revision": revision }))?;
+                    self.production.move_work(
+                        *item,
+                        WorkChange::Ship(ShipWorkRequest {
+                            revision: Revision::Commit {
+                                commit: built.clone(),
+                                tree: Tree::Clean,
+                            },
+                        }),
+                    )?;
                     Progress(&format!(
                         "Work item {item} shipped in {}",
                         running.abbreviated(12)
@@ -139,7 +134,7 @@ impl<'a> WorkLedger<'a> {
     /// counted, not timed, so this reads no clock.
     fn settle(&self, landed: &[(WorkItemId, CommitId)]) -> Result<(), CanaryError> {
         for _ in 0..Self::POLLS {
-            let items = self.items()?.unwrap_or_default();
+            let items = self.production.work_items()?.unwrap_or_default();
             let stored = landed.iter().all(|(id, _)| {
                 items.iter().any(|item| {
                     item.id == *id && item.state == Stored::Known(WorkStateKind::Landed)
@@ -150,87 +145,9 @@ impl<'a> WorkLedger<'a> {
             }
             thread::sleep(Self::POLL);
         }
-        Err(CanaryError::WorkAnswer(
-            "production did not store the landings in time".to_owned(),
-        ))
-    }
-
-    /// The items under way, or none when production's daemon does not
-    /// serve work items.
-    fn items(&self) -> Result<Option<Vec<Listed>>, CanaryError> {
-        let answer = Invocation::new("curl")
-            .args([
-                "--silent",
-                "--max-time",
-                "20",
-                "--write-out",
-                "\n%{http_code}",
-            ])
-            .arg(format!(
-                "http://{}/api/work?limit=1000",
-                self.production.listen()
-            ))
-            .capture()?;
-        let (body, status) = answer.rsplit_once('\n').unwrap_or(("", answer.as_str()));
-        match status.trim() {
-            "200" => serde_json::from_str::<Listing>(body)
-                .map(|listing| Some(listing.work))
-                .map_err(|_| CanaryError::WorkAnswer("/api/work".to_owned())),
-            "404" => Ok(None),
-            other => Err(CanaryError::WorkAnswer(format!(
-                "/api/work answered {other}"
-            ))),
-        }
-    }
-
-    /// `POST /control/v1/work/{item}/{change}` on production.
-    fn move_on(
-        &self,
-        item: WorkItemId,
-        change: &str,
-        body: &serde_json::Value,
-    ) -> Result<(), CanaryError> {
-        let path = self.production.data_dir.join(ControlToken::FILE);
-        let token = fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| ControlToken::parse(&text))
-            .ok_or_else(|| {
-                CanaryError::WorkAnswer(format!("no control token in {}", path.display()))
-            })?;
-        // The token goes in a private file curl reads, never on its command
-        // line, where any process could read it.
-        let mut header = tempfile::Builder::new()
-            .prefix(".ren-work.")
-            .tempfile()
-            .map_err(FileError::at(&path))?;
-        writeln!(header, "authorization: Bearer {}", token.expose())
-            .map_err(FileError::at(&path))?;
-        let answer = Invocation::new("curl")
-            .args([
-                "--silent",
-                "--max-time",
-                "20",
-                "--write-out",
-                "\n%{http_code}",
-            ])
-            .args(["-X", "POST", "-H", "content-type: application/json"])
-            .arg("-H")
-            .arg(format!("@{}", header.path().display()))
-            .arg("--data")
-            .arg(body.to_string())
-            .arg(format!(
-                "http://{}/control/v1/work/{item}/{change}",
-                self.production.listen()
-            ))
-            .capture()?;
-        let status = answer
-            .rsplit_once('\n')
-            .map_or(answer.as_str(), |(_, status)| status);
-        match status.trim() {
-            "202" => Ok(()),
-            other => Err(CanaryError::WorkAnswer(format!(
-                "{change} of work item {item} answered {other}"
-            ))),
-        }
+        Err(
+            ReplicaError::WorkAnswer("production did not store the landings in time".to_owned())
+                .into(),
+        )
     }
 }
