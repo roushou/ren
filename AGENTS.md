@@ -622,10 +622,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `cargo xtask compat --base <revision> [--message <file>]` is the
   compatibility gate (`compat`; `docs/plans/self-build.md`, phase 1): it
   compares the store's migration pins, store fixtures, and new migrations,
-  and every crate's labels, with the base revision (read through `ren_git`),
-  and refuses a break the message does not declare with a `!` and a
-  `BREAKING CHANGE:` footer; its comparison is pure and unit-tested
-  (`compat::contract`), and the Compatibility workflow runs it on every pull
+  every crate's labels, and the API's wire types with the base revision
+  (read through `ren_git`), and refuses a break the message does not declare
+  with a `!` and a `BREAKING CHANGE:` footer. Wire types are parsed from the
+  files ts-rs writes and compared by structure (`compat::api`): a type
+  reached from one of the gateway's request types
+  (`crates/ren-gateway/tests/fixtures/requests.txt`, kept whole by
+  `tests/api_owner.rs`) must still read what older clients send, and any
+  other must still hold what they read. Its comparison is pure and
+  unit-tested (`compat::contract`, `compat::api`), and the Compatibility
+  workflow runs it on every pull
   request (again when its title or body is edited) and push to main.
   `cargo xtask install-vps` installs or upgrades Ren from a checkout as a
   systemd user service and can publish it with Tailscale Serve; it restarts a
@@ -767,8 +773,8 @@ cargo test --workspace --locked
 ```
 
 A change to what an existing install depends on (the store's migrations and
-their fixtures, or a crate's labels) is checked against the base it will
-land on:
+their fixtures, a crate's labels, or the API's wire types) is checked
+against the base it will land on:
 
 ```sh
 cargo xtask compat --base origin/main --message <file with the change's message>

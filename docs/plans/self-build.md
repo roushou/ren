@@ -80,28 +80,35 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
 
 ## Phases
 
-1. **Compatibility contract.** Partly built. Enforced in CI, not by
-   review, by the Compatibility workflow (`cargo xtask compat`):
-   - Shipped migrations are frozen. Built: each is pinned by the checksum
-     a store keeps for it (`crates/ren-store/tests/fixtures/migrations.txt`),
-     and the gate refuses a changed or removed pin. A schema change is
-     expand then contract: a new migration that drops, renames, or deletes
-     is a breaking change (built, read from its statements).
+1. **Compatibility contract.** Built. Enforced in CI, not by review, by
+   the Compatibility workflow (`cargo xtask compat`):
+   - Shipped migrations are frozen: each is pinned by the checksum a store
+     keeps for it (`crates/ren-store/tests/fixtures/migrations.txt`), and
+     the gate refuses a changed or removed pin. A schema change is expand
+     then contract: a new migration that drops, renames, or deletes is a
+     breaking change, read from its statements.
    - A store written at each earlier migration opens with the change's
-     build and serves every read. Built: each migration has a store
-     fixture (`crates/ren-store/tests/fixtures/stores/<version>.sql`),
-     recorded once through the recorder and frozen, and
+     build and serves every read: each migration has a store fixture
+     (`crates/ren-store/tests/fixtures/stores/<version>.sql`), recorded
+     once through the recorder and frozen, and
      `crates/ren-store/tests/upgrade.rs` opens each with today's
      migrations and serves every `ReadRequest` and session read from it.
    - The `labels.txt` tables, the control refusals among them, are
-     compared with the base: a label may be added, never removed. Built.
-   - The read and control APIs' wire types are compared with the base.
-     Not built: they are pinned as generated TypeScript
-     (`ui/apps/web/src/lib/wire`), and telling an added response field
-     from a removed one needs a structural comparison, not a text diff.
+     compared with the base: a label may be added, never removed.
+   - The API's wire types are compared with the base by structure, parsed
+     from the files ts-rs writes (`ui/apps/web/src/lib/wire`). A type
+     reached from one of the gateway's request types
+     (`crates/ren-gateway/tests/fixtures/requests.txt`, every type a route
+     reads from a body or query string) must still read what older
+     clients send: no new required field, no field removed (requests deny
+     unknown fields), nothing narrowed. Any other type must still hold
+     what older clients read: no required field removed, nothing made
+     optional, nullable, or wider. A new label or variant in a response is
+     compatible, as the UI keeps unknown labels and variants. A wire file
+     the gate cannot read is a break.
    - A breaking difference passes only when the change's message declares
      it: a `!` in its header and a `BREAKING CHANGE:` footer naming what
-     breaks and how an existing install moves on. Built.
+     breaks and how an existing install moves on.
 2. **Runs outlive the daemon.** Not built. Each agent process runs in its
    own transient systemd user unit, holding its client's stdio on a socket
    the daemon reconnects to when it starts. The supervisor's run machine
@@ -170,6 +177,10 @@ things faster. Each phase is useful on its own.
   is recorded once, through the recorder at the migration it belongs to,
   and frozen. Building every earlier release in CI would be slower and
   would need its toolchain; a frozen fixture checks the same upgrade.
+- **A type's direction is read, not declared per type.** The gateway pins
+  only its request types, found in its sources by the extractors that read
+  them; every type is classed by what reaches it. A type reached from a request
+  and from a response is compared both ways.
 - **The gate is its own workflow.** It reads the pull request's title and
   body, so it runs again when they are edited, which would otherwise
   rerun all of CI.

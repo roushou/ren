@@ -1,12 +1,14 @@
 //! `cargo xtask compat`: whether this checkout keeps the compatibility
 //! contract with a base revision. An install of the base must be able to
 //! upgrade to this checkout: no shipped migration or store fixture changes,
-//! no new migration takes data or structure away, and no label an earlier
-//! release stored or sent disappears. A change that breaks any of these
+//! no new migration takes data or structure away, no label an earlier
+//! release stored or sent disappears, and the API's wire types still read
+//! what older clients send and still hold what they read. A change that breaks any of these
 //! must say so in its message (`docs/plans/self-build.md`, phase 1).
 //!
 //! The base is read through git, the checkout from the working tree. The
 //! comparison itself is pure (`contract`).
+mod api;
 mod contract;
 
 use self::contract::{Comparison, Declaration, Impact, Missing, Snapshot, Surface, Verdict};
@@ -90,7 +92,7 @@ impl Compat {
         let comparison = Comparison::between(&base, &head);
         println!("Compared with {} ({}):", self.base, commit.abbreviated(12));
         if comparison.findings().is_empty() {
-            println!("  no change to the store's migrations, fixtures, or labels");
+            println!("  no change to the store's migrations, fixtures, labels, or the API");
         }
         for finding in comparison.findings() {
             let impact = match finding.change.impact() {
@@ -126,6 +128,8 @@ impl Compat {
         for name in Self::names(&repo.join("crates"))? {
             paths.push(format!("crates/{name}/{}", Surface::LABELS));
         }
+        paths.push(api::REQUESTS.to_owned());
+        Self::files_under(repo, api::WIRE, &mut paths)?;
         let mut snapshot = Snapshot::default();
         for path in paths {
             let file = repo.join(&path);
@@ -136,6 +140,19 @@ impl Compat {
             }
         }
         Ok(snapshot)
+    }
+
+    /// Every file under `folder` (from `repo`), into `paths`.
+    fn files_under(repo: &Path, folder: &str, paths: &mut Vec<String>) -> Result<(), CompatError> {
+        for name in Self::names(&repo.join(folder))? {
+            let path = format!("{folder}/{name}");
+            if repo.join(&path).is_dir() {
+                Self::files_under(repo, &path, paths)?;
+            } else {
+                paths.push(path);
+            }
+        }
+        Ok(())
     }
 
     /// The names in `folder`, or none when it does not exist.

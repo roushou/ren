@@ -1,7 +1,9 @@
 //! The compatibility contract, pure: what a change does to the files an
 //! existing install depends on (the store's migration pins, its store
 //! fixtures, and its migrations, and every crate's label tables), and
-//! whether the change's message declares the breaks it makes.
+//! whether the change's message declares the breaks it makes. The API's
+//! wire types are compared by structure (`api`).
+use super::api::{ApiChange, WireTypes};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -17,6 +19,11 @@ pub enum Surface {
     Migration,
     /// A crate's label table: each vocabulary with its labels.
     Labels,
+    /// One of the API's wire types, as ts-rs writes it for the UI.
+    Wire,
+    /// The gateway's request types, which say which way each wire type
+    /// travels.
+    Requests,
 }
 
 impl Surface {
@@ -30,6 +37,15 @@ impl Surface {
     pub fn of(path: &str) -> Option<Self> {
         if path == Self::PINS {
             return Some(Self::Pins);
+        }
+        if path == super::api::REQUESTS {
+            return Some(Self::Requests);
+        }
+        if path
+            .strip_prefix(super::api::WIRE)
+            .is_some_and(|rest| rest.starts_with('/') && rest.ends_with(".ts"))
+        {
+            return Some(Self::Wire);
         }
         let inside = |folder: &str| {
             path.strip_prefix(folder)
@@ -55,6 +71,22 @@ impl Surface {
 pub struct Snapshot(BTreeMap<String, Vec<u8>>);
 
 impl Snapshot {
+    /// The API's wire types in this snapshot.
+    fn wire_types(&self) -> WireTypes {
+        let mut types = WireTypes::default();
+        for (path, bytes) in &self.0 {
+            match Surface::of(path) {
+                Some(Surface::Wire) => types.file(path, &String::from_utf8_lossy(bytes)),
+                Some(Surface::Requests) => types.requests(&String::from_utf8_lossy(bytes)),
+                Some(
+                    Surface::Pins | Surface::StoreFixture | Surface::Migration | Surface::Labels,
+                )
+                | None => {}
+            }
+        }
+        types
+    }
+
     /// Keep `bytes` as the file at `path`, when the contract watches it.
     pub fn keep(&mut self, path: String, bytes: Vec<u8>) {
         if Surface::of(&path).is_some() {
@@ -96,6 +128,9 @@ pub enum Change {
     },
     MigrationChanged,
     MigrationRemoved,
+    /// A difference in the API's wire types; whether it breaks depends on
+    /// which way the type travels.
+    Api(ApiChange),
     VocabularyAdded {
         vocabulary: String,
     },
@@ -147,6 +182,13 @@ impl Change {
             | Self::MigrationRemoved
             | Self::VocabularyRemoved { .. }
             | Self::LabelRemoved { .. } => Impact::Breaking,
+            Self::Api(change) => {
+                if change.breaks() {
+                    Impact::Breaking
+                } else {
+                    Impact::Compatible
+                }
+            }
         }
     }
 }
@@ -206,6 +248,7 @@ impl fmt::Display for Finding {
             }
             Change::MigrationChanged => write!(f, "{path}: shipped migration changed"),
             Change::MigrationRemoved => write!(f, "{path}: shipped migration removed"),
+            Change::Api(change) => write!(f, "{path}: {change}"),
             Change::VocabularyAdded { vocabulary } => {
                 write!(f, "{path}: vocabulary {vocabulary} added")
             }
@@ -281,6 +324,9 @@ impl Comparison {
                     (Some(_), None) => Change::MigrationRemoved,
                     (Some(_), Some(_)) => Change::MigrationChanged,
                 }),
+                // Compared together, below: a wire type's direction depends
+                // on the others.
+                Surface::Wire | Surface::Requests => {}
                 Surface::Labels => {
                     let (before, after) = (Labels::read(before), Labels::read(after));
                     for (vocabulary, labels) in &before.0 {
@@ -311,6 +357,15 @@ impl Comparison {
                 }
             }
         }
+        let (old, new) = (base.wire_types(), head.wire_types());
+        findings.extend(
+            WireTypes::compare(&old, &new)
+                .into_iter()
+                .map(|change| Finding {
+                    path: super::api::WIRE.to_owned(),
+                    change: Change::Api(change),
+                }),
+        );
         Self { findings }
     }
 
