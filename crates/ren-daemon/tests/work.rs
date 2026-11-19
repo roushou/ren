@@ -186,6 +186,27 @@ async fn a_work_item_goes_from_queued_to_shipped_through_the_api() {
     let not_a_url = json!({ "preview": { "ui": "javascript:alert(1)", "revision": COMMIT } });
     let (status, _) = send(&gateway, &format!("/work/{item}/preview"), Some(not_a_url)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Deleting the session removes its workspace, and so its preview: the
+    // item no longer links to it.
+    let (status, body) = send(
+        &gateway,
+        &format!("/sessions/{session}/delete"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let mut cleared = false;
+    for _ in 0..200 {
+        if read(&gateway, &format!("/api/work/{item}")).await["preview"].is_null() {
+            cleared = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        cleared,
+        "the deleted session's preview is still on its item"
+    );
     let (status, _) = send(
         &gateway,
         &format!("/work/{item}/land"),

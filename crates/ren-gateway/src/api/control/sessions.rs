@@ -44,7 +44,7 @@ use ren_harness::{
 use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
-    batch::{HistoryChange, HistorySubject},
+    batch::{HistoryChange, HistorySubject, WorkFact},
     id::{AttachmentId, SessionId},
 };
 use ren_store::{
@@ -692,7 +692,36 @@ impl SessionsApi {
             return Err(ControlRefusal::NotFound);
         }
         slot.record(actor, subject, HistoryChange::Delete);
+        api.forget_previews(session).await;
         Ok(Self::done())
+    }
+
+    /// Takes the preview off each work item `session` took up: deleting the
+    /// session removed its workspace, and its preview with it, so a link to
+    /// it would lead nowhere (or, later, to another workspace's).
+    async fn forget_previews(&self, session: SessionId) {
+        let items = match self
+            .reader
+            .work_items(PageLimit::LARGEST, Shelf::Current)
+            .await
+        {
+            Ok(items) => items,
+            Err(error) => {
+                tracing::warn!(%session, %error, "a deleted session's previews were left on its work items");
+                return;
+            }
+        };
+        for item in items
+            .into_iter()
+            .filter(|item| item.session == Some(session) && item.preview.is_some())
+        {
+            match self.control.recorder.work_slot() {
+                Some(slot) => slot.record(item.id, WorkFact::Previewed { preview: None }),
+                None => {
+                    tracing::warn!(item = %item.id, "no room to take a gone preview off a work item")
+                }
+            }
+        }
     }
 
     /// What the session's client offers a prompt: its running client's
