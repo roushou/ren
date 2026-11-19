@@ -16,6 +16,7 @@
 //! [`Supervisor`]: crate::Supervisor
 
 mod clients;
+mod held;
 pub(crate) mod listing;
 pub(crate) mod login;
 mod sessions;
@@ -27,7 +28,8 @@ use crate::{
     SessionSnapshot, StartError, Warmup,
     client::Client,
     files::{FileMatch, FileQuery, FoundPath},
-    host::{AgentHost, AgentProcess, KillSwitch},
+    host::{AgentHost, KillSwitch, RunTools},
+    journal::{Entry, Start},
     project::Search,
     run::{ProcessExit, RunCommand, RunState},
     session::{Launch, Room, Session, TurnsEnded},
@@ -48,7 +50,7 @@ use ren_harness::{
     endpoint::GatewayEndpoint,
     lines::{Framed, Line, LineLimit, Lines},
     models::{DefaultChoice, Model, ModelId},
-    prompt::Prompt,
+    prompt::{KeptPrompt, Prompt},
     settings::{ApprovalPolicy, RunSettings},
 };
 use ren_protocol::native::NativeThreadId;
@@ -63,7 +65,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    sync::{broadcast, mpsc, oneshot},
+    sync::{broadcast, mpsc, oneshot, watch},
 };
 
 /// Runs every run's I/O. Returned by [`Supervisor::new`](crate::Supervisor::new).
@@ -96,10 +98,18 @@ struct Live {
     /// The commands last kept from it, so each list is kept once.
     booked: Vec<ClientCommand>,
     /// Lines queued for its stdin; `None` once its stdin is closed.
-    stdin: Option<mpsc::Sender<Line>>,
+    stdin: Option<mpsc::Sender<held::Queued>>,
     kill: Option<KillSwitch>,
     /// Records the run's opening and end; taken when the end is recorded.
     tap: Option<RunTap>,
+    /// Its journal, when a run host holds it.
+    held: Option<held::Holding>,
+}
+
+/// Frames of a process's output, and the spool offset they end at.
+struct Output {
+    frames: Vec<Framed>,
+    upto: u64,
 }
 
 /// What a process's effects mean for the session it serves.
@@ -115,8 +125,9 @@ enum Turned {
 /// An attachment being read off the task: its read, and its bytes.
 type Reading = BoxFuture<'static, Result<(Attachment, Vec<u8>), SessionError>>;
 
-type Outputs = SelectAll<BoxStream<'static, (RunId, Vec<Framed>)>>;
-type Exits = FuturesUnordered<BoxFuture<'static, (RunId, ProcessExit)>>;
+type Outputs = SelectAll<BoxStream<'static, (RunId, Output)>>;
+/// `None` for a process the daemon left to its run host.
+type Exits = FuturesUnordered<BoxFuture<'static, (RunId, Option<ProcessExit>)>>;
 
 /// A prompt checked against its session: whole, or with its images still
 /// to be read.
@@ -151,7 +162,7 @@ struct Served {
     /// Folder walks for file searches, cached as they finish.
     walks: FuturesUnordered<BoxFuture<'static, Walked>>,
     /// Each run's stdin writer: how it ended.
-    writers: FuturesUnordered<BoxFuture<'static, (RunId, std::io::Result<()>)>>,
+    writers: FuturesUnordered<BoxFuture<'static, (RunId, held::Writer, std::io::Result<()>)>>,
     exits: Exits,
     /// Idle stops: the run, and the rest each was armed for.
     idles: FuturesUnordered<BoxFuture<'static, (RunId, Rest)>>,
@@ -167,6 +178,9 @@ struct Served {
     sign_ins: SignIns,
     /// Who asked for the clients while sign-in checks were running.
     clients_waiting: Vec<oneshot::Sender<Vec<Client>>>,
+    /// Runs taken up from their run hosts, by the session each serves,
+    /// until the session is adopted.
+    rejoined: BTreeMap<SessionId, RunId>,
 }
 
 impl Served {
@@ -198,6 +212,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             }
             Warmup::WhenAsked => {}
         }
+        self.rejoin_held(&mut served).await;
         let mut accepting = true;
         loop {
             tokio::select! {
@@ -206,13 +221,15 @@ impl<H: AgentHost> SupervisorTask<H> {
                     None => {
                         accepting = false;
                         for live in served.runs.values_mut() {
-                            let effects = live.process.shut_down();
-                            self.carry_out(live, effects, &mut served.idles);
+                            self.leave(live, &mut served.idles);
                         }
                     }
                 },
-                Some((run, frames)) = served.outputs.next(), if !served.outputs.is_empty() => {
+                Some((run, Output { frames, upto })) = served.outputs.next(), if !served.outputs.is_empty() => {
                     if let Some(live) = served.runs.get_mut(&run) {
+                        if let Some(holding) = live.held.as_mut() {
+                            holding.journal(run, &Entry::Read { upto });
+                        }
                         let mut turned = Vec::new();
                         for frame in frames {
                             let effects = live.process.receive(frame);
@@ -269,32 +286,50 @@ impl<H: AgentHost> SupervisorTask<H> {
                 Some(walked) = served.walks.next(), if !served.walks.is_empty() => {
                     Self::walked(walked, &mut served);
                 }
-                Some((run, written)) = served.writers.next(), if !served.writers.is_empty() => {
+                Some((run, writer, written)) = served.writers.next(), if !served.writers.is_empty() => {
                     if let Err(error) = written {
-                        // The process is ending; its exit will say how.
-                        tracing::debug!(%run, %error, "agent stdin closed");
-                        if let Some(live) = served.runs.get_mut(&run) {
-                            live.stdin = None;
+                        let live = served.runs.get_mut(&run);
+                        match writer {
+                            held::Writer::Stdin => {
+                                // The process is ending; its exit will say how.
+                                tracing::debug!(%run, %error, "agent stdin closed");
+                                if let Some(live) = live {
+                                    live.stdin = None;
+                                }
+                            }
+                            held::Writer::Journal => {
+                                tracing::warn!(%run, %error, "a run's journal failed; it ends with the daemon");
+                                if let Some(holding) = live.and_then(|live| live.held.as_mut()) {
+                                    holding.broke();
+                                }
+                            }
                         }
                     }
                 }
                 Some((run, rest)) = served.idles.next(), if !served.idles.is_empty() => {
                     if let Some(live) = served.runs.get_mut(&run) {
-                        let effects = live.process.rest_over(rest);
+                        let effects = Self::rest_over(live, rest);
                         self.carry_out(live, effects, &mut served.idles);
                     }
                 }
                 Some((run, exit)) = served.exits.next(), if !served.exits.is_empty() => {
-                    if let Some(live) = served.runs.get_mut(&run) {
+                    if let Some(exit) = exit
+                        && let Some(live) = served.runs.get_mut(&run)
+                    {
                         live.stdin = None;
                         live.kill = None;
+                        // An ended run is not taken up again: its journal
+                        // closes once what it holds is written.
+                        live.held = None;
                         let effects = live.process.exited(exit);
                         self.carry_out(live, effects, &mut served.idles);
                     }
                 }
                 else => break,
             }
-            if !accepting && served.exits.is_empty() {
+            // Every run has ended or been left to its host, and what each
+            // was given is written.
+            if !accepting && served.exits.is_empty() && served.writers.is_empty() {
                 break;
             }
         }
@@ -417,8 +452,9 @@ impl<H: AgentHost> SupervisorTask<H> {
             },
         };
         let plan = harness.drive(&self.gateway, &opening);
-        let (codec, opening_lines) =
-            Driver::open(harness, opening, &self.version, self.ids.next_uuid());
+        let seed = self.ids.next_uuid();
+        let journaled = opening.clone();
+        let (codec, opening_lines) = Driver::open(harness, opening, &self.version, seed);
         let run = RunId::generate(self.ids.as_ref());
         let tools = self.host.tools();
         // Every run is recorded: without room, it does not start.
@@ -441,8 +477,8 @@ impl<H: AgentHost> SupervisorTask<H> {
             workdir: workdir.clone(),
             settings,
         };
-        let process = match self.host.spawn(&plan, &workdir, &tools) {
-            Ok(process) => process,
+        let agent = match self.host.start_run(run, &plan, &workdir, &tools) {
+            Ok(agent) => agent,
             Err(source) => {
                 let (process, effects) = Process::unstarted(serving);
                 let mut live = Live {
@@ -452,46 +488,33 @@ impl<H: AgentHost> SupervisorTask<H> {
                     stdin: None,
                     kill: None,
                     tap: Some(tap),
+                    held: None,
                 };
                 self.carry_out(&mut live, effects, &mut served.idles);
                 served.runs.insert(run, live);
                 return Err(StartError::Spawn { run, source });
             }
         };
-        let AgentProcess {
-            stdin,
-            stdout,
-            exit,
-            kill,
-        } = process;
-        let (queue, lines) = mpsc::channel(Self::STDIN_LINES);
-        served.writers.push(
-            Self::writer(stdin, lines)
-                .map(move |written| (run, written))
-                .boxed(),
-        );
-        let (process, effects) = Process::opening(serving, codec, opening_lines, first);
-        let book = self
-            .host
-            .client_stamp(harness.profile().program, &tools)
-            .map(|stamp| CommandKey {
-                harness,
-                stamp,
-                folder: workdir.as_path().to_path_buf(),
-            });
-        let mut live = Live {
-            process,
-            book,
-            booked: Vec::new(),
-            stdin: Some(queue),
-            kill: Some(kill),
-            tap: Some(tap),
+        let start = Start {
+            run,
+            session,
+            harness,
+            workdir: workdir.as_str().to_owned(),
+            settings: serving.settings.clone(),
+            opening: journaled,
+            version: self.version.clone(),
+            seed,
+            first: first.as_ref().map(KeptPrompt::from),
         };
+        let (process, effects) = Process::opening(serving, codec, opening_lines, first);
+        let mut live = self.take_on(process, agent, 0, Lines::new(self.line_limit), served);
+        live.book = self.book_key(harness, &workdir, &tools);
+        live.tap = Some(tap);
+        // The start goes into the journal before the client is sent a line.
+        if let Some(holding) = live.held.as_mut() {
+            holding.journal(run, &Entry::Started(Box::new(start)));
+        }
         self.carry_out(&mut live, effects, &mut served.idles);
-        served
-            .outputs
-            .push(Self::output(run, stdout, self.line_limit));
-        served.exits.push(exit.map(move |exit| (run, exit)).boxed());
         served.runs.insert(run, live);
         Ok(run)
     }
@@ -527,7 +550,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         let Some(live) = run.and_then(|run| served.runs.get_mut(&run)) else {
             return;
         };
-        match live.process.command(RunCommand::Stop) {
+        match Self::command(live, RunCommand::Stop) {
             Ok(effects) => {
                 self.carry_out(live, effects, &mut served.idles);
             }
@@ -633,7 +656,11 @@ impl<H: AgentHost> SupervisorTask<H> {
         let Some(stdin) = live.stdin.as_ref() else {
             return;
         };
-        match stdin.try_send(line.clone()) {
+        let after = live.held.as_ref().map_or(0, held::Holding::queued);
+        match stdin.try_send(held::Queued {
+            line: line.clone(),
+            after,
+        }) {
             Ok(()) => {}
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 // The process is ending; its exit will say how.
@@ -649,32 +676,67 @@ impl<H: AgentHost> SupervisorTask<H> {
 
     /// Write each queued line to `stdin`, in order, until the queue closes
     /// or a write fails.
+    ///
+    /// A held process's line waits until its journal holds the entries
+    /// queued before it; a journal whose writer is gone holds up nothing,
+    /// as its run is no longer held.
     async fn writer(
         mut stdin: Box<dyn AsyncWrite + Send + Unpin>,
-        mut lines: mpsc::Receiver<Line>,
+        mut lines: mpsc::Receiver<held::Queued>,
+        mut journaled: Option<watch::Receiver<u64>>,
     ) -> std::io::Result<()> {
-        while let Some(line) = lines.recv().await {
+        while let Some(held::Queued { line, after }) = lines.recv().await {
+            if let Some(written) = journaled.as_mut()
+                && written.wait_for(|count| *count >= after).await.is_err()
+            {
+                journaled = None;
+            }
             stdin.write_all(line.as_bytes()).await?;
             stdin.flush().await?;
         }
         Ok(())
     }
 
+    /// The key a process's client's commands are listed under.
+    fn book_key(
+        &self,
+        harness: Harness,
+        workdir: &Workdir,
+        tools: &RunTools,
+    ) -> Option<CommandKey> {
+        self.host
+            .client_stamp(harness.profile().program, tools)
+            .map(|stamp| CommandKey {
+                harness,
+                stamp,
+                folder: workdir.as_path().to_path_buf(),
+            })
+    }
+
+    /// A process's output from spool offset `from`, framed by `lines`.
     fn output(
         run: RunId,
         stdout: Box<dyn AsyncRead + Send + Unpin>,
-        limit: LineLimit,
-    ) -> BoxStream<'static, (RunId, Vec<Framed>)> {
+        from: u64,
+        lines: Lines,
+    ) -> BoxStream<'static, (RunId, Output)> {
         const CHUNK: usize = 64 * 1024;
         stream::unfold(
-            Some((stdout, Lines::new(limit), vec![0; CHUNK])),
+            Some((stdout, lines, vec![0; CHUNK], from)),
             move |reading| async move {
-                let (mut stdout, mut lines, mut buffer) = reading?;
+                let (mut stdout, mut lines, mut buffer, at) = reading?;
                 match stdout.read(&mut buffer).await {
-                    Ok(0) | Err(_) => Some(((run, lines.finish().into_iter().collect()), None)),
+                    Ok(0) | Err(_) => {
+                        let frames = lines.finish().into_iter().collect();
+                        Some(((run, Output { frames, upto: at }), None))
+                    }
                     Ok(read) => {
                         let frames = lines.push(buffer.get(..read).unwrap_or_default());
-                        Some(((run, frames), Some((stdout, lines, buffer))))
+                        let upto = at.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+                        Some((
+                            (run, Output { frames, upto }),
+                            Some((stdout, lines, buffer, upto)),
+                        ))
                     }
                 }
             },

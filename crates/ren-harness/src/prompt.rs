@@ -195,6 +195,78 @@ impl Prompt {
     }
 }
 
+/// A prompt kept whole, its images' bytes and all, so it can be given back
+/// exactly: for a run's journal, which replays what a client was sent when
+/// a daemon restarts. Never recorded or shown, since it holds the bytes;
+/// what Ren records of a prompt is its [`RecordedPrompt`].
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct KeptPrompt {
+    text: String,
+    images: Vec<KeptImage>,
+}
+
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct KeptImage {
+    read: Attachment,
+    path: PathBuf,
+    /// Its bytes, in base64.
+    data: String,
+}
+
+/// What it is, never its text or bytes.
+impl std::fmt::Debug for KeptPrompt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeptPrompt")
+            .field("images", &self.images.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Why a kept prompt could not be given back.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum KeptPromptError {
+    #[error(transparent)]
+    Blank(#[from] BlankPrompt),
+    #[error("a kept image's bytes are not base64")]
+    Bytes,
+}
+
+impl From<&Prompt> for KeptPrompt {
+    fn from(prompt: &Prompt) -> Self {
+        Self {
+            text: prompt.text.clone(),
+            images: prompt
+                .images
+                .iter()
+                .map(|image| KeptImage {
+                    read: image.read.clone(),
+                    path: image.path.clone(),
+                    data: image.base64(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl KeptPrompt {
+    /// The prompt it kept.
+    pub fn prompt(&self) -> Result<Prompt, KeptPromptError> {
+        let images = self
+            .images
+            .iter()
+            .map(|image| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(&image.data)
+                    .map(|bytes| {
+                        PromptImage::new(image.read.clone(), image.path.clone(), bytes.into())
+                    })
+                    .map_err(|_| KeptPromptError::Bytes)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Prompt::with_images(self.text.clone(), images)?)
+    }
+}
+
 #[cfg(test)]
 impl Prompt {
     /// A prompt of `text` with the sample image.
@@ -205,7 +277,27 @@ impl Prompt {
 
 #[cfg(test)]
 mod tests {
-    use super::{BlankPrompt, Prompt, PromptImage, RecordedPrompt};
+    use super::{BlankPrompt, KeptPrompt, KeptPromptError, Prompt, PromptImage, RecordedPrompt};
+
+    #[test]
+    fn a_kept_prompt_gives_back_the_prompt_bytes_and_all() {
+        for prompt in [
+            Prompt::try_from("go".to_owned()).unwrap(),
+            Prompt::sample("look"),
+        ] {
+            let kept = serde_json::to_string(&KeptPrompt::from(&prompt)).unwrap();
+            let back: KeptPrompt = serde_json::from_str(&kept).unwrap();
+            assert_eq!(back.prompt().unwrap(), prompt);
+            assert!(
+                !format!("{back:?}").contains("look"),
+                "its text is never shown"
+            );
+        }
+        let mut kept = serde_json::to_value(KeptPrompt::from(&Prompt::sample(""))).unwrap();
+        kept["images"][0]["data"] = "not base64!".into();
+        let kept: KeptPrompt = serde_json::from_value(kept).unwrap();
+        assert_eq!(kept.prompt(), Err(KeptPromptError::Bytes));
+    }
 
     #[test]
     fn a_prompt_with_images_shows_what_they_are_never_their_bytes() {

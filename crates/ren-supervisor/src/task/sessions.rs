@@ -385,7 +385,11 @@ impl<H: AgentHost> SupervisorTask<H> {
             .map_err(|error| SessionError::Start(StartError::Workdir(error)))?;
         let workdir = self.confirm(&requested).map_err(SessionError::Start)?;
         let session = seed.session;
-        let restored = Session::restore(seed, workdir);
+        let mut restored = Session::restore(seed, workdir);
+        // A process taken up from its run host serves it again.
+        if let Some(run) = served.rejoined.remove(&session) {
+            restored.started(run);
+        }
         self.publish_session(session, &restored);
         served.sessions.insert(session, restored);
         Ok(())
@@ -414,7 +418,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         let outcome = match served.serving(&serving) {
             Some(run) => match served.runs.get_mut(&run) {
                 None => Err(SessionError::NoProcess),
-                Some(live) => match live.process.command(command) {
+                Some(live) => match Self::command(live, command) {
                     Err(error) => Err(SessionError::Command(error)),
                     Ok(effects) => {
                         self.carry_out(live, effects, &mut served.idles);

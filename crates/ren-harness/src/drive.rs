@@ -28,8 +28,10 @@ use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
-/// How a driven process's one conversation is opened.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// How a driven process's one conversation is opened. Serialized for a
+/// run's journal, which opens the codec again on a daemon's restart.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "as", rename_all = "snake_case")]
 pub enum Opening {
     /// A new conversation in this working directory. `id` is the id Ren
     /// gives it where the client lets Ren choose (Claude Code, Pi); Codex

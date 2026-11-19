@@ -16,6 +16,7 @@ mod client;
 mod entries;
 mod files;
 mod host;
+mod journal;
 mod process;
 mod project;
 #[cfg(test)]
@@ -29,7 +30,8 @@ mod workdir;
 pub use client::{Client, ClientStatus};
 pub use files::{FileListing, FileMatch, FileQuery, FoundPath, PathKind, WalkLimits};
 pub use host::{
-    AgentHost, AgentProcess, ClientStamp, KillSignal, KillSwitch, RunTools, Scratch, Untracked,
+    AgentHost, AgentProcess, ClientStamp, HeldRun, KillSignal, KillSwitch, RunTools, Scratch,
+    Tenure, Untracked,
 };
 pub use project::{Look, PlaceKind, Project, ProjectGit, Search};
 pub use run::{

@@ -23,7 +23,8 @@ use ren_recorder::id::{RunId, SessionId};
 
 /// Which time a process went idle. An idle stop armed for an earlier rest
 /// is stale: the process has worked since.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub(crate) struct Rest(u64);
 
 /// What the task does for a process.
@@ -178,6 +179,18 @@ impl Process {
 
     pub(crate) fn state(&self) -> &RunState {
         &self.state
+    }
+
+    /// The rest it is on, while it is idle: a process taken up idle is
+    /// stopped after the idle stop, counted from then.
+    pub(crate) fn resting(&self) -> Option<Rest> {
+        match self.state {
+            RunState::Idle { .. } => Some(self.rest),
+            RunState::Starting
+            | RunState::Working { .. }
+            | RunState::Stopping { .. }
+            | RunState::Ended { .. } => None,
+        }
     }
 
     /// The commands its client offers a prompt; none before it says.

@@ -164,6 +164,14 @@ impl Workdir {
         }
     }
 
+    /// The folder a run was confirmed in when it started, read back from
+    /// its journal: the run works there whatever the bounds are now. Still
+    /// absolute and UTF-8, or `None`.
+    pub(crate) fn journaled(path: &str) -> Option<Self> {
+        let path = PathBuf::from(path);
+        path.is_absolute().then_some(Self(path))
+    }
+
     pub fn as_path(&self) -> &Path {
         &self.0
     }

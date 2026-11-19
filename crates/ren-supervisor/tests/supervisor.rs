@@ -31,7 +31,7 @@ use ren_store::{Reader, Store, query::PageLimit, view::RunView};
 use ren_supervisor::{
     AgentHost, AgentProcess, CommandError, FileQuery, FoundPath, KillSignal, KillSwitch, Look,
     PathKind, ProcessExit, RunCommand, RunRefused, RunState, RunTools, RunUpdate, StartError,
-    Supervisor, SupervisorOptions, WalkLimits, Workdir,
+    Supervisor, SupervisorOptions, Tenure, WalkLimits, Workdir,
 };
 use ren_supervisor::{ProjectGit, Scratch};
 use serde_json::{Value, json};
@@ -90,6 +90,167 @@ struct FakeHost {
     deaf: Option<PathBuf>,
     /// The installed clients' version, as their stamp's size.
     version: Arc<Mutex<u64>>,
+    /// When set, runs are held as a run host holds them: they go on when
+    /// the supervisor stops, and the next one takes them up.
+    holds: Option<Holds>,
+}
+
+/// The runs a fake run host holds.
+type Holds = Arc<Mutex<std::collections::BTreeMap<ren_recorder::id::RunId, Arc<Hold>>>>;
+
+/// One held run, as a run host keeps it: the client's output in a spool,
+/// its stdin, its exit, and the daemon's journal.
+struct Hold {
+    spool: Mutex<Vec<u8>>,
+    closed: std::sync::atomic::AtomicBool,
+    grew: tokio::sync::Notify,
+    stdin: tokio::sync::Mutex<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>,
+    exit: tokio::sync::watch::Sender<Option<ProcessExit>>,
+    kill: Mutex<Option<KillSwitch>>,
+    journal: Arc<Mutex<Vec<u8>>>,
+}
+
+/// Appends to a held run's journal.
+struct Journal(Arc<Mutex<Vec<u8>>>);
+
+impl tokio::io::AsyncWrite for Journal {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        std::task::Poll::Ready(Ok(bytes.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+impl Hold {
+    /// Hold `agent`: its output is spooled and its exit kept, whoever
+    /// reads them.
+    fn keep(agent: AgentProcess) -> Arc<Self> {
+        use tokio::io::AsyncReadExt as _;
+        let AgentProcess {
+            stdin,
+            mut stdout,
+            exit,
+            kill,
+            tenure: _,
+        } = agent;
+        let (exited, _) = tokio::sync::watch::channel(None);
+        let hold = Arc::new(Self {
+            spool: Mutex::default(),
+            closed: std::sync::atomic::AtomicBool::new(false),
+            grew: tokio::sync::Notify::new(),
+            stdin: tokio::sync::Mutex::new(stdin),
+            exit: exited,
+            kill: Mutex::new(Some(kill)),
+            journal: Arc::default(),
+        });
+        let spooling = hold.clone();
+        tokio::spawn(async move {
+            let mut buffer = vec![0; 4096];
+            while let Ok(read) = stdout.read(&mut buffer).await
+                && read > 0
+            {
+                spooling
+                    .spool
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(&buffer[..read]);
+                spooling.grew.notify_waiters();
+            }
+            spooling
+                .closed
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            spooling.grew.notify_waiters();
+        });
+        let exiting = hold.clone();
+        tokio::spawn(async move {
+            let status = exit.await;
+            exiting.exit.send_replace(Some(status));
+        });
+        hold
+    }
+
+    /// A daemon's view of the run: its output from `from`, its stdin, exit,
+    /// and kill switch, and its journal to go on with.
+    fn attach(self: &Arc<Self>, from: u64) -> AgentProcess {
+        use tokio::io::AsyncReadExt as _;
+        let (mut out, stdout) = tokio::io::duplex(64 * 1024);
+        let reading = self.clone();
+        tokio::spawn(async move {
+            let mut at = usize::try_from(from).unwrap();
+            loop {
+                let grew = reading.grew.notified();
+                let fresh = reading.spool.lock().unwrap().get(at..).map(<[u8]>::to_vec);
+                match fresh {
+                    Some(bytes) if !bytes.is_empty() => {
+                        if out.write_all(&bytes).await.is_err() {
+                            return;
+                        }
+                        at += bytes.len();
+                    }
+                    Some(_) | None => {
+                        if reading.closed.load(std::sync::atomic::Ordering::SeqCst) {
+                            return;
+                        }
+                        grew.await;
+                    }
+                }
+            }
+        });
+        let (stdin, mut taken) = tokio::io::duplex(64 * 1024);
+        let writing = self.clone();
+        tokio::spawn(async move {
+            let mut buffer = vec![0; 4096];
+            // The daemon going away leaves the client's stdin open.
+            while let Ok(read) = taken.read(&mut buffer).await
+                && read > 0
+            {
+                let mut stdin = writing.stdin.lock().await;
+                if stdin.write_all(&buffer[..read]).await.is_err() {
+                    return;
+                }
+            }
+        });
+        let (kill, signal) = KillSwitch::pair();
+        let killing = self.clone();
+        tokio::spawn(async move {
+            signal.fired().await;
+            if let Some(switch) = killing.kill.lock().unwrap().take() {
+                switch.fire();
+            }
+        });
+        let mut exited = self.exit.subscribe();
+        AgentProcess {
+            stdin: Box::new(stdin),
+            stdout: Box::new(stdout),
+            exit: Box::pin(async move {
+                match exited.wait_for(Option::is_some).await {
+                    Ok(exit) => exit.unwrap_or(ProcessExit::Unknown),
+                    Err(_) => ProcessExit::Unknown,
+                }
+            }),
+            kill,
+            tenure: Tenure::Held {
+                journal: Box::new(Journal(self.journal.clone())),
+            },
+        }
+    }
 }
 
 impl FakeHost {
@@ -104,11 +265,64 @@ impl FakeHost {
             files: Arc::default(),
             deaf: None,
             version: Arc::new(Mutex::new(1)),
+            holds: None,
         }
+    }
+
+    /// This host, holding its runs as a run host does.
+    fn holding(mut self) -> Self {
+        self.holds = Some(Arc::default());
+        self
     }
 }
 
 impl AgentHost for FakeHost {
+    fn start_run(
+        &self,
+        run: ren_recorder::id::RunId,
+        plan: &LaunchPlan,
+        workdir: &Workdir,
+        tools: &RunTools,
+    ) -> io::Result<AgentProcess> {
+        let agent = self.spawn(plan, workdir, tools)?;
+        let Some(holds) = &self.holds else {
+            return Ok(agent);
+        };
+        let hold = Hold::keep(agent);
+        holds.lock().unwrap().insert(run, hold.clone());
+        Ok(hold.attach(0))
+    }
+
+    fn held(&self) -> io::Result<Vec<ren_supervisor::HeldRun>> {
+        let Some(holds) = &self.holds else {
+            return Ok(Vec::new());
+        };
+        Ok(holds
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, hold)| hold.exit.borrow().is_none())
+            .map(|(run, hold)| ren_supervisor::HeldRun {
+                run: *run,
+                journal: hold.journal.lock().unwrap().clone(),
+            })
+            .collect())
+    }
+
+    fn spool(&self, run: ren_recorder::id::RunId, from: u64, to: u64) -> io::Result<Vec<u8>> {
+        let hold = self.hold(run)?;
+        let spool = hold.spool.lock().unwrap();
+        let (from, to) = (usize::try_from(from).unwrap(), usize::try_from(to).unwrap());
+        Ok(spool
+            .get(from..to.min(spool.len()))
+            .unwrap_or_default()
+            .to_vec())
+    }
+
+    fn rejoin(&self, run: ren_recorder::id::RunId, from: u64) -> io::Result<AgentProcess> {
+        Ok(self.hold(run)?.attach(from))
+    }
+
     fn finds(&self, program: &str) -> bool {
         // Codex is installed here; Claude Code is not.
         program == "codex"
@@ -252,6 +466,7 @@ impl AgentHost for FakeHost {
                 stdout: Box::new(stdout),
                 exit: Box::pin(async move { exit_rx.await.unwrap_or(ProcessExit::Unknown) }),
                 kill,
+                tenure: Tenure::Bound,
             });
         }
         let (stdin, agent_in) = tokio::io::duplex(64 * 1024);
@@ -277,6 +492,7 @@ impl AgentHost for FakeHost {
             stdout: Box::new(stdout),
             exit: Box::pin(async move { exit_rx.await.unwrap_or(ProcessExit::Unknown) }),
             kill,
+            tenure: Tenure::Bound,
         })
     }
 
@@ -306,6 +522,7 @@ impl AgentHost for FakeHost {
             stdout: Box::new(stdout),
             exit: Box::pin(async { ProcessExit::Code(1) }),
             kill,
+            tenure: Tenure::Bound,
         })
     }
 
@@ -330,6 +547,15 @@ async fn send(out: &mut DuplexStream, message: Value) {
     let mut line = message.to_string().into_bytes();
     line.push(b'\n');
     out.write_all(&line).await.unwrap();
+}
+
+impl FakeHost {
+    fn hold(&self, run: ren_recorder::id::RunId) -> io::Result<Arc<Hold>> {
+        self.holds
+            .as_ref()
+            .and_then(|holds| holds.lock().unwrap().get(&run).cloned())
+            .ok_or_else(|| io::ErrorKind::NotFound.into())
+    }
 }
 
 /// A scripted Codex app server.
@@ -2031,4 +2257,138 @@ async fn a_draft_runs_no_client_and_its_commands_are_listed_once_per_client_and_
     ));
     // A running client's own list is the session's.
     assert_eq!(supervisor.session_commands(session).await.unwrap(), listed);
+}
+
+/// A supervisor stopped while its run waits for an approval leaves the run
+/// to its host; the next takes it up from the run's journal, mid-turn, with
+/// the approval still waiting, and answers it.
+#[tokio::test]
+async fn a_held_run_goes_on_through_a_restart_mid_turn() {
+    let host = FakeHost::new(Script::Codex).holding();
+    let first = supervise(host.clone()).await;
+    let mut updates = first.supervisor.subscribe();
+    let (session, run) = start(
+        &first.supervisor,
+        starting(
+            Harness::Codex,
+            "/work/acme",
+            Conversation::New,
+            Some(Prompt::try_from("edit src".to_owned()).unwrap()),
+        ),
+    )
+    .await
+    .unwrap();
+    state(
+        &mut updates,
+        |s| matches!(s, RunState::Working { approvals, .. } if !approvals.is_empty()),
+    )
+    .await;
+
+    // The daemon stops: the run is left to its host, not ended.
+    let Supervised {
+        supervisor,
+        task,
+        recorder,
+        dir,
+    } = first;
+    drop(supervisor);
+    tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .expect("the supervisor leaves its runs")
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), recorder)
+        .await
+        .expect("the recorder drains")
+        .unwrap();
+    let held = host.held().unwrap();
+    assert_eq!(held.iter().map(|held| held.run).collect::<Vec<_>>(), [run]);
+
+    // The next daemon takes it up, waiting on the same approval.
+    let clock = Arc::new(ManualClock::at(UnixMillis::from_millis(9_000)));
+    let ids = Arc::new(SequentialIds::starting_at(1_000));
+    let (store, recovery) = Store::open_holding(dir.path(), clock.as_ref(), ids.clone(), &[run])
+        .await
+        .unwrap();
+    assert_eq!(recovery.runs, 0);
+    let setup = RecorderSetup {
+        options: CaptureOptions::default(),
+        retention: RetentionPolicy::default(),
+        max_calls: 16,
+        live_buffer: 64,
+        scanner: Arc::new(SecretScanner::new().unwrap()),
+    };
+    let (recorder, recording) = Recorder::new(store, 0, setup, clock, ids.clone()).unwrap();
+    let recording = tokio::spawn(async move { recording.run().await.unwrap() });
+    let (supervisor, task) = Supervisor::new(options(), host.clone(), ids, recorder).unwrap();
+    let mut updates = supervisor.subscribe();
+    let task = tokio::spawn(task.run());
+    let runs = supervisor.runs().await.unwrap();
+    let RunState::Working { approvals, .. } = &runs[0].state else {
+        panic!("taken up mid-turn: {:?}", runs[0].state);
+    };
+    let approval: ApprovalId = approvals.first().unwrap().approval.clone();
+    assert_eq!(approval.to_string(), "ap-1");
+    let reader = Reader::open(dir.path(), 1).await.unwrap();
+    let stored = reader.session(session).await.unwrap().unwrap();
+    supervisor
+        .adopt(ren_supervisor::SessionSeed {
+            session,
+            harness: Harness::Codex,
+            workdir: stored.workdir.clone(),
+            settings: ren_harness::settings::RunSettings::default(),
+            thread: None,
+            state: ren_supervisor::SessionState::Open(ren_supervisor::SessionPhase::Active),
+            attachments: Vec::new(),
+        })
+        .await
+        .unwrap();
+    // Answered through the new daemon, the client hears it under the id it
+    // asked with, and finishes the turn.
+    supervisor
+        .send(
+            session,
+            RunCommand::Answer {
+                approval,
+                decision: Decision::Accept,
+            },
+        )
+        .await
+        .unwrap();
+    state(&mut updates, |s| matches!(s, RunState::Idle { .. })).await;
+    supervisor.send(session, RunCommand::Stop).await.unwrap();
+    let ended = state(&mut updates, RunState::is_ended).await;
+    assert_eq!(
+        ended,
+        RunState::Ended {
+            end: RunEnd::Stopped,
+            exit: Some(ProcessExit::Signal(9))
+        }
+    );
+    drop(supervisor);
+    tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .expect("the supervisor drains")
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), recording)
+        .await
+        .expect("the recorder drains")
+        .unwrap();
+    let reader = Reader::open(dir.path(), 1).await.unwrap();
+    let ran = reader.run(run).await.unwrap().unwrap();
+    assert_eq!(
+        ran.end,
+        Some(ren_protocol::label::Stored::Known(RunEnd::Stopped))
+    );
+    let kinds: Vec<_> = reader
+        .observations_after(0, ren_store::query::PageLimit::DEFAULT)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|observation| observation.kind.to_string())
+        .collect();
+    let at = |kind: &str| kinds.iter().position(|seen| seen == kind);
+    assert!(
+        at("run_detached") < at("run_rejoined") && at("run_rejoined") < at("run_ended"),
+        "{kinds:?}"
+    );
 }

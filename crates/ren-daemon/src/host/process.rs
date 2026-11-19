@@ -8,7 +8,7 @@ use ren_git::{Git, GitError, Head, Repository};
 use ren_harness::{launch::LaunchPlan, pi::PiCache, sign_in::LocalRedirect};
 use ren_supervisor::{
     AgentHost, AgentProcess, ClientStamp, FoundPath, KillSwitch, Look, PathKind, ProcessExit,
-    ProjectGit, RunTools, Scratch, Untracked, WalkLimits, Workdir,
+    ProjectGit, RunTools, Scratch, Tenure, Untracked, WalkLimits, Workdir,
 };
 use std::io;
 use std::path::{Path, PathBuf};
@@ -102,6 +102,7 @@ impl ProcessHost {
             stdout,
             exit,
             kill,
+            tenure: Tenure::Bound,
         })
     }
 
@@ -169,6 +170,7 @@ impl ProcessHost {
             stdout: Box::new(read),
             exit,
             kill,
+            tenure: Tenure::Bound,
         })
     }
 
