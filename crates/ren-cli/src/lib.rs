@@ -61,6 +61,7 @@ enum Command {
     Tools(commands::tools::ToolsCmd),
     Mcp(commands::mcp::McpCmd),
     Release(commands::release::ReleaseCmd),
+    Project(commands::project::ProjectCmd),
     #[command(hide = true)]
     RunHost(commands::run_host::RunHostCmd),
 }
@@ -115,6 +116,7 @@ impl Cli {
             Command::Tools(cmd) => cmd.run(&ctx).await,
             Command::Mcp(cmd) => cmd.run(&ctx).await,
             Command::Release(cmd) => cmd.run(&ctx).await,
+            Command::Project(cmd) => cmd.run(&ctx).await,
             Command::RunHost(cmd) => cmd.run().await,
         }
     }

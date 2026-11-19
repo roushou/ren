@@ -3481,6 +3481,7 @@ dependencies = [
  "ren-gateway",
  "ren-git",
  "ren-harness",
+ "ren-project",
  "ren-protocol",
  "ren-recorder",
  "ren-release",

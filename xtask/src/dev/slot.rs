@@ -328,19 +328,64 @@ program_at = "acme-lint"
                 )
                 .map_err(FileError::at(&readme))?;
             }
+            let git = Git::inherited();
+            let author = Author {
+                name: "Ren dev slot".into(),
+                email: "dev-slot@example.com".into(),
+            };
             // A repository with a commit, so a session (and Redline's
             // briefs) can work in a workspace of it.
             if Git::repository(&folder) == Repository::None {
-                let git = Git::inherited();
-                let author = Author {
-                    name: "Ren dev slot".into(),
-                    email: "dev-slot@example.com".into(),
-                };
                 git.init(&folder)
                     .and_then(|()| git.commit_all(&folder, "Start the fake project", &author))?;
             }
+            // Its contract, so a workspace of it has checks and a preview.
+            let contract = folder.join(ren_project::ProjectContract::FILE);
+            if !contract.exists() {
+                for (name, text) in Self::site(project) {
+                    let path = folder.join(name);
+                    fs::write(&path, text).map_err(FileError::at(&path))?;
+                }
+                git.commit_all(
+                    &folder,
+                    "Declare how Ren builds, serves, and checks it",
+                    &author,
+                )?;
+            }
         }
         Ok(())
+    }
+
+    /// A fake project's page and its contract: a static page served by
+    /// Python's own server on the workspace's first port, checked by
+    /// parsing it.
+    fn site(project: &str) -> [(&'static str, String); 2] {
+        [
+            (
+                "index.html",
+                format!(
+                    "<!doctype html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>{project}</title></head>\n<body><main><h1>{project}</h1><p>A fake project for the dev slot's runs.</p></main></body>\n</html>\n"
+                ),
+            ),
+            (
+                ren_project::ProjectContract::FILE,
+                r#"# How Ren builds, serves, and checks this fake project.
+
+[[build]]
+run = ["python3", "-c", "print('Nothing to build: the page is static.')"]
+
+[serve]
+run = ["python3", "-m", "http.server", "{port}", "--bind", "127.0.0.1"]
+open = "http://127.0.0.1:{port}"
+health = "/"
+
+[[check]]
+name = "page"
+run = ["python3", "-c", "import html.parser; html.parser.HTMLParser().feed(open('index.html').read()); print('index.html parses')"]
+"#
+                .to_owned(),
+            ),
+        ]
     }
 
     /// `path` as one single-quoted shell word.
@@ -621,6 +666,16 @@ mod tests {
             assert!(unit.name().starts_with("ren-dev-"), "{unit:?}");
             assert_ne!(unit.name(), "ren");
             assert_ne!(unit.name(), "ren-ui");
+        }
+    }
+
+    #[test]
+    fn every_fake_project_declares_a_contract_ren_reads() {
+        for project in Slot::PROJECTS {
+            let [_, (name, text)] = Slot::site(project);
+            assert_eq!(name, ren_project::ProjectContract::FILE);
+            let contract = ren_project::ProjectContract::read(&text).unwrap();
+            assert!(contract.serve().is_some() && !contract.checks().is_empty());
         }
     }
 

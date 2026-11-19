@@ -18,6 +18,7 @@ ren-daemon.workspace = true
 ren-gateway.workspace = true
 ren-git.workspace = true
 ren-harness.workspace = true
+ren-project.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
 ren-release.workspace = true

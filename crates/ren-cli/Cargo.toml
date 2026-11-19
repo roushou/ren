@@ -31,10 +31,13 @@ ren-daemon.workspace = true
 ren-depot.workspace = true
 ren-gateway.workspace = true
 ren-harness.workspace = true
+ren-git.workspace = true
+ren-project.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
 ren-release.workspace = true
 ren-store.workspace = true
+ren-supervisor.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -59,7 +62,6 @@ serde_json.workspace = true
 axum.workspace = true
 bytes.workspace = true
 futures-util.workspace = true
-ren-supervisor.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [lints]
