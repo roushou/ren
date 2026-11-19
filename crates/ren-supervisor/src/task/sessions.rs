@@ -5,7 +5,7 @@
 use super::{Composing, Reading, Served, SupervisorTask, Walked};
 use crate::attachments::AttachmentUse;
 use crate::host::Scratch;
-use crate::workspace::{Slot, Workspace};
+use crate::worktree::{Slot, Worktree};
 use crate::{
     Create, Reply, SessionError, SessionRequest, SessionSeed, StartError, StartPlace,
     files::{FileListing, FileMatch, FileQuery},
@@ -150,16 +150,16 @@ impl<H: AgentHost> SupervisorTask<H> {
         if served.process(session).is_some() {
             return Err(SessionError::Running);
         }
-        // Its workspace goes with it, unless it holds changes not committed.
-        let workspace = served.sessions.get(&session).and_then(|serving| {
-            Workspace::of(self.bounds.worktrees()?, serving.workdir().as_path())
+        // Its worktree goes with it, unless it holds changes not committed.
+        let worktree = served.sessions.get(&session).and_then(|serving| {
+            Worktree::of(self.bounds.worktrees()?, serving.workdir().as_path())
         });
-        if let Some(workspace) = workspace
+        if let Some(worktree) = worktree
             && let Err(error) = self
-                .off_task(move |host| host.remove_worktree(&workspace, &host.tools()))
+                .off_task(move |host| host.remove_worktree(&worktree, &host.tools()))
                 .await
         {
-            tracing::warn!(%session, %error, "a deleted session's workspace was kept");
+            tracing::warn!(%session, %error, "a deleted session's worktree was kept");
         }
         // Its attachments go with it, served or not.
         if let Some(folders) = &self.attachments {
@@ -700,13 +700,13 @@ impl<H: AgentHost> SupervisorTask<H> {
                     .off_task(move |host| host.look(&looking))
                     .await
                     .map_err(StartError::Worktree)?;
-                let slot = Slot::free(&Workspace::taken(look.folders.iter().map(String::as_str)))
+                let slot = Slot::free(&Worktree::taken(look.folders.iter().map(String::as_str)))
                     .ok_or(StartError::NoSlot)?;
-                let workspace =
-                    Workspace::new(&root, repo.as_path(), slot).ok_or(StartError::NoWorktrees)?;
+                let worktree =
+                    Worktree::new(&root, repo.as_path(), slot).ok_or(StartError::NoWorktrees)?;
                 let id = self.ids.next_uuid().simple().to_string();
-                let branch = workspace.branch(id.get(id.len().saturating_sub(8)..).unwrap_or(&id));
-                let (folder, data) = (workspace.folder(), workspace.data());
+                let branch = worktree.branch(id.get(id.len().saturating_sub(8)..).unwrap_or(&id));
+                let (folder, data) = (worktree.folder(), worktree.data());
                 let making = folder.clone();
                 self.off_task(move |host| {
                     host.make_worktree(repo.as_path(), &making, &data, &branch, &host.tools())

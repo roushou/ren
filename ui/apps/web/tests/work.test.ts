@@ -54,19 +54,19 @@ test('an order keeps only noted marks, and its revision as the daemon writes it'
 test('a brief names its work item and what else was on screen', async () => {
   const [item] = await new WorkApi(pinned).list();
   assert.ok(item);
-  const brief = Work.brief(item.id, Work.wire(item.order), 'workspace');
+  const brief = Work.brief(item.id, Work.wire(item.order), 'worktree');
   assert.match(brief, /^Redline: Show each recording's turn count\n/);
   assert.match(brief, new RegExp(`This is work item \`${item.id}\`\\.`));
   assert.match(brief, /The page logged an error: `TypeError: turns is undefined`\./);
   assert.match(brief, /`\/api\/recordings\?limit=100`/);
-  assert.match(brief, /workspace of its own/);
-  const preview = Work.brief(null, Work.wire(item.order), 'workspace');
+  assert.match(brief, /worktree of its own/);
+  const preview = Work.brief(null, Work.wire(item.order), 'worktree');
   assert.doesNotMatch(preview, /This is work item/);
   // The change names the item in its commits and pull request, so Ren
   // knows when it lands.
   assert.match(brief, new RegExp(`End each commit message with \`Work-Item: ${item.id}\``));
   assert.match(preview, /the work item's `Work-Item:` line/);
-  assert.match(brief, /run `cargo xtask preview up --publish` in the workspace/);
+  assert.match(brief, /run `cargo xtask preview up --publish` in the worktree/);
   assert.equal(Work.previewed(item), null);
   assert.equal(
     Work.previewed({
@@ -91,7 +91,7 @@ test('several items make one brief, each under its page, closed once', async () 
       evidence: { console: [], reads: [] },
     },
   };
-  const brief = Work.batch([first, second], 'workspace');
+  const brief = Work.batch([first, second], 'worktree');
   assert.match(brief, /^Redline: 2 work items\n/);
   assert.match(brief, /## 1\. Show each recording's turn count \(work item `[0-9a-f-]+`\)/);
   assert.match(brief, /## 2\. Move the archive button/);
@@ -155,16 +155,16 @@ test('a change to an item not yet stored is tried again', async () => {
 test("an item for another project is briefed as that project's page", async () => {
   const [item] = await new WorkApi(pinned).list();
   assert.ok(item);
-  const ren = Work.brief(item.id, Work.wire(item.order), 'workspace', { kind: 'ren' });
+  const ren = Work.brief(item.id, Work.wire(item.order), 'worktree', { kind: 'ren' });
   assert.match(
     ren,
     /In Ren's UI this page is `ui\/apps\/web\/src\/routes\/recordings\/\+page\.svelte`\./,
   );
-  const other = Work.batch([item], 'workspace', { kind: 'other', name: 'acme-web' });
+  const other = Work.batch([item], 'worktree', { kind: 'other', name: 'acme-web' });
   assert.doesNotMatch(other, /Ren's UI this page is|ui\/apps\/web/);
   assert.doesNotMatch(other, /served by a build of commit/);
   assert.match(other, /It is a page of the project `acme-web`, not of Ren's own UI\./);
-  assert.match(other, /run `ren project preview up --publish` in the workspace/);
+  assert.match(other, /run `ren project preview up --publish` in the worktree/);
   assert.doesNotMatch(other, /cargo xtask preview/);
 });
 

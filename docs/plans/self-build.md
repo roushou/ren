@@ -50,7 +50,7 @@ everyone using it, the agents included.**
 - **Only production runs the factory.** Agents working on Ren run in
   production. Canary and previews are what they build and check, never
   where they run, so an upgrade never removes the instance carrying it out.
-- **Ren owns workspaces.** A change's branch and worktree are made, named,
+- **Ren owns worktrees.** A change's branch and worktree are made, named,
   and removed by Ren, never improvised by an agent from a prompt.
 - **Promotion is a policy.** Production takes a build that passed canary
   automatically, in a window, or on the operator's approval, as configured.
@@ -135,22 +135,22 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      answered through it, and the turn completed and was recorded, with
      `run_detached` and `run_rejoined` around the restart. Stopping the run
      ended its unit and removed its folder.
-3. **Workspaces.** Built; `main` is guarded by required checks, not a queue.
-   - A session can work in a workspace of its own (`workspace:
-     "worktree"`, `ren runs start --workspace worktree`): a worktree of
+3. **Worktrees.** Built; `main` is guarded by required checks, not a queue.
+   - A session can work in a worktree of its own (`checkout:
+     "worktree"`, `ren runs start --checkout worktree`): a worktree of
      the repository named, in `<data>/worktrees/<repo>-<slot>`, on a new
      branch `ren/<repo>-<slot>-<id>`. Deleting the session removes it,
      unless it holds changes not committed, and deletes its branch only
      once merged. Redline's briefs always start a session in one: the
      `WorkPlace` guess is gone.
-   - Each workspace's slot, the lowest free, gives it 100 ports and a data
-     folder no other workspace holds, which its runs are told as
-     `REN_WORKSPACE`, `REN_WORKSPACE_PORTS`, and `REN_WORKSPACE_DATA`.
+   - Each worktree's slot, the lowest free, gives it 100 ports and a data
+     folder no other worktree holds, which its runs are told as
+     `REN_WORKTREE`, `REN_WORKTREE_PORTS`, and `REN_WORKTREE_DATA`.
    - Builds share a compiler cache: `sccache` is in the catalog, and
-     `[runs] workspace_env` gives every workspace's runs what the
+     `[runs] worktree_env` gives every worktree's runs what the
      operator declares (`RUSTC_WRAPPER = "sccache"`).
    - Verified in the dev slot, whose projects are now repositories: a
-     workspace session ran in its own worktree and branch with its
+     worktree session ran in its own worktree and branch with its
      variables, and deleting it removed the worktree, its data, and its
      merged branch.
    - `main` is protected by its ruleset: every change lands through a pull
@@ -212,7 +212,7 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      moves it on.
    - Every Redline brief records a work item, names it, and carries its
      evidence; Later keeps one queued. The Work view lists them and sends
-     queued items together as one brief to a new session in a workspace of
+     queued items together as one brief to a new session in a worktree of
      its own (phase 3).
    - Marks on a recording, a call, a transcript step, or an error are marks
      on the page that shows it: its path names the subject.
@@ -231,18 +231,18 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      naming a sent item: the item landed as that commit and shipped in the
      slot's build, in one pass; an item landed earlier shipped in a later
      pass. Both ended on the Work view's archived shelf.
-   - A preview runs a workspace's branch on a copy of production's
+   - A preview runs a worktree's branch on a copy of production's
      history (`cargo xtask preview up`, which a brief asks the agent to
-     run): the canary's replica, on the workspace slot's first two ports,
+     run): the canary's replica, on the worktree slot's first two ports,
      recorded on the sent work items the branch names, so the Work view
      opens the marked page on the branch and in production side by side.
-     Deleting the workspace's session stops it.
+     Deleting the worktree's session stops it.
    - Verified with the dev slot as production: a preview of this branch,
-     run as the dev workspace `acme-web-1`, served `/recordings` on the
+     run as the dev worktree `acme-web-1`, served `/recordings` on the
      slot's copied history with its preview tag, was recorded on that
-     workspace's two items (the Work view showed "On the branch"), and
+     worktree's two items (the Work view showed "On the branch"), and
      stopped when the session was deleted.
-   - Deleting a workspace's session takes its preview off the session's
+   - Deleting a worktree's session takes its preview off the session's
      work items too, so no link leads to a port nothing serves.
    - Not built: a screenshot with the marks (a page cannot capture itself
      without the browser asking, or a library).
@@ -250,21 +250,21 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
    and promotion, shown in the Release view; with no timer of its own.
    - A repository declares in `.ren/project.toml` how it is built, served,
      checked, and quiesced (`ren-project`, sans-IO): argv steps whose
-     values name the workspace's ports, data, and folder through parsed
+     values name the worktree's ports, data, and folder through parsed
      placeholders. Its `tools` name the depot packages its steps need;
      every step runs with Ren's current toolset first on its `PATH`, and a
      tool lacking refuses the command (or, in a canary, fails its build).
-   - `ren project check` runs its checks in a workspace; `ren project
-     preview up` builds it, serves it on the workspace's ports as
-     `ren-preview-<workspace>-serve`, and records the preview on the work
+   - `ren project check` runs its checks in a worktree; `ren project
+     preview up` builds it, serves it on the worktree's ports as
+     `ren-preview-<worktree>-serve`, and records the preview on the work
      items the branch names, as `cargo xtask preview` does for Ren.
-     Deleting the workspace stops it.
+     Deleting the worktree stops it.
    - Verified in the dev slot, whose fake projects now declare a contract:
-     in a new `acme-web` workspace, its check passed, its preview served
+     in a new `acme-web` worktree, its check passed, its preview served
      the page on the slot's first port and was recorded on the session's
      work item, and deleting the session stopped it.
    - `ren project canary` checks a project's `main` as Ren's canary does:
-     in a workspace the factory keeps for it, it runs the build, serves it,
+     in a worktree the factory keeps for it, it runs the build, serves it,
      and runs each declared check against it, into a verdict whose suite
      requires all of them (`ren_release::Suite::Project`). The operator's
      policy for the project (`[projects.<name>]` in `release.toml`) decides,
@@ -315,12 +315,12 @@ things faster. Each phase is useful on its own.
   same pure machine, so no machine changed. A journal that falls 4096
   entries behind or fails is broken, and its run is drained like a bound
   one.
-- **Workspaces are found by where they are, not recorded.** A session's
-  folder in the worktrees folder, named `<repo>-<slot>`, is a workspace;
+- **Worktrees are found by where they are, not recorded.** A session's
+  folder in the worktrees folder, named `<repo>-<slot>`, is a worktree;
   nothing new is stored, and a slot is free once its folder is gone.
 - **The compiler cache is the operator's to declare.** Ren knows no
   language: it installs `sccache` like any utility and passes
-  `workspace_env` to workspaces' runs.
+  `worktree_env` to worktrees' runs.
 - **The run host is `ren` itself.** A hidden `ren run-host` command, so it
   is built, installed, and upgraded with the daemon; a host started by an
   older build goes on running that build, which is why its frames keep
@@ -353,13 +353,13 @@ things faster. Each phase is useful on its own.
   `Work-Item:` trailer the brief asks for. It works for any merge style and
   any host, and needs only git.
 - **A preview is a replica, run by the agent.** The canary's instance
-  became `Replica`, which a preview reuses on its workspace's ports; the
-  agent starts it from its workspace, which already holds the branch and
+  became `Replica`, which a preview reuses on its worktree's ports; the
+  agent starts it from its worktree, which already holds the branch and
   its build, rather than production building branches.
 - **Ren keeps its own steps.** Ren's preview and canary stay in xtask:
   they copy production's history and drive two processes, more than a
   contract's serve step says. A project's contract covers one process
-  served on its workspace's ports.
+  served on its worktree's ports.
 - **The gate is its own workflow.** It reads the pull request's title and
   body, so it runs again when they are edited, which would otherwise
   rerun all of CI.

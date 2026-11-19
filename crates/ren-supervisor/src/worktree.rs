@@ -1,26 +1,26 @@
-//! A workspace Ren owns, pure: a worktree of a repository, made for one
+//! A worktree Ren owns, pure: one of a repository's worktrees, made for one
 //! session in the worktrees folder on a branch of its own, so sessions
 //! working on one repository never share a checkout. Each has a slot no
-//! other workspace holds while it exists: a block of ports and a data
-//! folder, given to its runs as `REN_WORKSPACE`, `REN_WORKSPACE_PORTS`, and
-//! `REN_WORKSPACE_DATA`, so what they start (a test server, a preview)
+//! other worktree holds while it exists: a block of ports and a data
+//! folder, given to its runs as `REN_WORKTREE`, `REN_WORKTREE_PORTS`, and
+//! `REN_WORKTREE_DATA`, so what they start (a test server, a preview)
 //! cannot collide.
 //!
-//! A workspace's folder is `<worktrees>/<repo>-<slot>`; its data folder is
+//! A worktree's folder is `<worktrees>/<repo>-<slot>`; its data folder is
 //! `<worktrees>/.data/<repo>-<slot>`; its branch is `ren/<repo>-<slot>-<id>`,
 //! unique even when a slot is used again.
 
 use std::path::{Path, PathBuf};
 
-/// One workspace: its folder in the worktrees folder, and its slot.
+/// One worktree: its folder in the worktrees folder, and its slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Workspace {
+pub struct Worktree {
     root: PathBuf,
     name: String,
     slot: Slot,
 }
 
-/// A workspace's place among the workspaces that exist: its ports and its
+/// A worktree's place among the worktrees that exist: its ports and its
 /// data folder are its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Slot(u16);
@@ -47,11 +47,11 @@ impl Slot {
     }
 }
 
-impl Workspace {
-    /// The folder workspaces' data folders are kept in.
+impl Worktree {
+    /// The folder worktrees' data folders are kept in.
     const DATA: &str = ".data";
 
-    /// The workspace of `repo` in `slot`, under `root`.
+    /// The worktree of `repo` in `slot`, under `root`.
     pub fn new(root: &Path, repo: &Path, slot: Slot) -> Option<Self> {
         let repo = repo.file_name()?.to_str()?;
         Some(Self {
@@ -61,7 +61,7 @@ impl Workspace {
         })
     }
 
-    /// The workspace `workdir` is, when it is a folder of `root`'s named as
+    /// The worktree `workdir` is, when it is a folder of `root`'s named as
     /// one.
     pub fn of(root: &Path, workdir: &Path) -> Option<Self> {
         if workdir.parent()? != root {
@@ -87,7 +87,7 @@ impl Workspace {
             .then_some(Slot(slot))
     }
 
-    /// Whether it is a workspace of the repository in `repo`: its name is
+    /// Whether it is a worktree of the repository in `repo`: its name is
     /// that folder's name and a slot.
     pub fn is_of(&self, repo: &Path) -> bool {
         repo.file_name()
@@ -118,7 +118,7 @@ impl Workspace {
         self.slot.ports()
     }
 
-    /// The transient units its preview runs as, stopped when the workspace
+    /// The transient units its preview runs as, stopped when the worktree
     /// is removed: Ren's own (`cargo xtask preview`: its UI's, then its
     /// daemon's), and a project's (`ren project preview`: its serve step).
     pub fn preview_units(&self) -> [String; 3] {
@@ -129,31 +129,41 @@ impl Workspace {
         ]
     }
 
-    /// What its runs are told of it.
+    /// What its runs are told of it: `REN_WORKTREE*`, and the same values
+    /// under the old `REN_WORKSPACE*` names, kept for project scripts
+    /// written before the rename.
     pub fn env(&self) -> Vec<(&'static str, String)> {
         let (first, last) = self.slot.ports();
+        let (folder, ports, data) = (
+            self.folder().display().to_string(),
+            format!("{first}-{last}"),
+            self.data().display().to_string(),
+        );
         vec![
-            ("REN_WORKSPACE", self.folder().display().to_string()),
-            ("REN_WORKSPACE_PORTS", format!("{first}-{last}")),
-            ("REN_WORKSPACE_DATA", self.data().display().to_string()),
+            ("REN_WORKTREE", folder.clone()),
+            ("REN_WORKTREE_PORTS", ports.clone()),
+            ("REN_WORKTREE_DATA", data.clone()),
+            ("REN_WORKSPACE", folder),
+            ("REN_WORKSPACE_PORTS", ports),
+            ("REN_WORKSPACE_DATA", data),
         ]
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Slot, Workspace};
+    use super::{Slot, Worktree};
     use std::path::Path;
 
     #[test]
-    fn a_workspace_is_named_for_its_repository_and_slot() {
+    fn a_worktree_is_named_for_its_repository_and_slot() {
         let root = Path::new("/data/worktrees");
-        let workspace = Workspace::new(root, Path::new("/home/op/dev/ren"), Slot(3)).unwrap();
-        assert_eq!(workspace.folder(), Path::new("/data/worktrees/ren-3"));
-        assert_eq!(workspace.data(), Path::new("/data/worktrees/.data/ren-3"));
-        assert_eq!(workspace.branch("1a2b3c4d"), "ren/ren-3-1a2b3c4d");
+        let worktree = Worktree::new(root, Path::new("/home/op/dev/ren"), Slot(3)).unwrap();
+        assert_eq!(worktree.folder(), Path::new("/data/worktrees/ren-3"));
+        assert_eq!(worktree.data(), Path::new("/data/worktrees/.data/ren-3"));
+        assert_eq!(worktree.branch("1a2b3c4d"), "ren/ren-3-1a2b3c4d");
         assert_eq!(
-            workspace.preview_units(),
+            worktree.preview_units(),
             [
                 "ren-preview-ren-3-ui",
                 "ren-preview-ren-3-daemon",
@@ -161,8 +171,14 @@ mod tests {
             ]
         );
         assert_eq!(
-            workspace.env(),
+            worktree.env(),
             [
+                ("REN_WORKTREE", "/data/worktrees/ren-3".to_owned()),
+                ("REN_WORKTREE_PORTS", "20200-20299".to_owned()),
+                (
+                    "REN_WORKTREE_DATA",
+                    "/data/worktrees/.data/ren-3".to_owned()
+                ),
                 ("REN_WORKSPACE", "/data/worktrees/ren-3".to_owned()),
                 ("REN_WORKSPACE_PORTS", "20200-20299".to_owned()),
                 (
@@ -172,8 +188,8 @@ mod tests {
             ]
         );
         assert_eq!(
-            Workspace::of(root, Path::new("/data/worktrees/ren-3")),
-            Some(workspace)
+            Worktree::of(root, Path::new("/data/worktrees/ren-3")),
+            Some(worktree)
         );
         for other in [
             "/data/worktrees/.data",
@@ -182,13 +198,13 @@ mod tests {
             "/data/worktrees/ren-0",
             "/data/worktrees/ren-451",
         ] {
-            assert_eq!(Workspace::of(root, Path::new(other)), None, "{other}");
+            assert_eq!(Worktree::of(root, Path::new(other)), None, "{other}");
         }
     }
 
     #[test]
     fn a_slot_is_the_lowest_free_and_ports_never_overlap() {
-        let taken = Workspace::taken(["ren-1", "ren-2", "acme-web-4", ".data", "notes"]);
+        let taken = Worktree::taken(["ren-1", "ren-2", "acme-web-4", ".data", "notes"]);
         assert_eq!(taken, [Slot(1), Slot(2), Slot(4)]);
         assert_eq!(Slot::free(&taken), Some(Slot(3)));
         assert_eq!(Slot(1).ports(), (20_000, 20_099));

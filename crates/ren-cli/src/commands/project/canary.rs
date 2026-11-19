@@ -2,7 +2,7 @@
 //! is for Ren (docs/plans/self-build.md, phase 6).
 //!
 //! A pass fetches the project's `main`, checks its tip out, detached, in a
-//! workspace the factory keeps for the project (a folder in Ren's
+//! worktree the factory keeps for the project (a folder in Ren's
 //! worktrees folder, so its slot's ports are its own), and runs its
 //! contract there: the build steps, the serve step until it answers its
 //! health path, then each declared check, against it. The verdict, the build
@@ -42,17 +42,17 @@ use ren_store::{
     query::{PageLimit, Shelf},
     read::ReadRequest,
 };
-use ren_supervisor::{Slot, Workspace};
+use ren_supervisor::{Slot, Worktree};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, process::ExitCode};
 
-/// One project's factory: its repository, its canary workspace, and the
+/// One project's factory: its repository, its canary worktree, and the
 /// folder its release is kept in.
 pub(super) struct ProjectFactory {
     /// The repository's folder name, which names the project.
     name: String,
     repo: PathBuf,
-    /// Ren's worktrees folder, where the canary's workspace is made.
+    /// Ren's worktrees folder, where the canary's worktree is made.
     worktrees: PathBuf,
     /// `<data>/projects/<name>`.
     state: PathBuf,
@@ -61,11 +61,14 @@ pub(super) struct ProjectFactory {
     git: Git,
 }
 
-/// Which workspace is the project's canary, kept between passes.
+/// Which worktree is the project's canary, kept between passes.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CanaryRecord {
-    workspace: String,
+    /// Read under its old name `workspace` too, for records written before
+    /// the rename.
+    #[serde(alias = "workspace")]
+    worktree: String,
 }
 
 impl Steps {
@@ -77,7 +80,7 @@ impl Steps {
             .map_err(anyhow::Error::from)
             .and_then(|step| {
                 println!("==> {}", step.argv.join(" "));
-                self.run(&step, &place.workspace)
+                self.run(&step, &place.worktree)
                     .map(|succeeded| (succeeded, step))
             });
         match ran {
@@ -131,17 +134,17 @@ impl ProjectFactory {
         let branch: Branch = branch.parse().map_err(anyhow::Error::msg)?;
         println!("==> Fetching {branch} from {remote}");
         let tip = self.git.fetch(&self.repo, remote, &branch)?;
-        let workspace = self.workspace()?;
+        let worktree = self.worktree()?;
         self.git
-            .check_out_detached(&self.repo, &workspace.folder(), &tip)?;
+            .check_out_detached(&self.repo, &worktree.folder(), &tip)?;
         let place = Place {
-            workspace: workspace.folder(),
-            data: workspace.data(),
-            ports: Some(workspace.ports()),
+            worktree: worktree.folder(),
+            data: worktree.data(),
+            ports: Some(worktree.ports()),
         };
-        let contract = ProjectCmd::contract(&place.workspace)?;
+        let contract = ProjectCmd::contract(&place.worktree)?;
         let steps = Steps::of(ctx, &contract);
-        let verdict = self.check(&steps, &contract, &place, &workspace).await?;
+        let verdict = self.check(&steps, &contract, &place, &worktree).await?;
         let commit = Self::release_commit(&tip)?;
         let canary = Canary::new(commit.clone(), verdict);
         let deployed = self.read()?.map(|release| release.production().clone());
@@ -166,13 +169,13 @@ impl ProjectFactory {
             bail!("the canary's build failed its checks");
         }
         let commit = canary.commit().clone();
-        let workspace = self.workspace()?;
+        let worktree = self.worktree()?;
         let place = Place {
-            workspace: workspace.folder(),
-            data: workspace.data(),
-            ports: Some(workspace.ports()),
+            worktree: worktree.folder(),
+            data: worktree.data(),
+            ports: Some(worktree.ports()),
         };
-        let contract = ProjectCmd::contract(&place.workspace)?;
+        let contract = ProjectCmd::contract(&place.worktree)?;
         let steps = Steps::of(ctx, &contract)?;
         let _ = fs::remove_file(self.failed(&commit));
         self.deploy(&steps, &contract, &place, &commit)?;
@@ -192,29 +195,29 @@ impl ProjectFactory {
         Ok(ExitCode::SUCCESS)
     }
 
-    /// The project's canary workspace: the one kept, else a new one in the
+    /// The project's canary worktree: the one kept, else a new one in the
     /// lowest free slot.
-    fn workspace(&self) -> Result<Workspace> {
+    fn worktree(&self) -> Result<Worktree> {
         let record = self.state.join(Self::CANARY);
         if let Some(kept) = fs::read(&record)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<CanaryRecord>(&bytes).ok())
-            && let Some(workspace) =
-                Workspace::of(&self.worktrees, &self.worktrees.join(&kept.workspace))
+            && let Some(worktree) =
+                Worktree::of(&self.worktrees, &self.worktrees.join(&kept.worktree))
         {
-            return Ok(workspace);
+            return Ok(worktree);
         }
         fs::create_dir_all(&self.worktrees)?;
         let names: Vec<String> = fs::read_dir(&self.worktrees)?
             .filter_map(Result::ok)
             .filter_map(|entry| entry.file_name().into_string().ok())
             .collect();
-        let slot = Slot::free(&Workspace::taken(names.iter().map(String::as_str)))
-            .context("every workspace slot is taken")?;
-        let workspace = Workspace::new(&self.worktrees, &self.repo, slot)
+        let slot = Slot::free(&Worktree::taken(names.iter().map(String::as_str)))
+            .context("every worktree slot is taken")?;
+        let worktree = Worktree::new(&self.worktrees, &self.repo, slot)
             .context("the project's folder has no name")?;
         fs::create_dir_all(&self.state)?;
-        let name = workspace
+        let name = worktree
             .folder()
             .file_name()
             .and_then(|name| name.to_str())
@@ -222,9 +225,9 @@ impl ProjectFactory {
             .context("the canary's folder has no name")?;
         fs::write(
             &record,
-            serde_json::to_vec(&CanaryRecord { workspace: name })?,
+            serde_json::to_vec(&CanaryRecord { worktree: name })?,
         )?;
-        Ok(workspace)
+        Ok(worktree)
     }
 
     /// The project's checks of the checked-out build: its build steps, its
@@ -236,7 +239,7 @@ impl ProjectFactory {
         steps: &Result<Steps>,
         contract: &ProjectContract,
         place: &Place,
-        workspace: &Workspace,
+        worktree: &Worktree,
     ) -> Result<Verdict> {
         let declared: Vec<String> = contract
             .checks()
@@ -268,7 +271,7 @@ impl ProjectFactory {
             (Ok(_), true, None) => Outcome::Failed {
                 detail: format!("{} declares no [serve] step", ProjectContract::FILE),
             },
-            (Ok(steps), true, Some(serve)) => Self::serve(steps, serve, place, workspace)
+            (Ok(steps), true, Some(serve)) => Self::serve(steps, serve, place, worktree)
                 .await
                 .map_or_else(
                     |error| Outcome::Failed {
@@ -303,17 +306,17 @@ impl ProjectFactory {
         Ok(Verdict::project(declared, checks))
     }
 
-    /// Starts the serve step in the canary's workspace and waits for it.
+    /// Starts the serve step in the canary's worktree and waits for it.
     async fn serve(
         steps: &Steps,
         serve: &ren_project::Serve,
         place: &Place,
-        workspace: &Workspace,
+        worktree: &Worktree,
     ) -> Result<()> {
-        let unit = ProjectCmd::unit(workspace);
+        let unit = ProjectCmd::unit(worktree);
         Steps::stop(&unit)?;
         let step = serve.step().expand(place)?;
-        steps.start(&unit, &step, &place.workspace)?;
+        steps.start(&unit, &step, &place.worktree)?;
         ProjectCmd::healthy(&serve.open(place)?, serve.health()).await
     }
 
@@ -392,7 +395,7 @@ impl ProjectFactory {
         };
         let step = deploy.expand(place)?;
         println!("==> Deploying {}: {}", commit.short(), step.argv.join(" "));
-        let deployed = steps.run(&step, &place.workspace)?;
+        let deployed = steps.run(&step, &place.worktree)?;
         let release = self.read()?.context("no release to promote")?;
         let tip: CommitId = release.main().to_string().parse()?;
         let canary = release.canary().cloned();
@@ -544,5 +547,26 @@ impl ProjectFactory {
         id.as_str()
             .parse()
             .with_context(|| format!("{id} is not a commit"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CanaryRecord;
+
+    #[test]
+    fn a_record_written_before_the_rename_reads() {
+        for record in [r#"{"workspace":"acme-2"}"#, r#"{"worktree":"acme-2"}"#] {
+            let read: CanaryRecord = serde_json::from_str(record).unwrap();
+            assert_eq!(read.worktree, "acme-2", "{record}");
+        }
+        assert_eq!(
+            serde_json::to_string(&CanaryRecord {
+                worktree: "acme-2".to_owned()
+            })
+            .unwrap(),
+            r#"{"worktree":"acme-2"}"#
+        );
+        assert!(serde_json::from_str::<CanaryRecord>(r#"{"worktree":"a","other":1}"#).is_err());
     }
 }

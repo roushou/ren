@@ -1,15 +1,15 @@
 //! `ren project`: the projects this host's daemon has registered (`add`,
 //! `list`, `archive`, `unarchive`), and a project's declared contract
 //! (`.ren/project.toml`) at work on this host: its checks (`check`), a
-//! preview of a workspace's branch (`preview up`, `preview down`), as Ren's
+//! preview of a worktree's branch (`preview up`, `preview down`), as Ren's
 //! own (`cargo xtask preview`) runs for Ren, and a registered project's
 //! canary and promotion.
 //!
-//! A preview builds the workspace, starts its serve step as the transient
-//! unit `ren-preview-<workspace>-serve` on the workspace's ports, waits for
+//! A preview builds the worktree, starts its serve step as the transient
+//! unit `ren-preview-<worktree>-serve` on the worktree's ports, waits for
 //! its health path, and records it on each sent work item the branch's
 //! commits name (`Work-Item: <id>`), or that `--work` gives, so the Work
-//! view opens the marked page on it. Removing the workspace stops it.
+//! view opens the marked page on it. Removing the worktree stops it.
 //!
 //! Every step runs with Ren's toolset (`ren tools`) first on its search
 //! path, as Ren's runs do; a tool the contract names (`tools`) that the
@@ -50,14 +50,14 @@ use ren_store::{
     query::{PageLimit, Shelf},
     read::ReadRequest,
 };
-use ren_supervisor::Workspace;
+use ren_supervisor::Worktree;
 use std::{
     path::{Path, PathBuf},
     process::{ExitCode, Stdio},
     time::Duration,
 };
 
-/// Run a project's declared checks, or preview a workspace's branch.
+/// Run a project's declared checks, or preview a worktree's branch.
 #[derive(Args)]
 pub struct ProjectCmd {
     #[command(subcommand)]
@@ -75,12 +75,12 @@ enum ProjectAction {
     Archive(NameArgs),
     Unarchive(NameArgs),
     /// Assign a project the sessions no project owns whose folder is in
-    /// its repository or is one of its workspaces.
+    /// its repository or is one of its worktrees.
     Adopt(NameArgs),
     /// Run the checks `.ren/project.toml` declares, in order; fails when one
     /// does.
     Check(CheckArgs),
-    /// A preview of this workspace's branch.
+    /// A preview of this worktree's branch.
     Preview {
         #[command(subcommand)]
         action: PreviewAction,
@@ -106,7 +106,7 @@ struct CanaryArgs {
 
 #[derive(Args)]
 struct CheckArgs {
-    /// The project's folder; by default the workspace this runs in, else
+    /// The project's folder; by default the worktree this runs in, else
     /// the current folder.
     #[arg(long)]
     dir: Option<PathBuf>,
@@ -114,7 +114,7 @@ struct CheckArgs {
 
 #[derive(Subcommand)]
 enum PreviewAction {
-    /// Build this workspace, serve it on its ports, and record it on the
+    /// Build this worktree, serve it on its ports, and record it on the
     /// work items its branch addresses.
     Up(PreviewArgs),
     /// Stop it, and take it off those work items.
@@ -133,10 +133,10 @@ struct PreviewArgs {
     target: TargetArgs,
 }
 
-/// Where a project's steps run, and the workspace it is, when it is one.
+/// Where a project's steps run, and the worktree it is, when it is one.
 struct ProjectPlace {
     place: Place,
-    workspace: Option<Workspace>,
+    worktree: Option<Worktree>,
 }
 
 /// The one place the CLI runs a project's steps and its preview's unit,
@@ -191,7 +191,7 @@ impl ProjectCmd {
 
     fn check(ctx: &Context, args: CheckArgs) -> Result<ExitCode> {
         let place = ProjectPlace::read(&ctx.env, args.dir)?;
-        let contract = Self::contract(&place.place.workspace)?;
+        let contract = Self::contract(&place.place.worktree)?;
         if contract.checks().is_empty() {
             println!("{} declares no checks.", ProjectContract::FILE);
             return Ok(ExitCode::SUCCESS);
@@ -201,7 +201,7 @@ impl ProjectCmd {
         for check in contract.checks() {
             println!("==> {}", check.name());
             let step = check.step().expand(&place.place)?;
-            if !steps.run(&step, &place.place.workspace)? {
+            if !steps.run(&step, &place.place.worktree)? {
                 failed.push(check.name().to_owned());
             }
         }
@@ -216,8 +216,8 @@ impl ProjectCmd {
 
     async fn up(ctx: &Context, args: PreviewArgs) -> Result<ExitCode> {
         let place = ProjectPlace::read(&ctx.env, None)?;
-        let workspace = place.workspace()?;
-        let contract = Self::contract(&place.place.workspace)?;
+        let worktree = place.worktree()?;
+        let contract = Self::contract(&place.place.worktree)?;
         let serve = contract.serve().with_context(|| {
             format!(
                 "{} declares no [serve] step to preview",
@@ -228,14 +228,14 @@ impl ProjectCmd {
         for step in contract.build() {
             let step = step.expand(&place.place)?;
             println!("==> {}", step.argv.join(" "));
-            if !steps.run(&step, &place.place.workspace)? {
+            if !steps.run(&step, &place.place.worktree)? {
                 bail!("a build step failed; the preview is not started");
             }
         }
-        let unit = Self::unit(workspace);
+        let unit = Self::unit(worktree);
         Steps::stop(&unit)?;
         let step = serve.step().expand(&place.place)?;
-        steps.start(&unit, &step, &place.place.workspace)?;
+        steps.start(&unit, &step, &place.place.worktree)?;
         let open = serve.open(&place.place)?;
         Self::healthy(&open, serve.health()).await?;
         let mut origin: PreviewUrl = open
@@ -247,8 +247,8 @@ impl ProjectCmd {
                 .with_context(|| format!("{open} names no port to publish"))?;
             origin = Steps::publish(port)?;
         }
-        let revision = Self::revision(&place.place.workspace)?;
-        let items = Self::addressed(ctx, &args, &place.place.workspace).await?;
+        let revision = Self::revision(&place.place.worktree)?;
+        let items = Self::addressed(ctx, &args, &place.place.worktree).await?;
         let target = super::control::ControlTarget::select(&args.target, ctx)?;
         for item in &items {
             let answer = target
@@ -280,14 +280,14 @@ impl ProjectCmd {
 
     async fn down(ctx: &Context, args: PreviewArgs) -> Result<ExitCode> {
         let place = ProjectPlace::read(&ctx.env, None)?;
-        let workspace = place.workspace()?;
-        let contract = Self::contract(&place.place.workspace)?;
+        let worktree = place.worktree()?;
+        let contract = Self::contract(&place.place.worktree)?;
         if let Some(quiesce) = contract.quiesce() {
             let step = quiesce.expand(&place.place)?;
             println!("==> {}", step.argv.join(" "));
-            Steps::of(ctx, &contract)?.run(&step, &place.place.workspace)?;
+            Steps::of(ctx, &contract)?.run(&step, &place.place.worktree)?;
         }
-        Steps::stop(&Self::unit(workspace))?;
+        Steps::stop(&Self::unit(worktree))?;
         let port = contract
             .serve()
             .and_then(|serve| serve.open(&place.place).ok())
@@ -298,7 +298,7 @@ impl ProjectCmd {
         }
         let target = super::control::ControlTarget::select(&args.target, ctx)?;
         let listed = Self::listed(ctx, &args).await?;
-        for item in Self::addressed(ctx, &args, &place.place.workspace).await? {
+        for item in Self::addressed(ctx, &args, &place.place.worktree).await? {
             // Only this preview's, by the port its page opened on.
             let ours = listed.iter().any(|entry| {
                 entry.id == item
@@ -320,10 +320,10 @@ impl ProjectCmd {
         Ok(ExitCode::SUCCESS)
     }
 
-    /// The unit the workspace's preview runs as: the one removing the
-    /// workspace stops.
-    pub(super) fn unit(workspace: &Workspace) -> String {
-        let [_, _, serve] = workspace.preview_units();
+    /// The unit the worktree's preview runs as: the one removing the
+    /// worktree stops.
+    pub(super) fn unit(worktree: &Worktree) -> String {
+        let [_, _, serve] = worktree.preview_units();
         serve
     }
 
@@ -344,7 +344,7 @@ impl ProjectCmd {
         bail!("{url} did not answer in a minute; see `journalctl --user -u 'ren-preview-*'`")
     }
 
-    /// The build the workspace's checkout is: its commit, modified or not.
+    /// The build the worktree's checkout is: its commit, modified or not.
     fn revision(dir: &Path) -> Result<Revision> {
         let git = Git::inherited();
         let commit = git.head_commit(dir)?;
@@ -415,24 +415,22 @@ impl ProjectCmd {
 }
 
 impl ProjectPlace {
-    /// The workspace this runs in, read from `REN_WORKSPACE` alone and
+    /// The worktree this runs in, read from `REN_WORKTREE` alone and
     /// checked to be one Ren made: its data folder and ports are the ones
     /// Ren gives its slot. Without one, `dir` (or the current folder), with
     /// no ports.
     fn read(env: &HostEnv, dir: Option<PathBuf>) -> Result<Self> {
-        let workspace = env.absolute_path("REN_WORKSPACE").and_then(|folder| {
-            folder
-                .parent()
-                .and_then(|root| Workspace::of(root, &folder))
-        });
-        match (dir, workspace) {
-            (None, Some(workspace)) => Ok(Self {
+        let worktree = env
+            .absolute_path("REN_WORKTREE")
+            .and_then(|folder| folder.parent().and_then(|root| Worktree::of(root, &folder)));
+        match (dir, worktree) {
+            (None, Some(worktree)) => Ok(Self {
                 place: Place {
-                    workspace: workspace.folder(),
-                    data: workspace.data(),
-                    ports: Some(workspace.ports()),
+                    worktree: worktree.folder(),
+                    data: worktree.data(),
+                    ports: Some(worktree.ports()),
                 },
-                workspace: Some(workspace),
+                worktree: Some(worktree),
             }),
             (dir, _) => {
                 let dir = match dir {
@@ -442,18 +440,18 @@ impl ProjectPlace {
                 Ok(Self {
                     place: Place {
                         data: dir.join(".ren-data"),
-                        workspace: dir,
+                        worktree: dir,
                         ports: None,
                     },
-                    workspace: None,
+                    worktree: None,
                 })
             }
         }
     }
 
-    fn workspace(&self) -> Result<&Workspace> {
-        self.workspace.as_ref().context(
-            "a preview runs in a workspace Ren made: REN_WORKSPACE names a folder of Ren's worktrees, `<repo>-<slot>`",
+    fn worktree(&self) -> Result<&Worktree> {
+        self.worktree.as_ref().context(
+            "a preview runs in a worktree Ren made: REN_WORKTREE names a folder of Ren's worktrees, `<repo>-<slot>`",
         )
     }
 }
@@ -712,11 +710,11 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     #[test]
-    fn a_workspace_is_the_place_its_runs_are_told() {
+    fn a_worktree_is_the_place_its_runs_are_told() {
         let env = HostEnv::from_pairs([
-            ("REN_WORKSPACE", "/data/worktrees/acme-web-2"),
-            ("REN_WORKSPACE_PORTS", "1-2"),
-            ("REN_WORKSPACE_DATA", "/home/op"),
+            ("REN_WORKTREE", "/data/worktrees/acme-web-2"),
+            ("REN_WORKTREE_PORTS", "1-2"),
+            ("REN_WORKTREE_DATA", "/home/op"),
         ]);
         let place = ProjectPlace::read(&env, None).unwrap();
         // The slot's own ports and data, whatever else the variables say.
@@ -726,13 +724,13 @@ mod tests {
             Path::new("/data/worktrees/.data/acme-web-2")
         );
         assert_eq!(
-            place.workspace().unwrap().preview_units()[2],
+            place.worktree().unwrap().preview_units()[2],
             "ren-preview-acme-web-2-serve"
         );
-        // A folder given, or no workspace, has no ports.
+        // A folder given, or no worktree, has no ports.
         let place = ProjectPlace::read(&env, Some(PathBuf::from("/src/acme"))).unwrap();
         assert_eq!(place.place.ports, None);
-        assert_eq!(place.place.workspace, Path::new("/src/acme"));
-        assert!(place.workspace().is_err());
+        assert_eq!(place.place.worktree, Path::new("/src/acme"));
+        assert!(place.worktree().is_err());
     }
 }

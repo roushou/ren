@@ -26,7 +26,7 @@ mod session;
 mod sign_in;
 mod task;
 mod workdir;
-mod workspace;
+mod worktree;
 
 pub use client::{Client, ClientStatus};
 pub use files::{FileListing, FileMatch, FileQuery, FoundPath, PathKind, WalkLimits};
@@ -50,7 +50,7 @@ pub use task::listing::ListingError;
 pub use task::login::SignInError;
 use task::{listing, login};
 pub use workdir::{Bounds, Roots, Workdir, WorkdirError};
-pub use workspace::{Slot, Workspace};
+pub use worktree::{Slot, Worktree};
 
 use attachments::AttachmentFolders;
 use ren_harness::{
@@ -86,12 +86,12 @@ pub struct SupervisorOptions {
     /// Where scratch runs each get a new folder; created when missing.
     /// None: runs cannot start in scratch.
     pub scratch: Option<PathBuf>,
-    /// Where workspaces are made: a worktree of a repository per session
-    /// that asks for one; created when missing. None: no workspaces.
+    /// Where worktrees are made: a worktree of a repository per session
+    /// that asks for one; created when missing. None: no worktrees.
     pub worktrees: Option<PathBuf>,
-    /// Variables every run in a workspace gets besides Ren's own, such as a
+    /// Variables every run in a worktree gets besides Ren's own, such as a
     /// compiler cache its builds share.
-    pub workspace_env: Vec<(String, String)>,
+    pub worktree_env: Vec<(String, String)>,
     /// Where each session's attachments are kept, a folder per session;
     /// Ren's own, made when missing. None: sessions take no attachments.
     pub attachments: Option<PathBuf>,
@@ -133,7 +133,7 @@ pub struct Supervisor {
     sessions: broadcast::Sender<SessionSnapshot>,
     /// The attachment limits; `None` when sessions take no attachments.
     attachment_limits: Option<Limits>,
-    /// The folder workspaces are made in, resolved; `None` when there is
+    /// The folder worktrees are made in, resolved; `None` when there is
     /// none.
     worktrees: Option<PathBuf>,
 }
@@ -267,11 +267,11 @@ pub enum StartPlace {
     Scratch,
     /// This folder, which must lie inside a root or another place.
     Folder(String),
-    /// A workspace of its own: a new worktree of the repository in this
+    /// A new worktree of its own, of the repository in this
     /// folder, on a branch of its own, with ports and a data folder no other
-    /// workspace shares.
+    /// worktree shares.
     Worktree(String),
-    /// A workspace of its own in a registered project's repository: as
+    /// A worktree of its own in a registered project's repository: as
     /// `Worktree`, but the repository need not lie inside a root, since the
     /// operator registered it; the worktree itself still must.
     Project(String),
@@ -321,11 +321,11 @@ pub enum StartError {
     NoScratch,
     #[error("cannot create the scratch run's folder")]
     Scratch(#[source] io::Error),
-    #[error("workspaces cannot be made here: their folder could not be set up")]
+    #[error("worktrees cannot be made here: their folder could not be set up")]
     NoWorktrees,
-    #[error("every workspace slot is taken: remove a session's workspace first")]
+    #[error("every worktree slot is taken: remove a session's worktree first")]
     NoSlot,
-    #[error("cannot make the workspace")]
+    #[error("cannot make the worktree")]
     Worktree(#[source] io::Error),
     #[error("{0} does not take that approval policy")]
     NoApprovals(Harness),
@@ -553,7 +553,7 @@ impl Supervisor {
         let worktrees = options.worktrees.as_deref().and_then(|worktrees| {
             host.make_dir(worktrees)
                 .and_then(|()| host.resolve(worktrees))
-                .inspect_err(|error| tracing::warn!(?worktrees, %error, "no folder for workspaces"))
+                .inspect_err(|error| tracing::warn!(?worktrees, %error, "no folder for worktrees"))
                 .ok()
         });
         let bounds = Bounds::new(roots, places, scratch, options.home)
@@ -586,7 +586,7 @@ impl Supervisor {
             idle: options.idle,
             attachments,
             attachment_limits: options.attachment_limits,
-            workspace_env: options.workspace_env,
+            worktree_env: options.worktree_env,
         };
         Ok((
             Self {
@@ -600,7 +600,7 @@ impl Supervisor {
         ))
     }
 
-    /// The folder workspaces are made in, when there is one.
+    /// The folder worktrees are made in, when there is one.
     pub fn worktrees(&self) -> Option<&Path> {
         self.worktrees.as_deref()
     }

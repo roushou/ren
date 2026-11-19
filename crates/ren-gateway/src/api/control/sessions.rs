@@ -16,7 +16,7 @@ use super::body::sessions::{
     SessionBody, SessionsBody,
 };
 use super::projects::ProjectRoster;
-use super::request::{AnswerRequest, CreateRequest, PromptRequest, WorkspaceKind};
+use super::request::{AnswerRequest, Checkout, CreateRequest, PromptRequest};
 use super::runs::RunsApi;
 use super::{ControlApi, ControlRefusal};
 use axum::{
@@ -513,9 +513,9 @@ impl SessionsApi {
             (Some(name), None) => {
                 let project = roster.named(name)?;
                 let dir = project.repository.to_string();
-                let place = match request.workspace.unwrap_or(WorkspaceKind::Worktree) {
-                    WorkspaceKind::Worktree => StartPlace::Project(dir),
-                    WorkspaceKind::Folder => StartPlace::Folder(dir),
+                let place = match request.checkout.unwrap_or(Checkout::Worktree) {
+                    Checkout::Worktree => StartPlace::Project(dir),
+                    Checkout::Folder => StartPlace::Folder(dir),
                 };
                 (place, Some(project.id))
             }
@@ -755,8 +755,8 @@ impl SessionsApi {
     }
 
     /// Takes the preview off each work item `session` took up: deleting the
-    /// session removed its workspace, and its preview with it, so a link to
-    /// it would lead nowhere (or, later, to another workspace's).
+    /// session removed its worktree, and its preview with it, so a link to
+    /// it would lead nowhere (or, later, to another worktree's).
     async fn forget_previews(&self, session: SessionId) {
         let items = match self
             .reader

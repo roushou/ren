@@ -147,16 +147,16 @@ pub struct CreateRequest {
     /// Where in `dir` it works; left out, in the folder itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(as = "Option<String>")]
-    pub workspace: Option<WorkspaceKind>,
+    pub checkout: Option<Checkout>,
     /// A registered project to work for, by name, in place of `dir`: the
-    /// session works in its repository, in a workspace of its own unless
-    /// `workspace` says `folder`.
+    /// session works in its repository, in a worktree of its own unless
+    /// `checkout` says `folder`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
 }
 
 /// Where a session with a folder works: in the folder itself, or in a
-/// workspace of its own, a new worktree of the repository in the folder.
+/// worktree of its own, made from the repository in the folder.
 #[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
 #[strum(serialize_all = "snake_case")]
 #[derive(
@@ -170,7 +170,7 @@ pub struct CreateRequest {
     serde_with::SerializeDisplay,
     serde_with::DeserializeFromStr,
 )]
-pub enum WorkspaceKind {
+pub enum Checkout {
     #[default]
     Folder,
     Worktree,
@@ -186,24 +186,22 @@ impl CreateRequest {
             effort: None,
             approvals: None,
             resume: None,
-            workspace: None,
+            checkout: None,
             project: None,
         }
     }
 
-    /// Where it starts: its folder, a workspace of the repository in it,
-    /// or, with no folder, a new scratch folder. A workspace needs a folder.
+    /// Where it starts: its folder, a worktree of the repository in it,
+    /// or, with no folder, a new scratch folder. A worktree needs a folder.
     /// A session asked for by `project` starts where its project is.
     pub fn place(&self) -> Option<ren_supervisor::StartPlace> {
-        match (&self.dir, self.workspace.unwrap_or_default()) {
-            (Some(dir), WorkspaceKind::Folder) => {
-                Some(ren_supervisor::StartPlace::Folder(dir.clone()))
-            }
-            (Some(dir), WorkspaceKind::Worktree) => {
+        match (&self.dir, self.checkout.unwrap_or_default()) {
+            (Some(dir), Checkout::Folder) => Some(ren_supervisor::StartPlace::Folder(dir.clone())),
+            (Some(dir), Checkout::Worktree) => {
                 Some(ren_supervisor::StartPlace::Worktree(dir.clone()))
             }
-            (None, WorkspaceKind::Folder) => Some(ren_supervisor::StartPlace::Scratch),
-            (None, WorkspaceKind::Worktree) => None,
+            (None, Checkout::Folder) => Some(ren_supervisor::StartPlace::Scratch),
+            (None, Checkout::Worktree) => None,
         }
     }
 }
@@ -321,7 +319,7 @@ pub enum ControlRequest {
     ArchiveProject(ProjectName),
     UnarchiveProject(ProjectName),
     /// Assign a project the unowned sessions in its repository or its
-    /// workspaces.
+    /// worktrees.
     AdoptSessions(ProjectName),
 }
 

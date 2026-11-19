@@ -240,7 +240,7 @@ impl Slot {
                 // Held as the installed service holds them, so a restart
                 // of the slot leaves its runs going.
                 hold: RunHold::Auto,
-                workspace_env: Default::default(),
+                worktree_env: Default::default(),
             },
             tools: toml::from_str::<ToolsOptions>(Self::TOOLS).map_err(|_| DevError::Config)?,
             ..Config::default()
@@ -334,12 +334,12 @@ program_at = "acme-lint"
                 email: "dev-slot@example.com".into(),
             };
             // A repository with a commit, so a session (and Redline's
-            // briefs) can work in a workspace of it.
+            // briefs) can work in a worktree of it.
             if Git::repository(&folder) == Repository::None {
                 git.init(&folder)
                     .and_then(|()| git.commit_all(&folder, "Start the fake project", &author))?;
             }
-            // Its contract, so a workspace of it has checks and a preview.
+            // Its contract, so a worktree of it has checks and a preview.
             let contract = folder.join(ren_project::ProjectContract::FILE);
             if !contract.exists() {
                 for (name, text) in Self::site(project) {
@@ -360,7 +360,7 @@ program_at = "acme-lint"
     }
 
     /// A fake project's page and its contract: a static page served by
-    /// Python's own server on the workspace's first port, checked by
+    /// Python's own server on the worktree's first port, checked by
     /// parsing it.
     fn site(project: &str) -> [(&'static str, String); 2] {
         [

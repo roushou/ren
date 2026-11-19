@@ -268,7 +268,7 @@ impl Report {
             Some(Some(Environment::Preview)) => self.add(
                 CheckId::Instance,
                 Status::Ok,
-                "a preview: one workspace's branch on a copy of production's history, not a production gateway",
+                "a preview: one worktree's branch on a copy of production's history, not a production gateway",
             ),
             Some(Some(Environment::Canary)) => self.add(
                 CheckId::Instance,

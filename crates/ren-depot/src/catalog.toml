@@ -180,8 +180,8 @@ sha256 = "3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4"
 format = "tar_gz"
 program_at = "ripgrep-15.2.0-aarch64-apple-darwin/rg"
 
-# A compiler cache: workspaces' builds share what their dependencies
-# compile to (`[runs] workspace_env`, `RUSTC_WRAPPER = "sccache"`).
+# A compiler cache: worktrees' builds share what their dependencies
+# compile to (`[runs] worktree_env`, `RUSTC_WRAPPER = "sccache"`).
 [[package]]
 id = "sccache"
 kind = "utility"

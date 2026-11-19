@@ -170,7 +170,7 @@ impl Registry {
     }
 
     /// Assign `args.name` the sessions no project owns in its repository
-    /// or its workspaces.
+    /// or its worktrees.
     pub(super) async fn adopt(ctx: &Context, args: NameArgs) -> Result<ExitCode> {
         let target = ControlTarget::select(&args.target, ctx)?;
         Ok(target

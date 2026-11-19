@@ -30,12 +30,12 @@ export type BriefProject = { kind: 'ren' } | { kind: 'other'; name: string };
 export type Destination = { kind: 'new' } | { kind: 'session'; session: DeskSession };
 
 /**
- * Where a brief's change is made: in the workspace Ren makes for a new
+ * Where a brief's change is made: in the worktree Ren makes for a new
  * session (a worktree of the checkout on a branch of its own, with its own
  * ports and data folder), or, sent into an open session, where that session
  * works, on a branch of its own.
  */
-export type WorkPlace = 'workspace' | 'session';
+export type WorkPlace = 'worktree' | 'session';
 
 /** How a brief reaches an open session: the prompt to send, or why it waits. */
 export type Handoff =
@@ -126,7 +126,7 @@ export class Briefing {
   static place(destination: Destination): WorkPlace {
     switch (destination.kind) {
       case 'new':
-        return 'workspace';
+        return 'worktree';
       case 'session':
         return 'session';
       default: {
@@ -139,8 +139,8 @@ export class Briefing {
   /** How a change is to be made, in the brief's closing paragraph. */
   static #work(place: WorkPlace, branch: string): string {
     switch (place) {
-      case 'workspace':
-        return `make it here: this session works in a workspace of its own, a worktree of the repository on a branch of its own. Run the project's checks and commit on that branch.`;
+      case 'worktree':
+        return `make it here: this session works in a worktree of its own, made from the repository on a branch of its own. Run the project's checks and commit on that branch.`;
       case 'session':
         return `make it on a new branch, ${Redline.code(branch)}, in a git worktree of this repository unless you already work in one, never in a checkout other sessions share, and run the project's checks.`;
       default: {

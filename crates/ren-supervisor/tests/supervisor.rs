@@ -33,7 +33,7 @@ use ren_supervisor::{
     PathKind, ProcessExit, RunCommand, RunRefused, RunState, RunTools, RunUpdate, StartError,
     Supervisor, SupervisorOptions, Tenure, WalkLimits, Workdir,
 };
-use ren_supervisor::{PlaceGit, Scratch, Workspace};
+use ren_supervisor::{PlaceGit, Scratch, Worktree};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -93,7 +93,7 @@ struct FakeHost {
     /// When set, runs are held as a run host holds them: they go on when
     /// the supervisor stops, and the next one takes them up.
     holds: Option<Holds>,
-    /// The workspaces made and not removed, with each one's repository.
+    /// The worktrees made and not removed, with each one's repository.
     worktrees: Arc<Mutex<Vec<(PathBuf, PathBuf)>>>,
     /// The variables each spawned agent was given, in order.
     envs: Arc<Mutex<Vec<Variables>>>,
@@ -384,8 +384,8 @@ impl AgentHost for FakeHost {
         Ok(())
     }
 
-    fn remove_worktree(&self, workspace: &Workspace, _tools: &RunTools) -> io::Result<()> {
-        let folder = workspace.folder();
+    fn remove_worktree(&self, worktree: &Worktree, _tools: &RunTools) -> io::Result<()> {
+        let folder = worktree.folder();
         self.worktrees
             .lock()
             .unwrap()
@@ -725,7 +725,7 @@ fn options() -> SupervisorOptions {
         places: vec![PathBuf::from("/home/op/.config")],
         scratch: Some(PathBuf::from("/scratch")),
         worktrees: Some(PathBuf::from("/worktrees")),
-        workspace_env: vec![("RUSTC_WRAPPER".into(), "sccache".into())],
+        worktree_env: vec![("RUSTC_WRAPPER".into(), "sccache".into())],
         home: Some(PathBuf::from("/home/op")),
         warmup: ren_supervisor::Warmup::WhenAsked,
         gateway: "http://127.0.0.1:8787".parse::<GatewayEndpoint>().unwrap(),
@@ -2456,11 +2456,11 @@ async fn a_held_run_goes_on_through_a_restart_mid_turn() {
     );
 }
 
-/// Sessions that ask for a workspace each get a worktree of their own, in
+/// Sessions that ask for a worktree each get a worktree of their own, in
 /// a slot of their own, and their runs are told of it; a session forgotten
-/// takes its workspace with it.
+/// takes its worktree with it.
 #[tokio::test]
-async fn each_workspace_session_works_in_its_own_worktree_and_slot() {
+async fn each_worktree_session_works_in_its_own_worktree_and_slot() {
     let host = FakeHost::new(Script::Codex);
     let (worktrees, envs) = (host.worktrees.clone(), host.envs.clone());
     let supervised = supervise(host).await;
@@ -2496,21 +2496,21 @@ async fn each_workspace_session_works_in_its_own_worktree_and_slot() {
             .map(|(_, value)| value.clone())
     };
     assert_eq!(
-        told(0, "REN_WORKSPACE").as_deref(),
+        told(0, "REN_WORKTREE").as_deref(),
         Some("/worktrees/acme-1")
     );
-    // And what the operator gives every workspace's runs.
+    // And what the operator gives every worktree's runs.
     assert_eq!(told(0, "RUSTC_WRAPPER").as_deref(), Some("sccache"));
     assert_eq!(
-        told(0, "REN_WORKSPACE_PORTS").as_deref(),
+        told(0, "REN_WORKTREE_PORTS").as_deref(),
         Some("20000-20099")
     );
     assert_eq!(
-        told(1, "REN_WORKSPACE_PORTS").as_deref(),
+        told(1, "REN_WORKTREE_PORTS").as_deref(),
         Some("20100-20199")
     );
     assert_eq!(
-        told(1, "REN_WORKSPACE_DATA").as_deref(),
+        told(1, "REN_WORKTREE_DATA").as_deref(),
         Some("/worktrees/.data/acme-2")
     );
     supervisor.send(made[0], RunCommand::Stop).await.unwrap();
@@ -2542,11 +2542,11 @@ async fn each_workspace_session_works_in_its_own_worktree_and_slot() {
     );
 }
 
-/// A registered project's repository gets a workspace though it lies
+/// A registered project's repository gets a worktree though it lies
 /// outside every root; the same folder asked for as a plain worktree does
 /// not.
 #[tokio::test]
-async fn a_registered_project_gets_a_workspace_outside_the_roots() {
+async fn a_registered_project_gets_a_worktree_outside_the_roots() {
     let host = FakeHost::new(Script::Codex);
     let worktrees = host.worktrees.clone();
     let supervised = supervise(host).await;

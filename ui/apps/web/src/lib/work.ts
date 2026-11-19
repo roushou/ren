@@ -400,7 +400,7 @@ export class Work {
     const lines = ids.length
       ? ids.map((id) => Redline.code(`Work-Item: ${id}`)).join(' and ')
       : `the work item's ${Redline.code('Work-Item:')} line`;
-    return `${closing} End each commit message with ${lines}, and put the same in the pull request's description: that is how Ren knows when the change lands. Once the change is ready to look at, run ${Redline.code(Briefing.preview(project))} in the workspace: it shows the marked page on your branch beside production's.`;
+    return `${closing} End each commit message with ${lines}, and put the same in the pull request's description: that is how Ren knows when the change lands. Once the change is ready to look at, run ${Redline.code(Briefing.preview(project))} in the worktree: it shows the marked page on your branch beside production's.`;
   }
 
   /** One brief for several queued items: each item's marks under its page,

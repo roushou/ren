@@ -42,7 +42,7 @@
           rel="noopener">On the branch</a
         >{:else}<span
           class="muted"
-          title="The agent starts one with `cargo xtask preview up --publish` in its workspace"
+          title="The agent starts one with `cargo xtask preview up --publish` in its worktree"
           >No preview yet</span
         >{/if}
       <a class="button small" href={item.order.page.path} target="_blank" rel="noopener"
@@ -82,7 +82,7 @@
   </ul>
 {/if}
 <h3>Brief</h3>
-<div class="brief"><Markdown text={Work.batch([item], 'workspace', project)} /></div>
+<div class="brief"><Markdown text={Work.batch([item], 'worktree', project)} /></div>
 
 <style>
   .detail-head {

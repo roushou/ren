@@ -1126,30 +1126,30 @@ export class RunsClient {
     const path = `/control/sessions/${session}`;
     return (await this.#send('GET', path, undefined, oneSession, signal)).session;
   }
-  /** A new draft in `dir` (null: a scratch folder of its own), or with `workspace`, in a workspace of its own made from the repository in `dir`; its client starts with its first prompt. */
+  /** A new draft in `dir` (null: a scratch folder of its own), or with `checkout` set to `worktree`, in a worktree of its own made from the repository in `dir`; its client starts with its first prompt. */
   async createSession(
     harness: Drivable,
     dir: string | null,
     settings: Partial<ChosenSettings> = {},
-    workspace: 'folder' | 'worktree' = 'folder',
+    checkout: 'folder' | 'worktree' = 'folder',
   ): Promise<SessionId> {
     const body = {
       harness,
       ...(dir ? { dir } : {}),
-      ...(dir && workspace === 'worktree' ? { workspace } : {}),
+      ...(dir && checkout === 'worktree' ? { checkout } : {}),
       ...(settings.model ? { model: settings.model } : {}),
       ...(settings.effort ? { effort: settings.effort } : {}),
       ...(settings.approvals ? { approvals: settings.approvals } : {}),
     } satisfies WireCreateRequest;
     return (await this.#send('POST', '/control/sessions', body, createdSession)).session;
   }
-  /** A session for the registered `project`, in a workspace of its own in
+  /** A session for the registered `project`, in a worktree of its own in
    * the project's repository. */
   async createProjectSession(harness: Drivable, project: string): Promise<SessionId> {
     const body = {
       harness,
       project,
-      workspace: 'worktree',
+      checkout: 'worktree',
     } satisfies WireCreateRequest;
     return (await this.#send('POST', '/control/sessions', body, createdSession)).session;
   }

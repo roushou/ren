@@ -42,7 +42,7 @@ although Ren is the first project the factory builds.
 ```text
 Project                       a repository Ren builds (Ren is one)
  ├─ Release                   main, the canary's verdict, production, the decision
- ├─ Workspace                 a worktree of it, with its slot's ports and data
+ ├─ Worktree                 a worktree of it, with its slot's ports and data
  └─ Work item                 queued → sent → landed → shipped (or dismissed)
      └─ Session               the agent conversation that does it
          └─ Run               one client process
@@ -79,9 +79,9 @@ Records outside the tree stay, and each says why it is outside:
    production's file does not move.
 3. **Ownership points up, once, and is set when the record is made.**
    - `operator_sessions.project`: a session made in a project's repository,
-     or in a workspace of it (`<repo>-<slot>` of that repository), names
+     or in a worktree of it (`<repo>-<slot>` of that repository), names
      the project, resolved when the session is created. A session may also
-     be asked for by project (`"project": "<name>"`, a workspace of it)
+     be asked for by project (`"project": "<name>"`, a worktree of it)
      rather than by folder. A scratch session has none.
    - `work_items.project`: queueing a work item names its project. Redline
      marks pages of Ren's UI, so it defaults to Ren, and a page marked on a
@@ -95,7 +95,7 @@ Records outside the tree stay, and each says why it is outside:
    columns are nullable. A null reads as `Unassigned`, a typed state of its
    own, never rounded up to Ren. `ren project add` offers to assign a
    project's unassigned sessions whose folder is in its repository or one
-   of its workspaces, since the folder says so. Work items are assigned by
+   of its worktrees, since the folder says so. Work items are assigned by
    hand, because their marked page does not say which repository it was for.
 5. **The API serves the tree, with collections under a project.** The flat
    reads stay, for Inspect, and gain a project filter. Project-scoped reads
@@ -273,7 +273,7 @@ gate against `main`.
 - **Phase 2: adoption is its own command.** The doc had `ren project add`
   offer it; `add` says how many sessions in the repository have no
   project, and `ren project adopt` (`POST /control/v1/projects/{name}/adopt`)
-  assigns them, with the project's workspaces matched by folder name
+  assigns them, with the project's worktrees matched by folder name
   (skipped when another project's repository shares it).
 - **Phase 3: project reads are their own routes.** The doc had
   `ReadRequest::Projects` and `ReadRequest::Project`. A project's read
@@ -285,7 +285,7 @@ gate against `main`.
 - **Phase 3: a project's activity is counts.** The project read holds its
   work items by state, its sessions not archived, and its runs not ended;
   the items, sessions, and runs themselves are the filtered lists, and its
-  workspaces are its sessions' folders, so no separate list is kept.
+  worktrees are its sessions' folders, so no separate list is kept.
 - **Phase 3: `ren project list` reads the API; resolving stays local.**
   `list` reads `/api/projects` (and so works against a remote gateway).
   `--project` lookups for `canary` and `promote`, which build a repository

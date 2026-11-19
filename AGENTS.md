@@ -176,7 +176,7 @@ saturation, and persistence recovery.
 
 ---
 
-## 4. Workspace map
+## 4. Worktree map
 
 This map describes the code as it is: the ten crates, listed with their
 dependencies under "Crates" below. Read the code for current module ownership.
@@ -218,11 +218,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`tools`), its build, serve, check, and quiesce steps,
   each an argv with the environment it adds, never a shell line, whose
   values name the `Place` a step runs for through a parsed `Template`
-  (`{port}`, `{port+N}`, `{data}`, `{workspace}`; an unknown placeholder is
+  (`{port}`, `{port+N}`, `{data}`, `{worktree}`, read from its old name
+  `{workspace}` too; an unknown placeholder is
   refused as the contract is read, a port past the place's range as a step
   expands). Sans-IO; `ren project` (`crates/ren-cli/src/commands/project/`,
   the one place the CLI runs a project's steps) runs its checks,
-  previews a workspace of it, and runs its canary and promotion
+  previews a worktree of it, and runs its canary and promotion
   (`commands/project/canary.rs`: `ProjectFactory`, with its release in
   `<data>/projects/<name>`).
 - `crates/ren-release`: how a build of Ren moves from `main` to production,
@@ -466,14 +467,15 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `AgentHost::spawn_in_terminal` when it needs a terminal, and a pasted
   address is opened with `AgentHost::open_local`. What a login prints is
   cleaned of every answer typed into it.
-  A session started with `StartPlace::Worktree` works in a workspace of
-  its own (`workspace`, pure): a worktree of the repository named, made by
+  A session started with `StartPlace::Worktree` works in a worktree of
+  its own (`worktree`, pure) of the repository named, made by
   `AgentHost::make_worktree` in the worktrees folder as `<repo>-<slot>` on
   `ren/<repo>-<slot>-<id>`, its slot (the lowest free) giving it 100 ports
-  and a data folder, which its runs are told as `REN_WORKSPACE*` beside the
-  operator's `workspace_env`; forgetting the session removes it
+  and a data folder, which its runs are told as `REN_WORKTREE*` (and, for project
+  scripts written before the rename, the old `REN_WORKSPACE*`) beside the
+  operator's `worktree_env` (read as `workspace_env` too); forgetting the session removes it
   (`AgentHost::remove_worktree`) unless it holds changes not committed.
-  `src/purity.rs` keeps `run`, `process`, `journal`, `workdir`, `workspace`, `project`, `entries`, `files`,
+  `src/purity.rs` keeps `run`, `process`, `journal`, `workdir`, `worktree`, `project`, `entries`, `files`,
   `session`, and `sign_in` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
@@ -709,10 +711,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `install-vps --build` installs).
   `replica`: Ren on a copy of production's history (`ProductionPlace`,
   production and its work item API, and `Replica`, the canary's and each
-  preview's instance). `cargo xtask preview` (`preview`) runs a workspace's
-  branch as a replica on the workspace's ports and records it on the work
-  items the branch names; `ren_supervisor::Workspace::preview_units` names
-  the units, which removing the workspace stops.
+  preview's instance). `cargo xtask preview` (`preview`) runs a worktree's
+  branch as a replica on the worktree's ports and records it on the work
+  items the branch names; `ren_supervisor::Worktree::preview_units` names
+  the units, which removing the worktree stops.
   `cargo xtask canary` is the factory's canary and promotion (`canary`;
   `docs/deployment.md#canary-and-promotion`, `docs/plans/self-build.md`,
   phase 4): a pass fetches `main` into Ren's own worktree and goes on with

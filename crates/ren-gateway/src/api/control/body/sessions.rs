@@ -15,7 +15,7 @@ use ren_recorder::time::UnixMillis;
 use ren_supervisor::ImageTaking;
 use ren_supervisor::PathKind;
 use ren_supervisor::SessionPhase;
-use ren_supervisor::Workspace;
+use ren_supervisor::Worktree;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use ts_rs::TS;
@@ -209,8 +209,8 @@ impl SessionBody {
             .or_else(|| stored.as_ref().map(|stored| PathBuf::from(&stored.workdir)));
         let worktree = worktrees
             .zip(workdir)
-            .and_then(|(root, workdir)| Workspace::of(root, &workdir))
-            .map(|workspace| WorktreeBody::from(&workspace));
+            .and_then(|(root, workdir)| Worktree::of(root, &workdir))
+            .map(|worktree| WorktreeBody::from(&worktree));
         Self {
             session,
             stored,
@@ -234,12 +234,12 @@ pub struct WorktreeBody {
     pub ports: (u16, u16),
 }
 
-impl From<&Workspace> for WorktreeBody {
-    fn from(workspace: &Workspace) -> Self {
+impl From<&Worktree> for WorktreeBody {
+    fn from(worktree: &Worktree) -> Self {
         Self {
-            name: workspace.name().to_owned(),
-            data: workspace.data(),
-            ports: workspace.ports(),
+            name: worktree.name().to_owned(),
+            data: worktree.data(),
+            ports: worktree.ports(),
         }
     }
 }

@@ -227,7 +227,7 @@ impl<H: AgentHost> SupervisorTask<H> {
     /// scratch folder itself, never a new one.
     pub(super) fn listing_folder(&self, place: StartPlace) -> Result<Workdir, StartError> {
         match place {
-            // A workspace's client lists what the repository's does.
+            // A worktree's client lists what the repository's does.
             StartPlace::Folder(dir) | StartPlace::Worktree(dir) => {
                 self.confirm(&dir.parse::<RequestedDir>().map_err(StartError::Workdir)?)
             }

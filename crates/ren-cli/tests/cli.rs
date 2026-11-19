@@ -868,7 +868,7 @@ async fn project_steps_run_with_rens_toolset_and_refuse_tools_it_lacks() {
                 project.to_str().unwrap(),
             ])
             .env("PATH", "/usr/bin:/bin")
-            .env_remove("REN_WORKSPACE")
+            .env_remove("REN_WORKTREE")
             .output()
             .unwrap()
     };

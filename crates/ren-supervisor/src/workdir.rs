@@ -21,7 +21,7 @@ pub struct Bounds {
     scratch: Option<PathBuf>,
     /// The operator's home, for showing paths as `~/…`.
     home: Option<PathBuf>,
-    /// The folder workspaces are made in; none when it could not be set up.
+    /// The folder worktrees are made in; none when it could not be set up.
     worktrees: Option<PathBuf>,
 }
 
@@ -101,7 +101,7 @@ impl Bounds {
         self.scratch.as_deref()
     }
 
-    /// These bounds, with workspaces made in `worktrees`.
+    /// These bounds, with worktrees made in `worktrees`.
     pub fn with_worktrees(mut self, worktrees: Option<PathBuf>) -> Self {
         self.worktrees = worktrees;
         self

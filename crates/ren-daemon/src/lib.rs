@@ -109,7 +109,7 @@ impl Daemon {
     /// The folder under the data directory where sessions' attachments
     /// are kept, a folder per session.
     const ATTACHMENTS: &str = "attachments";
-    /// The folder under the data directory where workspaces are made: a
+    /// The folder under the data directory where worktrees are made: a
     /// worktree per session that asks for one.
     const WORKTREES: &str = "worktrees";
     /// How long stopped runs may take to exit and be recorded.
@@ -330,9 +330,9 @@ impl Daemon {
             places: config.run_places().places.clone(),
             scratch: config.run_places().scratch.clone(),
             worktrees: Some(data_dir.join(Self::WORKTREES)),
-            workspace_env: config
+            worktree_env: config
                 .runs()
-                .workspace_env
+                .worktree_env
                 .iter()
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect(),
