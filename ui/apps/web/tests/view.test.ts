@@ -40,3 +40,13 @@ test('three destinations hold every page, each page in exactly one', () => {
   assert.equal(Views.destination(Views.tab('turn')), 'inspect');
   assert.equal(Views.destination(Views.tab('project')), 'projects');
 });
+
+test('only the pages that read a project carry it between them', () => {
+  const traffic = { tab: 'traffic', href: '/traffic', label: 'Traffic' } as const;
+  const live = { tab: 'live', href: '/live', label: 'Live' } as const;
+  assert.equal(Views.scopedHref(traffic, 'acme-web'), '/traffic?project=acme-web');
+  assert.equal(Views.scopedHref(traffic, null), '/traffic');
+  assert.equal(Views.scopedHref(live, 'acme-web'), '/live');
+  assert.ok(Views.scoped('recordings'));
+  assert.equal(Views.scoped('search'), false);
+});

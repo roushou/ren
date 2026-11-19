@@ -190,8 +190,14 @@ Records outside the tree stay, and each says why it is outside:
    in its project's repository (`"project"` on session create), one
    project's items at a time.
 
-   Left for later rounds: Inspect scoped to a project (calls are tied to
-   runs only through their conversation), and a project's workspaces.
+   Inspect is scoped to a project by `?project=` on Traffic and
+   Recordings (`/api/calls` and `/api/recordings` take `project`: a call is
+   a project's when its recording's conversation is the thread of a run of
+   a session working for it); a row under the pages names the scope and
+   clears it, and switching between those two keeps it. A project's page
+   links its calls and recordings.
+
+   Left for later rounds: a project's workspaces.
 
 Each phase is verified in the dev slot, whose fake projects are registered
 as projects (and the slot's checkout as `Ren`), and by the compatibility

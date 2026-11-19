@@ -186,19 +186,25 @@ impl Reader {
         })
     }
 
-    /// The `limit` most recently active recordings on `shelf`.
+    /// Recordings on `shelf`, most recently active first; with `project`,
+    /// only the conversations of its sessions' runs.
     pub async fn recordings(
         &self,
         limit: PageLimit,
         shelf: Shelf,
+        project: Option<&ProjectName>,
     ) -> Result<Vec<RecordingView>, StoreError> {
         let mut sql = QueryBuilder::<Sqlite>::new(
             "SELECT s.id, s.provider, s.source, s.native_id, s.first_seen, s.last_seen, CASE WHEN s.archived_at >= s.last_seen THEN s.archived_at END AS archived_at, (SELECT COUNT(*) FROM turns WHERE recording = s.id) AS turn_count, ",
         );
         CallQuery::push_usage_columns(&mut sql);
         sql.push(" FROM recordings s LEFT JOIN calls c ON c.recording = s.id WHERE ")
-            .push(shelf.recordings())
-            .push(" GROUP BY s.id ORDER BY s.last_seen DESC, s.id DESC LIMIT ")
+            .push(shelf.recordings());
+        if let Some(project) = project {
+            sql.push(" AND ");
+            CallQuery::push_project_recording(&mut sql, project);
+        }
+        sql.push(" GROUP BY s.id ORDER BY s.last_seen DESC, s.id DESC LIMIT ")
             .push_bind(i64::from(limit.get()));
         sql.build()
             .fetch_all(&self.pool)

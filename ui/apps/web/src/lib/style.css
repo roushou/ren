@@ -355,6 +355,27 @@ pre {
   color: var(--ink);
   border-bottom-color: var(--accent);
 }
+/* An Inspect page narrowed to one project, under its row of pages. */
+.scope-row {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 6px 14px;
+  font-size: 12px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--accent-border);
+  color: var(--accent-text);
+}
+.scope-row a {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.scope-row .clear {
+  margin-left: auto;
+  font-weight: 500;
+}
 /* Where the gateway runs: its node and network, never its address. */
 .gateway-place {
   display: inline-flex;

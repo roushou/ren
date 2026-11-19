@@ -20,10 +20,12 @@ pub enum ReadRequest {
     /// Calls, newest first, narrowed by the query's filters.
     Calls(CallQuery),
     Call(CallId),
-    /// Recordings, most recently active first.
+    /// Recordings, most recently active first; with a project, its
+    /// sessions' runs' only.
     Recordings {
         limit: PageLimit,
         shelf: Shelf,
+        project: Option<ProjectName>,
     },
     /// A recording's calls, oldest first, a page at a time.
     RecordingCalls {
@@ -100,8 +102,12 @@ impl Reader {
         Ok(match request {
             ReadRequest::Calls(query) => ReadResponse::Calls(self.calls(query).await?),
             ReadRequest::Call(call) => ReadResponse::Call(Box::new(self.call(*call).await?)),
-            ReadRequest::Recordings { limit, shelf } => ReadResponse::Recordings {
-                recordings: self.recordings(*limit, *shelf).await?,
+            ReadRequest::Recordings {
+                limit,
+                shelf,
+                project,
+            } => ReadResponse::Recordings {
+                recordings: self.recordings(*limit, *shelf, project.as_ref()).await?,
             },
             ReadRequest::RecordingCalls {
                 recording,

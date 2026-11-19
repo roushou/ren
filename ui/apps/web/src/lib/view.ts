@@ -190,6 +190,37 @@ export class Views {
     }
   }
 
+  /** Whether `tab` can be scoped to one project with `?project=`. */
+  static scoped(tab: Tab): boolean {
+    switch (tab) {
+      case 'traffic':
+      case 'recordings':
+        return true;
+      case 'projects':
+      case 'sessions':
+      case 'work':
+      case 'release':
+      case 'overview':
+      case 'live':
+      case 'search':
+      case 'tools':
+      case 'usage':
+      case 'recorder':
+        return false;
+      default: {
+        const never: never = tab;
+        return never;
+      }
+    }
+  }
+
+  /** `link`'s address, carrying `project` when its page can be scoped. */
+  static scopedHref(link: PageLink, project: string | null): string {
+    return project && Views.scoped(link.tab)
+      ? `${link.href}?${new URLSearchParams({ project })}`
+      : link.href;
+  }
+
   /** What the toolbar and the document title call `view`. */
   static title(view: View): string {
     switch (view) {

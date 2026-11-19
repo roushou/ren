@@ -8,5 +8,10 @@ const reader = browser ? new RecordingsReader() : null;
 export const load: PageLoad = async ({ fetch, parent, url }) => {
   await parent();
   const shelf = url.searchParams.get('shelf') === 'archived' ? 'archived' : 'current';
-  return { recordings: await (reader ?? new RecordingsReader()).read(fetch, shelf), shelf };
+  const project = url.searchParams.get('project');
+  return {
+    recordings: await (reader ?? new RecordingsReader()).read(fetch, shelf, project),
+    shelf,
+    project,
+  };
 };

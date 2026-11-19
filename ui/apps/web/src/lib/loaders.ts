@@ -54,6 +54,7 @@ export interface TrafficData {
 const callFilters: readonly (keyof RawCallQuery & string)[] = [
   'q',
   'recording',
+  'project',
   'client',
   'user',
   'provider',
@@ -228,23 +229,32 @@ export class RecordingsReader {
     this.#details = details;
   }
 
-  /** The recordings on `shelf`: current, or archived. */
-  read(fetcher: typeof fetch, shelf: Shelf = 'current'): Promise<Arriving<RecordingsData>> {
+  /** The recordings on `shelf`, current or archived; with `project`, only
+   * its sessions' runs'. */
+  read(
+    fetcher: typeof fetch,
+    shelf: Shelf = 'current',
+    project: string | null = null,
+  ): Promise<Arriving<RecordingsData>> {
     const api = new ManagementApi(fetcher);
-    // Keyed by shelf: a refresh keeps its rows, but the other shelf is another query.
-    return Arrival.read(`recordings:${shelf}`, async (): Promise<RecordingsData> => {
-      const [listing, open] = await Promise.all([
-        api.recordings(100, undefined, shelf),
-        api
-          .calls(query<RawCallQuery>({ status: 'active', kind: 'model', limit: 100 }))
-          .then((page) => page.calls),
-      ]);
-      const wanted = listing.recordings
-        .filter((recording) => !RecordingList.trivial(recording))
-        .slice(0, RecordingsReader.detailed);
-      const details = await this.#details.read(api, wanted);
-      return { recordings: listing.recordings, open, details };
-    });
+    // Keyed by shelf and project: a refresh keeps its rows, but another
+    // shelf or project is another query.
+    return Arrival.read(
+      `recordings:${shelf}:${project ?? ''}`,
+      async (): Promise<RecordingsData> => {
+        const [listing, open] = await Promise.all([
+          api.recordings(100, undefined, shelf, project),
+          api
+            .calls(query<RawCallQuery>({ status: 'active', kind: 'model', limit: 100 }))
+            .then((page) => page.calls),
+        ]);
+        const wanted = listing.recordings
+          .filter((recording) => !RecordingList.trivial(recording))
+          .slice(0, RecordingsReader.detailed);
+        const details = await this.#details.read(api, wanted);
+        return { recordings: listing.recordings, open, details };
+      },
+    );
   }
 }
 

@@ -33,6 +33,8 @@ pub(super) struct RawCallQuery {
     after: Option<String>,
     #[ts(as = "Option<String>")]
     recording: RawLabel,
+    /// A project's name: its sessions' runs' calls.
+    project: Option<String>,
     #[ts(as = "Option<String>")]
     client: RawLabel,
     #[ts(as = "Option<String>")]
@@ -61,34 +63,8 @@ pub(super) struct RawPageQuery {
     pub after: Option<String>,
 }
 
-/// `GET /api/runs` and `/api/work` parameters: a page of one shelf, of
-/// every project or of the one named.
-#[derive(Debug, Default, Deserialize, TS)]
-#[serde(deny_unknown_fields, default)]
-#[ts(export, optional_fields)]
-pub(super) struct RawOwnedQuery {
-    limit: Option<u32>,
-    #[ts(as = "Option<String>")]
-    shelf: RawLabel,
-    project: Option<String>,
-}
-
-impl RawOwnedQuery {
-    pub fn parse(self) -> Result<(PageLimit, Shelf, Option<ProjectName>), QueryError> {
-        let (limit, shelf) = RawShelfQuery {
-            limit: self.limit,
-            shelf: self.shelf,
-        }
-        .parse()?;
-        let project = self
-            .project
-            .map(|name| name.parse().map_err(|_| QueryError::Filter))
-            .transpose()?;
-        Ok((limit, shelf, project))
-    }
-}
-
-/// `GET /api/recordings` parameters: a page of one shelf.
+/// `GET /api/recordings`, `/api/runs`, and `/api/work` parameters: a page
+/// of one shelf, of every project or of the one named.
 #[derive(Debug, Default, Deserialize, TS)]
 #[serde(deny_unknown_fields, default)]
 #[ts(export, optional_fields)]
@@ -96,14 +72,18 @@ pub(super) struct RawShelfQuery {
     limit: Option<u32>,
     #[ts(as = "Option<String>")]
     shelf: RawLabel,
+    project: Option<String>,
 }
 
 impl RawShelfQuery {
-    pub fn parse(self) -> Result<(PageLimit, Shelf), QueryError> {
-        Ok((
-            self.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
-            self.shelf.parse()?.unwrap_or_default(),
-        ))
+    pub fn parse(self) -> Result<(PageLimit, Shelf, Option<ProjectName>), QueryError> {
+        let limit = self.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?;
+        let shelf = self.shelf.parse()?.unwrap_or_default();
+        let project = self
+            .project
+            .map(|name| name.parse().map_err(|_| QueryError::Filter))
+            .transpose()?;
+        Ok((limit, shelf, project))
     }
 }
 
@@ -224,6 +204,10 @@ impl TryFrom<RawCallQuery> for CallQuery {
             after: raw.after.as_deref().map(Cursor::from_str).transpose()?,
             filter: CallFilter {
                 recording: raw.recording.parse()?,
+                project: raw
+                    .project
+                    .map(|name| name.parse().map_err(|_| QueryError::Filter))
+                    .transpose()?,
                 client: raw.client.parse()?,
                 user: raw.user.parse()?,
                 kind: raw.kind.parse()?,

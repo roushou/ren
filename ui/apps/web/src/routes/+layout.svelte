@@ -115,6 +115,16 @@
   const tab = $derived(Views.tab(target ?? view));
   /** The header's place the page is in, and so the row of pages under it. */
   const destination = $derived(Views.destination(tab));
+  /** The project an Inspect page is narrowed to, when it can be. */
+  const scope = $derived(Views.scoped(tab) ? page.url.searchParams.get('project') : null);
+  /** The same page, for every project. */
+  const unscoped = $derived.by(() => {
+    const params = new URLSearchParams(page.url.search);
+    params.delete('project');
+    params.delete('after');
+    const search = params.toString();
+    return search ? `${page.url.pathname}?${search}` : page.url.pathname;
+  });
   const destinationIcons = {
     projects: 'branch',
     inspect: 'logs',
@@ -299,7 +309,7 @@
   >
     {#each Views.pages(destination) as link (link.tab)}
       <a
-        href={link.href}
+        href={Views.scopedHref(link, scope)}
         data-sveltekit-preload-data="hover"
         class:active={tab === link.tab}
         aria-current={tab === link.tab ? 'page' : undefined}
@@ -310,6 +320,13 @@
       >
     {/each}
   </nav>
+  {#if scope}
+    <div class="scope-row" role="status">
+      <span>Project <a href={`/projects/${encodeURIComponent(scope)}`}>{scope}</a></span>
+      <span class="muted">its sessions' runs only</span>
+      <a class="clear" href={unscoped}>All projects</a>
+    </div>
+  {/if}
   {#if navigating.to}<div
       class="nav-progress"
       role="progressbar"

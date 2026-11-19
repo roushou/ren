@@ -175,7 +175,15 @@
       </ul>
     {/each}
 
-    <h2>Runs</h2>
+    <h2 class="with-links">
+      Runs
+      <span class="inspect">
+        <a href={`/traffic?${new URLSearchParams({ project: project.name })}`}>Their calls</a>
+        <a href={`/recordings?${new URLSearchParams({ project: project.name })}`}
+          >Their recordings</a
+        >
+      </span>
+    </h2>
     {#if !data.runs.length}
       <p class="empty">No session has run for {project.name} yet.</p>
     {:else}
@@ -320,6 +328,20 @@
     margin: 0;
     padding: 16px 16px 8px;
     border-bottom: 1px solid var(--line);
+  }
+  .with-links {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .inspect {
+    display: flex;
+    gap: 12px;
+    margin-left: auto;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+    font-size: 12px;
   }
   .lanes {
     display: grid;

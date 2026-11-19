@@ -26,6 +26,7 @@ fn every_read() -> Vec<ReadRequest> {
     };
     filtered.filter = CallFilter {
         recording: Some(session),
+        project: Some("acme-web".parse().unwrap()),
         client: Some(Harness::Codex),
         user: Some("alice".parse::<UserId>().unwrap()),
         kind: Some(KindFilter::Model),
@@ -45,10 +46,12 @@ fn every_read() -> Vec<ReadRequest> {
         ReadRequest::Recordings {
             limit,
             shelf: Shelf::Current,
+            project: None,
         },
         ReadRequest::Recordings {
             limit,
             shelf: Shelf::Archived,
+            project: Some("acme-web".parse().unwrap()),
         },
         ReadRequest::RecordingCalls {
             recording: session,

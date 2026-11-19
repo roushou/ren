@@ -147,7 +147,7 @@ pub enum Step {
     /// Write this message.
     Reply(Value),
     /// Run this tool call, then write [`PendingCall::answer`].
-    Run(PendingCall),
+    Run(Box<PendingCall>),
     /// Write nothing: the line was a notification or a response.
     Silent,
 }
@@ -290,7 +290,7 @@ impl McpServer {
             }
             (Method::ToolsCall, Era::Modern(_) | Era::Legacy(_)) => {
                 return Ok(match Self::call(params)? {
-                    Ok(tool) => Step::Run(PendingCall { tool, reply }),
+                    Ok(tool) => Step::Run(Box::new(PendingCall { tool, reply })),
                     Err(message) => {
                         Step::Reply(reply.complete(ToolOutcome::Failed(message).into_result()))
                     }
@@ -455,7 +455,7 @@ mod tests {
 
     fn run(server: &mut McpServer, line: &str) -> PendingCall {
         match server.handle(line.as_bytes()) {
-            Step::Run(pending) => pending,
+            Step::Run(pending) => *pending,
             Step::Reply(value) => panic!("expected a tool call, got {value}"),
             Step::Silent => panic!("expected a tool call, got nothing"),
         }

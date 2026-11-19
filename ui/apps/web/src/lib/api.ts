@@ -1647,11 +1647,18 @@ export class ManagementApi {
     const suffix = params.size ? `?${params}` : '';
     return this.#read(`/api/usage${suffix}`, usageView, signal);
   }
-  /** The most recently active recordings; `archived` lists those archived instead. */
-  recordings(limit = 100, signal?: AbortSignal, shelf: Shelf = 'current'): Promise<Recordings> {
+  /** The most recently active recordings; `archived` lists those archived
+   * instead; with `project`, only its sessions' runs'. */
+  recordings(
+    limit = 100,
+    signal?: AbortSignal,
+    shelf: Shelf = 'current',
+    project: string | null = null,
+  ): Promise<Recordings> {
     const params = query<RawShelfQuery>({
       limit,
       shelf: shelf === 'archived' ? 'archived' : null,
+      project,
     });
     return this.#read(`/api/recordings?${params}`, recordings, signal);
   }

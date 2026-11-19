@@ -324,6 +324,7 @@ impl Reads {
             let ReadResponse::Recordings { recordings: listed } = serve(ReadRequest::Recordings {
                 limit: PageLimit::DEFAULT,
                 shelf,
+                project: None,
             })
             .await
             else {
@@ -426,11 +427,42 @@ impl Reads {
                 assert!(item.state().is_some(), "work item state");
             }
         }
-        // Stores before projects hold none.
+        // Stores before projects hold none. A project whose session ran
+        // sees that run's calls and recording.
+        let owned: Vec<_> = sessions
+            .iter()
+            .filter_map(|session| session.project)
+            .collect();
         for project in reader.projects().await.unwrap() {
             let named = reader.project_named(&project.name).await.unwrap();
             assert_eq!(named.map(|named| named.id), Some(project.id));
             assert!(project.factory.known().is_some(), "project factory");
+            let ReadResponse::Calls(page) = serve(ReadRequest::Calls(CallQuery {
+                filter: ren_store::query::CallFilter {
+                    project: Some(project.name.clone()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }))
+            .await
+            else {
+                panic!("a project's calls");
+            };
+            let ReadResponse::Recordings { recordings } = serve(ReadRequest::Recordings {
+                limit: PageLimit::DEFAULT,
+                shelf: Shelf::Current,
+                project: Some(project.name.clone()),
+            })
+            .await
+            else {
+                panic!("a project's recordings");
+            };
+            assert_eq!(
+                owned.contains(&project.id),
+                !page.calls.is_empty() && !recordings.is_empty(),
+                "{}'s calls and recordings",
+                project.name
+            );
         }
         reader
             .observations_after(0, PageLimit::DEFAULT)

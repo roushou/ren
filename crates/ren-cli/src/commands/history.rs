@@ -112,6 +112,7 @@ impl RecordingsCmd {
                 ReadRequest::Recordings {
                     limit: self.limit,
                     shelf: self.shelf,
+                    project: None,
                 },
             )
             .await

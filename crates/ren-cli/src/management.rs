@@ -576,6 +576,7 @@ mod tests {
                 .serve(&ReadRequest::Recordings {
                     limit: PageLimit::new(10).unwrap(),
                     shelf: Shelf::Current,
+                    project: None,
                 })
                 .await
                 .unwrap()

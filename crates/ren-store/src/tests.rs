@@ -319,7 +319,7 @@ async fn a_recorded_call_reads_back_with_its_log_bodies_and_inspection() {
     assert!(prefix.truncated && !prefix.gap);
     let sessions = fixture
         .reader
-        .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current)
+        .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current, None)
         .await
         .unwrap();
     assert_eq!(
@@ -600,7 +600,7 @@ async fn retention_removes_oldest_calls_and_sweeps_only_unreferenced_chunks() {
     assert!(
         fixture
             .reader
-            .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current)
+            .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current, None)
             .await
             .unwrap()
             .is_empty()
@@ -1013,7 +1013,7 @@ async fn sessions_total_their_errors_and_tokens_including_cached_input() {
         .await;
     let sessions = fixture
         .reader
-        .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current)
+        .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current, None)
         .await
         .unwrap();
     let totals: Vec<_> = sessions
@@ -1344,7 +1344,7 @@ mod digests {
             let reader = reader.clone();
             async move {
                 reader
-                    .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current)
+                    .recordings(PageLimit::DEFAULT, crate::query::Shelf::Current, None)
                     .await
                     .unwrap()[0]
                     .error_count
@@ -1597,7 +1597,7 @@ mod history {
 
         async fn shelf(&self, shelf: Shelf) -> Vec<RecordingId> {
             self.reader
-                .recordings(PageLimit::DEFAULT, shelf)
+                .recordings(PageLimit::DEFAULT, shelf, None)
                 .await
                 .unwrap()
                 .iter()
@@ -1684,7 +1684,7 @@ mod history {
         assert_eq!(fixture.shelf(Shelf::Archived).await, [archived]);
         let listed = fixture
             .reader
-            .recordings(PageLimit::DEFAULT, Shelf::Archived)
+            .recordings(PageLimit::DEFAULT, Shelf::Archived, None)
             .await
             .unwrap();
         assert!(listed[0].archived_at.is_some());

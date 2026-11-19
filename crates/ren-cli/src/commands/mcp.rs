@@ -46,7 +46,7 @@ impl McpCmd {
                 Line::Message(line) if line.iter().all(u8::is_ascii_whitespace) => continue,
                 Line::Message(line) => match server.handle(&line) {
                     Step::Reply(reply) => reply,
-                    Step::Run(pending) => Self::execute(&gateway, pending).await,
+                    Step::Run(pending) => Self::execute(&gateway, *pending).await,
                     Step::Silent => continue,
                 },
             };

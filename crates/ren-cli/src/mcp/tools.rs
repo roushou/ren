@@ -308,6 +308,7 @@ impl ToolCall {
                     after: Field("after").cursor(args.after)?,
                     filter: CallFilter {
                         recording: Field("recording_id").optional_id(args.recording_id)?,
+                        project: None,
                         client: Field("client").label::<Harness>(args.client)?,
                         user: Field("user").user(args.user)?,
                         kind: Field("kind").label::<KindFilter>(args.kind)?,
@@ -332,6 +333,7 @@ impl ToolCall {
                 ReadRequest::Recordings {
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
                     shelf: Shelf::Current,
+                    project: None,
                 }
             }
             ToolName::RecordingCalls => {

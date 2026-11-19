@@ -349,6 +349,7 @@ fn each_pinned_answer_decodes_as_its_read_and_round_trips() {
             ReadRequest::Recordings {
                 limit: PageLimit::DEFAULT,
                 shelf: Shelf::Current,
+                project: None,
             },
         ),
         (
