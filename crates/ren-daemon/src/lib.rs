@@ -7,6 +7,7 @@
 
 pub mod config;
 pub mod host;
+pub mod tailscale;
 pub mod tools;
 
 use crate::config::RuntimeConfig;
