@@ -126,7 +126,11 @@
       <div class="shots">
         {#each shots as shot (shot)}
           <a class="shot" href={`/api/release/shots/${shot}`} target="_blank" rel="noopener">
-            <img src={`/api/release/shots/${shot}`} alt={`The ${shot} page on the canary`} loading="lazy" />
+            <img
+              src={`/api/release/shots/${shot}`}
+              alt={`The ${shot} page on the canary`}
+              loading="lazy"
+            />
             <span>{shot}</span>
           </a>
         {/each}
@@ -181,7 +185,11 @@
             <td class="mono">{ReleasePage.short(line.production)} · {line.behind}</td>
             <td class="mono"
               >{ReleasePage.short(project.release.canary?.commit ?? null)}
-              {project.release.canary ? (project.release.canary.passed ? 'passed' : 'failed') : ''}</td
+              {project.release.canary
+                ? project.release.canary.passed
+                  ? 'passed'
+                  : 'failed'
+                : ''}</td
             >
             <td><span class="tone-{tone}">{project.release.policy}: {said}</span></td>
           </tr>

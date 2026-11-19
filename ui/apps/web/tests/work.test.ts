@@ -4,13 +4,21 @@ import { readFileSync } from 'node:fs';
 import { PageEvidence, Work, WorkApi, type WorkItem } from '../src/lib/work.ts';
 
 const pinned: typeof fetch = async () =>
-  Response.json(JSON.parse(readFileSync(new URL('./fixtures/api/work.json', import.meta.url), 'utf8')));
+  Response.json(
+    JSON.parse(readFileSync(new URL('./fixtures/api/work.json', import.meta.url), 'utf8')),
+  );
 
-const page = { path: '/recordings', title: 'Ren - Recordings', width: 1440, height: 900, theme: 'light' as const };
+const page = {
+  path: '/recordings',
+  title: 'Ren - Recordings',
+  width: 1440,
+  height: 900,
+  theme: 'light' as const,
+};
 const mark = (id: number, note: string) => ({
   id,
   note,
-  target: { selector: 'main > table', text: 'acme-api', source: null, width: 640.4, height: 28, },
+  target: { selector: 'main > table', text: 'acme-api', source: null, width: 640.4, height: 28 },
 });
 
 test("the daemon's work items decode", async () => {
@@ -29,7 +37,10 @@ test("the daemon's work items decode", async () => {
 test('an order keeps only noted marks, and its revision as the daemon writes it', () => {
   const order = Work.order(
     page,
-    { route: '/recordings', revision: { kind: 'commit', commit: 'a'.repeat(40), tree: 'modified' } },
+    {
+      route: '/recordings',
+      revision: { kind: 'commit', commit: 'a'.repeat(40), tree: 'modified' },
+    },
     [mark(1, ' Show the turn count '), mark(2, '  ')],
     { console: [], reads: ['/api/recordings?limit=100'] },
   );
@@ -58,7 +69,10 @@ test('a brief names its work item and what else was on screen', async () => {
   assert.match(brief, /run `cargo xtask preview up --publish` in the workspace/);
   assert.equal(Work.previewed(item), null);
   assert.equal(
-    Work.previewed({ ...item, preview: { ui: 'https://ren.example.ts.net:20201', revision: { kind: 'unknown' } } }),
+    Work.previewed({
+      ...item,
+      preview: { ui: 'https://ren.example.ts.net:20201', revision: { kind: 'unknown' } },
+    }),
     'https://ren.example.ts.net:20201/recordings',
   );
 });
@@ -98,7 +112,10 @@ test("a page's evidence is bounded, deduplicated, and of its own origin's API", 
   evidence.reset();
   assert.deepEqual(evidence.snapshot(), { console: [], reads: [] });
   const origin = 'https://ren.example';
-  assert.equal(PageEvidence.readOf(`${origin}/api/usage?from_ms=1`, origin), '/api/usage?from_ms=1');
+  assert.equal(
+    PageEvidence.readOf(`${origin}/api/usage?from_ms=1`, origin),
+    '/api/usage?from_ms=1',
+  );
   assert.equal(PageEvidence.readOf(`${origin}/api/live?after=3`, origin), null);
   assert.equal(PageEvidence.readOf(`${origin}/_app/immutable/x.js`, origin), null);
   assert.equal(PageEvidence.readOf('https://elsewhere.example/api/usage', origin), null);
@@ -110,7 +127,10 @@ test('a change to an item not yet stored is tried again', async () => {
     tries += 1;
     return tries < 3
       ? Response.json({ api_version: 1, error: 'not_found' }, { status: 404 })
-      : Response.json({ api_version: 1, id: '00000000-0000-0000-0000-00000000000b', state: 'sent' }, { status: 202 });
+      : Response.json(
+          { api_version: 1, id: '00000000-0000-0000-0000-00000000000b', state: 'sent' },
+          { status: 202 },
+        );
   };
   const state = await new WorkApi(settling).move('00000000-0000-0000-0000-00000000000b' as never, {
     kind: 'send',
@@ -125,7 +145,9 @@ test('a change to an item not yet stored is tried again', async () => {
     return Response.json({ api_version: 1, error: 'work_state' }, { status: 409 });
   };
   await assert.rejects(
-    new WorkApi(conflict).move('00000000-0000-0000-0000-00000000000b' as never, { kind: 'dismiss' }),
+    new WorkApi(conflict).move('00000000-0000-0000-0000-00000000000b' as never, {
+      kind: 'dismiss',
+    }),
   );
   assert.equal(refused, 1);
 });

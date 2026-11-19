@@ -996,25 +996,25 @@ const health = object<Health, WireHealth>({
 });
 const metrics = object<Metrics, WireMetrics>({ recorder: recorderMetrics, storage: storageView });
 const releaseView = object<ReleaseView, WireReleaseView>({
-      main: string,
-      production: revision,
-      behind: nullable(count),
-      canary: nullable(
-        object<CanaryView, WireCanaryView>({
-          commit: string,
+  main: string,
+  production: revision,
+  behind: nullable(count),
+  canary: nullable(
+    object<CanaryView, WireCanaryView>({
+      commit: string,
+      passed: boolean,
+      checks: array(
+        object<CheckView, WireCheckView>({
+          check: label(checkKinds),
+          name: nullable(string),
           passed: boolean,
-          checks: array(
-            object<CheckView, WireCheckView>({
-              check: label(checkKinds),
-              name: nullable(string),
-              passed: boolean,
-              detail: nullable(string),
-            }),
-          ),
+          detail: nullable(string),
         }),
       ),
-      policy: string,
-      decision: label(decisions),
+    }),
+  ),
+  policy: string,
+  decision: label(decisions),
 });
 const releaseBody = object<ReleaseBody, WireReleaseBody>({
   release: nullable(releaseView),
@@ -1022,7 +1022,9 @@ const releaseBody = object<ReleaseBody, WireReleaseBody>({
   promotion_requested: nullable(string),
 });
 const projectReleases = object<{ projects: ProjectRelease[] }, WireProjectReleases>({
-  projects: array(object<ProjectRelease, WireProjectRelease>({ name: string, release: releaseView })),
+  projects: array(
+    object<ProjectRelease, WireProjectRelease>({ name: string, release: releaseView }),
+  ),
 });
 const storage = object<Storage>({
   policy: object<RetentionPolicy>({

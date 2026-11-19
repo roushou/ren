@@ -31,8 +31,6 @@
     "policy": "manual",
     "decision": "awaiting_operator"
   },
-  "shots": [
-    "overview"
-  ],
+  "shots": ["overview"],
   "promotion_requested": null
 }

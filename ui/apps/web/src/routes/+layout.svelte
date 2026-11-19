@@ -59,7 +59,9 @@
     // What the page itself logs as an error (Svelte's included), kept as text.
     const log = console.error;
     console.error = (...args: unknown[]) => {
-      evidence.error(args.map((arg) => (arg instanceof Error ? arg.message : String(arg))).join(' '));
+      evidence.error(
+        args.map((arg) => (arg instanceof Error ? arg.message : String(arg))).join(' '),
+      );
       log(...args);
     };
     return () => {

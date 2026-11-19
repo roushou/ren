@@ -27,12 +27,8 @@
           }
         ],
         "evidence": {
-          "console": [
-            "TypeError: turns is undefined"
-          ],
-          "reads": [
-            "/api/recordings?limit=100"
-          ]
+          "console": ["TypeError: turns is undefined"],
+          "reads": ["/api/recordings?limit=100"]
         }
       },
       "state": "queued",

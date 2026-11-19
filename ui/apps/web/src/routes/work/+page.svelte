@@ -108,9 +108,12 @@
   }
 
   const select = (item: WorkItem) =>
-    goto(`/work?${new URLSearchParams({ ...(data.shelf === 'archived' ? { shelf: 'archived' } : {}), item: item.id })}`, {
-      replaceState: true,
-    });
+    goto(
+      `/work?${new URLSearchParams({ ...(data.shelf === 'archived' ? { shelf: 'archived' } : {}), item: item.id })}`,
+      {
+        replaceState: true,
+      },
+    );
 </script>
 
 {#snippet scope()}
@@ -166,7 +169,9 @@
                 <span class="title">{item.title}</span>
                 <span class="meta mono"
                   >{item.order.page.path} · {item.order.marks.length}
-                  {item.order.marks.length === 1 ? 'mark' : 'marks'}{#if item.order.evidence.console.length}{' '}·
+                  {item.order.marks.length === 1
+                    ? 'mark'
+                    : 'marks'}{#if item.order.evidence.console.length}{' '}·
                     <span class="errors"
                       >{item.order.evidence.console.length}
                       {item.order.evidence.console.length === 1 ? 'error' : 'errors'}</span
@@ -221,8 +226,8 @@
         <span class="state state-{shown.state}">{Work.state(shown.state)}</span>
         <h2>{shown.title}</h2>
         <p class="meta mono">
-          <a href={shown.order.page.path}>{shown.order.page.path}</a> · {shown.order.page.width}×{shown
-            .order.page.height}, {shown.order.page.theme}
+          <a href={shown.order.page.path}>{shown.order.page.path}</a> · {shown.order.page
+            .width}×{shown.order.page.height}, {shown.order.page.theme}
         </p>
         {#if shown.state === 'sent'}
           <p class="compare">

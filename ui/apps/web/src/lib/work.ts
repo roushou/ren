@@ -184,7 +184,10 @@ export class WorkApi {
           await this.#request('POST', `/control/work/${item}/${change.kind}`, body, workAnswer)
         ).state;
       } catch (failure) {
-        if (!(failure instanceof WorkError && failure.code === 'not_found') || tried >= WorkApi.TRIES)
+        if (
+          !(failure instanceof WorkError && failure.code === 'not_found') ||
+          tried >= WorkApi.TRIES
+        )
           throw failure;
         await new Promise((settle) => setTimeout(settle, WorkApi.WAIT_MS));
       }
@@ -297,7 +300,12 @@ export class Work {
 
   /** The order a Redline pane sends: the page, its noted marks, and what
    * else was on screen. */
-  static order(page: PageContext, ren: RenPage, marks: readonly Mark[], evidence: Evidence): WireWorkOrder {
+  static order(
+    page: PageContext,
+    ren: RenPage,
+    marks: readonly Mark[],
+    evidence: Evidence,
+  ): WireWorkOrder {
     return {
       page: {
         path: page.path,
@@ -353,7 +361,11 @@ export class Work {
     const { page, ren, marks } = Work.#parts(order);
     const framing = Briefing.framing(ren, marks, place);
     return Redline.brief(page, marks, {
-      about: [...framing.about, ...(id ? [`This is work item ${Redline.code(id)}.`] : []), ...Work.evidence(order.evidence)],
+      about: [
+        ...framing.about,
+        ...(id ? [`This is work item ${Redline.code(id)}.`] : []),
+        ...Work.evidence(order.evidence),
+      ],
       closing: Work.closing(framing.closing, id ? [id] : []),
     });
   }
@@ -387,7 +399,9 @@ export class Work {
         .split('\n')
         .slice(2)
         .join('\n');
-      return [`## ${index + 1}. ${item.title} (work item ${Redline.code(item.id)})`, '', body].join('\n');
+      return [`## ${index + 1}. ${item.title} (work item ${Redline.code(item.id)})`, '', body].join(
+        '\n',
+      );
     });
     const all = items.flatMap((item) => Work.#parts(Work.wire(item.order)).marks);
     const first = items[0];
