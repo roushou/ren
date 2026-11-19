@@ -492,6 +492,7 @@ impl SessionsApi {
     ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let request = RunsApi::body(body)?;
+        let place = request.place().ok_or(ControlRefusal::InvalidRequest)?;
         let settings = SettingsRequest {
             model: request.model,
             effort: request.effort,
@@ -501,10 +502,7 @@ impl SessionsApi {
         let session = supervisor
             .create(Create {
                 harness: request.harness,
-                place: match request.dir {
-                    Some(dir) => StartPlace::Folder(dir),
-                    None => StartPlace::Scratch,
-                },
+                place,
                 settings,
                 resume: request.resume.and_then(NativeThreadId::new),
             })

@@ -404,6 +404,46 @@ impl AgentHost for ProcessHost {
         })
     }
 
+    fn make_worktree(
+        &self,
+        repo: &Path,
+        folder: &Path,
+        data: &Path,
+        branch: &str,
+        tools: &RunTools,
+    ) -> io::Result<()> {
+        let git = Git::find(&self.search_dirs(tools))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no git on the runs' path"))?;
+        let branch = branch
+            .parse::<ren_git::Branch>()
+            .map_err(io::Error::other)?;
+        git.add_worktree(repo, folder, &branch)
+            .map_err(io::Error::other)?;
+        std::fs::create_dir_all(data)
+    }
+
+    fn remove_worktree(&self, folder: &Path, data: &Path, tools: &RunTools) -> io::Result<()> {
+        let git = Git::find(&self.search_dirs(tools))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no git on the runs' path"))?;
+        let branch = match Git::repository(folder) {
+            Repository::At(Head::Branch(branch)) => branch.parse::<ren_git::Branch>().ok(),
+            Repository::At(Head::Detached(_)) | Repository::None | Repository::Unreadable => None,
+        };
+        let main = git.main_worktree(folder).map_err(io::Error::other)?;
+        git.remove_worktree(folder).map_err(io::Error::other)?;
+        match std::fs::remove_dir_all(data) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            Ok(()) | Err(_) => {}
+        }
+        if let Some(branch) = branch {
+            let kept = git
+                .delete_merged(&main, &branch)
+                .map_err(io::Error::other)?;
+            tracing::debug!(%branch, ?kept, "a workspace's branch");
+        }
+        Ok(())
+    }
+
     fn tools(&self) -> RunTools {
         match self.tools.current() {
             Ok(toolset) if toolset.generation() == Generation::NONE => RunTools::Empty,

@@ -58,6 +58,11 @@ pub enum ControlRefusal {
     NotDrivable,
     NoApprovals,
     NoScratch,
+    /// A workspace could not be made: no folder for workspaces here, or the
+    /// folder named is not a git repository with a commit.
+    NoWorkspace,
+    /// Every workspace slot is taken.
+    WorkspacesFull,
     SpawnFailed,
     /// The client's model listing failed.
     ModelsUnavailable,
@@ -181,6 +186,8 @@ impl ControlRefusal {
             | Self::Unrecorded
             | Self::BackupIncomplete
             | Self::NoScratch
+            | Self::NoWorkspace
+            | Self::WorkspacesFull
             | Self::NoAttachments
             | Self::ToolsDisabled => StatusCode::SERVICE_UNAVAILABLE,
         }

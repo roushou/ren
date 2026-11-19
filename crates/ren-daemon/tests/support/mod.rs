@@ -291,6 +291,7 @@ impl TestGateway {
                         roots,
                         places: Vec::new(),
                         scratch: Some(std::path::PathBuf::from("/scratch")),
+                        worktrees: Some(std::path::PathBuf::from("/worktrees")),
                         home: Some(std::path::PathBuf::from("/work")),
                         warmup: ren_supervisor::Warmup::WhenAsked,
                         gateway: format!("http://{address}")

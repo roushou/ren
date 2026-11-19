@@ -12,4 +12,8 @@ dir?: string | null, model?: string | null, effort?: string | null, approvals?: 
 /**
  * A client conversation to go on with, begun elsewhere.
  */
-resume?: string | null, };
+resume?: string | null, 
+/**
+ * Where in `dir` it works; left out, in the folder itself.
+ */
+workspace?: string | null, };

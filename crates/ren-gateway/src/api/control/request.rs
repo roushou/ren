@@ -71,6 +71,31 @@ pub struct CreateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(as = "Option<String>")]
     pub resume: Option<uuid::Uuid>,
+    /// Where in `dir` it works; left out, in the folder itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(as = "Option<String>")]
+    pub workspace: Option<WorkspaceKind>,
+}
+
+/// Where a session with a folder works: in the folder itself, or in a
+/// workspace of its own, a new worktree of the repository in the folder.
+#[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub enum WorkspaceKind {
+    #[default]
+    Folder,
+    Worktree,
 }
 
 impl CreateRequest {
@@ -83,6 +108,22 @@ impl CreateRequest {
             effort: None,
             approvals: None,
             resume: None,
+            workspace: None,
+        }
+    }
+
+    /// Where it starts: its folder, a workspace of the repository in it,
+    /// or, with no folder, a new scratch folder. A workspace needs a folder.
+    pub fn place(&self) -> Option<ren_supervisor::StartPlace> {
+        match (&self.dir, self.workspace.unwrap_or_default()) {
+            (Some(dir), WorkspaceKind::Folder) => {
+                Some(ren_supervisor::StartPlace::Folder(dir.clone()))
+            }
+            (Some(dir), WorkspaceKind::Worktree) => {
+                Some(ren_supervisor::StartPlace::Worktree(dir.clone()))
+            }
+            (None, WorkspaceKind::Folder) => Some(ren_supervisor::StartPlace::Scratch),
+            (None, WorkspaceKind::Worktree) => None,
         }
     }
 }

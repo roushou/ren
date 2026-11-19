@@ -110,6 +110,29 @@ pub trait AgentHost: Send + Sync + 'static {
         Err(io::ErrorKind::Unsupported.into())
     }
 
+    /// Make `folder` a worktree of the repository at `repo` on a new
+    /// branch `branch`, and `data` its data folder. None by default: a host
+    /// that makes no workspaces.
+    fn make_worktree(
+        &self,
+        repo: &Path,
+        folder: &Path,
+        data: &Path,
+        branch: &str,
+        tools: &RunTools,
+    ) -> io::Result<()> {
+        let _ = (repo, folder, data, branch, tools);
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    /// Remove the worktree at `folder` and its data folder `data`, and its
+    /// branch once merged. A worktree holding changes not committed is
+    /// kept, and the error says so.
+    fn remove_worktree(&self, folder: &Path, data: &Path, tools: &RunTools) -> io::Result<()> {
+        let _ = (folder, data, tools);
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
     /// `run` has ended and its end is recorded: what its host kept of it
     /// can go. Nothing to do by default.
     fn release(&self, run: RunId) {

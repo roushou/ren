@@ -34,6 +34,7 @@ use crate::{
     run::{ProcessExit, RunCommand, RunState},
     session::{Launch, Room, Session, TurnsEnded},
     workdir::{Bounds, RequestedDir, Workdir},
+    workspace::Workspace,
 };
 use futures_util::{
     FutureExt, StreamExt,
@@ -455,7 +456,17 @@ impl<H: AgentHost> SupervisorTask<H> {
                 settings: settings.clone(),
             },
         };
-        let plan = harness.drive(&self.gateway, &opening);
+        let mut plan = harness.drive(&self.gateway, &opening);
+        // A workspace's runs are told its folder, ports, and data folder.
+        if let Some(workspace) = self
+            .bounds
+            .worktrees()
+            .and_then(|root| Workspace::of(root, workdir.as_path()))
+        {
+            for (name, value) in workspace.env() {
+                plan.environment.insert(name.to_owned(), value.into());
+            }
+        }
         let seed = self.ids.next_uuid();
         let journaled = opening.clone();
         let (codec, opening_lines) = Driver::open(harness, opening, &self.version, seed);

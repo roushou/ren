@@ -26,6 +26,7 @@ mod session;
 mod sign_in;
 mod task;
 mod workdir;
+mod workspace;
 
 pub use client::{Client, ClientStatus};
 pub use files::{FileListing, FileMatch, FileQuery, FoundPath, PathKind, WalkLimits};
@@ -80,6 +81,9 @@ pub struct SupervisorOptions {
     /// Where scratch runs each get a new folder; created when missing.
     /// None: runs cannot start in scratch.
     pub scratch: Option<PathBuf>,
+    /// Where workspaces are made: a worktree of a repository per session
+    /// that asks for one; created when missing. None: no workspaces.
+    pub worktrees: Option<PathBuf>,
     /// Where each session's attachments are kept, a folder per session;
     /// Ren's own, made when missing. None: sessions take no attachments.
     pub attachments: Option<PathBuf>,
@@ -252,6 +256,10 @@ pub enum StartPlace {
     Scratch,
     /// This folder, which must lie inside a root or another place.
     Folder(String),
+    /// A workspace of its own: a new worktree of the repository in this
+    /// folder, on a branch of its own, with ports and a data folder no other
+    /// workspace shares.
+    Worktree(String),
 }
 
 /// Where runs can start: every place, and the folder scratch runs get
@@ -298,6 +306,12 @@ pub enum StartError {
     NoScratch,
     #[error("cannot create the scratch run's folder")]
     Scratch(#[source] io::Error),
+    #[error("workspaces cannot be made here: their folder could not be set up")]
+    NoWorktrees,
+    #[error("every workspace slot is taken: remove a session's workspace first")]
+    NoSlot,
+    #[error("cannot make the workspace")]
+    Worktree(#[source] io::Error),
     #[error("{0} does not take that approval policy")]
     NoApprovals(Harness),
     #[error("the recorder has no room to record the run")]
@@ -521,8 +535,15 @@ impl Supervisor {
                 .inspect_err(|error| tracing::warn!(?scratch, %error, "no scratch folder for runs"))
                 .ok()
         });
-        let bounds =
-            Bounds::new(roots, places, scratch, options.home).map_err(SupervisorError::Roots)?;
+        let worktrees = options.worktrees.as_deref().and_then(|worktrees| {
+            host.make_dir(worktrees)
+                .and_then(|()| host.resolve(worktrees))
+                .inspect_err(|error| tracing::warn!(?worktrees, %error, "no folder for workspaces"))
+                .ok()
+        });
+        let bounds = Bounds::new(roots, places, scratch, options.home)
+            .map_err(SupervisorError::Roots)?
+            .with_worktrees(worktrees);
         // An attachments folder that cannot be made leaves sessions without
         // attachments, not the supervisor without sessions.
         let attachments = options.attachments.and_then(|root| {

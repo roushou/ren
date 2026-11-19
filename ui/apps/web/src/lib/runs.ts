@@ -1097,15 +1097,17 @@ export class RunsClient {
     const path = `/control/sessions/${session}`;
     return (await this.#send('GET', path, undefined, oneSession, signal)).session;
   }
-  /** A new draft in `dir` (null: a scratch folder of its own); its client starts with its first prompt. */
+  /** A new draft in `dir` (null: a scratch folder of its own), or with `workspace`, in a workspace of its own made from the repository in `dir`; its client starts with its first prompt. */
   async createSession(
     harness: Drivable,
     dir: string | null,
     settings: Partial<ChosenSettings> = {},
+    workspace: 'folder' | 'worktree' = 'folder',
   ): Promise<SessionId> {
     const body = {
       harness,
       ...(dir ? { dir } : {}),
+      ...(dir && workspace === 'worktree' ? { workspace } : {}),
       ...(settings.model ? { model: settings.model } : {}),
       ...(settings.effort ? { effort: settings.effort } : {}),
       ...(settings.approvals ? { approvals: settings.approvals } : {}),

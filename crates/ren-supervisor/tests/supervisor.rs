@@ -93,7 +93,14 @@ struct FakeHost {
     /// When set, runs are held as a run host holds them: they go on when
     /// the supervisor stops, and the next one takes them up.
     holds: Option<Holds>,
+    /// The workspaces made and not removed, with each one's repository.
+    worktrees: Arc<Mutex<Vec<(PathBuf, PathBuf)>>>,
+    /// The variables each spawned agent was given, in order.
+    envs: Arc<Mutex<Vec<Variables>>>,
 }
+
+/// The variables an agent was given, by name.
+type Variables = Vec<(String, String)>;
 
 /// The runs a fake run host holds.
 type Holds = Arc<Mutex<std::collections::BTreeMap<ren_recorder::id::RunId, Arc<Hold>>>>;
@@ -266,6 +273,8 @@ impl FakeHost {
             deaf: None,
             version: Arc::new(Mutex::new(1)),
             holds: None,
+            worktrees: Arc::default(),
+            envs: Arc::default(),
         }
     }
 
@@ -358,7 +367,43 @@ impl AgentHost for FakeHost {
         }
     }
 
+    fn make_worktree(
+        &self,
+        repo: &Path,
+        folder: &Path,
+        _data: &Path,
+        branch: &str,
+        _tools: &RunTools,
+    ) -> io::Result<()> {
+        assert!(branch.starts_with("ren/"), "{branch}");
+        self.worktrees
+            .lock()
+            .unwrap()
+            .push((folder.to_path_buf(), repo.to_path_buf()));
+        Ok(())
+    }
+
+    fn remove_worktree(&self, folder: &Path, _data: &Path, _tools: &RunTools) -> io::Result<()> {
+        self.worktrees
+            .lock()
+            .unwrap()
+            .retain(|(made, _)| made != folder);
+        Ok(())
+    }
+
     fn look(&self, dir: &Path) -> io::Result<Look> {
+        if dir == Path::new("/worktrees") {
+            return Ok(Look {
+                folders: self
+                    .worktrees
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|(folder, _)| Some(folder.file_name()?.to_str()?.to_owned()))
+                    .collect(),
+                git: ProjectGit::None,
+            });
+        }
         Ok(match dir.to_str() {
             Some("/work") => Look {
                 folders: vec!["acme".into(), "notes".into()],
@@ -443,6 +488,14 @@ impl AgentHost for FakeHost {
         }
         self.tools_given.lock().unwrap().push(tools.clone());
         let command = plan.command(None, &[]);
+        self.envs.lock().unwrap().push(
+            command
+                .get_envs()
+                .filter_map(|(key, value)| {
+                    Some((key.to_str()?.to_owned(), value?.to_str()?.to_owned()))
+                })
+                .collect(),
+        );
         let arguments: Vec<String> = command
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
@@ -669,6 +722,7 @@ fn options() -> SupervisorOptions {
         roots: vec![PathBuf::from("/work")],
         places: vec![PathBuf::from("/home/op/.config")],
         scratch: Some(PathBuf::from("/scratch")),
+        worktrees: Some(PathBuf::from("/worktrees")),
         home: Some(PathBuf::from("/home/op")),
         warmup: ren_supervisor::Warmup::WhenAsked,
         gateway: "http://127.0.0.1:8787".parse::<GatewayEndpoint>().unwrap(),
@@ -1606,6 +1660,7 @@ async fn a_scratch_run_gets_a_new_repository_of_its_own() {
         made,
         [
             (PathBuf::from("/scratch"), false),
+            (PathBuf::from("/worktrees"), false),
             (PathBuf::from("/data/attachments"), false),
             (workdir, true)
         ]
@@ -2390,5 +2445,89 @@ async fn a_held_run_goes_on_through_a_restart_mid_turn() {
     assert!(
         at("run_detached") < at("run_rejoined") && at("run_rejoined") < at("run_ended"),
         "{kinds:?}"
+    );
+}
+
+/// Sessions that ask for a workspace each get a worktree of their own, in
+/// a slot of their own, and their runs are told of it; a session forgotten
+/// takes its workspace with it.
+#[tokio::test]
+async fn each_workspace_session_works_in_its_own_worktree_and_slot() {
+    let host = FakeHost::new(Script::Codex);
+    let (worktrees, envs) = (host.worktrees.clone(), host.envs.clone());
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
+    let mut made = Vec::new();
+    for _ in 0..2 {
+        let create = ren_supervisor::Create {
+            harness: Harness::Codex,
+            place: ren_supervisor::StartPlace::Worktree("/work/acme".into()),
+            settings: ren_harness::settings::RunSettings::default(),
+            resume: None,
+        };
+        let (session, _) = start(supervisor, (create, None)).await.unwrap();
+        made.push(session);
+    }
+    assert_eq!(
+        *worktrees.lock().unwrap(),
+        [
+            (
+                PathBuf::from("/worktrees/acme-1"),
+                PathBuf::from("/work/acme")
+            ),
+            (
+                PathBuf::from("/worktrees/acme-2"),
+                PathBuf::from("/work/acme")
+            ),
+        ]
+    );
+    let told = |n: usize, name: &str| {
+        envs.lock().unwrap()[n]
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.clone())
+    };
+    assert_eq!(
+        told(0, "REN_WORKSPACE").as_deref(),
+        Some("/worktrees/acme-1")
+    );
+    assert_eq!(
+        told(0, "REN_WORKSPACE_PORTS").as_deref(),
+        Some("20000-20099")
+    );
+    assert_eq!(
+        told(1, "REN_WORKSPACE_PORTS").as_deref(),
+        Some("20100-20199")
+    );
+    assert_eq!(
+        told(1, "REN_WORKSPACE_DATA").as_deref(),
+        Some("/worktrees/.data/acme-2")
+    );
+    supervisor.send(made[0], RunCommand::Stop).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while supervisor.forget(made[0]).await.is_err() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("a stopped session is forgotten");
+    assert_eq!(
+        *worktrees.lock().unwrap(),
+        [(
+            PathBuf::from("/worktrees/acme-2"),
+            PathBuf::from("/work/acme")
+        )]
+    );
+    // Its slot is free again.
+    let create = ren_supervisor::Create {
+        harness: Harness::Codex,
+        place: ren_supervisor::StartPlace::Worktree("/work/acme".into()),
+        settings: ren_harness::settings::RunSettings::default(),
+        resume: None,
+    };
+    start(supervisor, (create, None)).await.unwrap();
+    assert_eq!(
+        worktrees.lock().unwrap()[1].0,
+        PathBuf::from("/worktrees/acme-1")
     );
 }

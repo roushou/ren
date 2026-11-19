@@ -107,6 +107,9 @@ impl Daemon {
     /// The folder under the data directory where sessions' attachments
     /// are kept, a folder per session.
     const ATTACHMENTS: &str = "attachments";
+    /// The folder under the data directory where workspaces are made: a
+    /// worktree per session that asks for one.
+    const WORKTREES: &str = "worktrees";
     /// How long stopped runs may take to exit and be recorded.
     const RUNS_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -323,6 +326,7 @@ impl Daemon {
             roots: config.runs().roots.clone(),
             places: config.run_places().places.clone(),
             scratch: config.run_places().scratch.clone(),
+            worktrees: Some(data_dir.join(Self::WORKTREES)),
             home: config.run_places().home.clone(),
             // The new-run form then offers each client's models at once.
             warmup: Warmup::AtStart,

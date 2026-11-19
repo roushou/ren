@@ -147,17 +147,22 @@ impl Git {
     /// Remove the worktree at `path`, from its repository. One holding
     /// changes not committed is refused, and kept.
     pub fn remove_worktree(&self, path: &Path) -> Result<(), GitError> {
+        let main = self.main_worktree(path)?;
+        let path = Self::text(path)?;
+        self.answer(&main, &["worktree", "remove", path]).map(drop)
+    }
+
+    /// The main worktree of the repository `path` is a worktree of: the
+    /// folder its git folder is in.
+    pub fn main_worktree(&self, path: &Path) -> Result<PathBuf, GitError> {
         let dirs = self.dirs(path)?;
-        let main = dirs
-            .common
+        dirs.common
             .parent()
+            .map(Path::to_path_buf)
             .ok_or_else(|| GitError::Unexpected {
                 args: "rev-parse --git-common-dir".into(),
                 output: dirs.common.display().to_string(),
-            })?
-            .to_path_buf();
-        let path = Self::text(path)?;
-        self.answer(&main, &["worktree", "remove", path]).map(drop)
+            })
     }
 
     /// Delete `branch` of `repo` if it is merged; keep it otherwise.

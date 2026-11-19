@@ -362,6 +362,8 @@ export const controlRefusals = [
   'not_drivable',
   'no_approvals',
   'no_scratch',
+  'no_workspace',
+  'workspaces_full',
   'spawn_failed',
   'models_unavailable',
   'commands_unavailable',

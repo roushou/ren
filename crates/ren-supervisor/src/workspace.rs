@@ -1,0 +1,162 @@
+//! A workspace Ren owns, pure: a worktree of a repository, made for one
+//! session in the worktrees folder on a branch of its own, so sessions
+//! working on one repository never share a checkout. Each has a slot no
+//! other workspace holds while it exists: a block of ports and a data
+//! folder, given to its runs as `REN_WORKSPACE`, `REN_WORKSPACE_PORTS`, and
+//! `REN_WORKSPACE_DATA`, so what they start (a test server, a preview)
+//! cannot collide.
+//!
+//! A workspace's folder is `<worktrees>/<repo>-<slot>`; its data folder is
+//! `<worktrees>/.data/<repo>-<slot>`; its branch is `ren/<repo>-<slot>-<id>`,
+//! unique even when a slot is used again.
+
+use std::path::{Path, PathBuf};
+
+/// One workspace: its folder in the worktrees folder, and its slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Workspace {
+    root: PathBuf,
+    name: String,
+    slot: Slot,
+}
+
+/// A workspace's place among the workspaces that exist: its ports and its
+/// data folder are its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Slot(u16);
+
+impl Slot {
+    /// The ports each slot holds.
+    const PORTS: u16 = 100;
+    /// Slot 1's first port; below it are the ports Ren and its dev slot use.
+    const FIRST_PORT: u16 = 20_000;
+    /// The most slots: their ports end below 65535.
+    const MOST: u16 = 450;
+
+    /// The lowest slot none of `taken` holds, if any is left.
+    pub fn free(taken: &[Slot]) -> Option<Self> {
+        (1..=Self::MOST)
+            .map(Self)
+            .find(|slot| !taken.contains(slot))
+    }
+
+    /// Its ports, first and last.
+    pub fn ports(self) -> (u16, u16) {
+        let first = Self::FIRST_PORT + (self.0 - 1) * Self::PORTS;
+        (first, first + Self::PORTS - 1)
+    }
+}
+
+impl Workspace {
+    /// The folder workspaces' data folders are kept in.
+    const DATA: &str = ".data";
+
+    /// The workspace of `repo` in `slot`, under `root`.
+    pub fn new(root: &Path, repo: &Path, slot: Slot) -> Option<Self> {
+        let repo = repo.file_name()?.to_str()?;
+        Some(Self {
+            root: root.to_path_buf(),
+            name: format!("{repo}-{}", slot.0),
+            slot,
+        })
+    }
+
+    /// The workspace `workdir` is, when it is a folder of `root`'s named as
+    /// one.
+    pub fn of(root: &Path, workdir: &Path) -> Option<Self> {
+        if workdir.parent()? != root {
+            return None;
+        }
+        let name = workdir.file_name()?.to_str()?;
+        Self::slot_of(name).map(|slot| Self {
+            root: root.to_path_buf(),
+            name: name.to_owned(),
+            slot,
+        })
+    }
+
+    /// The slots the folders named `names` hold.
+    pub fn taken<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<Slot> {
+        names.into_iter().filter_map(Self::slot_of).collect()
+    }
+
+    fn slot_of(name: &str) -> Option<Slot> {
+        let (repo, slot) = name.rsplit_once('-')?;
+        let slot: u16 = slot.parse().ok()?;
+        (!repo.is_empty() && !repo.starts_with('.') && (1..=Slot::MOST).contains(&slot))
+            .then_some(Slot(slot))
+    }
+
+    pub fn folder(&self) -> PathBuf {
+        self.root.join(&self.name)
+    }
+
+    pub fn data(&self) -> PathBuf {
+        self.root.join(Self::DATA).join(&self.name)
+    }
+
+    /// Its branch, made unique by `id`.
+    pub fn branch(&self, id: &str) -> String {
+        format!("ren/{}-{id}", self.name)
+    }
+
+    /// What its runs are told of it.
+    pub fn env(&self) -> Vec<(&'static str, String)> {
+        let (first, last) = self.slot.ports();
+        vec![
+            ("REN_WORKSPACE", self.folder().display().to_string()),
+            ("REN_WORKSPACE_PORTS", format!("{first}-{last}")),
+            ("REN_WORKSPACE_DATA", self.data().display().to_string()),
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Slot, Workspace};
+    use std::path::Path;
+
+    #[test]
+    fn a_workspace_is_named_for_its_repository_and_slot() {
+        let root = Path::new("/data/worktrees");
+        let workspace = Workspace::new(root, Path::new("/home/op/dev/ren"), Slot(3)).unwrap();
+        assert_eq!(workspace.folder(), Path::new("/data/worktrees/ren-3"));
+        assert_eq!(workspace.data(), Path::new("/data/worktrees/.data/ren-3"));
+        assert_eq!(workspace.branch("1a2b3c4d"), "ren/ren-3-1a2b3c4d");
+        assert_eq!(
+            workspace.env(),
+            [
+                ("REN_WORKSPACE", "/data/worktrees/ren-3".to_owned()),
+                ("REN_WORKSPACE_PORTS", "20200-20299".to_owned()),
+                (
+                    "REN_WORKSPACE_DATA",
+                    "/data/worktrees/.data/ren-3".to_owned()
+                ),
+            ]
+        );
+        assert_eq!(
+            Workspace::of(root, Path::new("/data/worktrees/ren-3")),
+            Some(workspace)
+        );
+        for other in [
+            "/data/worktrees/.data",
+            "/data/worktrees/ren",
+            "/data/scratch/ren-3",
+            "/data/worktrees/ren-0",
+            "/data/worktrees/ren-451",
+        ] {
+            assert_eq!(Workspace::of(root, Path::new(other)), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn a_slot_is_the_lowest_free_and_ports_never_overlap() {
+        let taken = Workspace::taken(["ren-1", "ren-2", "acme-web-4", ".data", "notes"]);
+        assert_eq!(taken, [Slot(1), Slot(2), Slot(4)]);
+        assert_eq!(Slot::free(&taken), Some(Slot(3)));
+        assert_eq!(Slot(1).ports(), (20_000, 20_099));
+        assert_eq!(Slot(450).ports(), (64_900, 64_999));
+        let all: Vec<_> = (1..=450).map(Slot).collect();
+        assert_eq!(Slot::free(&all), None);
+    }
+}
