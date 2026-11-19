@@ -225,6 +225,9 @@
             .order.page.height}, {shown.order.page.theme}
         </p>
         {#if shown.landed}<p class="meta mono">Landed as {shown.landed.slice(0, 12)}</p>{/if}
+        {#if shown.shipped?.kind === 'commit'}<p class="meta mono">
+            Shipped in production's build of {shown.shipped.commit.slice(0, 12)}
+          </p>{/if}
         {#if shown.state === 'queued' || shown.state === 'sent'}
           <button class="button small" onclick={() => void dismiss(shown)}
             ><Icon name="close" size={11} />Dismiss</button

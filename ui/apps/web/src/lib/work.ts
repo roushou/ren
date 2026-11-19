@@ -170,9 +170,24 @@ export class WorkApi {
         }
       }
     })();
-    return (await this.#request('POST', `/control/work/${item}/${change.kind}`, body, workAnswer))
-      .state;
+    // An item just queued is stored a moment after the answer: a change
+    // that finds it not yet stored is tried again, briefly.
+    for (let tried = 1; ; tried += 1) {
+      try {
+        return (
+          await this.#request('POST', `/control/work/${item}/${change.kind}`, body, workAnswer)
+        ).state;
+      } catch (failure) {
+        if (!(failure instanceof WorkError && failure.code === 'not_found') || tried >= WorkApi.TRIES)
+          throw failure;
+        await new Promise((settle) => setTimeout(settle, WorkApi.WAIT_MS));
+      }
+    }
   }
+
+  /** How many times a change is tried while its item is not yet stored. */
+  static readonly TRIES = 10;
+  static readonly WAIT_MS = 200;
 
   async #request<T>(
     method: 'GET' | 'POST',

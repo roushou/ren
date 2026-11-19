@@ -409,6 +409,15 @@ session in a workspace of its own.
   sent one lands, only a landed one ships; shipped and dismissed are final.
   A session that was never recorded is `404` `not_found`.
 
+Ren lands and ships items itself ([canary and
+promotion](deployment.md#canary-and-promotion)): a brief asks for a
+`Work-Item: <id>` trailer in each commit and in the pull request's
+description, which a squash merge keeps; the factory lands a sent item when
+a commit on `main` names it, and ships a landed item once production runs a
+clean build whose history holds that commit. An item is stored a moment
+after its change is accepted, so a change to an item queued just before may
+answer `404` until it is.
+
 `/api/work` lists each item with its `order` as it was queued, its `state`
 (`queued`, `sent`, `landed`, `shipped`, or `dismissed`), and its `session`,
 `landed` commit, and `shipped` revision once known. Each change is recorded

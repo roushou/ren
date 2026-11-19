@@ -16,7 +16,7 @@ use ren_recorder::{
 };
 use ren_release::{Commit, Revision, Tree};
 use serde::Deserialize;
-use std::{fs, io::Write as _};
+use std::{fs, io::Write as _, thread, time::Duration};
 
 /// Production's work items, as far as closing them needs.
 pub struct WorkLedger<'a> {
@@ -46,6 +46,9 @@ pub struct Closed {
 impl<'a> WorkLedger<'a> {
     /// How far back `main`'s history is read for trailers.
     const HISTORY: u32 = 500;
+    /// How long, and how often, to wait for production to store a change.
+    const POLL: Duration = Duration::from_millis(100);
+    const POLLS: u32 = 100;
 
     pub fn new(production: &'a ProductionPlace) -> Self {
         Self { production }
@@ -96,6 +99,11 @@ impl<'a> WorkLedger<'a> {
                 }
             }
         }
+        // A change is stored a moment after it is accepted: ship only what
+        // production says has landed.
+        if closed.landed > 0 {
+            self.settle(&landed)?;
+        }
         let running = match self.production.revision()? {
             Revision::Commit {
                 commit,
@@ -122,6 +130,27 @@ impl<'a> WorkLedger<'a> {
             }
         }
         Ok(closed)
+    }
+
+    /// Waits until production lists every item in `landed` as landed, so
+    /// a ship is checked against the state it moves from. Polls are
+    /// counted, not timed, so this reads no clock.
+    fn settle(&self, landed: &[(WorkItemId, CommitId)]) -> Result<(), CanaryError> {
+        for _ in 0..Self::POLLS {
+            let items = self.items()?.unwrap_or_default();
+            let stored = landed.iter().all(|(id, _)| {
+                items.iter().any(|item| {
+                    item.id == *id && item.state == Stored::Known(WorkStateKind::Landed)
+                })
+            });
+            if stored {
+                return Ok(());
+            }
+            thread::sleep(Self::POLL);
+        }
+        Err(CanaryError::WorkAnswer(
+            "production did not store the landings in time".to_owned(),
+        ))
     }
 
     /// The items under way, or none when production's daemon does not

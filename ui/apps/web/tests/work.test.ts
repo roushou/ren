@@ -97,3 +97,29 @@ test("a page's evidence is bounded, deduplicated, and of its own origin's API", 
   assert.equal(PageEvidence.readOf(`${origin}/_app/immutable/x.js`, origin), null);
   assert.equal(PageEvidence.readOf('https://elsewhere.example/api/usage', origin), null);
 });
+
+test('a change to an item not yet stored is tried again', async () => {
+  let tries = 0;
+  const settling: typeof fetch = async () => {
+    tries += 1;
+    return tries < 3
+      ? Response.json({ api_version: 1, error: 'not_found' }, { status: 404 })
+      : Response.json({ api_version: 1, id: '00000000-0000-0000-0000-00000000000b', state: 'sent' }, { status: 202 });
+  };
+  const state = await new WorkApi(settling).move('00000000-0000-0000-0000-00000000000b' as never, {
+    kind: 'send',
+    session: '00000000-0000-0000-0000-0000000000aa' as never,
+  });
+  assert.equal(state, 'sent');
+  assert.equal(tries, 3);
+  // Any other refusal is not tried again.
+  let refused = 0;
+  const conflict: typeof fetch = async () => {
+    refused += 1;
+    return Response.json({ api_version: 1, error: 'work_state' }, { status: 409 });
+  };
+  await assert.rejects(
+    new WorkApi(conflict).move('00000000-0000-0000-0000-00000000000b' as never, { kind: 'dismiss' }),
+  );
+  assert.equal(refused, 1);
+});

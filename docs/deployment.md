@@ -402,6 +402,15 @@ pause, the backup, the build check, and the rollback on failure), with the
 kept build instead of building the checkout. No policy promotes a build that failed its checks, that production already runs, or that lacks commits production has, nor one over a production build that is not a clean commit of `main`; `canary promote` promotes any build that passed. A promotion that fails is rolled back by the install and marked on the build, and is not tried again unless you promote
 it. `install-vps --build <commit>` also installs a kept build by hand.
 
+Every pass also closes work items ([work items](api.md#work-items)): it
+lands each sent item that a commit in `main`'s recent history names in a
+`Work-Item: <id>` trailer, waits for production to store the landings, and
+ships each landed item whose commit production's clean build holds, through
+production's own control API with its control token (read from its data
+folder and handed to curl in a private file). `cargo xtask canary work` does
+only this, against this checkout's commit as `main` (or `--main <commit>`).
+A production whose daemon keeps no work items yet is left alone.
+
 `canary enable` writes `ren-canary.service` and `ren-canary.timer` to
 `~/.config/systemd/user`, running `cargo xtask canary run` from the checkout
 it was enabled in; follow a pass with `journalctl --user -u ren-canary`.

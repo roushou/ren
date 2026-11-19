@@ -195,9 +195,8 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
    - Not run: a promotion into the installed service and the timer. They
      install into production, which stays a step the operator asks for;
      the install's own steps are the ones `install-vps` has always run.
-5. **Work items and Redline.** Its first step built: work items, from a
-   mark to a session. Landing and shipping are recorded but not yet
-   detected, and previews are not built.
+5. **Work items and Redline.** Work items built, from a mark to the
+   build that ships it; previews and screenshots are not built.
    - A work item is what was marked to be done: the page (its path, route,
      size, theme, and the build that served it), the noted marks, and what
      else was on screen (the errors the page logged and the API reads
@@ -218,11 +217,18 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      page's reads; two queued items were sent as one brief to a new session
      in its own worktree, whose first prompt held both; a Redline Send
      recorded its item as sent to the session it made.
-   - Next: the factory lands an item when its session's branch merges and
-     ships it when production's build holds that commit, so the mark closes
-     with the revision that shipped it; a preview opens the marked page on
-     the branch's build beside production's; a screenshot travels with the
-     marks.
+   - The factory closes them: a brief asks for a `Work-Item: <id>`
+     trailer in each commit and in the pull request's description, which a
+     squash merge keeps; each canary pass (and `cargo xtask canary work`)
+     lands every sent item a commit on `main` names, and ships every landed
+     item whose commit production's clean build holds, so the mark closes
+     with the revision that shipped it.
+   - Verified with the dev slot as production, run from a throwaway commit
+     naming a sent item: the item landed as that commit and shipped in the
+     slot's build, in one pass; an item landed earlier shipped in a later
+     pass. Both ended on the Work view's archived shelf.
+   - Next: a preview opens the marked page on the branch's build beside
+     production's; a screenshot travels with the marks.
 6. **Projects.** Not built. A project declares its build, run, checks, and
    quiesce steps, and gets workspaces, previews, canary, and promotion as
    Ren does.
@@ -295,6 +301,10 @@ things faster. Each phase is useful on its own.
   the union of every read's answer, which the compatibility gate rightly
   calls a break for a type decoded whole. No client decodes it whole, so
   it stopped being written to the UI's wire types, declared as a break.
+- **A trailer, not a branch, says what landed.** Squash merges leave no
+  trace of a branch on `main`, so the change names its items itself, in a
+  `Work-Item:` trailer the brief asks for. It works for any merge style and
+  any host, and needs only git.
 - **The gate is its own workflow.** It reads the pull request's title and
   body, so it runs again when they are edited, which would otherwise
   rerun all of CI.
