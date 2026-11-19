@@ -111,7 +111,7 @@ import { query } from './query.ts';
 import type { AttachRequest as WireAttachRequest } from './wire/AttachRequest.ts';
 import type { FilesRequest as WireFilesRequest } from './wire/FilesRequest.ts';
 import type { ListRequest as WireListRequest } from './wire/ListRequest.ts';
-import type { RawShelfQuery as WireRawShelfQuery } from './wire/RawShelfQuery.ts';
+import type { RawOwnedQuery as WireRawOwnedQuery } from './wire/RawOwnedQuery.ts';
 import type { ItemPhase as WireItemPhase } from './wire/ItemPhase.ts';
 import type { RecordedPrompt as WireRecordedPrompt } from './wire/RecordedPrompt.ts';
 import type { Retry as WireRetry } from './wire/Retry.ts';
@@ -1252,10 +1252,12 @@ export class RunsClient {
     limit = 100,
     shelf: Shelf = 'current',
     signal?: AbortSignal,
+    project: string | null = null,
   ): Promise<RecordedRun[]> {
-    const params = query<WireRawShelfQuery>({
+    const params = query<WireRawOwnedQuery>({
       limit,
       shelf: shelf === 'archived' ? 'archived' : null,
+      project,
     });
     return (await this.#send('GET', `/api/runs?${params}`, undefined, recordedRuns, signal)).runs;
   }

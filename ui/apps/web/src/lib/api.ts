@@ -1612,6 +1612,10 @@ export class ManagementApi {
   async projects(signal?: AbortSignal): Promise<Project[]> {
     return (await this.#read('/api/projects', projectsBody, signal)).projects;
   }
+  /** One project, as `/api/projects` lists it. */
+  project(name: string, signal?: AbortSignal): Promise<Project> {
+    return this.#read(`/api/projects/${encodeURIComponent(name)}`, project, signal);
+  }
   /** A project's release, with Ren's captured pages and any promotion asked for. */
   projectRelease(name: string, signal?: AbortSignal): Promise<ReleaseBody> {
     return this.#read(`/api/projects/${encodeURIComponent(name)}/release`, releaseBody, signal);

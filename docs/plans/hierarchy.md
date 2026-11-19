@@ -151,7 +151,32 @@ Records outside the tree stay, and each says why it is outside:
      declared break (`feat!` and a `BREAKING CHANGE:` footer). The Release
      view and `ren release` read it.
    - Wire types are generated for the UI as today.
-4. **The UI.** Not built.
+4. **The UI.** Under way. The audit:
+
+   | The operator's task                     | Today                                       | In the tree                                                                  |
+   | --------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------- |
+   | See what is in flight and what waits    | nowhere: Overview is the gateway's traffic  | **Projects** (home): each project's work, runs, and release; what is pending |
+   | Mark what is wrong (Redline)            | any page                                    | any page; the item is queued for Ren's project                               |
+   | Send work, check a preview, see it land | Work                                        | Work, under Projects; a project's page lists its items by state              |
+   | Watch and steer an agent                | Sessions                                    | Sessions, under Projects; a project's page lists its runs                    |
+   | Check a canary and promote              | Release (Ren's); the CLI for other projects | Release (Ren's), and every project's release on its page                     |
+   | Find out why a call or run went wrong   | Live, Traffic, Recordings, Search, Overview | **Inspect**: those five                                                      |
+   | Keep the host                           | Tools, Usage, Recorder                      | **Host**: those three                                                        |
+
+   Built in this round: the header names Projects, Inspect, and Host, and
+   a row under it lists the current one's pages (`lib/view.ts`,
+   `Views.destination` and `Views.pages`). Projects (`/`) lists each
+   project with its release, open work, and runs, beside what is pending:
+   a canary to promote, a preview to check, work still queued. A project's
+   page (`/projects/{name}`) shows its release (lanes and checks), its
+   work by state, and its runs, each opening in Work, Sessions, or
+   Release. Overview, the gateway's traffic, moves to `/overview` under
+   Inspect.
+
+   Left for later rounds: approvals among what is pending (the read API
+   does not carry a session's phase), Inspect scoped to a project (calls
+   are tied to runs only through their conversation), a work item opened
+   in a drawer over its project, and a project's workspaces.
    - First, an audit: the operator's tasks in the loop, the screen that
      serves each today, and the gaps. Then the navigation in decision 6,
      rendered on the dev slot (with Ren and the fake projects registered)
@@ -244,3 +269,14 @@ gate against `main`.
   `--project` lookups for `canary` and `promote`, which build a repository
   on this host, still read the store beside the daemon. `ren release`
   takes `--project`, Ren's by default.
+- **Phase 4: Work, Sessions, and Release stay pages under Projects.**
+  Decision 6 put them inside a project. A project's page lists its work
+  and runs and links into them, while the pages themselves still list
+  every project's; moving each inside its project is a later round, from
+  the real page, so nothing they do is lost on the way.
+- **Phase 4: Overview stays, under Inspect.** It is the gateway's traffic
+  at a glance, not the factory's, so `/` became Projects and Overview moved
+  to `/overview`.
+- **Phase 4: a project's page is one page of sections.** The mockups had
+  tabs; with its release, work, and runs each short, sections read in one
+  scroll, and the tabs wait until a section outgrows it.

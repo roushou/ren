@@ -16,6 +16,10 @@ use std::{
 /// A page of the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Page {
+    /// The factory's home: every project, and what is pending.
+    Projects,
+    Work,
+    Release,
     Overview,
     Live,
     Traffic,
@@ -38,7 +42,10 @@ struct Newest {
 }
 
 impl Page {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 12] = [
+        Self::Projects,
+        Self::Work,
+        Self::Release,
         Self::Overview,
         Self::Live,
         Self::Traffic,
@@ -52,6 +59,9 @@ impl Page {
 
     pub fn name(self) -> &'static str {
         match self {
+            Self::Projects => "projects",
+            Self::Work => "work",
+            Self::Release => "release",
             Self::Overview => "overview",
             Self::Live => "live",
             Self::Traffic => "traffic",
@@ -68,7 +78,10 @@ impl Page {
     /// run's session (if any) for `Sessions`.
     fn path(self, newest: &Newest) -> Option<String> {
         match self {
-            Self::Overview => Some("/".into()),
+            Self::Projects => Some("/".into()),
+            Self::Work => Some("/work".into()),
+            Self::Release => Some("/release".into()),
+            Self::Overview => Some("/overview".into()),
             Self::Live => Some("/live".into()),
             Self::Traffic => Some("/traffic".into()),
             Self::Recordings => Some("/recordings".into()),
@@ -238,7 +251,10 @@ mod tests {
                     assert_eq!(page.path(&none).as_deref(), Some("/sessions"));
                     assert_eq!(page.path(&some).as_deref(), Some("/sessions?run=r1"));
                 }
-                Page::Overview
+                Page::Projects
+                | Page::Work
+                | Page::Release
+                | Page::Overview
                 | Page::Live
                 | Page::Traffic
                 | Page::Recordings

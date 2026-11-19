@@ -73,6 +73,8 @@ export interface WorkItem {
   title: string;
   order: WorkOrder;
   state: Stored<WorkState>;
+  /** The project it is for, by id; null when none was named, or from before projects. */
+  project: string | null;
   session: SessionId | null;
   landed: string | null;
   shipped: Revision | null;
@@ -126,6 +128,7 @@ const workItem = object<WorkItem, WireWorkItem>({
     evidence: object<Evidence, WireEvidence>({ console: array(string), reads: array(string) }),
   }),
   state: label(workStates),
+  project: nullable(string),
   session: nullable(SessionId.decode),
   landed: nullable(string),
   shipped: nullable(revision),
@@ -147,9 +150,18 @@ export class WorkApi {
     this.#fetch = fetcher;
   }
 
-  /** Work items on `shelf`, most recently changed first. */
-  async list(shelf: Shelf = 'current', signal?: AbortSignal): Promise<WorkItem[]> {
-    const path = shelf === 'archived' ? '/api/work?shelf=archived' : '/api/work';
+  /** Work items on `shelf`, most recently changed first; with `project`,
+   * only those for the project of that name. */
+  async list(
+    shelf: Shelf = 'current',
+    signal?: AbortSignal,
+    project: string | null = null,
+  ): Promise<WorkItem[]> {
+    const params = new URLSearchParams();
+    if (shelf === 'archived') params.set('shelf', 'archived');
+    if (project) params.set('project', project);
+    const search = params.toString();
+    const path = search ? `/api/work?${search}` : '/api/work';
     return (await this.#request('GET', path, undefined, workItems, signal)).work;
   }
 

@@ -1,10 +1,28 @@
-import { browser } from '$app/env';
-import { LiveReader, overviewSnapshot } from '#lib/loaders.ts';
+import { ManagementApi, type Project } from '#lib/api.ts';
+import { WorkApi, type WorkItem } from '#lib/work.ts';
 import type { PageLoad } from './$types';
 
-// In the browser one reader keeps the Live board's turn cache between refreshes.
-const reader = browser ? new LiveReader() : null;
+/** What the Projects view reads; work that fails to read leaves it empty. */
+export interface ProjectsData {
+  projects: Project[];
+  /** Why the projects did not read, when they did not. */
+  failed: string | null;
+  /** Work items under way, across every project. */
+  work: WorkItem[];
+}
 
-export const load: PageLoad = async ({ fetch }) => ({
-  overview: await overviewSnapshot(fetch, reader ?? new LiveReader()),
-});
+export const load: PageLoad = async ({ fetch, parent }): Promise<ProjectsData> => {
+  await parent();
+  const api = new ManagementApi(fetch);
+  const [listed, work] = await Promise.all([
+    api.projects().then(
+      (projects) => ({ projects, failed: null }),
+      (failure: unknown) => ({
+        projects: [],
+        failed: failure instanceof Error ? failure.message : 'The projects did not read.',
+      }),
+    ),
+    new WorkApi(fetch).list('current').catch(() => []),
+  ]);
+  return { ...listed, work };
+};

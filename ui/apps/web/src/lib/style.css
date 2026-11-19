@@ -454,6 +454,38 @@ pre {
   border-top-color: var(--accent);
   background: var(--canvas);
 }
+/* The current destination's pages, one rule under the header. */
+.page-row {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.page-row::-webkit-scrollbar {
+  display: none;
+}
+.page-row a {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+}
+.page-row a:hover {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+.page-row a.active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
 /* Where the gateway runs: its node and network, never its address. */
 .gateway-place {
   display: inline-flex;
@@ -1985,7 +2017,7 @@ td > .chip {
 }
 .nav-progress {
   position: absolute;
-  top: 40px;
+  top: 73px;
   left: 0;
   right: 0;
   z-index: 20;
