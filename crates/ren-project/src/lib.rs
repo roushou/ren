@@ -4,6 +4,8 @@
 //! and a preview as Ren's own do.
 //!
 //! ```toml
+//! tools = ["node"]
+//!
 //! [[build]]
 //! run = ["npm", "ci"]
 //!
@@ -30,6 +32,9 @@
 //! Deploying runs in a build the canary checked, when the operator's
 //! promotion policy says (`ren project canary`, `ren project promote`).
 //!
+//! `tools` names the packages of Ren's depot its steps need (`ren tools
+//! list`); every step runs with Ren's toolset first on its search path.
+//!
 //! Every command is an argv, never a shell line. Arguments and values may
 //! name the place a step runs for ([`Place`]): `{port}` (its first port),
 //! `{port+N}` (another of its ports), `{data}` (its data folder), and
@@ -41,12 +46,17 @@ mod template;
 
 pub use template::{Template, TemplateError};
 
+use ren_depot::package::PackageId;
 use serde::Deserialize;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 /// How a project is built, served, checked, and quiesced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectContract {
+    tools: BTreeSet<PackageId>,
     build: Vec<Step>,
     serve: Option<Serve>,
     checks: Vec<NamedCheck>,
@@ -118,6 +128,8 @@ pub enum ContractError {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ContractFile {
+    #[serde(default)]
+    tools: BTreeSet<PackageId>,
     #[serde(default)]
     build: Vec<StepFile>,
     serve: Option<ServeFile>,
@@ -209,12 +221,18 @@ impl ProjectContract {
             .map(|step| Step::read(step.run, step.env))
             .transpose()?;
         Ok(Self {
+            tools: file.tools,
             build,
             serve,
             checks,
             quiesce,
             deploy,
         })
+    }
+
+    /// The depot's packages its steps need.
+    pub fn tools(&self) -> &BTreeSet<PackageId> {
+        &self.tools
     }
 
     /// Its build steps, in order.
@@ -320,6 +338,8 @@ mod tests {
     use std::path::PathBuf;
 
     const CONTRACT: &str = r#"
+tools = ["node", "jq", "node"]
+
 [[build]]
 run = ["npm", "ci"]
 
@@ -355,6 +375,14 @@ run = ["./deploy.sh", "{workspace}"]
     fn a_contract_reads_and_expands_for_its_place() {
         let contract = ProjectContract::read(CONTRACT).unwrap();
         assert_eq!(contract.build().len(), 2);
+        assert_eq!(
+            contract
+                .tools()
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>(),
+            ["jq", "node"]
+        );
         let serve = contract.serve().unwrap();
         let expanded = serve.step().expand(&place()).unwrap();
         assert_eq!(
@@ -387,7 +415,7 @@ run = ["./deploy.sh", "{workspace}"]
         );
         // A contract may declare as little as nothing.
         let empty = ProjectContract::read("").unwrap();
-        assert!(empty.serve().is_none() && empty.checks().is_empty());
+        assert!(empty.serve().is_none() && empty.checks().is_empty() && empty.tools().is_empty());
     }
 
     #[test]
@@ -405,6 +433,7 @@ run = ["./deploy.sh", "{workspace}"]
                 "health",
             ),
             ("[[build]]\nrun = [\"x\", \"{home}\"]", "placeholder"),
+            ("tools = [\"Node 22\"]", "package"),
             (
                 "[[build]]\nrun = [\"x\"]\nenv = { \"1BAD\" = \"v\" }",
                 "invalid name",

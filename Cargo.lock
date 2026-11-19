@@ -1900,6 +1900,7 @@ dependencies = [
 name = "ren-project"
 version = "0.1.0"
 dependencies = [
+ "ren-depot",
  "serde",
  "thiserror",
  "toml",
@@ -1983,6 +1984,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
+ "sha2 0.11.1",
  "strum",
  "tempfile",
  "thiserror",

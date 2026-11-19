@@ -458,6 +458,8 @@ A repository declares how Ren builds, serves, checks, and quiesces it in
 a preview as Ren's own do:
 
 ```toml
+tools = ["node"]
+
 [[build]]
 run = ["npm", "ci"]
 
@@ -481,6 +483,39 @@ run = ["./deploy.sh", "production"]
 Every command is an argv, never a shell line. Arguments and values may
 name the workspace's first port `{port}`, another `{port+N}` (within its
 100), its data folder `{data}`, and its folder `{workspace}`.
+
+Every step, the serve unit's included, runs with Ren's toolset (`ren
+tools`, see [clients.md](clients.md#tools-for-agents)) first on its `PATH`,
+then the caller's, as Ren's runs do: the current generation, named when
+the command starts (`==> Tools: generation 3 (node 26.13.1, ...)`).
+`tools` names the packages the steps need. One Ren installs must be in
+that generation, so steps run the release Ren pins, not another copy on
+the host; one Ren only adopts (git) must be on the host's `PATH`; and a
+package the catalog does not know is added as a `[[tools.package]]` in the
+daemon's `ren.toml`, as for Go:
+
+```toml
+[[tools.package]]
+id = "go"
+kind = "runtime"
+program = "go"
+
+[tools.package.release]
+version = "1.25.4"
+
+[[tools.package.release.artifact]]
+platform = "linux_x64"
+url = "https://go.dev/dl/go1.25.4.linux-amd64.tar.gz"
+sha256 = "<64 hex digits from go.dev/dl>"
+format = "tar_gz"
+program_at = "go/bin/go"
+```
+
+A tool lacking refuses `check`, `preview`, and `promote` before any step
+runs, each with what to do (`ren tools install node`); in a canary pass it
+fails the build check. `ren tools gc` keeps the generations runs use, not
+the one a preview or canary serves with: after a change, start them again
+before collecting.
 
 ```sh
 ren project check                  # run the declared checks; fails when one does

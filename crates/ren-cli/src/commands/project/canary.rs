@@ -10,10 +10,11 @@
 //! decides make the project's release, kept in `<data>/projects/<name>`.
 //! When the policy promotes, the contract's deploy step runs in the checked
 //! build; a deploy that fails is marked and not tried again on its own.
+//! A tool the contract names that cannot be had fails the build check.
 
 use super::{ProjectCmd, Steps};
 use crate::context::Context;
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use ren_daemon::host::SystemClock;
 use ren_gateway::api::release::{ReleaseBody, ReleaseView};
 use ren_git::{Branch, CommitId, Git};
@@ -40,8 +41,6 @@ pub(super) struct ProjectFactory {
     state: PathBuf,
     /// `~/.config/ren/release.toml`.
     options: PathBuf,
-    /// The caller's search path, which the serve unit runs with.
-    path: Option<String>,
     git: Git,
 }
 
@@ -50,6 +49,30 @@ pub(super) struct ProjectFactory {
 #[serde(deny_unknown_fields)]
 struct CanaryRecord {
     workspace: String,
+}
+
+impl Steps {
+    /// One step's outcome: a step that cannot expand or start fails, as one
+    /// that exits unsuccessfully does.
+    fn outcome(&self, step: &ren_project::Step, place: &Place) -> Outcome {
+        let ran = step
+            .expand(place)
+            .map_err(anyhow::Error::from)
+            .and_then(|step| {
+                println!("==> {}", step.argv.join(" "));
+                self.run(&step, &place.workspace)
+                    .map(|succeeded| (succeeded, step))
+            });
+        match ran {
+            Ok((true, _)) => Outcome::Passed,
+            Ok((false, step)) => Outcome::Failed {
+                detail: format!("`{}` failed", step.argv.join(" ")),
+            },
+            Err(error) => Outcome::Failed {
+                detail: format!("{error:#}"),
+            },
+        }
+    }
 }
 
 impl ProjectFactory {
@@ -75,7 +98,6 @@ impl ProjectFactory {
             worktrees: data.join("worktrees"),
             state: data.join(Release::PROJECTS).join(&name),
             options: home.join(".config/ren/release.toml"),
-            path: ctx.env.get("PATH").map(str::to_owned),
             git: Git::inherited(),
             name,
             repo,
@@ -84,7 +106,7 @@ impl ProjectFactory {
 
     /// One pass: fetch, check out, build, serve, check, decide, and deploy
     /// when the policy says.
-    pub(super) async fn pass(&self, remote: &str, branch: &str) -> Result<ExitCode> {
+    pub(super) async fn pass(&self, ctx: &Context, remote: &str, branch: &str) -> Result<ExitCode> {
         let branch: Branch = branch.parse().map_err(anyhow::Error::msg)?;
         println!("==> Fetching {branch} from {remote}");
         let tip = self.git.fetch(&self.repo, remote, &branch)?;
@@ -97,20 +119,23 @@ impl ProjectFactory {
             ports: Some(workspace.ports()),
         };
         let contract = ProjectCmd::contract(&place.workspace)?;
-        let verdict = self.check(&contract, &place, &workspace).await?;
+        let steps = Steps::of(ctx, &contract);
+        let verdict = self.check(&steps, &contract, &place, &workspace).await?;
         let commit = Self::release_commit(&tip)?;
         let canary = Canary::new(commit.clone(), verdict);
         let deployed = self.read()?.map(|release| release.production().clone());
         let release = self.assess(&tip, Some(canary), deployed)?;
         self.write(&release)?;
         if release.decision() == &Stored::Known(Decision::Promote) {
-            self.deploy(&contract, &place, &commit)?;
+            // Only a build that passed is promoted, so its steps were had.
+            let steps = steps.map_err(|error| anyhow!("{error:#}"))?;
+            self.deploy(&steps, &contract, &place, &commit)?;
         }
         Ok(ExitCode::SUCCESS)
     }
 
     /// `ren project promote`: the canary's checked build, now.
-    pub(super) fn promote(&self) -> Result<ExitCode> {
+    pub(super) fn promote(&self, ctx: &Context) -> Result<ExitCode> {
         let release = self
             .read()?
             .context("no canary pass has run for this project")?;
@@ -126,8 +151,9 @@ impl ProjectFactory {
             ports: Some(workspace.ports()),
         };
         let contract = ProjectCmd::contract(&place.workspace)?;
+        let steps = Steps::of(ctx, &contract)?;
         let _ = fs::remove_file(self.failed(&commit));
-        self.deploy(&contract, &place, &commit)?;
+        self.deploy(&steps, &contract, &place, &commit)?;
         Ok(ExitCode::SUCCESS)
     }
 
@@ -179,9 +205,11 @@ impl ProjectFactory {
 
     /// The project's checks of the checked-out build: its build steps, its
     /// serve step up and answering, then each declared check against it.
-    /// A check that cannot run fails.
+    /// A check that cannot run fails; steps that cannot be had (a tool
+    /// the contract names is lacking) fail the build.
     async fn check(
         &self,
+        steps: &Result<Steps>,
         contract: &ProjectContract,
         place: &Place,
         workspace: &Workspace,
@@ -192,39 +220,50 @@ impl ProjectFactory {
             .map(|check| check.name().to_owned())
             .collect();
         let mut checks = Vec::new();
-        let mut built = Outcome::Passed;
-        for step in contract.build() {
-            built = Self::step(step, place);
-            if !matches!(built, Outcome::Passed) {
-                break;
+        let built = match steps {
+            Err(error) => Outcome::Failed {
+                detail: format!("{error:#}"),
+            },
+            Ok(steps) => {
+                let mut built = Outcome::Passed;
+                for step in contract.build() {
+                    built = steps.outcome(step, place);
+                    if !matches!(built, Outcome::Passed) {
+                        break;
+                    }
+                }
+                built
             }
-        }
+        };
         let built_ok = matches!(built, Outcome::Passed);
         checks.push(Check::new(CheckKind::Build, built));
-        let serving = match (built_ok, contract.serve()) {
-            (false, _) => Outcome::Failed {
+        let serving = match (steps, built_ok, contract.serve()) {
+            (Err(_), _, _) | (_, false, _) => Outcome::Failed {
                 detail: "not run: the build failed".to_owned(),
             },
-            (true, None) => Outcome::Failed {
+            (Ok(_), true, None) => Outcome::Failed {
                 detail: format!("{} declares no [serve] step", ProjectContract::FILE),
             },
-            (true, Some(serve)) => self.serve(serve, place, workspace).await.map_or_else(
-                |error| Outcome::Failed {
-                    detail: format!("{error:#}"),
-                },
-                |()| Outcome::Passed,
-            ),
+            (Ok(steps), true, Some(serve)) => Self::serve(steps, serve, place, workspace)
+                .await
+                .map_or_else(
+                    |error| Outcome::Failed {
+                        detail: format!("{error:#}"),
+                    },
+                    |()| Outcome::Passed,
+                ),
         };
         let served = matches!(serving, Outcome::Passed);
         checks.push(Check::new(CheckKind::Serve, serving));
         for check in contract.checks() {
-            let outcome = if served {
-                println!("==> {}", check.name());
-                Self::step(check.step(), place)
-            } else {
-                Outcome::Failed {
-                    detail: "not run: the project did not serve".to_owned(),
+            let outcome = match (steps, served) {
+                (Ok(steps), true) => {
+                    println!("==> {}", check.name());
+                    steps.outcome(check.step(), place)
                 }
+                (Err(_), _) | (_, false) => Outcome::Failed {
+                    detail: "not run: the project did not serve".to_owned(),
+                },
             };
             checks.push(Check::declared(check.name(), outcome));
         }
@@ -240,30 +279,9 @@ impl ProjectFactory {
         Ok(Verdict::project(declared, checks))
     }
 
-    /// One step's outcome: a step that cannot expand or start fails, as one
-    /// that exits unsuccessfully does.
-    fn step(step: &ren_project::Step, place: &Place) -> Outcome {
-        let ran = step
-            .expand(place)
-            .map_err(anyhow::Error::from)
-            .and_then(|step| {
-                println!("==> {}", step.argv.join(" "));
-                Steps::run(&step, &place.workspace).map(|succeeded| (succeeded, step))
-            });
-        match ran {
-            Ok((true, _)) => Outcome::Passed,
-            Ok((false, step)) => Outcome::Failed {
-                detail: format!("`{}` failed", step.argv.join(" ")),
-            },
-            Err(error) => Outcome::Failed {
-                detail: format!("{error:#}"),
-            },
-        }
-    }
-
     /// Starts the serve step in the canary's workspace and waits for it.
     async fn serve(
-        &self,
+        steps: &Steps,
         serve: &ren_project::Serve,
         place: &Place,
         workspace: &Workspace,
@@ -271,7 +289,7 @@ impl ProjectFactory {
         let unit = ProjectCmd::unit(workspace);
         Steps::stop(&unit)?;
         let step = serve.step().expand(place)?;
-        Steps::start(&unit, &step, &place.workspace, self.path.as_deref())?;
+        steps.start(&unit, &step, &place.workspace)?;
         ProjectCmd::healthy(&serve.open(place)?, serve.health()).await
     }
 
@@ -334,7 +352,13 @@ impl ProjectFactory {
 
     /// Runs the deploy step in the checked build; production is then that
     /// commit. A failed deploy is marked and not tried again on its own.
-    fn deploy(&self, contract: &ProjectContract, place: &Place, commit: &Commit) -> Result<()> {
+    fn deploy(
+        &self,
+        steps: &Steps,
+        contract: &ProjectContract,
+        place: &Place,
+        commit: &Commit,
+    ) -> Result<()> {
         let Some(deploy) = contract.deploy() else {
             println!(
                 "{} declares no [deploy] step: nothing is promoted.",
@@ -344,7 +368,7 @@ impl ProjectFactory {
         };
         let step = deploy.expand(place)?;
         println!("==> Deploying {}: {}", commit.short(), step.argv.join(" "));
-        let deployed = Steps::run(&step, &place.workspace)?;
+        let deployed = steps.run(&step, &place.workspace)?;
         let release = self.read()?.context("no release to promote")?;
         let tip: CommitId = release.main().to_string().parse()?;
         let canary = release.canary().cloned();

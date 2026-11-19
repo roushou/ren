@@ -214,7 +214,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   filesystem and process I/O but has no async runtime, HTTP, database, or
   CLI dependency.
 - `crates/ren-project`: a project's contract with Ren (`ProjectContract`,
-  read from `ren-project.toml`): its build, serve, check, and quiesce steps,
+  read from `ren-project.toml`): the depot packages its steps need
+  (`tools`), its build, serve, check, and quiesce steps,
   each an argv with the environment it adds, never a shell line, whose
   values name the `Place` a step runs for through a parsed `Template`
   (`{port}`, `{port+N}`, `{data}`, `{workspace}`; an unknown placeholder is

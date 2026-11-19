@@ -9,6 +9,10 @@
 //! commits name (`Work-Item: <id>`), or that `--work` gives, so the Work
 //! view opens the marked page on it. Removing the workspace stops it.
 //!
+//! Every step runs with Ren's toolset (`ren tools`) first on its search
+//! path, as Ren's runs do; a tool the contract names (`tools`) that the
+//! toolset or the host lacks refuses the command before any step runs.
+//!
 //! This module is the one place the CLI runs a project's declared steps.
 
 mod canary;
@@ -16,9 +20,13 @@ mod canary;
 use self::canary::ProjectFactory;
 use super::history::TargetArgs;
 use crate::{context::Context, management::Management};
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use clap::{Args, Subcommand};
-use ren_daemon::tailscale::{NodeStatus, Route, ServeStatus};
+use ren_daemon::{
+    tailscale::{NodeStatus, Route, ServeStatus},
+    tools::{HostTools, ToolStore},
+};
+use ren_depot::toolset::{Generation, Lack};
 use ren_gateway::api::{
     control::request::{ControlRequest, PreviewWorkRequest, WorkChange},
     read::{ReadBody, work::WorkPreviewBody},
@@ -121,8 +129,13 @@ struct ProjectPlace {
     workspace: Option<Workspace>,
 }
 
-/// The one place the CLI runs a project's steps and its preview's unit.
-struct Steps;
+/// The one place the CLI runs a project's steps and its preview's unit,
+/// with the search path each gets.
+struct Steps {
+    /// Ren's toolset's programs, then the caller's search path; `None`
+    /// keeps the caller's.
+    path: Option<String>,
+}
 
 impl ProjectCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
@@ -134,10 +147,10 @@ impl ProjectCmd {
             },
             ProjectAction::Canary(args) => {
                 ProjectFactory::new(ctx, args.dir.dir)?
-                    .pass(&args.remote, &args.branch)
+                    .pass(ctx, &args.remote, &args.branch)
                     .await
             }
-            ProjectAction::Promote(args) => ProjectFactory::new(ctx, args.dir)?.promote(),
+            ProjectAction::Promote(args) => ProjectFactory::new(ctx, args.dir)?.promote(ctx),
             ProjectAction::Release(args) => ProjectFactory::new(ctx, args.dir)?.show(),
         }
     }
@@ -161,11 +174,12 @@ impl ProjectCmd {
             println!("{} declares no checks.", ProjectContract::FILE);
             return Ok(ExitCode::SUCCESS);
         }
+        let steps = Steps::of(ctx, &contract)?;
         let mut failed = Vec::new();
         for check in contract.checks() {
             println!("==> {}", check.name());
             let step = check.step().expand(&place.place)?;
-            if !Steps::run(&step, &place.place.workspace)? {
+            if !steps.run(&step, &place.place.workspace)? {
                 failed.push(check.name().to_owned());
             }
         }
@@ -188,17 +202,18 @@ impl ProjectCmd {
                 ProjectContract::FILE
             )
         })?;
+        let steps = Steps::of(ctx, &contract)?;
         for step in contract.build() {
             let step = step.expand(&place.place)?;
             println!("==> {}", step.argv.join(" "));
-            if !Steps::run(&step, &place.place.workspace)? {
+            if !steps.run(&step, &place.place.workspace)? {
                 bail!("a build step failed; the preview is not started");
             }
         }
         let unit = Self::unit(workspace);
         Steps::stop(&unit)?;
         let step = serve.step().expand(&place.place)?;
-        Steps::start(&unit, &step, &place.place.workspace, ctx.env.get("PATH"))?;
+        steps.start(&unit, &step, &place.place.workspace)?;
         let open = serve.open(&place.place)?;
         Self::healthy(&open, serve.health()).await?;
         let mut origin: PreviewUrl = open
@@ -248,7 +263,7 @@ impl ProjectCmd {
         if let Some(quiesce) = contract.quiesce() {
             let step = quiesce.expand(&place.place)?;
             println!("==> {}", step.argv.join(" "));
-            Steps::run(&step, &place.place.workspace)?;
+            Steps::of(ctx, &contract)?.run(&step, &place.place.workspace)?;
         }
         Steps::stop(&Self::unit(workspace))?;
         let port = contract
@@ -421,16 +436,100 @@ impl ProjectPlace {
 }
 
 impl Steps {
+    /// The steps of `contract` on this host: Ren's current toolset goes
+    /// first on their search path. Refused when a tool the contract names
+    /// is lacking, or the toolset it would come from cannot be read.
+    pub(super) fn of(ctx: &Context, contract: &ProjectContract) -> Result<Self> {
+        let config = ctx.config()?;
+        let store = ToolStore::without_downloads(ctx.data_dir(&config)?.join(ToolStore::FOLDER));
+        let caller = Self {
+            path: ctx.env.get("PATH").map(str::to_owned),
+        };
+        let toolset = match store.current() {
+            Ok(toolset) => toolset,
+            Err(error) if contract.tools().is_empty() => {
+                eprintln!("Ren's toolset does not read ({error}); steps run with your PATH alone.");
+                return Ok(caller);
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "{} names tools, and Ren's toolset does not read",
+                        ProjectContract::FILE
+                    )
+                });
+            }
+        };
+        let search = ctx.env.search_path();
+        let lacks = toolset.lacks(
+            &config.tools.depot()?,
+            &HostTools::new(search.clone()),
+            contract.tools(),
+        );
+        if !lacks.is_empty() {
+            bail!(Self::lacking(&lacks));
+        }
+        if toolset.generation() == Generation::NONE {
+            return Ok(caller);
+        }
+        let bin = store.bin(toolset.generation());
+        let dirs: Vec<PathBuf> = std::iter::once(bin.clone())
+            .chain(search.into_iter().filter(|dir| *dir != bin))
+            .collect();
+        let path = std::env::join_paths(dirs)?
+            .into_string()
+            .map_err(|_| anyhow!("the search path is not text"))?;
+        let installs: Vec<String> = toolset
+            .installs()
+            .map(|install| format!("{} {}", install.package, install.version))
+            .collect();
+        println!(
+            "==> Tools: generation {} ({})",
+            toolset.generation(),
+            installs.join(", ")
+        );
+        Ok(Self { path: Some(path) })
+    }
+
+    /// What to tell the operator about `lacks`, one line each.
+    fn lacking(lacks: &[Lack]) -> String {
+        let lines: Vec<String> = lacks
+            .iter()
+            .map(|lack| match lack {
+                Lack::Unknown(_) => {
+                    format!(
+                        "  {lack}: add it to the daemon's ren.toml as a [[tools.package]] entry"
+                    )
+                }
+                Lack::NotInstalled(id) => format!("  {lack}: run `ren tools install {id}`"),
+                Lack::NotOnHost { .. } => format!("  {lack}: install it on this host"),
+            })
+            .collect();
+        format!(
+            "{} names tools its steps cannot have:\n{}",
+            ProjectContract::FILE,
+            lines.join("\n")
+        )
+    }
+
     /// Runs `step` in `dir`, in the foreground; whether it succeeded.
+    pub(super) fn run(&self, step: &Expanded, dir: &Path) -> Result<bool> {
+        Self::status(step, dir, self.path.as_deref())
+    }
+
     #[expect(
         clippy::disallowed_methods,
         reason = "the one place the CLI runs a project's declared steps"
     )]
-    pub(super) fn run(step: &Expanded, dir: &Path) -> Result<bool> {
+    fn status(step: &Expanded, dir: &Path, path: Option<&str>) -> Result<bool> {
         let [program, args @ ..] = step.argv.as_slice() else {
             bail!("an empty command");
         };
-        let status = std::process::Command::new(program)
+        let mut command = std::process::Command::new(program);
+        if let Some(path) = path {
+            command.env("PATH", path);
+        }
+        let status = command
             .args(args)
             .envs(step.env.iter().map(|(name, value)| (name, value)))
             .current_dir(dir)
@@ -441,9 +540,9 @@ impl Steps {
     }
 
     /// Starts `step` as the transient user unit `unit`, in `dir`, with the
-    /// caller's `path`: a unit otherwise gets the user manager's, which
-    /// lacks the programs installed in the operator's home (Node, Bun).
-    pub(super) fn start(unit: &str, step: &Expanded, dir: &Path, path: Option<&str>) -> Result<()> {
+    /// steps' search path: a unit otherwise gets the user manager's, which
+    /// lacks Ren's toolset and the programs in the operator's home.
+    pub(super) fn start(&self, unit: &str, step: &Expanded, dir: &Path) -> Result<()> {
         let mut argv = vec![
             "systemd-run".to_owned(),
             "--user".to_owned(),
@@ -452,7 +551,7 @@ impl Steps {
             format!("--unit={unit}"),
             format!("--working-directory={}", dir.display()),
         ];
-        if let Some(path) = path {
+        if let Some(path) = &self.path {
             argv.push(format!("--setenv=PATH={path}"));
         }
         argv.extend(
@@ -466,7 +565,7 @@ impl Steps {
             argv,
             env: Vec::new(),
         };
-        if Self::run(&start, dir)? {
+        if self.run(&start, dir)? {
             Ok(())
         } else {
             bail!("systemd-run did not start {unit}")
@@ -508,7 +607,7 @@ impl Steps {
                     argv,
                     env: Vec::new(),
                 };
-                if !Self::run(&serve, Path::new("/"))? {
+                if !Self::status(&serve, Path::new("/"), None)? {
                     bail!("tailscale serve did not publish port {port}");
                 }
             }
