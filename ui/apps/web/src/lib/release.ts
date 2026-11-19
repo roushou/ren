@@ -33,7 +33,7 @@ export const ReleaseLine = {
   of(release: ReleaseView): ReleaseLine {
     const behind =
       release.behind === null
-        ? 'Production not on main'
+        ? 'Production not counted against main'
         : release.behind === 0
           ? 'Production on main'
           : `Production ${release.behind} behind main`;

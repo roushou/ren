@@ -115,6 +115,7 @@ test('every allowlisted read uses the same bounded read bridge', async () => {
     '/health',
     '/api/metrics',
     '/api/storage',
+    '/api/release',
     '/api/calls',
     `/api/calls/${id}`,
     `/api/calls/${id}/body/request`,

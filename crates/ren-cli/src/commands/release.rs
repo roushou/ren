@@ -9,7 +9,7 @@ use anyhow::Result;
 use clap::Args;
 use ren_gateway::api::release::{ReleaseBody, ReleaseView};
 use ren_protocol::label::Stored;
-use ren_release::{Decision, Policy, Revision};
+use ren_release::{Decision, Policy, Revision, Tree};
 use std::{fmt::Write as _, process::ExitCode};
 
 /// Show where the release stands: main, production, and the canary.
@@ -41,14 +41,21 @@ impl ReleaseCmd {
         let mut text = String::new();
         let _ = writeln!(text, "main        {}", release.main.short());
         let production = match &release.production {
-            Revision::Commit { commit, .. } => commit.short().to_owned(),
+            Revision::Commit {
+                commit,
+                tree: Tree::Clean,
+            } => commit.short().to_owned(),
+            Revision::Commit {
+                commit,
+                tree: Tree::Modified,
+            } => format!("{}, modified", commit.short()),
             Revision::Unknown => "unknown".to_owned(),
         };
         let behind = match release.behind {
             Some(0) => "up to date with main".to_owned(),
             Some(1) => "1 commit behind main".to_owned(),
             Some(count) => format!("{count} commits behind main"),
-            None => "not a commit of main".to_owned(),
+            None => "not counted against main".to_owned(),
         };
         let _ = writeln!(text, "production  {production} ({behind})");
         match &release.canary {
