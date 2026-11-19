@@ -190,12 +190,13 @@ Records outside the tree stay, and each says why it is outside:
    in its project's repository (`"project"` on session create), one
    project's items at a time.
 
-   Inspect is scoped to a project by `?project=` on Traffic and
-   Recordings (`/api/calls` and `/api/recordings` take `project`: a call is
-   a project's when its recording's conversation is the thread of a run of
-   a session working for it); a row under the pages names the scope and
-   clears it, and switching between those two keeps it. A project's page
-   links its calls and recordings.
+   Every Inspect page is scoped to a project by `?project=`: Overview,
+   Live, Traffic, Recordings, and Search (`/api/calls`, `/api/recordings`,
+   `/api/usage`, `/api/search`, and `/api/exposures` take `project`: a call
+   is a project's when its recording's conversation is the thread of a run
+   of a session working for it); a row under the pages names the scope and
+   clears it, and moving between them keeps it. A project's Overview links
+   them.
 
    A project's page lists its current sessions, each with the worktree it
    works in (or its folder), the worktree's ports, whether it runs, and
@@ -217,6 +218,18 @@ Records outside the tree stay, and each says why it is outside:
    name Ren. `/work?item=` and `/sessions?session=` (or `?run=`) lead to
    where the item or session now is; `/work` and `/sessions` alone lead to
    Projects.
+
+   Release is a project's fourth page (`/projects/{name}/release`): its
+   builds, the canary's checks, and the work its production build shipped
+   and the work waiting on main; Ren's adds the pages its canary captured
+   and Promote. `/release` leads to Ren's.
+
+   A project's Overview is a summary of the pages beside it: its release
+   in one line, its work not yet shipped (opening in the drawer), its
+   sessions running with their worktrees, links into Inspect, and,
+   beside them, what waits on the operator in it (`PendingPanel`, the
+   Projects view's own, on a board of the one project: its sessions'
+   approvals to answer, its previews, a canary to promote).
 
 Each phase is verified in the dev slot, whose fake projects are registered
 as projects (and the slot's checkout as `Ren`), and by the compatibility
@@ -303,14 +316,15 @@ gate against `main`.
   `--project` lookups for `canary` and `promote`, which build a repository
   on this host, still read the store beside the daemon. `ren release`
   takes `--project`, Ren's by default.
-- **Phase 4: Work and Sessions moved inside each project in a second
-  round; Release stays.** Decision 6 put them inside a project. The first
-  round kept them as pages listing every project's, linked from a
-  project's page; the second moved each, whole, under its project, so
-  nothing they do was lost. Sessions of no project needed a home the
-  decision did not give: Scratch, beside Projects. Release stays Ren's
-  full release under Projects; every project's release is on its page.
-- **Phase 4: a project's pages are Overview, Work, and Sessions.** The
+- **Phase 4: Work, Sessions, and Release moved inside each project in
+  later rounds.** Decision 6 put them inside a project. The first round
+  kept them as pages listing every project's, linked from a project's
+  page; later rounds moved each, whole, under its project, so nothing they
+  do was lost. Sessions of no project needed a home the decision did not
+  give: Scratch, beside Projects. Release is every project's page now;
+  Ren's alone has the canary's pages and a Promote, since its canary
+  captures them and the control route promotes Ren.
+- **Phase 4: a project's pages are Overview, Work, Sessions, and Release.** The
   mockups had tabs and the first round one page of sections; with Work and
   Sessions whole pages (a list beside its detail, and the session desk),
   they are pages of their own, and the overview keeps the sections.

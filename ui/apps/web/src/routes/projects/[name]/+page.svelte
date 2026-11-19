@@ -1,13 +1,13 @@
 <!--
-  A project (docs/plans/hierarchy.md): what it is, where its release
-  stands, its work items by state, its sessions (each in the worktree or
-  folder it works in, with the work it took up), and their runs. Each item
-  opens in a drawer, each session and run in Sessions, and Ren's release in
-  full in Release.
+  A project's Overview (docs/plans/hierarchy.md): where its release stands,
+  its work under way, its sessions running, and, beside them, what waits on
+  the operator in it. Each has a page of its own beside this one (Work,
+  Sessions, Release); a work item opens in a drawer here.
 -->
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
   import Icon from '#lib/Icon.svelte';
+  import PendingPanel from '#lib/PendingPanel.svelte';
   import WorkItemDetail from '#lib/WorkItemDetail.svelte';
   import { onMount, tick } from 'svelte';
   import { goto, invalidateAll } from '$app/navigation';
@@ -17,13 +17,27 @@
   import { harnessLabel } from '#lib/activity.ts';
   import { Sessions } from '#lib/runs.ts';
   import { ProjectBoard } from '#lib/projects.ts';
-  import { ReleaseLine, ReleasePage } from '#lib/release.ts';
+  import { ReleaseLine } from '#lib/release.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
   const project = $derived(data.project);
-  const groups = $derived(ProjectBoard.groups(data.work));
-  const view = $derived(project.release ? new ReleasePage(project.release, null) : null);
+  const board = $derived(ProjectBoard.of(project, data.work, data.live, data.sessions));
+  /** Its work not yet shipped or dismissed, by state. */
+  const open = $derived(
+    ProjectBoard.groups(data.work).filter(
+      (group) => group.state !== 'shipped' && group.state !== 'dismissed',
+    ),
+  );
+  /** Its sessions with a run under way. */
+  const running = $derived(
+    data.sessions
+      .flatMap((body) => Sessions.desk(body, data.live) ?? [])
+      .filter((session) => Sessions.running(session)),
+  );
+  const line = $derived(project.release ? ReleaseLine.of(project.release) : null);
+  const base = $derived(ProjectBoard.href(project.name));
+  const inspect = $derived(new URLSearchParams({ project: project.name }).toString());
 
   /** The work item open in the drawer, as the address names it. */
   const shown = $derived(
@@ -69,14 +83,9 @@
 
 {#snippet scope()}
   <div class="scope-group">
-    <a class="muted crumb" href="/">Projects</a>
-    <span class="muted">/</span>
-    <strong>{project.name}</strong>
+    <span class="muted mono path">{project.repository}</span>
     {#if project.factory === 'ren'}<span class="tag">Ren itself</span>{/if}
     {#if project.archived_at !== null}<span class="tag archived">archived</span>{/if}
-  </div>
-  <div class="scope-group">
-    <span class="muted mono path">{project.repository}</span>
   </div>
 {/snippet}
 
@@ -89,172 +98,84 @@
 <Toolbar {scope} />
 
 <div class="frame">
-  <section class="project" aria-label={project.name}>
-    <h2 id="release">Release</h2>
-    {#if view}
-      {@const release = view.release}
-      {@const [decision, tone] = ReleaseLine.decision(release)}
-      <div class="lanes" aria-label="Builds">
-        <div class="lane">
-          <span class="lane-label">Main</span>
-          <span class="lane-commit mono">{ReleasePage.short(release.main)}</span>
-          <span class="lane-note">its tip, as the canary last fetched it</span>
-        </div>
-        <div class="lane">
-          <span class="lane-label">Canary</span>
-          <span class="lane-commit mono">{ReleasePage.short(release.canary?.commit ?? null)}</span>
-          <span
-            class="lane-note"
-            class:ok={release.canary?.passed}
-            class:bad={release.canary && !release.canary.passed}
-            >{release.canary ? (release.canary.passed ? 'passed' : 'failed') : 'none checked'}</span
+  <section class="overview" aria-label={project.name}>
+    <div class="main">
+      <h2 class="with-links">
+        Release <a href={`${base}/release`}>The full release</a>
+      </h2>
+      {#if line}
+        <p class="line tone-{line.tone}">{line.text}</p>
+      {:else}
+        <p class="empty">
+          No canary has run yet: <code
+            >{project.factory === 'ren'
+              ? 'cargo xtask canary run'
+              : `ren project canary --project ${project.name}`}</code
           >
-        </div>
-        <div class="lane">
-          <span class="lane-label">Production</span>
-          <span class="lane-commit mono">{ReleasePage.short(view.production)}</span>
-          <span class="lane-note">{view.behind}</span>
-        </div>
-        <div class="lane">
-          <span class="lane-label">Promotion · {release.policy}</span>
-          <span class="tone-{tone}">{decision}</span>
-          {#if project.factory === 'ren'}
-            <a class="lane-note" href="/release">The full release, with the canary's pages</a>
-          {:else}
-            <span class="lane-note mono">ren project promote --project {project.name}</span>
-          {/if}
-        </div>
-      </div>
-      {#if release.canary}
-        <ul class="checks" aria-label="Canary checks">
-          {#each release.canary.checks as check, index (index)}
-            <li class:failed={!check.passed}>
-              <Icon name={check.passed ? 'check' : 'alert'} size={13} />
-              <span class="check-name">{check.name ?? check.check}</span>
-              {#if check.detail}<span class="check-detail mono">{check.detail}</span>{/if}
+        </p>
+      {/if}
+
+      <h2 class="with-links">
+        Work under way <a href={`${base}/work`}>All work</a>
+      </h2>
+      {#if !open.length}
+        <p class="empty">Nothing open. Redline marks work on any of {project.name}'s pages.</p>
+      {/if}
+      <ul class="rows">
+        {#each open as group (group.state)}
+          {#each group.items as item (item.id)}
+            <li>
+              <span class="work-state state-{item.state}">{Work.state(item.state)}</span>
+              <a
+                href={`?item=${item.id}`}
+                data-sveltekit-reset="false"
+                onclick={() => (opened = true)}
+                aria-current={shown?.id === item.id ? 'true' : undefined}>{item.title}</a
+              >
+              <span class="muted mono">{item.order.page.path}</span>
+              <span class="muted when">{ago(item.updated_at, now)}</span>
             </li>
           {/each}
-        </ul>
+        {/each}
+      </ul>
+
+      <h2 class="with-links">
+        Sessions running <a href={`${base}/sessions`}>All sessions</a>
+      </h2>
+      {#if !page.data.runsControl}
+        <p class="empty">This UI only reads: give it the control token to see sessions.</p>
+      {:else if !running.length}
+        <p class="empty">No session is running for {project.name}.</p>
       {/if}
-    {:else}
-      <p class="empty">
-        No canary has run yet: <code
-          >{project.factory === 'ren'
-            ? 'cargo xtask canary run'
-            : `ren project canary --project ${project.name}`}</code
-        >
+      <ul class="rows">
+        {#each running as session (session.session)}
+          <li>
+            <span class="live"><span class="dot"></span></span>
+            <a href={Sessions.deskHref(project.name, { session: session.session })}
+              >{session.asked ?? 'Not asked anything yet'}</a
+            >
+            <span class="muted"
+              >{harnessLabel(session.harness)}{session.worktree ? ' in ' : ''}<span class="mono"
+                >{session.worktree?.name ?? ''}</span
+              ></span
+            >
+            <span class="muted mono when"
+              >{#if session.worktree}ports {session.worktree.ports[0]}–{session.worktree
+                  .ports[1]}{/if}</span
+            >
+          </li>
+        {/each}
+      </ul>
+
+      <h2>Inspect</h2>
+      <p class="inspect">
+        <a href={`/traffic?${inspect}`}>Its calls</a>
+        <a href={`/recordings?${inspect}`}>Its recordings</a>
+        <a href={`/live?${inspect}`}>Live</a>
+        <a href={`/overview?${inspect}`}>Traffic overview</a>
       </p>
-    {/if}
-
-    <h2>Work</h2>
-    {#if !groups.length}
-      <p class="empty">No work items for {project.name} yet. Redline marks them.</p>
-    {/if}
-    {#each groups as group (group.state)}
-      <div class="group state-{group.state}">
-        <span class="dot"></span><strong>{group.label}</strong>
-        <span class="muted">{group.items.length}</span>
-        <span class="muted note">{group.note}</span>
-      </div>
-      <ul class="rows">
-        {#each group.items as item (item.id)}
-          <li>
-            <a
-              href={`?item=${item.id}`}
-              data-sveltekit-reset="false"
-              onclick={() => (opened = true)}
-              aria-current={shown?.id === item.id ? 'true' : undefined}>{item.title}</a
-            >
-            <span class="muted mono">{item.order.page.path}</span>
-            <span class="muted">
-              {#if item.preview}<a href={item.preview.ui} target="_blank" rel="noopener"
-                  >preview up</a
-                >{:else if item.landed}{ReleasePage.short(item.landed)}{:else if item.session}<a
-                  href={Sessions.deskHref(project.name, { session: item.session })}>its session</a
-                >{/if}
-            </span>
-            <span class="muted when">{ago(item.updated_at, now)}</span>
-          </li>
-        {/each}
-      </ul>
-    {/each}
-
-    <h2>Sessions</h2>
-    {#if !data.sessions.length}
-      <p class="empty">No session works for {project.name} now.</p>
-    {:else}
-      <ul class="rows sessions">
-        {#each data.sessions as session (session.session)}
-          {@const taken = data.work.filter((item) => item.session === session.session)}
-          <li>
-            <span class="session">
-              <a href={Sessions.deskHref(project.name, { session: session.session })}
-                >{session.asked ?? 'Not asked anything yet'}</a
-              >
-              <span class="muted where">
-                {harnessLabel(session.harness)} in
-                {#if session.worktree}worktree <span class="mono">{session.worktree.name}</span
-                  >{:else}<span class="mono">{session.workdir}</span>{/if}
-              </span>
-              {#each taken as item (item.id)}
-                <span class="taken">
-                  <span class="work-state state-{item.state}">{Work.state(item.state)}</span>
-                  <a
-                    href={`?item=${item.id}`}
-                    data-sveltekit-reset="false"
-                    onclick={() => (opened = true)}>{item.title}</a
-                  >
-                  {#if item.preview}<a
-                      class="muted"
-                      href={item.preview.ui}
-                      target="_blank"
-                      rel="noopener">preview up</a
-                    >{/if}
-                </span>
-              {/each}
-            </span>
-            <span class="muted mono">
-              {#if session.worktree}<span title={`Data in ${session.worktree.data}`}
-                  >ports {session.worktree.ports[0]}–{session.worktree.ports[1]}</span
-                >{/if}
-            </span>
-            <span class="muted">
-              {#if Sessions.running(session)}<span class="live"
-                  ><span class="dot"></span>running</span
-                >{:else}idle{/if}
-            </span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-
-    <h2 class="with-links">
-      Runs
-      <span class="inspect">
-        <a href={`/traffic?${new URLSearchParams({ project: project.name })}`}>Their calls</a>
-        <a href={`/recordings?${new URLSearchParams({ project: project.name })}`}
-          >Their recordings</a
-        >
-      </span>
-    </h2>
-    {#if !data.runs.length}
-      <p class="empty">No session has run for {project.name} yet.</p>
-    {:else}
-      <ul class="rows">
-        {#each data.runs as run (run.id)}
-          <li>
-            <a href={Sessions.deskHref(project.name, { run: run.id })}
-              >{harnessLabel(run.harness)} in <span class="mono">{run.workdir}</span></a
-            >
-            <span class="muted">
-              {#if run.ended_at === null}<span class="live"><span class="dot"></span>running</span
-                >{:else}ended{/if}
-            </span>
-            <span class="muted when">{ago(run.started_at, now)}</span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
+    </div>
+    <aside class="pending" aria-label="Pending"><PendingPanel {board} /></aside>
   </section>
   {#if shown}
     <button
@@ -300,6 +221,25 @@
     display: flex;
     flex-direction: column;
   }
+  .overview {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1px;
+    background: var(--line);
+    overflow: auto;
+  }
+  .main {
+    flex: 999 1 560px;
+    min-width: 0;
+    padding: 0 0 24px;
+    background: var(--surface);
+  }
+  .pending {
+    flex: 1 1 300px;
+    background: var(--surface);
+  }
   .scrim {
     position: absolute;
     inset: 0;
@@ -344,19 +284,6 @@
     padding: 8px 16px;
     color: var(--error);
   }
-  .rows a[aria-current] {
-    font-weight: 600;
-  }
-  .project {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    padding: 0 0 24px;
-    background: var(--surface);
-  }
-  .crumb {
-    color: var(--muted);
-  }
   .path {
     font-size: 11px;
   }
@@ -387,109 +314,26 @@
     align-items: baseline;
     gap: 12px;
   }
-  .inspect {
-    display: flex;
-    gap: 12px;
+  .with-links a {
     margin-left: auto;
     text-transform: none;
     letter-spacing: 0;
     font-weight: 500;
     font-size: 12px;
   }
-  .lanes {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    border-bottom: 1px solid var(--line);
-  }
-  .lane {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+  .line {
+    margin: 0;
     padding: 12px 16px;
-    min-width: 0;
-    border-right: 1px solid var(--line);
+    font-weight: 500;
   }
-  .lane-label {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .lane-commit {
-    font-size: 16px;
-  }
-  .lane-note {
-    color: var(--muted);
-    font-size: 12px;
-  }
-  a.lane-note {
-    color: var(--accent-text);
-  }
-  .lane-note.ok,
   .tone-ok {
     color: var(--success);
-  }
-  .lane-note.bad,
-  .tone-bad {
-    color: var(--error);
   }
   .tone-warning {
     color: var(--warning);
   }
-  .checks {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-  .checks li {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 6px 16px;
-    border-bottom: 1px solid var(--line-subtle);
-    color: var(--success);
-  }
-  .checks li.failed {
+  .tone-bad {
     color: var(--error);
-  }
-  .check-name {
-    color: var(--ink);
-    font-weight: 500;
-  }
-  .check-detail {
-    color: var(--muted);
-    font-size: 11px;
-    overflow-wrap: anywhere;
-  }
-  .group {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 16px;
-    background: var(--surface-subtle);
-    border-bottom: 1px solid var(--line);
-  }
-  .group .note {
-    margin-left: auto;
-    font-size: 12px;
-  }
-  .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--muted);
-    flex: none;
-  }
-  .state-sent .dot,
-  .live .dot {
-    background: var(--live);
-  }
-  .state-landed .dot {
-    background: var(--warning);
-  }
-  .state-shipped .dot {
-    background: var(--success);
   }
   .rows {
     list-style: none;
@@ -498,60 +342,56 @@
   }
   .rows li {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 220px) 120px 90px;
+    grid-template-columns: 110px minmax(0, 1fr) minmax(0, 200px) 150px;
     gap: 12px;
     align-items: baseline;
     padding: 8px 16px;
     border-bottom: 1px solid var(--line-subtle);
   }
-  .rows li > :first-child {
+  .rows li > a {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .rows.sessions li {
-    grid-template-columns: minmax(0, 1fr) 140px 90px;
-  }
-  .rows.sessions li > :first-child {
-    white-space: normal;
-  }
-  .session {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .where {
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .taken {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    font-size: 12px;
+  .rows a[aria-current] {
+    font-weight: 600;
   }
   .when {
     text-align: right;
     font-size: 12px;
+    white-space: nowrap;
   }
   .live {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--live);
+  }
+  .inspect {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin: 0;
+    padding: 12px 16px;
   }
   .empty {
     padding: 12px 16px;
     margin: 0;
     color: var(--muted);
   }
+  .muted {
+    color: var(--muted);
+  }
   @media (max-width: 640px) {
     .rows li {
       grid-template-columns: minmax(0, 1fr) auto;
     }
-    .rows li > :nth-child(2) {
+    .rows li > .mono:not(.when) {
       display: none;
     }
   }

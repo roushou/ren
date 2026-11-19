@@ -171,6 +171,7 @@ impl Reader {
         report.add_exposures(
             self.exposures(&ExposureQuery {
                 recording: Some(recording),
+                project: None,
                 time: TimeRange::default(),
                 limit: PageLimit::LARGEST,
             })

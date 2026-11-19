@@ -323,6 +323,7 @@ test('the URL place parses density, band, grouping, and window once', () => {
     pins: [],
     by: 'client',
     series: null,
+    project: null,
   };
   assert.deepEqual(LivePlace.parse(new URLSearchParams('')), plain);
   const view = LivePlace.parse(
@@ -337,6 +338,7 @@ test('the URL place parses density, band, grouping, and window once', () => {
     pins: [],
     by: 'model',
     series: 'm-a',
+    project: null,
   });
   assert.equal(
     LivePlace.href(view),
@@ -344,6 +346,12 @@ test('the URL place parses density, band, grouping, and window once', () => {
   );
   // Ribbon and grouping by client are the defaults, kept off the URL.
   assert.equal(LivePlace.href(plain), '/live');
+  // A board narrowed to a project stays narrowed as it changes.
+  assert.equal(LivePlace.parse(new URLSearchParams('project=acme-web')).project, 'acme-web');
+  assert.equal(
+    LivePlace.href({ ...plain, project: 'acme-web', window: '1h' }),
+    '/live?window=1h&project=acme-web',
+  );
   assert.equal(LivePlace.href({ ...plain, band: 'area' }), '/live?band=area');
   const focused = LivePlace.parse(new URLSearchParams(`focus=${sid(1).toUpperCase()}`));
   assert.equal(focused.focus, sid(1));

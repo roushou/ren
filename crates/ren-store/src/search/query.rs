@@ -4,6 +4,7 @@ use super::SearchField;
 use crate::query::{PageLimit, TimeRange};
 use ren_harness::Harness;
 use ren_protocol::label::Stored;
+use ren_recorder::project::ProjectName;
 use ren_recorder::secrets::SecretKind;
 use ren_recorder::{
     id::{CallId, RecordingId, TurnId},
@@ -83,6 +84,8 @@ impl fmt::Display for SearchTerms {
 pub struct SearchQuery {
     pub terms: SearchTerms,
     pub recording: Option<RecordingId>,
+    /// Only calls of this project's sessions' runs.
+    pub project: Option<ProjectName>,
     pub client: Option<Harness>,
     pub field: Option<SearchField>,
     pub time: TimeRange,
@@ -93,6 +96,8 @@ pub struct SearchQuery {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExposureQuery {
     pub recording: Option<RecordingId>,
+    /// Only calls of this project's sessions' runs.
+    pub project: Option<ProjectName>,
     pub time: TimeRange,
     pub limit: PageLimit,
 }

@@ -20,6 +20,8 @@
   const page = $derived(current?.page ?? null);
   /** What was searched for, from the URL until the search is read. */
   const q = $derived(current?.q ?? (location.url.searchParams.get('q') ?? '').trim());
+  /** The project the search is narrowed to, kept across searches. */
+  const project = $derived(location.url.searchParams.get('project') || null);
   const field = $derived(
     current ? current.field : parseSearchField(location.url.searchParams.get('field')),
   );
@@ -37,6 +39,7 @@
     const query = new URLSearchParams();
     if (q) query.set('q', q);
     if (field) query.set('field', field);
+    if (project) query.set('project', project);
     return `/search?${query}`;
   };
   /** The input takes the keyboard when the page opens, and on `/`. */
@@ -67,6 +70,7 @@
 
 {#snippet searchForm(hero: boolean)}
   <form class="search-form" class:hero method="GET" action="/search" role="search">
+    {#if project}<input type="hidden" name="project" value={project} />{/if}
     <label class="search-box">
       <Icon name="search" size={hero ? 18 : 15} />
       <input

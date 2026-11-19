@@ -991,6 +991,8 @@ export interface LiveView {
   by: BandBy;
   /** The band series the wall is narrowed to, by its key. */
   series: string | null;
+  /** The project the board is narrowed to, by name. */
+  project: string | null;
 }
 export type Density = 'comfortable' | 'compact';
 /** How the band draws its clients: a row each, or stacked into one ribbon. */
@@ -1030,6 +1032,7 @@ export class LivePlace {
       ),
       by: LivePlace.parseBy(params.get('by')),
       series: params.get('series') || null,
+      project: params.get('project') || null,
     };
   }
 
@@ -1057,6 +1060,7 @@ export class LivePlace {
     if (view.series) params.set('series', view.series);
     if (view.focus) params.set('focus', view.focus);
     for (const pin of view.pins) params.append('pin', pin);
+    if (view.project) params.set('project', view.project);
     const query = params.toString();
     return query ? `/live?${query}` : '/live';
   }

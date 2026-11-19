@@ -80,9 +80,11 @@ impl ApiRead {
                 QueryParams::default(),
             ),
             ReadRequest::Turn(turn) => (format!("/api/turns/{turn}"), QueryParams::default()),
-            ReadRequest::Usage(range) => (
+            ReadRequest::Usage { range, project } => (
                 "/api/usage".to_owned(),
-                QueryParams::default().range(*range),
+                QueryParams::default()
+                    .range(*range)
+                    .opt("project", project.as_ref()),
             ),
             ReadRequest::Search(query) => (
                 "/api/search".to_owned(),
@@ -90,6 +92,7 @@ impl ApiRead {
                     .with("q", &query.terms)
                     .with("limit", query.limit.get())
                     .opt("recording", query.recording)
+                    .opt("project", query.project.as_ref())
                     .opt("client", query.client.map(|client| client.label()))
                     .opt("field", query.field.map(|field| field.label()))
                     .range(query.time),
@@ -99,6 +102,7 @@ impl ApiRead {
                 QueryParams::default()
                     .with("limit", query.limit.get())
                     .opt("recording", query.recording)
+                    .opt("project", query.project.as_ref())
                     .range(query.time),
             ),
             ReadRequest::Runs {
@@ -180,7 +184,8 @@ impl ApiRead {
             ["recordings", recording, "report"] => ReadRequest::Report(Self::id(recording)?),
             ["turns", turn] => ReadRequest::Turn(Self::id(turn)?),
             ["usage"] => {
-                ReadRequest::Usage(TimeRange::try_from(Self::query::<RawUsageQuery>(uri)?)?)
+                let (range, project) = Self::query::<RawUsageQuery>(uri)?.parse()?;
+                ReadRequest::Usage { range, project }
             }
             ["search"] => {
                 ReadRequest::Search(SearchQuery::try_from(Self::query::<RawSearchQuery>(uri)?)?)

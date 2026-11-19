@@ -7,6 +7,7 @@ test('each route is its view, and an unknown one is Traffic', () => {
   assert.equal(Views.of('/projects/[name]'), 'project');
   assert.equal(Views.of('/projects/[name]/work'), 'work');
   assert.equal(Views.of('/projects/[name]/sessions'), 'sessions');
+  assert.equal(Views.of('/projects/[name]/release'), 'release');
   assert.equal(Views.of('/scratch'), 'scratch');
   assert.equal(Views.of('/overview'), 'overview');
   assert.equal(Views.of('/traffic'), 'traffic');
@@ -47,7 +48,7 @@ test('three destinations hold every page, each page in exactly one', () => {
 test("inside a project, the row holds the project's own pages", () => {
   assert.deepEqual(
     Views.pages('projects').map((page) => page.label),
-    ['Projects', 'Scratch', 'Release'],
+    ['Projects', 'Scratch'],
   );
   assert.deepEqual(
     Views.pages('projects', 'acme web').map((page) => [page.tab, page.href]),
@@ -55,6 +56,7 @@ test("inside a project, the row holds the project's own pages", () => {
       ['project', '/projects/acme%20web'],
       ['work', '/projects/acme%20web/work'],
       ['sessions', '/projects/acme%20web/sessions'],
+      ['release', '/projects/acme%20web/release'],
     ],
   );
   for (const page of Views.pages('projects', 'acme-web')) {
@@ -65,9 +67,13 @@ test("inside a project, the row holds the project's own pages", () => {
 test('only the pages that read a project carry it between them', () => {
   const traffic = { tab: 'traffic', href: '/traffic', label: 'Traffic' } as const;
   const live = { tab: 'live', href: '/live', label: 'Live' } as const;
+  const tools = { tab: 'tools', href: '/tools', label: 'Tools' } as const;
   assert.equal(Views.scopedHref(traffic, 'acme-web'), '/traffic?project=acme-web');
   assert.equal(Views.scopedHref(traffic, null), '/traffic');
-  assert.equal(Views.scopedHref(live, 'acme-web'), '/live');
+  // Every Inspect page reads a project; Host's do not.
+  assert.equal(Views.scopedHref(live, 'acme-web'), '/live?project=acme-web');
+  assert.equal(Views.scopedHref(tools, 'acme-web'), '/tools');
   assert.ok(Views.scoped('recordings'));
-  assert.equal(Views.scoped('search'), false);
+  assert.ok(Views.scoped('search'));
+  assert.equal(Views.scoped('usage'), false);
 });

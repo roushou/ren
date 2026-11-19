@@ -1121,9 +1121,7 @@
 
 {#snippet toolbarScope()}
   <div class="scope-group scope-identity">
-    <span class="scope-title"
-      >{scope.kind === 'project' ? `${scope.project.name} sessions` : 'Scratch'}</span
-    >
+    <span class="scope-title">{scope.kind === 'project' ? 'Sessions' : 'Scratch'}</span>
     <span class="muted"
       >{liveCount} running{waiting ? ` · ${waiting} waiting for you` : ''}{data.runsControl
         ? feedNote(feed)

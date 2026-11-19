@@ -295,6 +295,7 @@ impl ToolCall {
                         ))
                     })?,
                     recording: Field("recording_id").optional_id(args.recording_id)?,
+                    project: None,
                     client: Field("client").label::<Harness>(args.client)?,
                     field: Field("field").label::<SearchField>(args.field)?,
                     time: Field::range(args.from_ms, args.until_ms)?,
@@ -381,12 +382,16 @@ impl ToolCall {
             }
             ToolName::Usage => {
                 let args: RangeArgs = Self::arguments(arguments)?;
-                ReadRequest::Usage(Field::range(args.from_ms, args.until_ms)?)
+                ReadRequest::Usage {
+                    range: Field::range(args.from_ms, args.until_ms)?,
+                    project: None,
+                }
             }
             ToolName::ListExposures => {
                 let args: ExposureArgs = Self::arguments(arguments)?;
                 ReadRequest::Exposures(ExposureQuery {
                     recording: Field("recording_id").optional_id(args.recording_id)?,
+                    project: None,
                     time: Field::range(args.from_ms, args.until_ms)?,
                     limit: Field("limit").limit(args.limit, Self::DEFAULT_ROWS)?,
                 })

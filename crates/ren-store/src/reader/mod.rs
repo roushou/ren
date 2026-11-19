@@ -215,8 +215,12 @@ impl Reader {
     }
 
     /// Calls, errors, and tokens of the calls started in `range`: in total,
-    /// by the hour, by model, and by user.
-    pub async fn usage(&self, range: TimeRange) -> Result<UsageView, StoreError> {
+    /// by the hour, by model, and by user; with `project`, of its calls only.
+    pub async fn usage(
+        &self,
+        range: TimeRange,
+        project: Option<&ProjectName>,
+    ) -> Result<UsageView, StoreError> {
         // One scan, grouped by hour, model, and user; the totals and each
         // breakdown are summed from its groups.
         let mut sql = QueryBuilder::<Sqlite>::new(
@@ -225,6 +229,9 @@ impl Reader {
         CallQuery::push_usage_columns(&mut sql);
         sql.push(" FROM calls c WHERE 1 = 1");
         range.push_started(&mut sql);
+        if let Some(project) = project {
+            CallQuery::push_project_calls(&mut sql, project);
+        }
         sql.push(" GROUP BY start, c.provider, c.model, c.user");
         let groups = sql
             .build()

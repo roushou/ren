@@ -1652,7 +1652,11 @@ export class ManagementApi {
     return this.#read(`/api/calls/${id}/body/${direction}`, bodyPreview, signal);
   }
   /** Totals, hours, and models for calls started within the range. */
-  usage(range: { from_ms?: number; until_ms?: number }, signal?: AbortSignal): Promise<UsageView> {
+  /** Usage over `range`; with `project`, only its sessions' runs' calls. */
+  usage(
+    range: { from_ms?: number; until_ms?: number; project?: string | null },
+    signal?: AbortSignal,
+  ): Promise<UsageView> {
     const params = query<RawUsageQuery>(range);
     const suffix = params.size ? `?${params}` : '';
     return this.#read(`/api/usage${suffix}`, usageView, signal);
@@ -1698,9 +1702,14 @@ export class ManagementApi {
   search(params: Query<RawSearchQuery>, signal?: AbortSignal): Promise<SearchPage> {
     return this.#read(`/api/search?${params}`, searchPage, signal);
   }
-  /** Credentials calls carried, newest first, from `from_ms` on. */
-  exposures(from_ms?: number, signal?: AbortSignal): Promise<Exposures> {
-    const params = query<RawExposureQuery>({ limit: 100, from_ms });
+  /** Credentials calls carried, newest first, from `from_ms` on; with
+   * `project`, only its sessions' runs' calls'. */
+  exposures(
+    from_ms?: number,
+    signal?: AbortSignal,
+    project: string | null = null,
+  ): Promise<Exposures> {
+    const params = query<RawExposureQuery>({ limit: 100, from_ms, project });
     return this.#read(`/api/exposures?${params}`, exposures, signal);
   }
 
