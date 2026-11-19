@@ -15,7 +15,7 @@ use crate::host::{HeldRuns, ObservationThread, ProcessHost, RandomIds, SystemClo
 use crate::tools::HostTools;
 use crate::tools::{HostToolbox, ToolStore, fetch::ReqwestFetch};
 use ren_gateway::{
-    ControlToken, Gateway, ManagementSetup, ReleaseFile, ReqwestUpstream, Shutdown, Stopped,
+    ControlToken, Gateway, ManagementSetup, ReleaseFolder, ReqwestUpstream, Shutdown, Stopped,
     control::Controls,
     operator::{OperatorState, Pause, RestoreError},
 };
@@ -252,7 +252,7 @@ impl Daemon {
                 build: self.build.clone(),
                 instance: config.instance(),
                 runs: runs.as_ref().map(|(supervisor, _)| supervisor.clone()),
-                release: ReleaseFile::in_data(data_dir),
+                release: ReleaseFolder::in_data(data_dir),
             },
         );
         // The gateway holds the only supervisor handles: the runs drain once

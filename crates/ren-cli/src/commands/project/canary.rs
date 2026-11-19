@@ -73,7 +73,7 @@ impl ProjectFactory {
         let home = ctx.env.absolute_path("HOME").context("HOME is not set")?;
         Ok(Self {
             worktrees: data.join("worktrees"),
-            state: data.join("projects").join(&name),
+            state: data.join(Release::PROJECTS).join(&name),
             options: home.join(".config/ren/release.toml"),
             path: ctx.env.get("PATH").map(str::to_owned),
             git: Git::inherited(),
@@ -135,6 +135,8 @@ impl ProjectFactory {
     pub(super) fn show(&self) -> Result<ExitCode> {
         let body = ReleaseBody {
             release: self.read()?.as_ref().map(ReleaseView::from),
+            shots: Vec::new(),
+            promotion_requested: None,
         };
         print!("{}", crate::commands::release::ReleaseCmd::render(&body));
         Ok(ExitCode::SUCCESS)

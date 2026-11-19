@@ -8,4 +8,14 @@ export type ReleaseBody = {
 /**
  * None until the factory has run against this instance.
  */
-release: ReleaseView | null, };
+release: ReleaseView | null, 
+/**
+ * The pages the canary captured, by name; each is at
+ * `/api/release/shots/{name}`.
+ */
+shots: Array<string>, 
+/**
+ * The build the operator asked production to take, until the
+ * factory's next pass takes it up.
+ */
+promotion_requested: string | null, };

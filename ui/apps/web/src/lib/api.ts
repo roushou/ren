@@ -436,6 +436,7 @@ export const controlRefusals = [
   'tools_failed',
   'invalid_order',
   'work_state',
+  'not_promotable',
 ] as const;
 export type ControlRefusal = (typeof controlRefusals)[number];
 export const previewExtents = ['complete', 'partial', 'truncated', 'gap'] as const;

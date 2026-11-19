@@ -159,6 +159,9 @@ impl Decision {
 impl Release {
     /// The file in production's data folder the factory writes it to.
     pub const FILE: &str = "release.json";
+    /// The folder in Ren's data folder each project's release is kept in:
+    /// `projects/<name>/release.json`.
+    pub const PROJECTS: &str = "projects";
 
     /// Where the release stands, with what `policy` decides at `now`.
     pub fn assess(assessment: Assessment, policy: Policy, now: MinuteOfDay) -> Self {

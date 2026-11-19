@@ -254,8 +254,25 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
                 serde_json::to_vec(&release()).unwrap(),
             )
             .unwrap();
+            let shots = dir.path().join(ren_release::ShotName::FOLDER);
+            std::fs::create_dir_all(&shots).unwrap();
+            std::fs::write(shots.join("overview.png"), b"\x89PNG").unwrap();
+            let project = dir
+                .path()
+                .join(ren_release::Release::PROJECTS)
+                .join("acme-web");
+            std::fs::create_dir_all(&project).unwrap();
+            std::fs::write(
+                project.join(ren_release::Release::FILE),
+                serde_json::to_vec(&release()).unwrap(),
+            )
+            .unwrap();
             read("/api/release".to_owned()).await
         }),
+        (
+            "release_projects",
+            read("/api/release/projects".to_owned()).await,
+        ),
     ];
     gateway.stop().await;
 

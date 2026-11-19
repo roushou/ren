@@ -13,6 +13,7 @@ ListRequest
 LoginAnswer
 PauseRequest
 PreviewWorkRequest
+PromoteRequest
 PromptRequest
 RawCallQuery
 RawExposureQuery

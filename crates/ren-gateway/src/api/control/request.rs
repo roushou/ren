@@ -57,6 +57,16 @@ pub struct PreviewWorkRequest {
     pub preview: Option<WorkPreviewBody>,
 }
 
+/// `POST release/promote`: production is to take the canary's build of
+/// `commit`, on the factory's next pass.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct PromoteRequest {
+    #[ts(as = "String")]
+    pub commit: Commit,
+}
+
 /// What happens to a work item, as a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkChange {
@@ -287,6 +297,8 @@ pub enum ControlRequest {
     Stop(SessionId),
     /// Queue a work item.
     QueueWork(Box<WorkOrderBody>),
+    /// Ask that production take the canary's build.
+    Promote(PromoteRequest),
     /// Move a work item on.
     Work {
         item: WorkItemId,
@@ -339,6 +351,7 @@ impl ControlRequest {
             | Self::Interrupt(_)
             | Self::Stop(_)
             | Self::QueueWork(_)
+            | Self::Promote(_)
             | Self::Work { .. } => ControlMethod::Post,
         }
     }
@@ -377,6 +390,7 @@ impl ControlRequest {
             Self::Interrupt(session) => format!("sessions/{session}/interrupt"),
             Self::Stop(session) => format!("sessions/{session}/stop"),
             Self::QueueWork(_) => "work".to_owned(),
+            Self::Promote(_) => "release/promote".to_owned(),
             Self::Work { item, change } => format!("work/{item}/{}", change.path()),
         }
     }
@@ -393,6 +407,7 @@ impl ControlRequest {
             Self::Prompt { prompt, .. } => serde_json::to_vec(prompt).map(Some),
             Self::Answer { answer, .. } => serde_json::to_vec(answer).map(Some),
             Self::QueueWork(order) => serde_json::to_vec(order).map(Some),
+            Self::Promote(promote) => serde_json::to_vec(promote).map(Some),
             Self::Work { change, .. } => match change {
                 WorkChange::Send(send) => serde_json::to_vec(send).map(Some),
                 WorkChange::Land(land) => serde_json::to_vec(land).map(Some),

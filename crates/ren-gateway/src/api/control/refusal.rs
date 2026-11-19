@@ -126,6 +126,10 @@ pub enum ControlRefusal {
     /// The item's state does not take the change (a shipped item cannot be
     /// dismissed, a queued one cannot land).
     WorkState,
+
+    // Release.
+    /// The commit is not the canary's, or its build did not pass.
+    NotPromotable,
 }
 
 impl ControlRefusal {
@@ -171,7 +175,8 @@ impl ControlRefusal {
             | Self::RedirectIncomplete
             | Self::ToolsBusy
             | Self::ToolsCollected
-            | Self::WorkState => StatusCode::CONFLICT,
+            | Self::WorkState
+            | Self::NotPromotable => StatusCode::CONFLICT,
             Self::AttachmentTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::BlankPrompt
             | Self::TooManyAttachments

@@ -6,11 +6,13 @@
 //! its [`Decision`]). The factory (`cargo xtask canary`) does the I/O.
 
 mod build;
+mod folder;
 mod policy;
 mod release;
 mod verdict;
 
 pub use build::{Build, Commit, Comparison, Revision, RevisionError, Tree};
+pub use folder::{NotAShotName, PromotionRequest, ShotName};
 pub use policy::{MinuteOfDay, Policy, PolicyError, ProjectRelease, ReleaseOptions, Window};
 pub use release::{Assessment, Attempt, Canary, Decision, Lineage, Release};
 pub use verdict::{Check, CheckKind, Outcome, Suite, Verdict};

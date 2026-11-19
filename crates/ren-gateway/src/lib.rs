@@ -58,7 +58,7 @@ pub mod tools;
 pub mod user;
 
 pub use api::{
-    ApiRead, ControlOptions, ControlRefusal, ControlToken, ManagementSetup, ReleaseFile,
+    ApiRead, ControlOptions, ControlRefusal, ControlToken, ManagementSetup, ReleaseFolder,
 };
 pub use build::{Environment, InstanceOptions};
 pub use forward::GatewayError;
@@ -163,6 +163,7 @@ impl<U: Upstream> Gateway<U> {
     /// All HTTP routes. Tests can drive this same router without a connection.
     pub fn router(self: Arc<Self>, management: ManagementSetup) -> Router {
         let reader = management.reader.clone();
+        let release = management.release.clone();
         let api = ApiState::new(
             ReadSources {
                 reader: management.reader,
@@ -189,6 +190,12 @@ impl<U: Upstream> Gateway<U> {
         let feeds_end = self.shutdown.drain_token();
         self.forwarding_router()
             .merge(api.router())
-            .merge(control.router(reader, management.runs, management.tools, feeds_end))
+            .merge(control.router(
+                reader,
+                management.runs,
+                management.tools,
+                release,
+                feeds_end,
+            ))
     }
 }

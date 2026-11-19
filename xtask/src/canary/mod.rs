@@ -309,6 +309,7 @@ impl Factory {
             shots: self.home.join(".local/share/ren-canary/shots"),
         }
         .run();
+        production.keep_shots(&self.home.join(".local/share/ren-canary/shots"))?;
         let checked = CanaryBuild::new(commit.clone(), verdict);
         let release = self.assess(&production, &commit, Some((checked, &build)))?;
         production.write_release(&release)?;
@@ -316,6 +317,7 @@ impl Factory {
         if release.decision() == &Stored::Known(Decision::Promote) {
             self.promote(env, &production, &commit, &build)?;
         }
+        self.requested(env, &production)?;
         WorkLedger::new(&production).close(self, &id)?;
         let keep: Vec<Commit> = [Some(commit), Self::running(&production)]
             .into_iter()
@@ -426,6 +428,52 @@ impl Factory {
         production.write_release(&release)?;
         Self::report(&release);
         Ok(installed?)
+    }
+
+    /// Carries out the operator's promotion request from the Release view,
+    /// if one waits: only for the canary's build that passed, which
+    /// production does not run yet; any other is dropped, with why.
+    fn requested(&self, env: &HostEnv, production: &ProductionPlace) -> Result<(), CanaryError> {
+        let Some(request) = production.take_request() else {
+            return Ok(());
+        };
+        let release = production.release();
+        let canary = release.as_ref().and_then(Release::canary);
+        let current = release
+            .as_ref()
+            .is_some_and(|release| release.decision() == &Stored::Known(Decision::Current));
+        match (production.kind, canary) {
+            (Production::Dev, _) => {
+                Progress(
+                    "A promotion was asked of the dev slot, which is never promoted into; dropped",
+                )
+                .show();
+                Ok(())
+            }
+            (Production::Installed, Some(canary))
+                if *canary.commit() == request.commit && canary.verdict().passed() && !current =>
+            {
+                Progress(&format!(
+                    "Promoting {}, as the operator asked in the Release view",
+                    request.commit.short()
+                ))
+                .show();
+                self.promote_now(
+                    env,
+                    TargetArgs {
+                        of: Production::Installed,
+                    },
+                )
+            }
+            (Production::Installed, _) => {
+                Progress(&format!(
+                    "A promotion of {} was asked, but it is not the canary's passed build, or production runs it; dropped",
+                    request.commit.short()
+                ))
+                .show();
+                Ok(())
+            }
+        }
     }
 
     /// `canary promote`: the canary's build, if it passed, now.

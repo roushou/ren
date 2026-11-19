@@ -22,7 +22,7 @@ mod storage;
 
 pub(crate) use control::ControlApi;
 pub use control::{ControlOptions, ControlRefusal, ControlToken};
-pub use release::ReleaseFile;
+pub use release::ReleaseFolder;
 pub use route::ApiRead;
 
 use crate::{build::InstanceOptions, control::Controls, user::Users};
@@ -40,11 +40,12 @@ use http::{HeaderValue, StatusCode, Uri, header};
 use live::LiveFeed;
 use params::RawLiveQuery;
 use preview::Previewer;
-use release::{ReleaseBody, ReleaseFileError, ReleaseView};
+use release::{ProjectRelease, ProjectReleases, ReleaseBody, ReleaseFileError, ReleaseView};
 use ren_protocol::direction::Direction;
 use ren_recorder::time::Clock;
 use ren_recorder::{Recorder, id::CallId, retention::RetentionPolicy};
 use ren_release::Build;
+use ren_release::ShotName;
 use ren_store::{Reader, StoreError, backup::Backup, query::QueryError, search::SearchError};
 use serde::Serialize;
 use std::sync::Arc;
@@ -71,7 +72,7 @@ pub struct ManagementSetup {
     /// The host's tools; the tools routes answer `tools_disabled` without.
     pub tools: Option<std::sync::Arc<dyn crate::tools::Toolbox>>,
     /// Where the factory writes the release, which `/api/release` reports.
-    pub release: ReleaseFile,
+    pub release: ReleaseFolder,
 }
 
 /// What the read API reads and reports, from the management setup.
@@ -80,7 +81,7 @@ pub(crate) struct ReadSources {
     pub retention: RetentionPolicy,
     pub build: Build,
     pub instance: InstanceOptions,
-    pub release: ReleaseFile,
+    pub release: ReleaseFolder,
 }
 
 /// What the read API reads from. It never writes.
@@ -92,7 +93,7 @@ pub(crate) struct ApiState {
     retention: RetentionPolicy,
     build: Build,
     instance: InstanceOptions,
-    release: ReleaseFile,
+    release: ReleaseFolder,
     previews: Arc<Semaphore>,
     exports: Arc<Semaphore>,
     shutdown: CancellationToken,
@@ -270,6 +271,8 @@ impl ApiState {
             .route("/api/storage", get(Self::storage))
             .route("/api/caller", get(Self::caller))
             .route("/api/release", get(Self::release))
+            .route("/api/release/projects", get(Self::project_releases))
+            .route("/api/release/shots/{name}", get(Self::release_shot))
             .route("/api/calls/{id}/body/{direction}", get(Self::body))
             .route("/api/calls/{id}/body/{direction}/export", get(Self::export))
             .route("/api/live", get(Self::live))
@@ -326,10 +329,42 @@ impl ApiState {
     /// Where the release stands, as the factory last wrote it.
     async fn release(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {
         let release = state.release.read().await?;
+        let requested = state.release.requested().await?;
         Ok(Self::versioned(ReleaseBody {
             release: release.as_ref().map(ReleaseView::from),
+            shots: state.release.shots().await,
+            promotion_requested: requested.map(|request| request.commit),
         })
         .into_response())
+    }
+
+    /// Each project's release, as `ren project canary` last wrote it.
+    async fn project_releases(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {
+        let projects = state
+            .release
+            .projects()
+            .await?
+            .into_iter()
+            .map(|(name, release)| ProjectRelease {
+                name,
+                release: ReleaseView::from(&release),
+            })
+            .collect();
+        Ok(Self::versioned(ProjectReleases { projects }).into_response())
+    }
+
+    /// One page the canary captured, as PNG.
+    async fn release_shot(
+        State(state): State<Arc<Self>>,
+        Path(name): Path<String>,
+    ) -> Result<Response, ApiError> {
+        let name: ShotName = name
+            .strip_suffix(".png")
+            .unwrap_or(&name)
+            .parse()
+            .map_err(|_| ApiError::NotFound)?;
+        let bytes = state.release.shot(&name).await?.ok_or(ApiError::NotFound)?;
+        Ok(([(header::CONTENT_TYPE, "image/png")], bytes).into_response())
     }
 
     async fn metrics(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {

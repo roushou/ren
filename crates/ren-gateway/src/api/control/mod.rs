@@ -14,6 +14,7 @@
 pub mod body;
 mod history;
 mod refusal;
+mod release;
 pub mod request;
 mod runs;
 mod sessions;
@@ -146,6 +147,7 @@ impl ControlApi {
         reader: ren_store::Reader,
         supervisor: Option<Supervisor>,
         toolbox: Option<Arc<dyn crate::tools::Toolbox>>,
+        release: crate::api::release::ReleaseFolder,
         shutdown: CancellationToken,
     ) -> Router {
         let control = Arc::new(self);
@@ -170,6 +172,11 @@ impl ControlApi {
         let work_routes = work::WorkApi {
             control: control.clone(),
             reader,
+        }
+        .router();
+        let release_routes = release::ReleaseApi {
+            control: control.clone(),
+            folder: release,
         }
         .router();
         let tools_routes = tools::ToolsApi {
@@ -199,6 +206,7 @@ impl ControlApi {
             .merge(session_routes)
             .merge(history_routes)
             .merge(work_routes)
+            .merge(release_routes)
             .layer(axum::middleware::map_response(Self::private))
     }
 

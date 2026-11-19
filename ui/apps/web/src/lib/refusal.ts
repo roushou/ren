@@ -193,6 +193,8 @@ export class Refusals {
         return 'A work item needs at least one mark with a note, within its limits.';
       case 'work_state':
         return 'That work item is past this step already.';
+      case 'not_promotable':
+        return "That is not the canary's build, or it did not pass its checks.";
       default:
         return `Refused: ${unrecognised(code)}.`;
     }

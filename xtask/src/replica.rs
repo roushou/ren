@@ -27,7 +27,7 @@ use ren_recorder::{
     id::WorkItemId,
     work::{PreviewUrl, WorkStateKind},
 };
-use ren_release::{Commit, Release, Revision};
+use ren_release::{Commit, PromotionRequest, Release, Revision, ShotName};
 use serde::Deserialize;
 use std::{
     fs,
@@ -294,6 +294,41 @@ impl ProductionPlace {
                 request.path()
             ))),
         }
+    }
+
+    /// Keeps the pages the canary captured in `shots` where the Release view
+    /// reads them, in place of the last pass's.
+    pub fn keep_shots(&self, shots: &Path) -> Result<(), ReplicaError> {
+        let kept = self.data_dir.join(ShotName::FOLDER);
+        if kept.exists() {
+            fs::remove_dir_all(&kept).map_err(FileError::at(&kept))?;
+        }
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&kept)
+            .map_err(FileError::at(&kept))?;
+        let Ok(entries) = fs::read_dir(shots) else {
+            return Ok(());
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name();
+            if name.to_str().and_then(ShotName::of_file).is_some() {
+                fs::copy(entry.path(), kept.join(&name)).map_err(FileError::at(&entry.path()))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The operator's promotion request, if one waits, taken: it is
+    /// carried out or dropped by the pass that reads it.
+    pub fn take_request(&self) -> Option<PromotionRequest> {
+        let path = self.data_dir.join(PromotionRequest::FILE);
+        let request = fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        let _ = fs::remove_file(&path);
+        request
     }
 
     /// The release the factory last wrote here, if it reads.
