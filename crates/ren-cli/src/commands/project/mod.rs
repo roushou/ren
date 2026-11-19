@@ -18,6 +18,7 @@ use super::history::TargetArgs;
 use crate::{context::Context, management::Management};
 use anyhow::{Context as _, Result, bail};
 use clap::{Args, Subcommand};
+use ren_daemon::tailscale::{NodeStatus, Route, ServeStatus};
 use ren_gateway::api::{
     control::request::{ControlRequest, PreviewWorkRequest, WorkChange},
     read::{ReadBody, work::WorkPreviewBody},
@@ -493,33 +494,40 @@ impl Steps {
     }
 
     /// Publishes the loopback `port` on the tailnet on the same port, and
-    /// returns its origin there.
+    /// returns its origin there. A port Serve already uses for anything
+    /// else, or exposes through Funnel, is refused, never replaced.
     fn publish(port: u16) -> Result<PreviewUrl> {
         let target = format!("http://127.0.0.1:{port}");
-        let argv = [
-            "tailscale",
-            "serve",
-            "--bg",
-            &format!("--https={port}"),
-            &target,
-        ]
-        .map(str::to_owned)
-        .to_vec();
-        if !Self::run(
-            &Expanded {
-                argv,
-                env: Vec::new(),
-            },
-            Path::new("/"),
-        )? {
-            bail!("tailscale serve did not publish port {port}");
+        let node = NodeStatus::parse(&Self::output(&["tailscale", "status", "--json"])?)?;
+        if let Some(state) = node.not_running() {
+            bail!("Tailscale is {state}, not running: run `tailscale up` first");
         }
-        let status = Self::output(&["tailscale", "status", "--json"])?;
-        let status: serde_json::Value = serde_json::from_str(&status)?;
-        let dns = status["Self"]["DNSName"]
-            .as_str()
-            .map(|name| name.trim_end_matches('.'))
-            .filter(|name| !name.is_empty())
+        match Self::route(port, &target)? {
+            Route::Free => {
+                let argv = [
+                    "tailscale",
+                    "serve",
+                    "--bg",
+                    &format!("--https={port}"),
+                    &target,
+                ]
+                .map(str::to_owned)
+                .to_vec();
+                let serve = Expanded {
+                    argv,
+                    env: Vec::new(),
+                };
+                if !Self::run(&serve, Path::new("/"))? {
+                    bail!("tailscale serve did not publish port {port}");
+                }
+            }
+            Route::Target => {}
+            route @ (Route::Funnel { .. } | Route::Other { .. } | Route::TcpForward) => {
+                bail!("Tailscale Serve port {port} is in use ({route}); it is not replaced")
+            }
+        }
+        let dns = node
+            .dns_name()
             .context("Tailscale reports no MagicDNS name for this node")?;
         let origin = format!("https://{dns}:{port}");
         origin
@@ -527,11 +535,26 @@ impl Steps {
             .with_context(|| format!("{origin} is not an origin a work item keeps"))
     }
 
+    /// Removes the Serve route on `port` only while it still proxies to
+    /// the preview's loopback port; any other route is left.
     fn unpublish(port: u16) -> Result<()> {
-        let argv = ["tailscale", "serve", &format!("--https={port}"), "off"]
-            .map(str::to_owned)
-            .to_vec();
-        Self::quiet(&argv).map(drop)
+        let target = format!("http://127.0.0.1:{port}");
+        match Self::route(port, &target)? {
+            Route::Target => {
+                let argv = ["tailscale", "serve", &format!("--https={port}"), "off"]
+                    .map(str::to_owned)
+                    .to_vec();
+                Self::quiet(&argv).map(drop)
+            }
+            Route::Free | Route::Funnel { .. } | Route::Other { .. } | Route::TcpForward => Ok(()),
+        }
+    }
+
+    /// How Serve routes `port` now.
+    fn route(port: u16, target: &str) -> Result<Route> {
+        let status =
+            ServeStatus::parse(&Self::output(&["tailscale", "serve", "status", "--json"])?)?;
+        Ok(status.route(port, target))
     }
 
     #[expect(
