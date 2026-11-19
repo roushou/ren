@@ -264,6 +264,7 @@ impl Slot {
                 // Held as the installed service holds them, so a restart
                 // of the slot leaves its runs going.
                 hold: RunHold::Auto,
+                workspace_env: Default::default(),
             },
             tools: toml::from_str::<ToolsOptions>(Self::TOOLS).map_err(|_| DevError::Config)?,
             ..Config::default()

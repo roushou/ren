@@ -83,6 +83,8 @@ pub enum ConfigError {
         "runs.roots entries must be absolute paths, and runs.places and runs.scratch absolute or under ~/"
     )]
     RunRoot,
+    #[error("[runs] workspace_env names must be non-empty, without `=`, and not REN_WORKSPACE*")]
+    WorkspaceEnv,
 }
 
 /// Where operator keys come from while resolving.
@@ -172,6 +174,9 @@ pub struct RunsOptions {
     pub scratch: Option<PathBuf>,
     /// Whether runs outlive the daemon, held by run hosts.
     pub hold: RunHold,
+    /// Variables every run in a workspace gets, such as a compiler cache
+    /// (`RUSTC_WRAPPER = "sccache"`). Ren's own `REN_WORKSPACE*` win.
+    pub workspace_env: std::collections::BTreeMap<String, String>,
 }
 
 /// Whether a run's client process outlives the daemon that started it.
@@ -232,6 +237,12 @@ pub struct RunPlaces {
 impl RunsOptions {
     pub fn validate(&self) -> Result<(), ConfigError> {
         let anchored = |path: &PathBuf| path.is_absolute() || path.starts_with("~");
+        let names = self.workspace_env.keys().all(|name| {
+            !name.is_empty() && !name.contains(['=', '\0']) && !name.starts_with("REN_WORKSPACE")
+        });
+        if !names {
+            return Err(ConfigError::WorkspaceEnv);
+        }
         if self.roots.iter().all(|root| root.is_absolute())
             && self.places.iter().chain(&self.scratch).all(anchored)
         {
@@ -696,6 +707,29 @@ mod tests {
             Err(ConfigError::Tools(ren_depot::CatalogError::Client(_)))
         ));
         assert!(toml::from_str::<Config>(&entry.replace("https://", "http://")).is_err());
+    }
+
+    #[test]
+    fn workspace_variables_may_not_be_rens_own_or_unnameable() {
+        for names in [
+            "REN_WORKSPACE_PORTS = \"1\"",
+            "\"\" = \"x\"",
+            "\"A=B\" = \"x\"",
+        ] {
+            let config: Config = toml::from_str(&format!(
+                "[runs]\nroots = [\"/home/op/dev\"]\nworkspace_env = {{ {names} }}\n"
+            ))
+            .unwrap();
+            assert!(
+                matches!(config.runs.validate(), Err(ConfigError::WorkspaceEnv)),
+                "{names}"
+            );
+        }
+        let config: Config = toml::from_str(
+            "[runs]\nroots = [\"/home/op/dev\"]\nworkspace_env = { RUSTC_WRAPPER = \"sccache\" }\n",
+        )
+        .unwrap();
+        assert!(config.runs.validate().is_ok());
     }
 
     #[test]

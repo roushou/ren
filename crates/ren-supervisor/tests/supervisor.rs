@@ -723,6 +723,7 @@ fn options() -> SupervisorOptions {
         places: vec![PathBuf::from("/home/op/.config")],
         scratch: Some(PathBuf::from("/scratch")),
         worktrees: Some(PathBuf::from("/worktrees")),
+        workspace_env: vec![("RUSTC_WRAPPER".into(), "sccache".into())],
         home: Some(PathBuf::from("/home/op")),
         warmup: ren_supervisor::Warmup::WhenAsked,
         gateway: "http://127.0.0.1:8787".parse::<GatewayEndpoint>().unwrap(),
@@ -2491,6 +2492,8 @@ async fn each_workspace_session_works_in_its_own_worktree_and_slot() {
         told(0, "REN_WORKSPACE").as_deref(),
         Some("/worktrees/acme-1")
     );
+    // And what the operator gives every workspace's runs.
+    assert_eq!(told(0, "RUSTC_WRAPPER").as_deref(), Some("sccache"));
     assert_eq!(
         told(0, "REN_WORKSPACE_PORTS").as_deref(),
         Some("20000-20099")

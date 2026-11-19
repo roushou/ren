@@ -87,6 +87,7 @@ pub struct SupervisorTask<H> {
     /// Where sessions' attachments are kept; `None`: they take none.
     pub(crate) attachments: Option<AttachmentFolders>,
     pub(crate) attachment_limits: Limits,
+    pub(crate) workspace_env: Vec<(String, String)>,
 }
 
 /// One process the task drives: its pure lifecycle, and the handles that
@@ -463,6 +464,9 @@ impl<H: AgentHost> SupervisorTask<H> {
             .worktrees()
             .and_then(|root| Workspace::of(root, workdir.as_path()))
         {
+            for (name, value) in &self.workspace_env {
+                plan.environment.insert(name.clone(), value.clone().into());
+            }
             for (name, value) in workspace.env() {
                 plan.environment.insert(name.to_owned(), value.into());
             }

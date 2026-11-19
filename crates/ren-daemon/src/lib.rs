@@ -327,6 +327,12 @@ impl Daemon {
             places: config.run_places().places.clone(),
             scratch: config.run_places().scratch.clone(),
             worktrees: Some(data_dir.join(Self::WORKTREES)),
+            workspace_env: config
+                .runs()
+                .workspace_env
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
             home: config.run_places().home.clone(),
             // The new-run form then offers each client's models at once.
             warmup: Warmup::AtStart,

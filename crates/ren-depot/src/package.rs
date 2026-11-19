@@ -33,6 +33,7 @@ impl PackageId {
     pub const JQ: Self = Self::known("jq");
     pub const FD: Self = Self::known("fd");
     pub const RIPGREP: Self = Self::known("ripgrep");
+    pub const SCCACHE: Self = Self::known("sccache");
 
     /// A catalog name written in this crate's source; the catalog's tests
     /// check every one parses.

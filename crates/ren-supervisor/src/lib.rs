@@ -84,6 +84,9 @@ pub struct SupervisorOptions {
     /// Where workspaces are made: a worktree of a repository per session
     /// that asks for one; created when missing. None: no workspaces.
     pub worktrees: Option<PathBuf>,
+    /// Variables every run in a workspace gets besides Ren's own, such as a
+    /// compiler cache its builds share.
+    pub workspace_env: Vec<(String, String)>,
     /// Where each session's attachments are kept, a folder per session;
     /// Ren's own, made when missing. None: sessions take no attachments.
     pub attachments: Option<PathBuf>,
@@ -571,6 +574,7 @@ impl Supervisor {
             idle: options.idle,
             attachments,
             attachment_limits: options.attachment_limits,
+            workspace_env: options.workspace_env,
         };
         Ok((
             Self {

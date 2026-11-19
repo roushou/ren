@@ -85,6 +85,13 @@ roots = []
 # mid-turn; the next daemon takes them up. "systemd" always holds them; "off"
 # ends them with the daemon.
 hold = "auto"
+# Variables every run in a workspace gets (a session made with
+# `--workspace worktree`, or by a Redline brief): each workspace is a worktree
+# of its own, so a compiler cache lets their builds share what dependencies
+# compile to. Ren's own REN_WORKSPACE, REN_WORKSPACE_PORTS, and
+# REN_WORKSPACE_DATA cannot be set here. `ren tools install sccache` installs
+# the cache.
+# workspace_env = { RUSTC_WRAPPER = "sccache" }
 
 [attachments]
 # Images uploaded to a session to go with a prompt (PNG, JPEG, GIF, WebP),
