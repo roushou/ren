@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { ManagementApi, type ReleaseView } from '../src/lib/api.ts';
-import { ReleaseLine, ReleasePage } from '../src/lib/release.ts';
+import { decisions, ManagementApi, type ReleaseView } from '../src/lib/api.ts';
+import { Promotion, ReleaseLine, ReleasePage, ReleaseStrip } from '../src/lib/release.ts';
 import type { WorkItem } from '../src/lib/work.ts';
 
 const fixture = (name: string) =>
@@ -60,6 +60,40 @@ test('a failed canary and an unknown decision read as such', () => {
   });
   assert.equal(later.tone, 'warning');
   assert.match(later.detail, /held_for_review$/);
+});
+
+test('a release draws as its pipeline and the word for what promotion decided', async () => {
+  const release = await new ManagementApi(pinned).release();
+  assert.ok(release);
+  const strip = ReleaseStrip.of(release);
+  assert.equal(strip.canary, 'passed');
+  assert.deepEqual(strip.production, { kind: 'behind', commits: 1 });
+  assert.equal(strip.promotion.word, 'Waiting on you');
+  assert.equal(strip.promotion.tone, 'warning');
+  assert.equal(strip.label, 'Production 1 behind main · canary passed · Waiting on you');
+
+  const live = ReleaseStrip.of({ ...release, behind: 0, decision: 'current' });
+  assert.deepEqual(live.production, { kind: 'on_main' });
+  assert.equal(live.promotion.word, 'Live');
+  const lost = ReleaseStrip.of({ ...release, behind: null, canary: null, decision: 'unchecked' });
+  assert.deepEqual(lost.production, { kind: 'uncounted' });
+  assert.equal(lost.canary, 'none');
+  const failed = ReleaseStrip.of({
+    ...release,
+    canary: { ...release.canary!, passed: false },
+    decision: 'failed',
+  });
+  assert.equal(failed.canary, 'failed');
+  assert.equal(failed.promotion.word, 'Blocked');
+  assert.equal(failed.promotion.tone, 'bad');
+});
+
+test('every decision has its own word, and an unknown one keeps its text', () => {
+  const words = new Set(decisions.map((decision) => Promotion.of(decision).word));
+  assert.equal(words.size, decisions.length);
+  const later = Promotion.of('held_for_review' as ReleaseView['decision']);
+  assert.equal(later.word, 'held_for_review');
+  assert.equal(later.tone, 'warning');
 });
 
 test('the Release view promotes only a passed build production does not run, once', () => {
