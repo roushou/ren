@@ -10,8 +10,9 @@ use crate::progress::Progress;
 use crate::{
     daemon::{Busy, Ending, RunPolicy, Runs, StillBusy},
     invocation::{Echo, Invocation, InvocationError},
-    tailscale::{Route, ServeStatus, TailscaleCli, TailscaleError},
+    tailscale::{TailscaleCli, TailscaleError},
     ui::UiBuild,
+    unit::{KillMode, Listener, TransientUnit},
 };
 use ren_daemon::config::{Config, RunHold, RunsOptions, ToolsOptions, UpstreamConfig};
 use ren_daemon::host::HeldRuns;
@@ -28,8 +29,7 @@ use ren_recorder::{
 };
 use std::{
     fs,
-    io::{Read as _, Write as _},
-    net::{SocketAddr, TcpStream},
+    net::SocketAddr,
     path::{Path, PathBuf},
     thread,
     time::Duration,
@@ -48,51 +48,37 @@ impl Unit {
     /// Every unit, in the order they stop.
     pub const ALL: [Self; 4] = [Self::Traffic, Self::Ui, Self::Daemon, Self::Provider];
 
-    /// The transient unit's name; every one starts with `ren-dev-`.
+    /// The transient unit; every one's name starts with `ren-dev-`.
+    pub fn unit(self) -> TransientUnit {
+        let (name, description) = match self {
+            Self::Provider => ("ren-dev-provider", "Ren dev slot: ren-dev-provider"),
+            Self::Daemon => ("ren-dev-daemon", "Ren dev slot: ren-dev-daemon"),
+            Self::Ui => ("ren-dev-ui", "Ren dev slot: ren-dev-ui"),
+            Self::Traffic => ("ren-dev-traffic", "Ren dev slot: ren-dev-traffic"),
+        };
+        // The daemon is signalled alone, as the installed unit does; the
+        // rest stop as a whole.
+        let kill = match self {
+            Self::Daemon => KillMode::Mixed,
+            Self::Provider | Self::Ui | Self::Traffic => KillMode::ControlGroup,
+        };
+        TransientUnit {
+            name,
+            description,
+            kill,
+        }
+    }
+
     pub fn name(self) -> &'static str {
-        match self {
-            Self::Provider => "ren-dev-provider",
-            Self::Daemon => "ren-dev-daemon",
-            Self::Ui => "ren-dev-ui",
-            Self::Traffic => "ren-dev-traffic",
-        }
-    }
-
-    fn service(self) -> String {
-        format!("{}.service", self.name())
-    }
-
-    /// Which of the unit's processes systemd signals when it stops. The
-    /// daemon is signalled alone, as the installed unit does, so it drains
-    /// its runs itself before the final kill covers what is left; the rest
-    /// stop as a whole.
-    fn kill_mode(self) -> &'static str {
-        match self {
-            Self::Daemon => "mixed",
-            Self::Provider | Self::Ui | Self::Traffic => "control-group",
-        }
+        self.unit().name
     }
 
     pub fn active(self) -> Result<bool, InvocationError> {
-        Invocation::new("systemctl")
-            .args(["--user", "is-active", "--quiet"])
-            .arg(self.service())
-            .succeeds(Echo::Hide)
+        self.unit().active()
     }
 
     pub fn stop(self) -> Result<(), InvocationError> {
-        if self.active()? {
-            Invocation::new("systemctl")
-                .args(["--user", "stop"])
-                .arg(self.service())
-                .run()?;
-        }
-        // A failed transient unit stays loaded until reset.
-        Invocation::new("systemctl")
-            .args(["--user", "reset-failed"])
-            .arg(self.service())
-            .succeeds(Echo::Hide)?;
-        Ok(())
+        self.unit().stop()
     }
 
     /// Run `command` as this unit, with `environment`, until stopped.
@@ -103,18 +89,7 @@ impl Unit {
         args: &[String],
         environment: &[(&str, String)],
     ) -> Result<(), InvocationError> {
-        let mut run = Invocation::new("systemd-run")
-            .args(["--user", "--collect", "--quiet"])
-            .arg(format!("--unit={}", self.name()))
-            .arg(format!("--description=Ren dev slot: {}", self.name()))
-            .arg(format!("--property=KillMode={}", self.kill_mode()));
-        if let Some(dir) = dir {
-            run = run.arg(format!("--working-directory={}", dir.display()));
-        }
-        for (name, value) in environment {
-            run = run.arg(format!("--setenv={name}={value}"));
-        }
-        run.arg("--").args(command).args(args).run()
+        self.unit().start(dir, command, args, environment)
     }
 }
 
@@ -388,32 +363,13 @@ program_at = "acme-lint"
         Ok(())
     }
 
-    /// Whether `address` answers `GET /health` (or `GET /` for the UI)
-    /// within a few seconds.
+    /// Whether `address` answers `path` within a few seconds.
     pub fn wait_for(address: SocketAddr, path: &str) -> Result<(), DevError> {
-        for _ in 0..100 {
-            if Self::answers(address, path) {
-                return Ok(());
-            }
-            thread::sleep(Duration::from_millis(100));
+        if Listener(address).answers_soon(path) {
+            Ok(())
+        } else {
+            Err(DevError::NotReady(address))
         }
-        Err(DevError::NotReady(address))
-    }
-
-    fn answers(address: SocketAddr, path: &str) -> bool {
-        let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(500))
-        else {
-            return false;
-        };
-        let request =
-            format!("GET {path} HTTP/1.1\r\nhost: {address}\r\nconnection: close\r\n\r\n");
-        let mut head = [0_u8; 12];
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .is_ok()
-            && stream.write_all(request.as_bytes()).is_ok()
-            && stream.read_exact(&mut head).is_ok()
-            && (head.ends_with(b"200") || head.ends_with(b"503"))
     }
 
     /// Build, configure, and (re)start the provider and daemon.
@@ -615,26 +571,10 @@ program_at = "acme-lint"
     /// Remove the dev preview's Serve routes, each only if it still proxies
     /// to the slot; the installed service's routes are never touched.
     pub fn unpublish(tailscale: TailscaleCli) -> Result<(), DevError> {
-        let status = Invocation::new("tailscale")
-            .args(["serve", "status", "--json"])
-            .capture()?;
-        let serve = ServeStatus::parse(&status).map_err(|_| DevError::Config)?;
-        for (port, target) in [
+        Ok(tailscale.unpublish(&[
             (Self::GATEWAY_PORT, format!("http://{}", Self::DAEMON)),
             (Self::UI_PORT, format!("http://{}", Self::UI)),
-        ] {
-            match serve.route(port, &target) {
-                Route::Target => {
-                    Progress(&format!("Unpublishing port {port}")).show();
-                    tailscale
-                        .invocation()
-                        .args(["serve", &format!("--https={port}"), "off"])
-                        .run()?;
-                }
-                Route::Free | Route::Funnel { .. } | Route::Other { .. } | Route::TcpForward => {}
-            }
-        }
-        Ok(())
+        ])?)
     }
 
     /// Stop the slot and remove its data. Only the slot's own directory is

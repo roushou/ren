@@ -8,6 +8,7 @@ mod invocation;
 mod progress;
 mod tailscale;
 mod ui;
+mod unit;
 
 use clap::Parser;
 use ren_harness::host::HostEnv;

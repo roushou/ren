@@ -84,6 +84,26 @@ impl TailscaleCli {
         }
         Ok(node.dns_name().map(str::to_owned))
     }
+
+    /// Removes each of `routes` (a port and the target it proxies to) only
+    /// while it still proxies to that target; any other route is left.
+    pub fn unpublish(self, routes: &[(u16, String)]) -> Result<(), TailscaleError> {
+        let serve = Invocation::new("tailscale")
+            .args(["serve", "status", "--json"])
+            .json("tailscale serve status --json", ServeStatus::parse)?;
+        for (port, target) in routes {
+            match serve.route(*port, target) {
+                Route::Target => {
+                    Progress(&format!("Unpublishing port {port}")).show();
+                    self.invocation()
+                        .args(["serve", &format!("--https={port}"), "off"])
+                        .run()?;
+                }
+                Route::Free | Route::Funnel { .. } | Route::Other { .. } | Route::TcpForward => {}
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The node's connection state and name (`tailscale status --json`).
