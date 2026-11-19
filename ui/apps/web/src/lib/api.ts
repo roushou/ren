@@ -25,6 +25,8 @@ import type { Build as WireBuild } from './wire/Build.ts';
 import type { CanaryView as WireCanaryView } from './wire/CanaryView.ts';
 import type { CheckView as WireCheckView } from './wire/CheckView.ts';
 import type { ReleaseBody as WireReleaseBody } from './wire/ReleaseBody.ts';
+import type { ProjectRelease as WireProjectRelease } from './wire/ProjectRelease.ts';
+import type { ProjectReleases as WireProjectReleases } from './wire/ProjectReleases.ts';
 import type { ReleaseView as WireReleaseView } from './wire/ReleaseView.ts';
 import type { EventCountsRecord as WireEventCountsRecord } from './wire/EventCountsRecord.ts';
 import type { Excerpt as WireExcerpt } from './wire/Excerpt.ts';
@@ -678,6 +680,19 @@ export interface CanaryView {
   passed: boolean;
   checks: CheckView[];
 }
+/** `/api/release`: the release, the pages the canary captured (each at
+ * `/api/release/shots/{name}`), and the build the operator asked production
+ * to take, until the factory's next pass takes it up. */
+export interface ReleaseBody {
+  release: ReleaseView | null;
+  shots: string[];
+  promotion_requested: string | null;
+}
+/** One project's release, by its repository's folder name. */
+export interface ProjectRelease {
+  name: string;
+  release: ReleaseView;
+}
 /** Where the release stands, as the factory last wrote it (`/api/release`). */
 export interface ReleaseView {
   main: string;
@@ -980,9 +995,7 @@ const health = object<Health, WireHealth>({
   recorder: recorderMetrics,
 });
 const metrics = object<Metrics, WireMetrics>({ recorder: recorderMetrics, storage: storageView });
-const releaseBody = object<{ release: ReleaseView | null }, WireReleaseBody>({
-  release: nullable(
-    object<ReleaseView, WireReleaseView>({
+const releaseView = object<ReleaseView, WireReleaseView>({
       main: string,
       production: revision,
       behind: nullable(count),
@@ -1002,8 +1015,14 @@ const releaseBody = object<{ release: ReleaseView | null }, WireReleaseBody>({
       ),
       policy: string,
       decision: label(decisions),
-    }),
-  ),
+});
+const releaseBody = object<ReleaseBody, WireReleaseBody>({
+  release: nullable(releaseView),
+  shots: array(string),
+  promotion_requested: nullable(string),
+});
+const projectReleases = object<{ projects: ProjectRelease[] }, WireProjectReleases>({
+  projects: array(object<ProjectRelease, WireProjectRelease>({ name: string, release: releaseView })),
 });
 const storage = object<Storage>({
   policy: object<RetentionPolicy>({
@@ -1539,7 +1558,15 @@ export class ManagementApi {
   }
   /** Where the release stands; null until the factory has run against this gateway. */
   async release(signal?: AbortSignal): Promise<ReleaseView | null> {
-    return (await this.#read('/api/release', releaseBody, signal)).release;
+    return (await this.releaseBody(signal)).release;
+  }
+  /** The release, with the pages the canary captured and any promotion asked for. */
+  releaseBody(signal?: AbortSignal): Promise<ReleaseBody> {
+    return this.#read('/api/release', releaseBody, signal);
+  }
+  /** Each project's release, as `ren project canary` last wrote it. */
+  async projectReleases(signal?: AbortSignal): Promise<ProjectRelease[]> {
+    return (await this.#read('/api/release/projects', projectReleases, signal)).projects;
   }
   /** Newest first. `query` holds the listing filters and `after`. */
   calls(params: Query<RawCallQuery>, signal?: AbortSignal): Promise<CallPage> {

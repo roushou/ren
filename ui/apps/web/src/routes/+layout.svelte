@@ -296,6 +296,12 @@
         aria-current={tab === 'work' ? 'page' : undefined}><Icon name="pencil" size={14} />Work</a
       >
       <a
+        href="/release"
+        class:active={tab === 'release'}
+        aria-current={tab === 'release' ? 'page' : undefined}
+        ><Icon name="branch" size={14} />Release</a
+      >
+      <a
         href="/recorder"
         data-sveltekit-preload-data="hover"
         class:active={tab === 'recorder'}

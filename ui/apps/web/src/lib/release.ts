@@ -4,6 +4,8 @@
 import type { Revision } from './api.ts';
 import type { ReleaseView } from './api.ts';
 import { unrecognised } from './decode.ts';
+import { Refusals } from './refusal.ts';
+import type { WorkItem } from './work.ts';
 
 /** The tone the entry is drawn in. */
 export type ReleaseTone = 'ok' | 'warning' | 'bad';
@@ -94,5 +96,92 @@ export class ReleaseLine {
       default:
         return [unrecognised(release.decision), 'warning'];
     }
+  }
+}
+
+/** What the Release view shows of one release, worked out once. */
+export class ReleasePage {
+  readonly release: ReleaseView;
+  /** The build the operator asked production to take, if one waits. */
+  readonly requested: string | null;
+
+  constructor(release: ReleaseView, requested: string | null) {
+    this.release = release;
+    this.requested = requested;
+  }
+
+  /** The commit production runs, when it is a clean or modified commit. */
+  get production(): string | null {
+    const { production } = this.release;
+    return production.kind === 'commit' ? production.commit : null;
+  }
+
+  /** Whether the canary's build can be asked for: it passed, and
+   * production does not run it already. */
+  get promotable(): boolean {
+    const canary = this.release.canary;
+    return canary !== null && canary.passed && this.release.decision !== 'current';
+  }
+
+  /** Whether the operator already asked for the canary's build. */
+  get asked(): boolean {
+    return this.requested !== null && this.requested === this.release.canary?.commit;
+  }
+
+  /** How far behind main production is, in words. */
+  get behind(): string {
+    const { behind } = this.release;
+    if (behind === null) return 'not counted against main';
+    if (behind === 0) return 'up to date with main';
+    return behind === 1 ? '1 commit behind main' : `${behind} commits behind main`;
+  }
+
+  /** The work items production's build shipped. */
+  shipped(items: readonly WorkItem[]): WorkItem[] {
+    const production = this.production;
+    return items.filter(
+      (item) =>
+        item.state === 'shipped' &&
+        item.shipped?.kind === 'commit' &&
+        item.shipped.commit === production,
+    );
+  }
+
+  /** The work items on main that production does not run yet. */
+  static waiting(items: readonly WorkItem[]): WorkItem[] {
+    return items.filter((item) => item.state === 'landed');
+  }
+
+  /** A commit as people read it. */
+  static short(commit: string | null): string {
+    return commit ? commit.slice(0, 12) : 'none';
+  }
+}
+
+/** The Release view's one write: asking production to take the canary's
+ * build, which the factory's next pass carries out. */
+export class ReleaseApi {
+  readonly #fetch: typeof fetch;
+
+  constructor(fetcher: typeof fetch) {
+    this.#fetch = fetcher;
+  }
+
+  async promote(commit: string): Promise<void> {
+    const response = await this.#fetch('/control/release/promote', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ commit }),
+    });
+    if (response.ok) return;
+    let parsed: unknown = null;
+    try {
+      parsed = await response.json();
+    } catch {
+      parsed = null;
+    }
+    const code = Refusals.read(parsed);
+    throw new Error(code ? Refusals.say(code) : `The daemon answered ${response.status}.`);
   }
 }
