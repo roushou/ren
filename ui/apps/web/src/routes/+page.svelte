@@ -10,7 +10,8 @@
   import { invalidateAll } from '$app/navigation';
   import { ProjectBoard, type Approval } from '#lib/projects.ts';
   import { ReleaseLine } from '#lib/release.ts';
-  import { RunCommandError, Runs, RunsClient, type Decision } from '#lib/runs.ts';
+  import { RunCommandError, Runs, RunsClient, Sessions, type Decision } from '#lib/runs.ts';
+  import { Work } from '#lib/work.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -102,6 +103,15 @@
           </tbody>
         </table>
       </div>
+      {#if data.sessions.length}
+        <p class="scratch">
+          <a href="/scratch">Scratch</a>
+          <span class="muted"
+            >{board.scratch}
+            {board.scratch === 1 ? 'session works' : 'sessions work'} for no project</span
+          >
+        </p>
+      {/if}
       {#if board.archived.length}
         <p class="archived muted">
           Archived: {board.archived.map((project) => project.name).join(', ')}
@@ -119,7 +129,7 @@
       <h3>Approvals</h3>
       {#if failed}<p class="error quiet" role="alert">{failed}</p>{/if}
       <ul>
-        {#each board.approvals as waiting (waiting.approval)}
+        {#each board.approvals as waiting (`${waiting.session}:${waiting.approval}`)}
           {@const said = Runs.ask(waiting.ask)}
           <li>
             <span class="muted"
@@ -141,7 +151,11 @@
                 disabled={answering !== null}
                 onclick={() => void answer(waiting, 'decline')}>Decline</button
               >
-              <a class="button small" href={`/sessions?session=${waiting.session}`}>Open session</a>
+              <a
+                class="button small"
+                href={Sessions.deskHref(waiting.project, { session: waiting.session })}
+                >Open session</a
+              >
             </span>
           </li>
         {/each}
@@ -164,9 +178,12 @@
       <h3>Previews to check</h3>
       <ul>
         {#each board.previews as item (item.id)}
+          {@const home = board.homeOf(item)}
           <li>
-            <span class="muted">{board.nameOf(item.project) ?? 'no project'}</span>
-            <a href={`/work?item=${item.id}`}>{item.title}</a>
+            <span class="muted">{home ?? 'no project'}</span>
+            <a href={home ? Work.href(home, { item: item.id }) : `/work?item=${item.id}`}
+              >{item.title}</a
+            >
             {#if item.preview}<a class="out" href={item.preview.ui} target="_blank" rel="noopener"
                 ><Icon name="arrow" size={11} />Open the preview</a
               >{/if}
@@ -180,9 +197,9 @@
         {#each board.queued as queued (queued.project)}
           <li>
             {#if queued.project}
-              <a href={ProjectBoard.href(queued.project)}>{queued.project}</a>
+              <a href={Work.href(queued.project)}>{queued.project}</a>
             {:else}
-              <a href="/work">No project</a>
+              <span>No project</span>
             {/if}
             <span class="muted">{queued.count} to send</span>
           </li>
@@ -274,9 +291,15 @@
     border-radius: 50%;
     background: var(--live);
   }
-  .archived {
+  .archived,
+  .scratch {
     padding: 10px 16px;
     margin: 0;
+  }
+  .scratch {
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid var(--line-subtle);
   }
   .empty {
     padding: 16px;

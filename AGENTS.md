@@ -645,11 +645,17 @@ dependencies under "Crates" below. Read the code for current module ownership.
   work item first), `src/lib/work.ts` work items (`WorkApi` through
   `/api/work` and `/control/work`, the order a pane makes, `PageEvidence`,
   what a page logged and read, kept by the layout, and `Work.batch`, one
-  brief for several items, which the Work view, `src/routes/work`, sends),
+  brief for several items, which a project's Work page,
+  `src/routes/projects/[name]/work`, sends),
   `Markdown.svelte` from `ui/packages/markdown` draws Markdown, and
-  `src/lib/server/runsStart.ts` makes the Sessions page's first reads on the UI
+  `src/lib/server/runsStart.ts` makes the session desk's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the
-  page renders as it will stay.
+  page renders as it will stay. The desk (`src/lib/desk/SessionDesk.svelte`)
+  is one component held by a project's Sessions page
+  (`src/routes/projects/[name]/sessions`) and by Scratch (`src/routes/scratch`),
+  each with its scope (`SessionScope`: a project's sessions, or those of no
+  project). The old `/work` and `/sessions` addresses lead to where an item or
+  session now is (`src/lib/server/oldAddress.ts`).
 - `ui/packages/redline`: Redline, a Bun workspace package of the UI with
   `Redline` as its primary type (`src/redline.ts`: what a mark points at,
   and the Markdown brief its marks make, with the lines a host adds as a

@@ -12,6 +12,7 @@ import {
   type Harness,
   type NativeThreadId,
   type NativeTurnId,
+  type Project as RegisteredProject,
   type Shelf,
   type ToolEffect,
   type UnixMillis,
@@ -2064,7 +2065,60 @@ export interface SessionFolder {
   waiting: number;
 }
 
+/** A project as a session desk knows it: enough to tell its sessions. */
+export type DeskProject = Pick<RegisteredProject, 'id' | 'name' | 'repository'>;
+
+/** Which sessions a desk holds: one project's, or those working for none
+ * (Scratch: scratch folders, and folders no project is registered for). */
+export type SessionScope =
+  { kind: 'project'; project: DeskProject } | { kind: 'scratch'; projects: readonly DeskProject[] };
+
 export class Sessions {
+  /**
+   * The project among `projects` that `body` works for: as stored, else
+   * (for a moment after it is made) by its folder, the project's
+   * repository or a worktree of it. Null when it works for none of them.
+   */
+  static projectOf(body: SessionBody, projects: readonly DeskProject[]): DeskProject | null {
+    if (body.stored) {
+      const id = body.stored.project;
+      return id === null ? null : (projects.find((project) => project.id === id) ?? null);
+    }
+    const workdir = body.served?.workdir;
+    return (
+      projects.find(
+        (project) =>
+          workdir === project.repository ||
+          (body.worktree !== null &&
+            body.worktree.name.replace(/-\d+$/, '') === Sessions.#base(project.repository)),
+      ) ?? null
+    );
+  }
+
+  /** The sessions among `bodies` that `scope` holds. */
+  static within(bodies: readonly SessionBody[], scope: SessionScope): SessionBody[] {
+    switch (scope.kind) {
+      case 'project':
+        return bodies.filter((body) => Sessions.projectOf(body, [scope.project]) !== null);
+      case 'scratch':
+        return bodies.filter((body) => Sessions.projectOf(body, scope.projects) === null);
+      default:
+        return assertNever(scope);
+    }
+  }
+
+  /** The desk a session is on: its project's, by name, or Scratch (null). */
+  static deskHref(project: string | null, query: Record<string, string> = {}): string {
+    const search = new URLSearchParams(query).toString();
+    const path =
+      project === null ? '/scratch' : `/projects/${encodeURIComponent(project)}/sessions`;
+    return search ? `${path}?${search}` : path;
+  }
+
+  static #base(path: string): string {
+    return path.replace(/\/+$/, '').split('/').pop() ?? '';
+  }
+
   /** One session from what the store holds and what the daemon serves. */
   static desk(body: SessionBody, live: readonly RunSnapshot[]): DeskSession | null {
     const { stored, served } = body;

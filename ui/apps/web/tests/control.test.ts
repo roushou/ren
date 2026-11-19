@@ -165,7 +165,7 @@ test('sessions map to their control routes, and a client session block is not pr
       new Request(`http://ui.test${path}`, { headers: { 'sec-fetch-site': 'same-origin' } }),
     );
   await proxy.respond(post('/control/sessions', { harness: 'codex' }));
-  await get('/control/sessions?shelf=archived&limit=5&x=1');
+  await get('/control/sessions?shelf=archived&limit=5&project=acme-web&x=1');
   await get(`/control/sessions/${run}`);
   await get(`/control/sessions/${run}/commands`);
   await get(`/control/sessions/${run}/files?q=src`);
@@ -179,7 +179,7 @@ test('sessions map to their control routes, and a client session block is not pr
   }
   assert.deepEqual(seen, [
     'POST /control/v1/sessions',
-    'GET /control/v1/sessions?shelf=archived&limit=5',
+    'GET /control/v1/sessions?shelf=archived&limit=5&project=acme-web',
     `GET /control/v1/sessions/${run}`,
     `GET /control/v1/sessions/${run}/commands`,
     `GET /control/v1/sessions/${run}/files?q=src`,

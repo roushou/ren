@@ -115,6 +115,11 @@
   const tab = $derived(Views.tab(target ?? view));
   /** The header's place the page is in, and so the row of pages under it. */
   const destination = $derived(Views.destination(tab));
+  /** The project whose pages the row shows, inside one. */
+  const inProject = $derived.by(() => {
+    const to = navigating.to ?? page;
+    return to.route.id?.startsWith('/projects/[name]') ? (to.params?.name ?? null) : null;
+  });
   /** The project an Inspect page is narrowed to, when it can be. */
   const scope = $derived(Views.scoped(tab) ? page.url.searchParams.get('project') : null);
   /** The same page, for every project. */
@@ -221,7 +226,7 @@
       '/recordings/[id]/report',
       '/turns/[id]',
       '/search',
-      '/sessions',
+      '/scratch',
     ] as const)
       void preloadCode(route);
   });
@@ -307,7 +312,12 @@
     class="page-row"
     aria-label={Views.destinations.find((place) => place.destination === destination)?.label}
   >
-    {#each Views.pages(destination) as link (link.tab)}
+    {#if inProject}
+      <span class="crumb"
+        ><a href="/">Projects</a><span class="muted">/</span><strong>{inProject}</strong></span
+      >
+    {/if}
+    {#each Views.pages(destination, inProject) as link (link.tab)}
       <a
         href={Views.scopedHref(link, scope)}
         data-sveltekit-preload-data="hover"

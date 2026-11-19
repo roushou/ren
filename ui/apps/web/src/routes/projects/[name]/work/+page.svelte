@@ -1,9 +1,10 @@
 <!--
-  Work: what was marked to be done, from queued to shipped. Queued items
-  can be picked and sent together, as one brief, to a new session in a
-  workspace of its own in Ren's source checkout; each row says where its
-  item stands, and the one picked shows its marks, what else was on screen,
-  and the brief it makes.
+  A project's work: what was marked to be done on its pages, from queued
+  to shipped. Queued items can be picked and sent together, as one brief,
+  to a new session in a workspace of its own in the project's repository
+  (Ren's source checkout for Ren's); each row says where its item stands,
+  and the one picked shows its marks, what else was on screen, and the
+  brief it makes.
 -->
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
@@ -14,7 +15,7 @@
   import { onMount } from 'svelte';
   import { ago } from '#lib/overview.ts';
   import { harnessLabel } from '#lib/activity.ts';
-  import { DRIVABLE, RunCommandError, RunsClient, type Drivable } from '#lib/runs.ts';
+  import { DRIVABLE, RunCommandError, RunsClient, Sessions, type Drivable } from '#lib/runs.ts';
   import { Work, WorkApi, WorkError, type WorkItem, type WorkItemId } from '#lib/work.ts';
   import type { PageProps } from './$types';
 
@@ -101,7 +102,7 @@
       });
       for (const item of batch) await work.move(item.id, { kind: 'send', session });
       picked = [];
-      await goto(`/sessions?session=${session}`);
+      await goto(Sessions.deskHref(data.project.name, { session }));
     } catch (failure) {
       error =
         failure instanceof RunCommandError || failure instanceof WorkError
@@ -125,7 +126,7 @@
 
   const select = (item: WorkItem) =>
     goto(
-      `/work?${new URLSearchParams({ ...(data.shelf === 'archived' ? { shelf: 'archived' } : {}), item: item.id })}`,
+      `?${new URLSearchParams({ ...(data.shelf === 'archived' ? { shelf: 'archived' } : {}), item: item.id })}`,
       {
         replaceState: true,
       },
@@ -140,8 +141,10 @@
     >
   </div>
   <div class="scope-group segmented" role="group" aria-label="Which work items">
-    <a class="button small" class:chosen={data.shelf === 'current'} href="/work">Current</a>
-    <a class="button small" class:chosen={data.shelf === 'archived'} href="/work?shelf=archived"
+    <a class="button small" class:chosen={data.shelf === 'current'} href={page.url.pathname}
+      >Current</a
+    >
+    <a class="button small" class:chosen={data.shelf === 'archived'} href="?shelf=archived"
       >Archived</a
     >
   </div>
@@ -198,7 +201,7 @@
                 <span class="work-state state-{item.state}">{Work.state(item.state)}</span>
                 {#if item.session}<a
                     class="session-link"
-                    href={`/sessions?session=${item.session}`}
+                    href={Sessions.deskHref(data.project.name, { session: item.session })}
                     onclick={(event) => event.stopPropagation()}>Session</a
                   >{/if}
               </td>

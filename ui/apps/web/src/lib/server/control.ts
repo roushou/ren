@@ -122,7 +122,7 @@ const routes: { pattern: RegExp; route: Route }[] = [
     route: {
       method: 'GET',
       feed: false,
-      query: ['shelf', 'limit'] satisfies (keyof ListRequest)[],
+      query: ['shelf', 'limit', 'project'] satisfies (keyof ListRequest)[],
     },
   },
   { pattern: /^\/control\/sessions\/events$/, route: { method: 'GET', feed: true } },

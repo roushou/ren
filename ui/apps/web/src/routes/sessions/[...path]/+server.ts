@@ -1,11 +1,14 @@
 import { redirect } from '@sveltejs/kit';
+import { OldAddress } from '#lib/server/oldAddress.ts';
 import type { RequestHandler } from './$types';
 
 /**
- * Recordings were called sessions: old links and bookmarks land on the
- * same page under its new name, with their query kept.
+ * Sessions live under their project now, or in Scratch: `/sessions`
+ * itself leads to the session or run it names. Recordings were called
+ * sessions before that: `/sessions/<rest>` lands on the same page under
+ * its new name, with its query kept.
  */
-export const GET: RequestHandler = ({ params, url }) => {
-  const rest = params.path ? `/${params.path}` : '';
-  redirect(308, `/recordings${rest}${url.search}`);
+export const GET: RequestHandler = async ({ params, url, request }) => {
+  if (!params.path) redirect(307, await OldAddress.sessions(request, url));
+  redirect(308, `/recordings/${params.path}${url.search}`);
 };

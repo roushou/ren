@@ -3,6 +3,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import {
     ManagementApi,
     clock,
@@ -45,6 +46,7 @@
     DRIVABLE,
     type DeskSession,
     type SessionBody,
+    type SessionScope,
     type SessionId,
     type StoredConversation,
     type ClientCommand,
@@ -75,9 +77,16 @@
   import Skeleton from '#lib/Skeleton.svelte';
   import type { Arriving } from '#lib/arrival.ts';
   import type { Snapshot } from '#lib/snapshots.ts';
-  import type { PageProps } from './$types';
+  import type { DeskData } from './load.ts';
 
-  let { data }: PageProps = $props();
+  let {
+    data,
+    scope,
+  }: {
+    data: DeskData;
+    /** Which sessions this desk holds: one project's, or Scratch. */
+    scope: SessionScope;
+  } = $props();
 
   const client = new RunsClient();
   const api = new ManagementApi();
@@ -89,9 +98,12 @@
   const first = <T,>(read: Read<T> | undefined, none: T): T =>
     read?.state === 'read' ? read.value : none;
   let live = $state.raw<RunSnapshot[]>(first(initial?.live, []));
-  /** The sessions, current and archived, as stored and served. */
-  let sessions = $state.raw<SessionBody[]>(first(initial?.sessions, []));
-  let archivedSessions = $state.raw<SessionBody[]>(first(initial?.archivedSessions, []));
+  /** Every session, current and archived, as stored and served. */
+  let everySession = $state.raw<SessionBody[]>(first(initial?.sessions, []));
+  let everyArchived = $state.raw<SessionBody[]>(first(initial?.archivedSessions, []));
+  /** Those this desk holds. */
+  const sessions = $derived(Sessions.within(everySession, scope));
+  const archivedSessions = $derived(Sessions.within(everyArchived, scope));
   /** Whether the lists have been read: on a navigation in the browser they
    * are on their way, and the list draws its outline until they come. */
   let listing = $state<Listing>(
@@ -127,7 +139,14 @@
   /** The folder scratch sessions get theirs in; null when there is none. */
   let scratch = $state<string | null>(first(initial?.places, null)?.scratch ?? null);
   const folders = $derived(
-    Sessions.folders(shelf === 'current' ? sessions : archivedSessions, live, scratch, chosen),
+    // A project's desk has no Scratch group: a session started there would
+    // leave the project.
+    Sessions.folders(
+      shelf === 'current' ? sessions : archivedSessions,
+      live,
+      scope.kind === 'project' ? null : scratch,
+      chosen,
+    ),
   );
   const session = $derived.by((): DeskSession | null => {
     const body = [...sessions, ...archivedSessions].find((entry) => entry.session === chosen);
@@ -270,7 +289,7 @@
   async function readSessions() {
     if (!data.runsControl) return;
     try {
-      [sessions, archivedSessions] = await Promise.all([
+      [everySession, everyArchived] = await Promise.all([
         client.sessions(),
         client.sessions('archived'),
       ]);
@@ -414,7 +433,7 @@
   }
 
   function select(next: SessionId | null, how: 'push' | 'replace' = 'push') {
-    void goto(next ? `/sessions?session=${next}` : '/sessions', {
+    void goto(next ? `?session=${next}` : page.url.pathname, {
       replaceState: how === 'replace',
     });
   }
@@ -437,7 +456,10 @@
    * kept for it that still apply.
    */
   async function newDraft(dir?: string | null) {
-    const place = dir === undefined ? Sessions.start(sessions, live, scratch) : dir;
+    // A project's desk starts in the project's repository; Scratch, in a
+    // scratch folder of its own.
+    const place =
+      dir !== undefined ? dir : scope.kind === 'project' ? scope.project.repository : null;
     const unused = Sessions.unused(sessions, live);
     await act(async () => {
       if (unused) {
@@ -1097,9 +1119,11 @@
   }
 </script>
 
-{#snippet scope()}
+{#snippet toolbarScope()}
   <div class="scope-group scope-identity">
-    <span class="scope-title">Sessions</span>
+    <span class="scope-title"
+      >{scope.kind === 'project' ? `${scope.project.name} sessions` : 'Scratch'}</span
+    >
     <span class="muted"
       >{liveCount} running{waiting ? ` · ${waiting} waiting for you` : ''}{data.runsControl
         ? feedNote(feed)
@@ -1319,7 +1343,7 @@
 
 <svelte:window onkeydown={shortcut} />
 
-<Toolbar {scope} />
+<Toolbar scope={toolbarScope} />
 <div class="runs-page" data-pane={pane}>
   <aside class="runs-sidebar" aria-label="Runs">
     {#if unavailable}<p class="sidebar-note danger">{unavailable}</p>{/if}
@@ -1330,7 +1354,7 @@
       {now}
       {title}
       place={(workdir) => Runs.place(workdir, scratch, offered)}
-      {scratch}
+      scratch={scope.kind === 'project' ? null : scratch}
       {shelf}
       archivedCount={archivedSessions.length}
       {busy}

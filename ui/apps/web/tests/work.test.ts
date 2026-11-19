@@ -191,3 +191,20 @@ test("an item's project decides its brief, and a batch is one project's", () => 
   });
   assert.equal(Work.oneProject([item('a', 'acme-id'), item('b', null)], projects), null);
 });
+
+test("a project's Work page holds its items, Ren's those from before projects too", () => {
+  const project = (id: string, name: string, factory: 'ren' | 'contract') =>
+    ({ id, name, factory, archived_at: null }) as never;
+  const ren = project('ren-id', 'ren', 'ren');
+  const acme = project('acme-id', 'acme-web', 'contract');
+  const item = (id: string, owner: string | null) =>
+    ({ id, project: owner }) as unknown as WorkItem;
+  const items = [item('a', 'acme-id'), item('b', null), item('c', 'ren-id')];
+  const ids = (list: WorkItem[]) => list.map((entry) => entry.id);
+  assert.deepEqual(ids(Work.of(items, acme)), ['a']);
+  assert.deepEqual(ids(Work.of(items, ren)), ['b', 'c']);
+  assert.equal(Work.home(item('b', null), [acme, ren]), ren);
+  assert.equal(Work.home(item('a', 'acme-id'), [acme, ren]), acme);
+  assert.equal(Work.home(item('x', 'gone-id'), [acme, ren]), null);
+  assert.equal(Work.href('acme-web', { item: 'a' }), '/projects/acme-web/work?item=a');
+});

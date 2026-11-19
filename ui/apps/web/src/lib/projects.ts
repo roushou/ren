@@ -3,8 +3,15 @@
 // the operator across them: a canary to promote, a preview to check, work
 // still queued. Read from `/api/projects` and `/api/work`.
 import type { Project } from './api.ts';
-import type { ApprovalAsk, ApprovalId, RunSnapshot, SessionBody, SessionId } from './runs.ts';
-import type { WorkItem } from './work.ts';
+import {
+  Sessions,
+  type ApprovalAsk,
+  type ApprovalId,
+  type RunSnapshot,
+  type SessionBody,
+  type SessionId,
+} from './runs.ts';
+import { Work, type WorkItem } from './work.ts';
 
 /** An approval a running session waits on, with the project it works for. */
 export interface Approval {
@@ -17,7 +24,7 @@ export interface Approval {
   prompt: string | null;
 }
 
-/** A queued work item's project, by name; null when it names none. */
+/** A queued work item's project, by name; null when none holds it. */
 export interface Queued {
   project: string | null;
   count: number;
@@ -97,7 +104,7 @@ export class ProjectBoard {
     const counts = new Map<string | null, number>();
     for (const item of this.work) {
       if (item.state !== 'queued') continue;
-      const project = this.nameOf(item.project);
+      const project = this.homeOf(item);
       counts.set(project, (counts.get(project) ?? 0) + 1);
     }
     return [...counts]
@@ -120,6 +127,17 @@ export class ProjectBoard {
   }
 
   /** The name of the project with `id`; null for none, or one not listed. */
+  /** The name of the project whose Work page holds `item`: its own, or
+   * Ren's for one from before projects. */
+  homeOf(item: WorkItem): string | null {
+    return Work.home(item, this.projects)?.name ?? null;
+  }
+
+  /** How many current sessions work for no project: Scratch's. */
+  get scratch(): number {
+    return Sessions.within(this.sessions, { kind: 'scratch', projects: this.projects }).length;
+  }
+
   nameOf(id: string | null): string | null {
     if (id === null) return null;
     return this.projects.find((project) => project.id === id)?.name ?? null;
