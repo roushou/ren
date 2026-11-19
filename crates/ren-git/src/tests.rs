@@ -305,22 +305,14 @@ fn a_branch_name_is_one_git_takes() {
     }
 }
 
-/// `git` with a fixed author, for a test's own commits.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "a test makes the commits a worktree needs"
-)]
+/// `file` written and committed in `dir`, by a fixed author.
 fn commit(dir: &Path, file: &str) {
     std::fs::write(dir.join(file), file).unwrap();
-    for args in [vec!["add", file], vec!["commit", "--quiet", "-m", file]] {
-        let status = std::process::Command::new("git")
-            .args(["-c", "user.name=Ren", "-c", "user.email=ren@example.com"])
-            .args(&args)
-            .current_dir(dir)
-            .status()
-            .unwrap();
-        assert!(status.success(), "{args:?}");
-    }
+    let author = crate::Author {
+        name: "Ren".into(),
+        email: "ren@example.com".into(),
+    };
+    Git::inherited().commit_all(dir, file, &author).unwrap();
 }
 
 /// The real git, making, keeping, and removing worktrees. Skipped where no

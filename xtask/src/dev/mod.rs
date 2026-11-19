@@ -242,6 +242,8 @@ pub enum DevError {
     Settings(#[from] SettingsError),
     #[error(transparent)]
     Agent(#[from] AgentError),
+    #[error("could not make a fake project a git repository: {0}")]
+    Git(#[from] ren_git::GitError),
 }
 
 impl Dev {

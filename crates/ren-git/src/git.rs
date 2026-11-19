@@ -23,6 +23,13 @@ pub enum Published {
     LocalOnly,
 }
 
+/// Who a commit Ren makes is by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Author {
+    pub name: String,
+    pub email: String,
+}
+
 /// What became of a branch asked to go once merged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BranchRemoval {
@@ -131,6 +138,28 @@ impl Git {
     pub fn file_at(&self, dir: &Path, commit: &CommitId, path: &str) -> Result<Vec<u8>, GitError> {
         let object = format!("{commit}:{path}");
         self.output(dir, &["cat-file", "blob", object.as_str()])
+    }
+
+    /// Commit everything in `dir`'s work tree with `message`, as `author`
+    /// (`Name <email>`), whatever identity the host's git is set up with.
+    pub fn commit_all(&self, dir: &Path, message: &str, author: &Author) -> Result<(), GitError> {
+        self.answer(dir, &["add", "--all"])?;
+        let name = format!("user.name={}", author.name);
+        let email = format!("user.email={}", author.email);
+        self.answer(
+            dir,
+            &[
+                "-c",
+                &name,
+                "-c",
+                &email,
+                "commit",
+                "--quiet",
+                "--message",
+                message,
+            ],
+        )
+        .map(drop)
     }
 
     /// A new worktree of `repo` at `path`, on a new branch `branch` from

@@ -19,6 +19,7 @@ use ren_gateway::{
     ControlToken, EntryIngress, Environment, InstanceOptions,
     user::{TokenDigest, UserConfig},
 };
+use ren_git::{Author, Git, Repository};
 use ren_harness::{endpoint::UserToken, host::HostEnv};
 use ren_protocol::route::{Provider, Wire};
 use ren_recorder::{
@@ -351,6 +352,17 @@ program_at = "acme-lint"
                     format!("# {project}\n\nA fake project for the dev slot's runs.\n"),
                 )
                 .map_err(FileError::at(&readme))?;
+            }
+            // A repository with a commit, so a session (and Redline's
+            // briefs) can work in a workspace of it.
+            if Git::repository(&folder) == Repository::None {
+                let git = Git::inherited();
+                let author = Author {
+                    name: "Ren dev slot".into(),
+                    email: "dev-slot@example.com".into(),
+                };
+                git.init(&folder)
+                    .and_then(|()| git.commit_all(&folder, "Start the fake project", &author))?;
             }
         }
         Ok(())
