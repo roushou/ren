@@ -347,6 +347,67 @@ loopback. `down` removes each preview route only while it still points at the
 slot. `shot` needs a headless Chromium: `REN_CHROME`, `chrome-headless-shell` or
 `chromium` on `PATH`, or Playwright's downloaded headless shell.
 
+### Canary and promotion
+
+`cargo xtask canary` checks `main`'s tip before production takes it, and
+promotes it as you decide ([the plan](plans/self-build.md), phase 4). One
+pass:
+
+```sh
+cargo xtask canary run              # fetch main, build, check, promote by policy
+cargo xtask canary promote          # install the canary's build now, once it passed
+ren release                         # main, production, the canary, and the decision
+cargo xtask canary enable --every 10   # a pass every 10 minutes, on a user timer
+cargo xtask canary disable
+cargo xtask canary down             # stop the canary
+```
+
+A pass fetches `main` from `origin` and checks its tip out, detached, in
+Ren's own worktree, `~/.local/share/ren/factory`, then goes on with that
+commit's own xtask, so a commit is checked by its own checks. It builds the
+commit once into `~/.local/share/ren/builds/<commit>` (the release `ren`
+and the UI's deployable copy; the newest few are kept). It backs up
+production's history with the running daemon (`ren control backup`) and
+starts the build as the canary on a copy of it: the units `ren-canary-daemon`
+and `ren-canary-ui`, on loopback `17787` and `17000`, with
+`~/.config/ren-canary` and `~/.local/state/ren-canary`, both replaced on every
+pass. Its configuration is production's with its own listener, `[instance]
+environment = "canary"`, no `[runs]`, and a placeholder for every operator
+key, so it drives no runs and forwards no operator-keyed call; its UI only
+reads. `--publish` also publishes it on the tailnet, gateway `9445` and UI
+`9446`, with the install's saved Tailscale choice.
+
+It then checks the canary: `ren doctor` (nothing failed, and the daemon runs
+the build its CLI is), every read of the read API over the copied history
+(each listing, then one item of each), and every page of the UI in a headless
+Chromium (as `dev shot` finds it; the captures are kept in
+`~/.local/share/ren-canary/shots`). A check that cannot run fails. It writes
+where the release stands to production's data folder (`release.json`): `main`'s
+tip, the build production runs and how many commits it is behind, the
+canary's build and each check, and the decision. `/api/release` serves it,
+`ren release` prints it, and the UI's status line shows it.
+
+When the build passed and follows production's commit, the policy in
+`~/.config/ren/release.toml` decides:
+
+```toml
+promote = "manual" # the default: `cargo xtask canary promote`
+# promote = "automatic"      # as soon as it passes
+# promote = "02:00-05:00"    # as soon as it passes inside this daily UTC window
+```
+
+Promoting runs `install-vps --build <commit>` with the saved publishing
+flags: the install's own steps (the wait for calls and bound runs' turns, the
+pause, the backup, the build check, and the rollback on failure), with the
+kept build instead of building the checkout. No policy promotes a build that failed its checks, that production already runs, or that lacks commits production has, nor one over a production build that is not a clean commit of `main`; `canary promote` promotes any build that passed. A promotion that fails is rolled back by the install and marked on the build, and is not tried again unless you promote
+it. `install-vps --build <commit>` also installs a kept build by hand.
+
+`canary enable` writes `ren-canary.service` and `ren-canary.timer` to
+`~/.config/systemd/user`, running `cargo xtask canary run` from the checkout
+it was enabled in; follow a pass with `journalctl --user -u ren-canary`.
+`--of dev` rehearses all of it with the dev slot as production: its fake
+history, its `release.json`, and never a promotion.
+
 ### Manual steps
 
 Build on the VPS with Rust and `cargo build --release --locked`, or copy an

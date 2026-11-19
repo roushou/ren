@@ -683,9 +683,23 @@ dependencies under "Crates" below. Read the code for current module ownership.
   shares with the dev slot sits beside it, each with its own error:
   running commands (`invocation`), writing files (`file`), progress lines
   (`progress`), Tailscale (`tailscale`: its status, and publishing a port
-  with Serve), the daemon a restart waits on (`daemon`: the installed
-  `ren`'s output, the wait, and the runs that end), and building the UI
-  (`ui`). Its parsing of Tailscale status and of the installed `ren`'s
+  with Serve or removing one that still points where it did), the daemon a
+  restart waits on (`daemon`: the installed `ren`'s output, the wait, and
+  the runs that end), building the UI (`ui`), transient user units and the
+  listeners they answer on (`unit`: `TransientUnit`, `Listener`), and builds
+  made once per commit (`builds`: `Builds`, `StoredBuild`, which
+  `install-vps --build` installs).
+  `cargo xtask canary` is the factory's canary and promotion (`canary`;
+  `docs/deployment.md#canary-and-promotion`, `docs/plans/self-build.md`,
+  phase 4): a pass fetches `main` into Ren's own worktree and goes on with
+  that commit's xtask, builds it once, starts it as `ren-canary-*` units on a
+  fresh backup of production's history (`canary::instance`: production, or
+  with `--of dev` the dev slot, and the canary's derived configuration),
+  checks it (`canary::checks`: doctor, a sweep of every read, kept whole by a
+  test that matches every `ReadRequest`, and every page through the dev
+  slot's camera), writes the `ren_release::Release` to production's data
+  folder, and promotes under the operator's policy; `enable` runs it on a
+  timer. Its parsing of Tailscale status and of the installed `ren`'s
   output, its UI unit rendering, its saved flags, and the upgrade's wait,
   pause, and build-check decisions are unit-tested; the commands it runs
   are exercised only by running it.

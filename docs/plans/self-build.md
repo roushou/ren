@@ -156,17 +156,45 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
    - `main` is protected by its ruleset: every change lands through a pull
      request, squashed, once **CI** and **Compatibility** pass on a branch
      up to date with `main`. No one bypasses it, agents included.
-4. **Canary and promotion.** Not built.
-   - Each merge to `main` is built once. The build is installed as canary
-     on a fresh copy of production's latest backup.
-   - Canary runs its checks: `ren doctor`, every `ReadRequest` against the
-     copied history, one short real run per client (only when the harness
-     or supervisor changed, at most hourly), and `dev shot`'s screenshots.
-   - A passing build is promoted under the operator's policy with
-     `install-vps`'s steps: paused admission, backup, swap, the build check,
-     and rollback on failure.
-   - `ren` and the UI report each instance's build and how far production
-     is behind `main`.
+4. **Canary and promotion.** Built, but for real runs and a promotion
+   into the installed service, which were not run (see below).
+   - `cargo xtask canary run` fetches `main`, checks its tip out in Ren's
+     own worktree (`~/.local/share/ren/factory`), and goes on with that
+     commit's own xtask. It builds the commit once into
+     `~/.local/share/ren/builds/<commit>` and starts that build as the
+     canary (`ren-canary-*`, loopback `17787` and `17000`, `--publish` for
+     the tailnet) on a fresh backup of production's history, with
+     production's configuration but its own listener and data,
+     `environment = "canary"`, no runs, and no operator key.
+   - Its checks: `ren doctor` (with the build check), a sweep of every read
+     of the read API over the copied history (a test matches every
+     `ReadRequest` against it), and every page of the UI in a headless
+     browser. A check that cannot run fails; a check left out is never a
+     pass (`ren_release::Verdict`).
+   - The pure `ren-release` crate decides: the operator's policy
+     (`~/.config/ren/release.toml`: `manual`, `automatic`, or a daily UTC
+     window) promotes a passed build that follows production's commit, and
+     never one that failed, is current, would lose production's commits,
+     or replaces a build not of a clean commit. Promotion is `install-vps
+     --build <commit>`, the install's steps with the kept build; a failed
+     one is rolled back by the install, marked, and not retried on its
+     own. `canary promote` promotes by hand; `canary enable` runs a pass on
+     a user timer.
+   - The release is written to production's data folder; `/api/release`
+     serves it, `ren release` prints it, and the UI's status line shows
+     how far production is behind `main` and the canary's verdict.
+   - Verified with the dev slot as production (`--of dev`): a pass built
+     the commit once, copied the slot's history, started the canary (its
+     wordmark tagged `canary`, read-only), passed doctor, 19 reads, and all
+     9 pages, and wrote the release; its decision was `unconfirmed`, since
+     the slot ran a modified build. `ren release` and the dev UI's status
+     line showed it.
+   - Not built: one short real run per client. Whether two instances can
+     drive one client sign-in, and how such runs are budgeted, are still
+     open questions below.
+   - Not run: a promotion into the installed service and the timer. They
+     install into production, which stays a step the operator asks for;
+     the install's own steps are the ones `install-vps` has always run.
 5. **Work items and Redline.** Not built.
    - A mark becomes a work item carrying what was on screen: the revision,
      route, screenshot, the data shown, the API response behind it, and
@@ -192,8 +220,6 @@ things faster. Each phase is useful on its own.
   sign-in at once is unchecked for each client.
 - Allowance: how canary's real runs are budgeted, and whether a failure in
   them blocks promotion or only warns.
-- Where the build is kept between stages: a content-addressed folder per
-  commit, like the depot's installs, is the likely form.
 - Whether previews need real clients at all, or the fake provider is enough
   for the UI changes they are mostly for.
 
@@ -235,6 +261,15 @@ things faster. Each phase is useful on its own.
   keeps the queue's guarantee (nothing lands untested against the current
   `main`); what is lost is the automatic retest, so a waiting pull request
   is updated by hand (`gh pr update-branch`) after `main` moves.
+- **A timer, not a hook on each merge.** A pass fetches `main` on a user
+  timer and builds a tip it has not built; tips that land between two
+  passes are checked together. Nothing on GitHub needs to reach the host.
+- **The release is a file the factory writes.** The factory (xtask) writes
+  `release.json` to production's data folder and the gateway only reads it,
+  so the daemon runs no builds and holds no factory state.
+- **Build identity moved to `ren-release`.** `Build`, `Revision`, and
+  `Commit` left the gateway for the new crate that owns how builds move,
+  so the gateway, the CLI, and xtask share one commit type for releases.
 - **The gate is its own workflow.** It reads the pull request's title and
   body, so it runs again when they are edited, which would otherwise
   rerun all of CI.
