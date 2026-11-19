@@ -109,14 +109,32 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
    - A breaking difference passes only when the change's message declares
      it: a `!` in its header and a `BREAKING CHANGE:` footer naming what
      breaks and how an existing install moves on.
-2. **Runs outlive the daemon.** Not built. Each agent process runs in its
-   own transient systemd user unit, holding its client's stdio on a socket
-   the daemon reconnects to when it starts. The supervisor's run machine
-   gains a reattaching state; the recorder records the gap as a gap, never
-   as a quiet turn. A restart then pauses admission, waits for running
-   calls, and restarts, with no wait for turns. `install-vps` and `dev up`
-   stop waiting for runs. macOS keeps today's behaviour until launchd has
-   the same.
+2. **Runs outlive the daemon.** Built (`[runs] hold`, `auto` by default).
+   - Each run's client is started by a run host, `ren run-host`, in a
+     transient systemd user unit of its own (`ren-run-<run>`), outside
+     `ren.service`. The host keeps the client's stdin open, appends all it
+     writes to the run folder's spool, writes its exit, and serves one
+     daemon at a time over a framed socket, from any offset.
+   - The daemon journals every input it gives a held process before the
+     process sees it: its start, how far its output was read, the
+     operator's commands, idle stops. The next daemon replays the journal
+     and the spool through the same pure `Process` machine and takes the
+     run up exactly where the last one left it: the codec's requests,
+     approvals, and turn included.
+   - The recorder records the gap: `run_detached` as a daemon stops,
+     `run_rejoined` as the next takes the run up. The store leaves held
+     runs open; a run that cannot be taken up is stopped as `recovered`.
+   - `install-vps` and `dev up` wait only for runs bound to the daemon
+     (`RunSnapshot::tenure`); calls are still waited for, and admission is
+     still paused around the restart.
+   - macOS, and any daemon not under systemd, keeps runs bound, as before.
+   - Verified in the dev slot under systemd: a fake Codex run waiting on an
+     approval kept its process through `systemctl --user restart
+     ren-dev-daemon` and through `cargo xtask dev up`, which did not wait
+     for it; the new daemon took it up within a second, the approval was
+     answered through it, and the turn completed and was recorded, with
+     `run_detached` and `run_rejoined` around the restart. Stopping the run
+     ended its unit and removed its folder.
 3. **Workspaces.** Not built.
    - Every change gets a branch and worktree Ren makes from `main` and
      removes after it merges or is dropped. Redline's `WorkPlace` choice
@@ -181,6 +199,19 @@ things faster. Each phase is useful on its own.
   only its request types, found in its sources by the extractors that read
   them; every type is classed by what reaches it. A type reached from a request
   and from a response is compared both ways.
+- **No reattaching state; a journal and a replay instead.** The plan had
+  the run machine gain a reattaching state and the host relay the client's
+  stdio. Relaying alone is not enough: each codec keeps state only in
+  memory (JSON-RPC requests waiting, approvals asked, the turn), and a
+  daemon rebuilt without it would read answers to requests it never sent.
+  The daemon journals its inputs, and the next one replays them through the
+  same pure machine, so no machine changed. A journal that falls 4096
+  entries behind or fails is broken, and its run is drained like a bound
+  one.
+- **The run host is `ren` itself.** A hidden `ren run-host` command, so it
+  is built, installed, and upgraded with the daemon; a host started by an
+  older build goes on running that build, which is why its frames keep
+  what they do not know.
 - **The gate is its own workflow.** It reads the pull request's title and
   body, so it runs again when they are edited, which would otherwise
   rerun all of CI.

@@ -144,7 +144,9 @@ Modules carry no lint headers of their own. A module with submodules lives in
 - The only exemptions are the capability implementations themselves, marked with
   `#[expect(clippy::disallowed_methods, reason = "…")]`: `HostEnv::capture`, the
   daemon's `SystemClock`, `RandomIds`, `ProcessHost` (`ren_daemon::host`, its process
-  starts and its program lookup on the agents' `PATH`), `ren_git::Git`
+  starts and its program lookup on the agents' `PATH`), `HeldRuns` and
+  `RunHost` (`ren_daemon::host::held`: starting a run host, and the one client
+  it holds), `ren_git::Git`
   (the one place Ren runs git), and `HostTools` (`ren_daemon::tools`, its
   `--version` probes), and the daemon's server
   and supervisor task spawns. Outside the daemon, `ren-git`'s `Git` (the one place
@@ -420,7 +422,19 @@ dependencies under "Crates" below. Read the code for current module ownership.
   through the recorder's `RunTap` (a run without room to be recorded does not
   start), with every event of its conversation as `entries` keeps it (no
   streamed pieces; a reply cut off kept as far as it came), and drains every
-  run when the last handle is dropped. A client's sign-in on the host is
+  run bound to the daemon when the last handle is dropped. A run a run host
+  holds (`AgentHost::start_run` answers a `Tenure`, `Held` with a journal)
+  outlives the daemon (`task::held`): what the daemon gives its process goes
+  into its journal first (`journal`, pure: the start its codec was opened
+  with, how far its output was read, the operator's commands with prompts
+  kept whole, idle stops), each stdin line waiting for the entries queued
+  before it; as the daemon stops it is detached, not ended; as the next
+  starts, `AgentHost::held` lists it, a `Replay` feeds its journal and its
+  host's spool through the same `Process` machine with effects discarded,
+  and `AgentHost::rejoin` takes it up where the last daemon left it, its
+  session served again once adopted. A journal that breaks drains its run
+  like a bound one; one that cannot be replayed is stopped as recovered.
+  Each run's `RunSnapshot::tenure` says which (`RunTenure`). A client's sign-in on the host is
   read and run through the client's own commands: `sign_in` holds the pure
   `SignInState` and the `Login` machine (starting, awaiting its code, its
   approval, its key, or its redirect, finishing, ended), and `task::login` its shell (`StatusCheck`, `LoginTalk`, and
@@ -431,7 +445,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `AgentHost::spawn_in_terminal` when it needs a terminal, and a pasted
   address is opened with `AgentHost::open_local`. What a login prints is
   cleaned of every answer typed into it.
-  `src/purity.rs` keeps `run`, `process`, `workdir`, `project`, `entries`, `files`,
+  `src/purity.rs` keeps `run`, `process`, `journal`, `workdir`, `project`, `entries`, `files`,
   `session`, and `sign_in` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.
@@ -510,7 +524,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   supervisor's `AgentHost` (its logins on a pseudo-terminal through
   `pty-process`, echo off, and a pasted loopback address opened with one
   `GET`), which reads folders' repositories and makes scratch repositories
-  with `ren_git::Git`, the git on a run's search path. `tools` is the tool store on disk
+  with `ren_git::Git`, the git on a run's search path, and, in `host::held`,
+  the run hosts that hold runs through a restart (`[runs] hold`, `RunHold`):
+  `HeldRuns` starts each, `ren run-host <folder>` (`RunHost`, the hidden
+  command), in a systemd user unit of its own (`ren-run-<run>`, outside
+  `ren.service`) and attaches to it without spawning a task; the host keeps
+  the client's stdin open and its output in the run folder's spool, writes
+  its exit, and serves one daemon at a time over a socket whose frames
+  (`frame`, pure, kept when unknown: a host may be an older build) are a
+  cross-version surface. The daemon lists held runs before opening the
+  store (`Store::open_holding`). `tools` is the tool store on disk
   (`ToolStore`, under `<data>/tools`, and `HostTools`, the depot's
   `ToolHost`, in `tools::host`): it carries out the depot's
   `InstallJob`s (downloading through its `Fetch` seam, `ReqwestFetch` in

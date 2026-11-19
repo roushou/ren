@@ -115,12 +115,30 @@ Both definitions restart after failure, run without a shell, use owner-only file
 creation permissions, disable core dumps, and allow 30 seconds for SIGTERM shutdown.
 The daemon lets running calls continue for 10 seconds, cancels what remains,
 then has a separate 10-second budget to drain the recorder.
-The systemd unit uses `KillMode=mixed`: SIGTERM goes to the daemon alone, so it
-ends the [runs](api.md#runs) it drives itself, after its calls, and records each
-as `drained` (a kill Ren sent, so the exit is usually `signal 9`). A run whose
-process exits before the daemon reaches it is recorded as `exited` with the
-exit seen. Whatever is still running when the stop timeout passes is killed
-with the rest of the unit.
+The systemd unit uses `KillMode=mixed`: SIGTERM goes to the daemon alone. Runs
+a run host holds ([below](#runs-through-a-restart)) are not in the unit and go
+on. Any other [run](api.md#runs) the daemon ends itself, after its calls, and
+records as `drained` (a kill Ren sent, so the exit is usually `signal 9`). A
+run whose process exits before the daemon reaches it is recorded as `exited`
+with the exit seen. Whatever is still running when the stop timeout passes is
+killed with the rest of the unit.
+
+#### Runs through a restart
+
+With `[runs] hold = "auto"` (the default) and the daemon running under systemd
+on Linux, each run's client is started by a run host, `ren run-host`, in a
+transient user unit of its own, `ren-run-<run>`. Stopping, restarting, or
+upgrading `ren.service` leaves the client working, mid-turn: the host keeps its
+stdin open and every byte it writes (in `<data>/runs/<run>`). The next daemon
+takes each run up where the last one left it, from what the last one journaled,
+and records a `run_detached` and a `run_rejoined` observation around the time
+no daemon watched it. A run whose host cannot be taken up is stopped and
+recorded as `recovered`. The run's model calls made while no daemon listened
+fail like any call to a stopped gateway, and its client retries them as it
+retries any. `hold = "systemd"` holds runs wherever `systemd-run` works;
+`hold = "off"`, and every host without systemd (macOS), ends runs with the
+daemon as above. `ren runs ls` says which: each run's `tenure` is `held` or
+`bound`.
 Systemd limits repeated startup failures to five in a minute; fix the cause and
 run `systemctl --user reset-failed ren` before restarting if it hits that limit.
 Launchd throttles respawns to at most once every 10 seconds. Neither manager's
@@ -174,15 +192,18 @@ no remote branch. It builds the release binary while the old daemon keeps
 serving, creates `~/.config/ren/ren.toml` only if missing, and checks the
 configuration with Ren's own parser before stopping anything.
 
-It then replaces a running daemon only between calls and between runs' turns. It
-waits until no call is running and no [run](api.md#runs) is starting, working
-(also while it waits for an approval), or stopping, naming each run it waits for
-(up to `--idle-timeout`, 900 seconds by default, then stops without changing
-anything). `--drain-runs` restarts without waiting for runs: their turns are lost
-and their processes end with the daemon; running calls are still waited for. It then pauses
-admission so new calls get `503` with `retry-after: 10` and clients wait (a run
-prompted between the check and the pause is waited for too). Idle runs end with
-the old daemon: before stopping it, it lists each with how to continue it.
+It then replaces a running daemon only between calls and, for runs bound to the
+daemon, between their turns. Runs a run host holds go on through the restart
+([runs through a restart](#runs-through-a-restart)) and are not waited for. It
+waits until no call is running and no bound [run](api.md#runs) is starting,
+working (also while it waits for an approval), or stopping, naming each run it
+waits for (up to `--idle-timeout`, 900 seconds by default, then stops without
+changing anything). `--drain-runs` restarts without waiting for bound runs:
+their turns are lost and their processes end with the daemon; running calls
+are still waited for. It then pauses admission so new calls get `503` with
+`retry-after: 10` and clients wait (a run prompted between the check and the
+pause is waited for too). Idle bound runs end with the old daemon: before
+stopping it, it lists each with how to continue it.
 Writing to its session (from the UI's Sessions page or
 `ren runs say <session> <prompt>`) starts its client again, which resumes the
 conversation where it left off; a run from a daemon without sessions is
@@ -311,11 +332,14 @@ or building and changes files for ones that mention fixing, editing, changing,
 adding, or writing (Codex and Claude Code ask first; Pi asks for no approvals;
 OpenCode asks when the run's approval policy says so), and sends each
 turn's model call through the dev gateway to the fake provider, so a run's
-turns are recorded under its recording. `dev up` restarts the daemon as
-`install-vps` does for runs: it waits for every run starting, working, or stopping
-(up to `--idle-timeout`, 300 seconds by default; `--drain-runs` does not wait), and
-names the idle runs that end with the restart, which can be continued. It does not
-wait for calls, since the fake traffic never stops.
+turns are recorded under its recording. The slot holds its runs as the
+installed service does ([runs through a restart](#runs-through-a-restart)), so
+`dev up` restarts its daemon with their turns going on. For runs bound to the
+daemon, `dev up` does as `install-vps` does: it waits for every one starting,
+working, or stopping (up to `--idle-timeout`, 300 seconds by default;
+`--drain-runs` does not wait), and names the idle ones that end with the
+restart, which can be continued. It does not wait for calls, since the fake
+traffic never stops. `dev down` and `dev reset` also stop the slot's run hosts.
 
 `--ui` publishes the preview with the same Serve step as `install-vps` (with
 `sudo -n` if it last did, or `--sudo-tailscale`); `--local` keeps it on
