@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { goto, preloadCode, refreshAll } from '$app/navigation';
+  import { beforeNavigate, goto, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import { createSettled, createSnapshot } from '#lib/snapshot.svelte.ts';
   import { Workbench, setWorkbench } from '#lib/workbench.svelte.ts';
@@ -16,6 +16,7 @@
   import { GatewayPlace, type Network } from '#lib/place.ts';
   import { RecorderReport } from '#lib/recorder.ts';
   import { ReleaseLine } from '#lib/release.ts';
+  import { PageEvidence } from '#lib/work.ts';
   import CopyButton from '#lib/CopyButton.svelte';
   import DevToolbar from '#lib/DevToolbar.svelte';
   import RedlineLayer from 'redline/RedlineLayer.svelte';
@@ -36,6 +37,38 @@
   // Hydrated: from here on, pages that can take their data pending render
   // at once on a navigation, with their own outline (`Arrival`).
   onMount(() => Arrival.stream());
+  /** What this page logged and read, carried by a work item marked on it. */
+  const evidence = new PageEvidence();
+  beforeNavigate(({ from, to }) => {
+    if (from?.url.pathname !== to?.url.pathname) evidence.reset();
+  });
+  onMount(() => {
+    const origin = window.location.origin;
+    // The page's reads of the daemon's API, as the browser timed them.
+    const reads = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        const read = PageEvidence.readOf(entry.name, origin);
+        if (read) evidence.read(read);
+      }
+    });
+    reads.observe({ type: 'resource', buffered: true });
+    const failed = (event: ErrorEvent) => evidence.error(event.message);
+    const rejected = (event: PromiseRejectionEvent) => evidence.error(String(event.reason));
+    window.addEventListener('error', failed);
+    window.addEventListener('unhandledrejection', rejected);
+    // What the page itself logs as an error (Svelte's included), kept as text.
+    const log = console.error;
+    console.error = (...args: unknown[]) => {
+      evidence.error(args.map((arg) => (arg instanceof Error ? arg.message : String(arg))).join(' '));
+      log(...args);
+    };
+    return () => {
+      reads.disconnect();
+      window.removeEventListener('error', failed);
+      window.removeEventListener('unhandledrejection', rejected);
+      console.error = log;
+    };
+  });
   const gateway = createSnapshot(() => data.gateway);
   const health = $derived(gateway.current.value?.health);
   // The gateway says what kind of instance it is; the UI only shows it.
@@ -253,6 +286,11 @@
         aria-current={tab === 'tools' ? 'page' : undefined}><Icon name="tool" size={14} />Tools</a
       >
       <a
+        href="/work"
+        class:active={tab === 'work'}
+        aria-current={tab === 'work' ? 'page' : undefined}><Icon name="pencil" size={14} />Work</a
+      >
+      <a
         href="/recorder"
         data-sveltekit-preload-data="hover"
         class:active={tab === 'recorder'}
@@ -376,5 +414,6 @@
         {recipients}
         source={page.data.redlineSource}
         revision={health?.build.revision ?? null}
+        {evidence}
       />{/if}{/if}
 </div>

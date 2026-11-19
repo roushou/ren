@@ -65,6 +65,33 @@ fn normalized(mut value: serde_json::Value) -> serde_json::Value {
     value
 }
 
+/// An order marked on the recordings page, with what else was on screen.
+fn work_order() -> serde_json::Value {
+    serde_json::json!({
+        "page": {
+            "path": "/recordings",
+            "route": "/recordings",
+            "title": "Ren - Recordings",
+            "width": 1440,
+            "height": 900,
+            "theme": "light",
+            "revision": "62e9e9e0000000000000000000000000000000ff",
+        },
+        "marks": [{
+            "selector": "[aria-label=\"Recordings\"] table > tbody > tr",
+            "text": "acme-api",
+            "source": null,
+            "width": 640,
+            "height": 28,
+            "note": "Show each recording's turn count",
+        }],
+        "evidence": {
+            "console": ["TypeError: turns is undefined"],
+            "reads": ["/api/recordings?limit=100"],
+        },
+    })
+}
+
 /// A release whose canary build passed, one commit ahead of production,
 /// waiting for the operator.
 fn release() -> ren_release::Release {
@@ -193,6 +220,26 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
         ("usage", read("/api/usage".to_owned()).await),
         ("search", read("/api/search?q=parser".to_owned()).await),
         ("exposures", read("/api/exposures".to_owned()).await),
+        ("work", {
+            let queued = client()
+                .post(format!("{base}/control/v1/work"))
+                .bearer_auth(TestGateway::CONTROL_TOKEN)
+                .header("content-type", "application/json")
+                .body(work_order().to_string())
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(queued.status(), http::StatusCode::CREATED);
+            let mut listed = serde_json::Value::Null;
+            for _ in 0..200 {
+                listed = read("/api/work".to_owned()).await;
+                if listed["work"].as_array().is_some_and(|work| !work.is_empty()) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            listed
+        }),
         ("release", {
             // None until the factory writes one, then as it wrote it.
             assert_eq!(
