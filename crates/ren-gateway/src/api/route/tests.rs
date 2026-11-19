@@ -67,6 +67,11 @@ fn every_read() -> Vec<ReadRequest> {
         },
         ReadRequest::Run(RunId::restore(Uuid::from_u128(4))),
         ReadRequest::Conversation(RunId::restore(Uuid::from_u128(4))),
+        ReadRequest::WorkItems {
+            limit,
+            shelf: Shelf::Current,
+        },
+        ReadRequest::WorkItem(ren_recorder::id::WorkItemId::restore(Uuid::from_u128(5))),
         ReadRequest::Usage(TimeRange::default()),
         ReadRequest::Usage(time),
         ReadRequest::Search(SearchQuery {

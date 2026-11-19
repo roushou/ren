@@ -139,7 +139,12 @@ impl Shown {
                 | ObservationKind::SessionDetached
                 | ObservationKind::SessionAttachmentsSent
                 | ObservationKind::RunDetached
-                | ObservationKind::RunRejoined,
+                | ObservationKind::RunRejoined
+                | ObservationKind::WorkQueued
+                | ObservationKind::WorkSent
+                | ObservationKind::WorkLanded
+                | ObservationKind::WorkShipped
+                | ObservationKind::WorkDismissed,
                 _,
             ) => Self::Hidden,
         })

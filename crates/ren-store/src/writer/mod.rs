@@ -4,6 +4,7 @@
 
 mod calls;
 mod runs;
+mod work;
 
 use super::chunk::{ChunkHash, EncodedChunk};
 use crate::Reader;
@@ -649,6 +650,7 @@ impl MetadataTx<'_> {
             Op::CloseChannel(close) => self.close_channel(close).await.map(Some),
             Op::Operator(action) => self.operator(action).await.map(Some),
             Op::Session(record) => self.session(record).await.map(Some),
+            Op::Work(record) => self.work(record).await.map(Some),
             Op::Run(record) => self.run(record).await.map(Some),
             Op::History(edit) => self.history(edit).await.map(Some),
             Op::RunEntry(entry) => self.run_entry(entry).await.map(|()| None),

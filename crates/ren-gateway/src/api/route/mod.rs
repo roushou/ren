@@ -22,7 +22,7 @@ pub struct ApiRead(pub ReadRequest);
 
 impl ApiRead {
     /// The routes reads are served on, in the router's path syntax.
-    pub(crate) const ROUTES: [&str; 14] = [
+    pub(crate) const ROUTES: [&str; 16] = [
         "/api/calls",
         "/api/calls/{id}",
         "/api/calls/{id}/activity",
@@ -37,6 +37,8 @@ impl ApiRead {
         "/api/runs",
         "/api/runs/{id}",
         "/api/runs/{id}/conversation",
+        "/api/work",
+        "/api/work/{id}",
     ];
 
     /// The path and query string that ask for this read.
@@ -105,6 +107,13 @@ impl ApiRead {
                 format!("/api/runs/{run}/conversation"),
                 QueryParams::default(),
             ),
+            ReadRequest::WorkItems { limit, shelf } => (
+                "/api/work".to_owned(),
+                QueryParams::default()
+                    .with("limit", limit.get())
+                    .shelf(*shelf),
+            ),
+            ReadRequest::WorkItem(item) => (format!("/api/work/{item}"), QueryParams::default()),
         };
         match serde_urlencoded::to_string(&query.0) {
             Ok(query) if !query.is_empty() => format!("{path}?{query}"),
@@ -167,6 +176,11 @@ impl ApiRead {
             }
             ["runs", run] => ReadRequest::Run(Self::id(run)?),
             ["runs", run, "conversation"] => ReadRequest::Conversation(Self::id(run)?),
+            ["work"] => {
+                let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
+                ReadRequest::WorkItems { limit, shelf }
+            }
+            ["work", item] => ReadRequest::WorkItem(Self::id(item)?),
             _ => return Err(ApiError::NotFound),
         };
         Ok(Self(request))

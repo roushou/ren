@@ -1412,7 +1412,8 @@ async fn every_control_request_reaches_its_route() {
     use ren_gateway::ControlRefusal;
     use ren_gateway::api::control::request::{
         AnswerRequest, BlockRequest, CancelRequest, ControlFeed, ControlMethod, ControlRequest,
-        CreateRequest, PauseRequest, PromptRequest,
+        CreateRequest, LandWorkRequest, PauseRequest, PromptRequest, SendWorkRequest,
+        ShipWorkRequest, WorkChange,
     };
     use ren_harness::{Harness, drive::Decision};
     use ren_protocol::native::NativeSessionId;
@@ -1487,6 +1488,35 @@ async fn every_control_request_reaches_its_route() {
         },
         ControlRequest::Interrupt(session),
         ControlRequest::Stop(session),
+        ControlRequest::QueueWork(Box::new(
+            serde_json::from_value(json!({
+                "page": { "path": "/", "route": "/", "title": "Overview", "width": 1440,
+                          "height": 900, "theme": "light", "revision": null },
+                "marks": [{ "selector": "main", "text": "", "source": null, "width": 10,
+                            "height": 10, "note": "Make it clearer" }],
+            }))
+            .unwrap(),
+        )),
+        ControlRequest::Work {
+            item: ren_recorder::id::WorkItemId::restore(id(6)),
+            change: WorkChange::Send(SendWorkRequest { session }),
+        },
+        ControlRequest::Work {
+            item: ren_recorder::id::WorkItemId::restore(id(6)),
+            change: WorkChange::Land(LandWorkRequest {
+                commit: "62e9e9e0000000000000000000000000000000ff".parse().unwrap(),
+            }),
+        },
+        ControlRequest::Work {
+            item: ren_recorder::id::WorkItemId::restore(id(6)),
+            change: WorkChange::Ship(ShipWorkRequest {
+                revision: "62e9e9e0000000000000000000000000000000ff".parse().unwrap(),
+            }),
+        },
+        ControlRequest::Work {
+            item: ren_recorder::id::WorkItemId::restore(id(6)),
+            change: WorkChange::Dismiss,
+        },
     ];
     let http = client();
     for request in &requests {

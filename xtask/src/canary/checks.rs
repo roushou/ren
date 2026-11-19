@@ -131,7 +131,7 @@ impl Checks<'_> {
 
 impl ReadSweep {
     /// The listings, each read as it is.
-    const LISTINGS: [&str; 11] = [
+    const LISTINGS: [&str; 13] = [
         "/api/calls?limit=5",
         "/api/recordings?limit=5",
         "/api/recordings?limit=5&shelf=archived",
@@ -143,6 +143,8 @@ impl ReadSweep {
         "/api/storage",
         "/api/metrics",
         "/api/release",
+        "/api/work?limit=5",
+        "/api/work?limit=5&shelf=archived",
     ];
 
     fn run(&self) -> Outcome {
@@ -193,6 +195,9 @@ impl ReadSweep {
             if let Some(turn) = first(&turns, "turns", "turn") {
                 read(format!("/api/turns/{turn}"));
             }
+        }
+        if let Some(item) = first(&listings[11], "work", "id") {
+            read(format!("/api/work/{item}"));
         }
         if let Some(run) = first(runs, "runs", "id") {
             read(format!("/api/runs/{run}"));
@@ -245,6 +250,8 @@ mod tests {
             ReadRequest::Runs { .. } => "/api/runs?",
             ReadRequest::Run(_) => "/api/runs/{run}",
             ReadRequest::Conversation(_) => "/api/runs/{run}/conversation",
+            ReadRequest::WorkItems { .. } => "/api/work?",
+            ReadRequest::WorkItem(_) => "/api/work/{item}",
         }
     }
 
@@ -259,7 +266,7 @@ mod tests {
             .skip(1)
             .filter_map(|arm| arm.split('"').next())
             .collect();
-        assert_eq!(paths.len(), 14, "one path per read");
+        assert_eq!(paths.len(), 16, "one path per read");
         for path in paths {
             let listed = ReadSweep::LISTINGS
                 .iter()

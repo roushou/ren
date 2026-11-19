@@ -311,6 +311,11 @@ export const observationKinds = [
   'session_attachments_sent',
   'run_detached',
   'run_rejoined',
+  'work_queued',
+  'work_sent',
+  'work_landed',
+  'work_shipped',
+  'work_dismissed',
 ] as const;
 export const channelEnds = [
   'client_closed',
@@ -428,6 +433,8 @@ export const controlRefusals = [
   'tools_unsupported',
   'tools_refused',
   'tools_failed',
+  'invalid_order',
+  'work_state',
 ] as const;
 export type ControlRefusal = (typeof controlRefusals)[number];
 export const previewExtents = ['complete', 'partial', 'truncated', 'gap'] as const;

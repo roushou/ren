@@ -404,6 +404,21 @@ impl Reads {
             attachments += reader.attachments(session.id).await.unwrap().len();
         }
         assert!(attachments > 0, "attachments");
+        // Stores before work items hold none.
+        for shelf in [Shelf::Current, Shelf::Archived] {
+            let ReadResponse::WorkItems { work } = serve(ReadRequest::WorkItems {
+                limit: PageLimit::DEFAULT,
+                shelf,
+            })
+            .await
+            else {
+                panic!("work items");
+            };
+            for item in &work {
+                serve(ReadRequest::WorkItem(item.id)).await;
+                assert!(item.state().is_some(), "work item state");
+            }
+        }
         reader
             .observations_after(0, PageLimit::DEFAULT)
             .await
@@ -548,6 +563,75 @@ impl Scenario {
         self.later(60_000);
         tap.end(RunEnd::Stopped, Some(ProcessExit::Code(0)));
         self.archived_run(session);
+        self.later(1_000);
+        self.work(session);
+    }
+
+    /// Two work items: one carried from queued to shipped by the session,
+    /// one dismissed.
+    fn work(&self, session: SessionId) {
+        use ren_recorder::batch::WorkFact;
+        use ren_recorder::id::WorkItemId;
+        use ren_recorder::work::{Evidence, MarkedPage, PageTheme, WorkMark, WorkOrder};
+        let order = |note: &str| WorkOrder {
+            page: MarkedPage {
+                path: "/recordings".into(),
+                route: Some("/recordings".into()),
+                title: "Recordings".into(),
+                width: 1440,
+                height: 900,
+                theme: PageTheme::Light,
+                revision: Some("62e9e9e0000000000000000000000000000000ff".parse().unwrap()),
+            },
+            marks: vec![WorkMark {
+                selector: "[aria-label=\"Recordings\"] table > tr".into(),
+                text: "acme-api".into(),
+                source: Some("src/routes/recordings/+page.svelte:42".into()),
+                width: 600,
+                height: 24,
+                note: note.into(),
+            }],
+            evidence: Evidence {
+                console: vec!["TypeError: turns is undefined".into()],
+                reads: vec!["/api/recordings?limit=100".into()],
+            },
+        };
+        let record = |item: WorkItemId, fact: WorkFact| {
+            self.recorder.work_slot().unwrap().record(item, fact);
+        };
+        let shipped = WorkItemId::generate(self.ids.as_ref());
+        record(
+            shipped,
+            WorkFact::Queued {
+                order: Box::new(order("Show each recording's turn count")),
+            },
+        );
+        self.later(1_000);
+        record(shipped, WorkFact::Sent { session });
+        self.later(1_000);
+        let commit = "07f4bb7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708";
+        record(
+            shipped,
+            WorkFact::Landed {
+                commit: commit.parse().unwrap(),
+            },
+        );
+        self.later(1_000);
+        record(
+            shipped,
+            WorkFact::Shipped {
+                revision: commit.parse().unwrap(),
+            },
+        );
+        let dismissed = WorkItemId::generate(self.ids.as_ref());
+        record(
+            dismissed,
+            WorkFact::Queued {
+                order: Box::new(order("Move the archive button")),
+            },
+        );
+        self.later(1_000);
+        record(dismissed, WorkFact::Dismissed);
     }
 
     fn item(id: &str, kind: ItemKind, read: ItemRead) -> DriveEvent {

@@ -31,9 +31,14 @@ use ren_recorder::{
         AttemptPhase, AttemptTerminal, BodyEnding, CallRejection, CallState, ChannelEnd, ExitKind,
         ExitParts, ProcessExit, RunEnd, TerminalCause,
     },
-    id::{AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, TurnId},
+    id::{
+        AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, TurnId,
+        WorkItemId,
+    },
     time::UnixMillis,
+    work::{WorkOrder, WorkState, WorkStateKind},
 };
+use ren_release::{Commit, Revision};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, sqlite::SqliteRow};
 use std::str::FromStr;
@@ -1044,5 +1049,74 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(Some("alice"), 4), (None, 11)]
         );
+    }
+}
+
+/// One work item, as recorded: what was marked, and where it stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkItemView {
+    pub id: WorkItemId,
+    pub created_at: UnixMillis,
+    pub updated_at: UnixMillis,
+    pub title: String,
+    pub order: WorkOrder,
+    pub state: Stored<WorkStateKind>,
+    /// The session that took it up, once sent.
+    pub session: Option<SessionId>,
+    /// The commit its change landed on `main` as.
+    pub landed: Option<Commit>,
+    /// The build production ran with its change.
+    pub shipped: Option<Revision>,
+}
+
+impl WorkItemView {
+    pub(super) const SELECT: &'static str = "SELECT id, created_at, updated_at, title, work_order, state, operator_session, landed_commit, shipped_revision FROM work_items";
+
+    pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
+        let row = Columns(row);
+        let corrupt = || StoreError::Corrupt("work item");
+        let order = row.text("work_order")?.ok_or_else(corrupt)?;
+        Ok(Self {
+            id: row.id("id")?,
+            created_at: row.time("created_at")?,
+            updated_at: row.time("updated_at")?,
+            title: row.text("title")?.ok_or_else(corrupt)?,
+            order: serde_json::from_str(&order)?,
+            state: row.label("state")?,
+            session: row.optional_id("operator_session")?,
+            landed: row
+                .text("landed_commit")?
+                .map(|text| text.parse().map_err(|_| corrupt()))
+                .transpose()?,
+            shipped: row
+                .text("shipped_revision")?
+                .map(|text| text.parse().map_err(|_| corrupt()))
+                .transpose()?,
+        })
+    }
+
+    /// Its state, rebuilt for a transition; `None` when its label is one
+    /// this build does not know, or its columns do not make a state.
+    pub fn state(&self) -> Option<WorkState> {
+        let Stored::Known(kind) = self.state else {
+            return None;
+        };
+        let session = || self.session;
+        Some(match kind {
+            WorkStateKind::Queued => WorkState::Queued,
+            WorkStateKind::Sent => WorkState::Sent {
+                session: session()?,
+            },
+            WorkStateKind::Landed => WorkState::Landed {
+                session: session()?,
+                commit: self.landed.clone()?,
+            },
+            WorkStateKind::Shipped => WorkState::Shipped {
+                session: session()?,
+                commit: self.landed.clone()?,
+                revision: self.shipped.clone()?,
+            },
+            WorkStateKind::Dismissed => WorkState::Dismissed,
+        })
     }
 }

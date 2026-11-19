@@ -189,6 +189,10 @@ export class Refusals {
         return 'The daemon refused the change.';
       case 'tools_failed':
         return 'The daemon could not read or write its tool store. Its log says why.';
+      case 'invalid_order':
+        return 'A work item needs at least one mark with a note, within its limits.';
+      case 'work_state':
+        return 'That work item is past this step already.';
       default:
         return `Refused: ${unrecognised(code)}.`;
     }

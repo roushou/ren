@@ -12,9 +12,10 @@ use crate::caller::{Caller, TailscaleLogin};
 use crate::digest::CallDigest;
 use crate::{
     capture::{BodyEnding, CallRejection, ChannelEnd, ProcessExit, RunEnd, TerminalRecord},
-    id::{AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId},
+    id::{AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, WorkItemId},
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     time::{Moment, UnixMillis},
+    work::WorkOrder,
 };
 use bytes::Bytes;
 use ren_depot::toolset::Generation;
@@ -29,6 +30,7 @@ use ren_protocol::{
     route::{Endpoint, Method, Provider, Transport, Wire},
     websocket::Payload,
 };
+use ren_release::{Commit, Revision};
 use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -100,6 +102,7 @@ impl Batch {
                     | Op::CloseChannel(_)
                     | Op::Operator(_)
                     | Op::Session(_)
+                    | Op::Work(_)
                     | Op::Run(_)
                     | Op::RunEntry(_)
                     | Op::History(_) => true,
@@ -194,6 +197,7 @@ pub enum Op {
     CloseChannel(CloseChannel),
     Operator(OperatorAction),
     Session(SessionRecord),
+    Work(WorkRecord),
     Run(RunRecord),
     /// One entry of a run's conversation. It is stored, not logged: the
     /// run feed carries it live.
@@ -352,6 +356,52 @@ impl SessionFact {
     }
 }
 
+/// A fact about a work item, when it happened. Not tied to a channel or
+/// call.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkRecord {
+    #[serde(skip)]
+    pub at: Moment,
+    pub item: WorkItemId,
+    #[serde(flatten)]
+    pub fact: WorkFact,
+}
+
+/// What happened to a work item: each a transition of its `WorkState`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case", tag = "fact")]
+pub enum WorkFact {
+    /// It was marked: what it asks, waiting to be sent.
+    Queued {
+        order: Box<WorkOrder>,
+    },
+    /// `session` took it up.
+    Sent {
+        session: SessionId,
+    },
+    /// Its change is on `main` as `commit`.
+    Landed {
+        commit: Commit,
+    },
+    /// Production runs `revision`, which holds its change.
+    Shipped {
+        revision: Revision,
+    },
+    Dismissed,
+}
+
+impl WorkFact {
+    pub fn kind(&self) -> ObservationKind {
+        match self {
+            Self::Queued { .. } => ObservationKind::WorkQueued,
+            Self::Sent { .. } => ObservationKind::WorkSent,
+            Self::Landed { .. } => ObservationKind::WorkLanded,
+            Self::Shipped { .. } => ObservationKind::WorkShipped,
+            Self::Dismissed => ObservationKind::WorkDismissed,
+        }
+    }
+}
+
 /// A fact about a run, when it happened. Not tied to a channel or call.
 #[derive(Debug, Clone, Serialize)]
 pub struct RunRecord {
@@ -484,6 +534,15 @@ pub enum ObservationKind {
     RunDetached,
     /// A daemon took up a run it had detached from.
     RunRejoined,
+    /// An operator marked something to be done. Not tied to a call.
+    WorkQueued,
+    /// A session took up a work item.
+    WorkSent,
+    /// A work item's change landed on main.
+    WorkLanded,
+    /// Production took a build with a work item's change.
+    WorkShipped,
+    WorkDismissed,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

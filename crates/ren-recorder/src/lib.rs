@@ -37,13 +37,14 @@ mod sink;
 mod tap;
 mod task;
 pub mod time;
+pub mod work;
 
 pub use metrics::{DedupMetrics, OmissionMetrics, QueueMetrics, RecorderMetrics};
 pub use options::{CaptureOptions, CaptureOptionsError, CaptureSplit};
 pub use sink::{Committed, Observation, Pruned, RecordSink};
 pub use tap::{
     AttemptRequest, AttemptStart, AttemptTap, CallStart, CallTap, ChannelTap, Head, HistorySlot,
-    OperatorSlot, ResponseTap, RunSession, RunTap, RunUnrecorded, SessionSlot,
+    OperatorSlot, ResponseTap, RunSession, RunTap, RunUnrecorded, SessionSlot, WorkSlot,
 };
 pub use task::RecorderTask;
 
@@ -198,6 +199,12 @@ impl Recorder {
     /// recorder has no room.
     pub fn session_slot(&self) -> Option<SessionSlot> {
         SessionSlot::reserve(self.shared.clone())
+    }
+
+    /// A slot to record one fact about a work item, or `None` when the
+    /// recorder has no room.
+    pub fn work_slot(&self) -> Option<WorkSlot> {
+        WorkSlot::reserve(self.shared.clone())
     }
 
     /// Record the start of `run`, serving `session` (recorded first when it

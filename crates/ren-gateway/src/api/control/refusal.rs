@@ -119,6 +119,13 @@ pub enum ControlRefusal {
     ToolsUnsupported,
     ToolsRefused,
     ToolsFailed,
+
+    // Work items.
+    /// An order with no noted mark, too many marks, or text past its limit.
+    InvalidOrder,
+    /// The item's state does not take the change (a shipped item cannot be
+    /// dismissed, a queued one cannot land).
+    WorkState,
 }
 
 impl ControlRefusal {
@@ -163,7 +170,8 @@ impl ControlRefusal {
             | Self::RedirectElsewhere
             | Self::RedirectIncomplete
             | Self::ToolsBusy
-            | Self::ToolsCollected => StatusCode::CONFLICT,
+            | Self::ToolsCollected
+            | Self::WorkState => StatusCode::CONFLICT,
             Self::AttachmentTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::BlankPrompt
             | Self::TooManyAttachments
@@ -172,7 +180,8 @@ impl ControlRefusal {
             | Self::AttachmentUnrecognized
             | Self::AttachmentUnreadable
             | Self::AttachmentTooWide
-            | Self::ToolsRefused => StatusCode::UNPROCESSABLE_ENTITY,
+            | Self::ToolsRefused
+            | Self::InvalidOrder => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Unrecordable
             | Self::BackupFailed
             | Self::Unreadable

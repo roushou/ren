@@ -4,6 +4,7 @@
 //! clients cannot drift apart; `crates/ren-daemon/tests/contract.rs` sends
 //! each one to the router.
 
+use crate::api::read::work::WorkOrderBody;
 use ren_harness::{
     Harness,
     drive::Decision,
@@ -13,11 +14,61 @@ use ren_protocol::native::NativeSessionId;
 use ren_recorder::{
     batch::{HistoryChange, HistorySubject},
     caller::UserId,
-    id::{AttachmentId, CallId, SessionId},
+    id::{AttachmentId, CallId, SessionId, WorkItemId},
 };
+use ren_release::{Commit, Revision};
 use ren_supervisor::Delivery;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+/// `POST work/{item}/send`: `session` takes the item up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct SendWorkRequest {
+    #[ts(as = "String")]
+    pub session: SessionId,
+}
+
+/// `POST work/{item}/land`: the item's change is on `main` as `commit`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct LandWorkRequest {
+    #[ts(as = "String")]
+    pub commit: Commit,
+}
+
+/// `POST work/{item}/ship`: production runs `revision`, which holds the
+/// item's change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct ShipWorkRequest {
+    #[ts(as = "String")]
+    pub revision: Revision,
+}
+
+/// What happens to a work item, as a request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkChange {
+    Send(SendWorkRequest),
+    Land(LandWorkRequest),
+    Ship(ShipWorkRequest),
+    Dismiss,
+}
+
+impl WorkChange {
+    /// Its path segment under `work/{item}/`.
+    pub fn path(&self) -> &'static str {
+        match self {
+            Self::Send(_) => "send",
+            Self::Land(_) => "land",
+            Self::Ship(_) => "ship",
+            Self::Dismiss => "dismiss",
+        }
+    }
+}
 
 /// `POST pause`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -224,6 +275,13 @@ pub enum ControlRequest {
     },
     Interrupt(SessionId),
     Stop(SessionId),
+    /// Queue a work item.
+    QueueWork(Box<WorkOrderBody>),
+    /// Move a work item on.
+    Work {
+        item: WorkItemId,
+        change: WorkChange,
+    },
 }
 
 /// Whether a request reads or changes.
@@ -269,7 +327,9 @@ impl ControlRequest {
             | Self::Prompt { .. }
             | Self::Answer { .. }
             | Self::Interrupt(_)
-            | Self::Stop(_) => ControlMethod::Post,
+            | Self::Stop(_)
+            | Self::QueueWork(_)
+            | Self::Work { .. } => ControlMethod::Post,
         }
     }
 
@@ -306,6 +366,8 @@ impl ControlRequest {
             } => format!("sessions/{session}/approvals/{approval}"),
             Self::Interrupt(session) => format!("sessions/{session}/interrupt"),
             Self::Stop(session) => format!("sessions/{session}/stop"),
+            Self::QueueWork(_) => "work".to_owned(),
+            Self::Work { item, change } => format!("work/{item}/{}", change.path()),
         }
     }
 
@@ -320,6 +382,13 @@ impl ControlRequest {
             Self::Create(create) => serde_json::to_vec(create).map(Some),
             Self::Prompt { prompt, .. } => serde_json::to_vec(prompt).map(Some),
             Self::Answer { answer, .. } => serde_json::to_vec(answer).map(Some),
+            Self::QueueWork(order) => serde_json::to_vec(order).map(Some),
+            Self::Work { change, .. } => match change {
+                WorkChange::Send(send) => serde_json::to_vec(send).map(Some),
+                WorkChange::Land(land) => serde_json::to_vec(land).map(Some),
+                WorkChange::Ship(ship) => serde_json::to_vec(ship).map(Some),
+                WorkChange::Dismiss => Ok(None),
+            },
             Self::State
             | Self::Resume
             | Self::UnblockSession(_)

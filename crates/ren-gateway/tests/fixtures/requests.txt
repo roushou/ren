@@ -8,6 +8,7 @@ CommandsRequest
 CreateRequest
 FilesRequest
 FolderRequest
+LandWorkRequest
 ListRequest
 LoginAnswer
 PauseRequest
@@ -20,5 +21,8 @@ RawSearchQuery
 RawShelfQuery
 RawUsageQuery
 RollbackRequest
+SendWorkRequest
 SettingsRequest
+ShipWorkRequest
 SignInStart
+WorkOrderBody

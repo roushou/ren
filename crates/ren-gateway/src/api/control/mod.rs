@@ -19,6 +19,7 @@ mod runs;
 mod sessions;
 mod sign_in;
 mod tools;
+pub mod work;
 
 use crate::api::Versioned;
 use crate::control::Controls;
@@ -163,6 +164,11 @@ impl ControlApi {
         let run_routes = runs.router();
         let history_routes = HistoryApi {
             control: control.clone(),
+            reader: reader.clone(),
+        }
+        .router();
+        let work_routes = work::WorkApi {
+            control: control.clone(),
             reader,
         }
         .router();
@@ -192,6 +198,7 @@ impl ControlApi {
             .merge(tools_routes)
             .merge(session_routes)
             .merge(history_routes)
+            .merge(work_routes)
             .layer(axum::middleware::map_response(Self::private))
     }
 
