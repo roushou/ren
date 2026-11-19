@@ -91,6 +91,8 @@ pub enum ReplicaError {
     NotReady { name: String, address: SocketAddr },
     #[error("Tailscale reports no MagicDNS name for this node")]
     NoDnsName,
+    #[error("{} is not a replica's data folder; it is not removed", .0.display())]
+    NotOurs(PathBuf),
     #[error("cannot write the release: {0}")]
     Json(serde_json::Error),
     #[error("production's work items: {0}")]
@@ -389,7 +391,14 @@ impl Replica {
     }
 
     /// Stops the replica and replaces its data with `backup`'s history.
+    /// Only a data folder a replica names (the canary's, or a preview's
+    /// `preview/data`) is ever removed.
     pub fn replace_data(&self, backup: &Path) -> Result<(), ReplicaError> {
+        let ours = self.data_dir.ends_with(".local/state/ren-canary")
+            || self.data_dir.ends_with("preview/data");
+        if !ours {
+            return Err(ReplicaError::NotOurs(self.data_dir.clone()));
+        }
         self.stop()?;
         if self.data_dir.exists() {
             fs::remove_dir_all(&self.data_dir).map_err(FileError::at(&self.data_dir))?;
@@ -596,6 +605,15 @@ operator_key_env = "ACME_ANTHROPIC_KEY"
             preview.data_dir,
             Path::new("/data/worktrees/.data/ren-3/preview/data")
         );
+        // A data folder no replica names is never removed.
+        let stray = Replica {
+            data_dir: Path::new("/home/op").to_path_buf(),
+            ..Replica::preview("ren-3", 20_200, Path::new("/data/worktrees/.data/ren-3"))
+        };
+        assert!(matches!(
+            stray.replace_data(Path::new("/tmp/backup")),
+            Err(super::ReplicaError::NotOurs(_))
+        ));
     }
 
     #[test]

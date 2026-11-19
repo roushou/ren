@@ -385,31 +385,26 @@ impl ProjectCmd {
 }
 
 impl ProjectPlace {
-    /// The workspace this runs in, from what Ren tells its runs
-    /// (`REN_WORKSPACE`, `REN_WORKSPACE_PORTS`, `REN_WORKSPACE_DATA`); else
-    /// `dir` (or the current folder), with no ports.
+    /// The workspace this runs in, read from `REN_WORKSPACE` alone and
+    /// checked to be one Ren made: its data folder and ports are the ones
+    /// Ren gives its slot. Without one, `dir` (or the current folder), with
+    /// no ports.
     fn read(env: &HostEnv, dir: Option<PathBuf>) -> Result<Self> {
-        let folder = env.absolute_path("REN_WORKSPACE");
-        let data = env.absolute_path("REN_WORKSPACE_DATA");
-        let ports = env
-            .get("REN_WORKSPACE_PORTS")
-            .map(Self::ports)
-            .transpose()?;
-        match (dir, folder, data, ports) {
-            (None, Some(folder), Some(data), Some(ports)) => {
-                let workspace = folder
-                    .parent()
-                    .and_then(|root| Workspace::of(root, &folder));
-                Ok(Self {
-                    place: Place {
-                        workspace: folder,
-                        data,
-                        ports: Some(ports),
-                    },
-                    workspace,
-                })
-            }
-            (dir, _, _, _) => {
+        let workspace = env.absolute_path("REN_WORKSPACE").and_then(|folder| {
+            folder
+                .parent()
+                .and_then(|root| Workspace::of(root, &folder))
+        });
+        match (dir, workspace) {
+            (None, Some(workspace)) => Ok(Self {
+                place: Place {
+                    workspace: workspace.folder(),
+                    data: workspace.data(),
+                    ports: Some(workspace.ports()),
+                },
+                workspace: Some(workspace),
+            }),
+            (dir, _) => {
                 let dir = match dir {
                     Some(dir) => dir,
                     None => std::env::current_dir()?,
@@ -426,16 +421,9 @@ impl ProjectPlace {
         }
     }
 
-    fn ports(text: &str) -> Result<(u16, u16)> {
-        let (first, last) = text
-            .split_once('-')
-            .with_context(|| format!("REN_WORKSPACE_PORTS {text:?} is not `first-last`"))?;
-        Ok((first.trim().parse()?, last.trim().parse()?))
-    }
-
     fn workspace(&self) -> Result<&Workspace> {
         self.workspace.as_ref().context(
-            "a preview runs in a workspace Ren made, whose runs are told REN_WORKSPACE, REN_WORKSPACE_PORTS, and REN_WORKSPACE_DATA",
+            "a preview runs in a workspace Ren made: REN_WORKSPACE names a folder of Ren's worktrees, `<repo>-<slot>`",
         )
     }
 }
@@ -591,11 +579,16 @@ mod tests {
     fn a_workspace_is_the_place_its_runs_are_told() {
         let env = HostEnv::from_pairs([
             ("REN_WORKSPACE", "/data/worktrees/acme-web-2"),
-            ("REN_WORKSPACE_PORTS", "20100-20199"),
-            ("REN_WORKSPACE_DATA", "/data/worktrees/.data/acme-web-2"),
+            ("REN_WORKSPACE_PORTS", "1-2"),
+            ("REN_WORKSPACE_DATA", "/home/op"),
         ]);
         let place = ProjectPlace::read(&env, None).unwrap();
+        // The slot's own ports and data, whatever else the variables say.
         assert_eq!(place.place.ports, Some((20_100, 20_199)));
+        assert_eq!(
+            place.place.data,
+            Path::new("/data/worktrees/.data/acme-web-2")
+        );
         assert_eq!(
             place.workspace().unwrap().preview_units()[2],
             "ren-preview-acme-web-2-serve"

@@ -33,6 +33,7 @@ use ren_recorder::{
     work::{Landing, PreviewUrl, WorkStateKind},
 };
 use ren_release::Revision;
+use ren_supervisor::Workspace;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -92,8 +93,8 @@ pub enum PreviewError {
         "{0} is not set: run `cargo xtask preview` in a workspace Ren made, whose runs are told it"
     )]
     NotAWorkspace(&'static str),
-    #[error("{0:?} is not a range of ports (`20200-20299`)")]
-    Ports(String),
+    #[error("{0} is not a workspace Ren made (`<worktrees>/<repo>-<slot>`)")]
+    NotRens(String),
     #[error("the built ren reports no revision: {0:?}")]
     Revision(String),
     #[error("the preview's address is not one a work item keeps: {0}")]
@@ -112,64 +113,48 @@ pub enum PreviewError {
     Publish(#[from] PublishError),
 }
 
-/// The workspace, as Ren told its runs.
-struct Workspace {
-    /// Its folder's name, `<repo>-<slot>`.
-    name: String,
-    first_port: u16,
-    data: PathBuf,
+/// The workspace, as Ren made it: read from `REN_WORKSPACE` alone, and
+/// checked to be a folder of Ren's worktrees named as a workspace. Its data
+/// folder and ports are the ones Ren gives that slot, never taken from
+/// other variables, so a preview only ever replaces its own data.
+struct PreviewPlace {
+    workspace: Workspace,
 }
 
-impl Workspace {
-    /// The workspace from the variables Ren gives a workspace's runs.
+impl PreviewPlace {
+    /// The workspace Ren told this run it works in.
     fn read(env: &HostEnv) -> Result<Self, PreviewError> {
         let folder = env
             .absolute_path("REN_WORKSPACE")
             .ok_or(PreviewError::NotAWorkspace("REN_WORKSPACE"))?;
-        let ports = env
-            .get("REN_WORKSPACE_PORTS")
-            .ok_or(PreviewError::NotAWorkspace("REN_WORKSPACE_PORTS"))?;
-        let data = env
-            .absolute_path("REN_WORKSPACE_DATA")
-            .ok_or(PreviewError::NotAWorkspace("REN_WORKSPACE_DATA"))?;
-        let name = folder
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or(PreviewError::NotAWorkspace("REN_WORKSPACE"))?
-            .to_owned();
-        Ok(Self {
-            name,
-            first_port: Self::first_port(ports)?,
-            data,
-        })
+        let workspace = folder
+            .parent()
+            .and_then(|root| Workspace::of(root, &folder))
+            .ok_or_else(|| PreviewError::NotRens(folder.display().to_string()))?;
+        Ok(Self { workspace })
     }
 
-    /// The first of `first-last`, which leaves room for the UI's port.
-    fn first_port(ports: &str) -> Result<u16, PreviewError> {
-        let refused = || PreviewError::Ports(ports.to_owned());
-        let (first, last) = ports.split_once('-').ok_or_else(refused)?;
-        let (first, last): (u16, u16) = (
-            first.trim().parse().map_err(|_| refused())?,
-            last.trim().parse().map_err(|_| refused())?,
-        );
-        if first < last {
-            Ok(first)
-        } else {
-            Err(refused())
-        }
+    fn name(&self) -> String {
+        self.workspace
+            .folder()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+            .unwrap_or_default()
     }
 
     fn replica(&self) -> Replica {
-        Replica::preview(&self.name, self.first_port, &self.data)
+        Replica::preview(&self.name(), self.ports().0, &self.workspace.data())
     }
 
     fn root(&self) -> PathBuf {
-        self.data.join("preview")
+        self.workspace.data().join("preview")
     }
 
-    /// The tailnet ports it is published on: the same as on loopback.
+    /// The slot's first two ports: its daemon's, then its UI's.
     fn ports(&self) -> (u16, u16) {
-        (self.first_port, self.first_port.saturating_add(1))
+        let (first, _) = self.workspace.ports();
+        (first, first.saturating_add(1))
     }
 }
 
@@ -178,7 +163,7 @@ impl Preview {
     const HISTORY: u32 = 200;
 
     pub fn run(self, env: &HostEnv) -> Result<(), PreviewError> {
-        let workspace = Workspace::read(env)?;
+        let workspace = PreviewPlace::read(env)?;
         let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
@@ -190,7 +175,7 @@ impl Preview {
 
     fn up(
         env: &HostEnv,
-        workspace: &Workspace,
+        workspace: &PreviewPlace,
         repo: &Path,
         args: &UpArgs,
     ) -> Result<(), PreviewError> {
@@ -235,7 +220,7 @@ impl Preview {
 
     fn down(
         env: &HostEnv,
-        workspace: &Workspace,
+        workspace: &PreviewPlace,
         repo: &Path,
         args: &DownArgs,
     ) -> Result<(), PreviewError> {
@@ -270,7 +255,7 @@ impl Preview {
     /// and the revision the binary reports.
     fn build(
         env: &HostEnv,
-        workspace: &Workspace,
+        workspace: &PreviewPlace,
         repo: &Path,
     ) -> Result<(PathBuf, Revision), PreviewError> {
         let cargo = env
@@ -357,33 +342,34 @@ impl Preview {
 
 #[cfg(test)]
 mod tests {
-    use super::{PreviewError, Workspace};
+    use super::{PreviewError, PreviewPlace};
     use ren_harness::host::HostEnv;
     use std::path::Path;
 
     #[test]
-    fn a_workspace_is_read_from_what_its_runs_are_told() {
+    fn a_preview_takes_its_workspace_from_where_ren_made_it() {
+        // The data and ports variables are not read: the slot gives them.
         let env = HostEnv::from_pairs([
             ("REN_WORKSPACE", "/data/worktrees/ren-3"),
-            ("REN_WORKSPACE_PORTS", "20200-20299"),
-            ("REN_WORKSPACE_DATA", "/data/worktrees/.data/ren-3"),
+            ("REN_WORKSPACE_PORTS", "1-2"),
+            ("REN_WORKSPACE_DATA", "/home/op"),
         ]);
-        let workspace = Workspace::read(&env).unwrap();
-        assert_eq!(workspace.name, "ren-3");
-        assert_eq!(workspace.ports(), (20_200, 20_201));
+        let place = PreviewPlace::read(&env).unwrap();
+        assert_eq!(place.name(), "ren-3");
+        assert_eq!(place.ports(), (20_200, 20_201));
         assert_eq!(
-            workspace.root(),
+            place.root(),
             Path::new("/data/worktrees/.data/ren-3/preview")
         );
-        assert!(matches!(
-            Workspace::read(&HostEnv::from_pairs([(
-                "REN_WORKSPACE",
-                "/data/worktrees/ren-3"
-            )])),
-            Err(PreviewError::NotAWorkspace("REN_WORKSPACE_PORTS"))
-        ));
-        for ports in ["20200", "a-b", "20299-20200", "20200-20200"] {
-            assert!(Workspace::first_port(ports).is_err(), "{ports}");
+        for folder in ["/data/worktrees/notes", "/home/op"] {
+            assert!(matches!(
+                PreviewPlace::read(&HostEnv::from_pairs([("REN_WORKSPACE", folder)])),
+                Err(PreviewError::NotRens(_))
+            ));
         }
+        assert!(matches!(
+            PreviewPlace::read(&HostEnv::from_pairs([])),
+            Err(PreviewError::NotAWorkspace("REN_WORKSPACE"))
+        ));
     }
 }
