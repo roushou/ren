@@ -22,6 +22,10 @@ import {
   type Variant,
 } from './decode.ts';
 import type { Build as WireBuild } from './wire/Build.ts';
+import type { CanaryView as WireCanaryView } from './wire/CanaryView.ts';
+import type { CheckView as WireCheckView } from './wire/CheckView.ts';
+import type { ReleaseBody as WireReleaseBody } from './wire/ReleaseBody.ts';
+import type { ReleaseView as WireReleaseView } from './wire/ReleaseView.ts';
 import type { EventCountsRecord as WireEventCountsRecord } from './wire/EventCountsRecord.ts';
 import type { Excerpt as WireExcerpt } from './wire/Excerpt.ts';
 import type { InspectionRecord as WireInspectionRecord } from './wire/InspectionRecord.ts';
@@ -329,6 +333,21 @@ export const healthStatuses = ['ok', 'degraded'] as const;
 /** What the gateway says it is: the installed service, or a development one. */
 export const environments = ['production', 'development', 'canary'] as const;
 export type Environment = (typeof environments)[number];
+/** What the canary checks of a build. */
+export const checkKinds = ['doctor', 'reads', 'pages'] as const;
+export type CheckKind = (typeof checkKinds)[number];
+/** What promotion decided for the canary's build. */
+export const decisions = [
+  'promote',
+  'current',
+  'failed',
+  'unchecked',
+  'production_ahead',
+  'unconfirmed',
+  'awaiting_operator',
+  'outside_window',
+] as const;
+export type Decision = (typeof decisions)[number];
 export type HealthStatus = (typeof healthStatuses)[number];
 export const errorCodes = [
   'not_found',
@@ -635,6 +654,29 @@ export interface Health {
   operator: OperatorSummary;
   recorder: RecorderMetrics;
 }
+/** One check of the canary's build. */
+export interface CheckView {
+  check: Stored<CheckKind>;
+  passed: boolean;
+  detail: string | null;
+}
+/** The build on the canary and its checks. */
+export interface CanaryView {
+  commit: string;
+  passed: boolean;
+  checks: CheckView[];
+}
+/** Where the release stands, as the factory last wrote it (`/api/release`). */
+export interface ReleaseView {
+  main: string;
+  production: Revision;
+  /** Commits main has that production does not; null when production is not a commit of main. */
+  behind: number | null;
+  canary: CanaryView | null;
+  /** `manual`, `automatic`, or a daily window in UTC (`02:00-05:00`). */
+  policy: string;
+  decision: Stored<Decision>;
+}
 export interface Metrics {
   recorder: RecorderMetrics;
   storage: StorageView;
@@ -926,6 +968,30 @@ const health = object<Health, WireHealth>({
   recorder: recorderMetrics,
 });
 const metrics = object<Metrics, WireMetrics>({ recorder: recorderMetrics, storage: storageView });
+const releaseBody = object<{ release: ReleaseView | null }, WireReleaseBody>({
+  release: nullable(
+    object<ReleaseView, WireReleaseView>({
+      main: string,
+      production: revision,
+      behind: nullable(count),
+      canary: nullable(
+        object<CanaryView, WireCanaryView>({
+          commit: string,
+          passed: boolean,
+          checks: array(
+            object<CheckView, WireCheckView>({
+              check: label(checkKinds),
+              passed: boolean,
+              detail: nullable(string),
+            }),
+          ),
+        }),
+      ),
+      policy: string,
+      decision: label(decisions),
+    }),
+  ),
+});
 const storage = object<Storage>({
   policy: object<RetentionPolicy>({
     enabled: boolean,
@@ -1457,6 +1523,10 @@ export class ManagementApi {
   }
   storage(signal?: AbortSignal): Promise<Storage> {
     return this.#read('/api/storage', storage, signal);
+  }
+  /** Where the release stands; null until the factory has run against this gateway. */
+  async release(signal?: AbortSignal): Promise<ReleaseView | null> {
+    return (await this.#read('/api/release', releaseBody, signal)).release;
   }
   /** Newest first. `query` holds the listing filters and `after`. */
   calls(params: Query<RawCallQuery>, signal?: AbortSignal): Promise<CallPage> {

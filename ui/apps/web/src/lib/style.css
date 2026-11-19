@@ -1650,6 +1650,17 @@ tr.call-row {
 .statusline .recorder-status:hover {
   background: var(--surface-hover);
 }
+/* How far production is behind main, and the canary's verdict. */
+.statusline .release-status {
+  white-space: nowrap;
+  color: var(--muted);
+}
+.statusline .release-status.warning {
+  color: var(--warning);
+}
+.statusline .release-status.error {
+  color: var(--error);
+}
 .status-context {
   color: var(--muted);
   overflow-wrap: anywhere;

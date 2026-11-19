@@ -39,6 +39,8 @@ const ui: [string, readonly string[]][] = [
   ['ren-harness tools::EffectKind', api.effectKinds],
   ['ren-protocol route::Endpoint', api.endpoints],
   ['ren-gateway instance::Environment', api.environments],
+  ['ren-release release::CheckKind', api.checkKinds],
+  ['ren-release release::Decision', api.decisions],
   ['ren-gateway api::ErrorCode', api.errorCodes],
   ['ren-gateway api::ControlRefusal', api.controlRefusals],
   ['ren-store activity::report::FindingKind', api.findingKinds],

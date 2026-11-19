@@ -65,6 +65,33 @@ fn normalized(mut value: serde_json::Value) -> serde_json::Value {
     value
 }
 
+/// A release whose canary build passed, one commit ahead of production,
+/// waiting for the operator.
+fn release() -> ren_release::Release {
+    use ren_release::{
+        Assessment, Canary, Check, CheckKind, Lineage, Outcome, Policy, Release, Verdict,
+    };
+    let main = "62e9e9e0000000000000000000000000000000ff";
+    let checks = vec![
+        Check::new(CheckKind::Doctor, Outcome::Passed),
+        Check::new(CheckKind::Reads, Outcome::Passed),
+        Check::new(CheckKind::Pages, Outcome::Passed),
+    ];
+    Release::assess(
+        Assessment {
+            main: main.parse().unwrap(),
+            production: "07f4bb7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708".parse().unwrap(),
+            behind: Some(1),
+            canary: Some((
+                Canary::new(main.parse().unwrap(), Verdict::new(checks)),
+                Lineage::Ahead,
+            )),
+        },
+        Policy::Manual,
+        "03:00".parse().unwrap(),
+    )
+}
+
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ui/apps/web/tests/fixtures/api")
 }
@@ -165,6 +192,19 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
         ("usage", read("/api/usage".to_owned()).await),
         ("search", read("/api/search?q=parser".to_owned()).await),
         ("exposures", read("/api/exposures".to_owned()).await),
+        ("release", {
+            // None until the factory writes one, then as it wrote it.
+            assert_eq!(
+                read("/api/release".to_owned()).await["release"],
+                serde_json::Value::Null
+            );
+            std::fs::write(
+                dir.path().join(ren_release::Release::FILE),
+                serde_json::to_vec(&release()).unwrap(),
+            )
+            .unwrap();
+            read("/api/release".to_owned()).await
+        }),
     ];
     gateway.stop().await;
 

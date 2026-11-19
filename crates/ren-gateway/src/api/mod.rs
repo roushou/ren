@@ -16,11 +16,13 @@ pub mod live;
 mod params;
 pub mod preview;
 pub mod read;
+pub mod release;
 mod route;
 mod storage;
 
 pub(crate) use control::ControlApi;
 pub use control::{ControlOptions, ControlRefusal, ControlToken};
+pub use release::ReleaseFile;
 pub use route::ApiRead;
 
 use crate::{build::InstanceOptions, control::Controls, user::Users};
@@ -38,6 +40,7 @@ use http::{HeaderValue, StatusCode, Uri, header};
 use live::LiveFeed;
 use params::RawLiveQuery;
 use preview::Previewer;
+use release::{ReleaseBody, ReleaseFileError, ReleaseView};
 use ren_protocol::direction::Direction;
 use ren_recorder::time::Clock;
 use ren_recorder::{Recorder, id::CallId, retention::RetentionPolicy};
@@ -67,6 +70,8 @@ pub struct ManagementSetup {
     pub runs: Option<ren_supervisor::Supervisor>,
     /// The host's tools; the tools routes answer `tools_disabled` without.
     pub tools: Option<std::sync::Arc<dyn crate::tools::Toolbox>>,
+    /// Where the factory writes the release, which `/api/release` reports.
+    pub release: ReleaseFile,
 }
 
 /// What the read API reads and reports, from the management setup.
@@ -75,6 +80,7 @@ pub(crate) struct ReadSources {
     pub retention: RetentionPolicy,
     pub build: Build,
     pub instance: InstanceOptions,
+    pub release: ReleaseFile,
 }
 
 /// What the read API reads from. It never writes.
@@ -86,6 +92,7 @@ pub(crate) struct ApiState {
     retention: RetentionPolicy,
     build: Build,
     instance: InstanceOptions,
+    release: ReleaseFile,
     previews: Arc<Semaphore>,
     exports: Arc<Semaphore>,
     shutdown: CancellationToken,
@@ -171,6 +178,8 @@ enum ApiError {
     IdentityRefused,
     #[error("store unavailable: {0}")]
     Store(StoreError),
+    #[error(transparent)]
+    Release(#[from] ReleaseFileError),
 }
 
 impl From<StoreError> for ApiError {
@@ -202,6 +211,10 @@ impl IntoResponse for ApiError {
                 tracing::warn!(%error, "management query failed");
                 (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable)
             }
+            Self::Release(error) => {
+                tracing::warn!(%error, "release file unreadable");
+                (StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable)
+            }
         };
         (status, ApiState::versioned(ErrorBody { error })).into_response()
     }
@@ -228,6 +241,7 @@ impl ApiState {
             retention,
             build,
             instance,
+            release,
         } = sources;
         Self {
             reader,
@@ -237,6 +251,7 @@ impl ApiState {
             retention,
             build,
             instance,
+            release,
             previews: Arc::new(Semaphore::new(Self::PREVIEW_PERMITS)),
             exports: Arc::new(Semaphore::new(Self::EXPORT_PERMITS)),
             shutdown,
@@ -254,6 +269,7 @@ impl ApiState {
             .route("/api/metrics", get(Self::metrics))
             .route("/api/storage", get(Self::storage))
             .route("/api/caller", get(Self::caller))
+            .route("/api/release", get(Self::release))
             .route("/api/calls/{id}/body/{direction}", get(Self::body))
             .route("/api/calls/{id}/body/{direction}/export", get(Self::export))
             .route("/api/live", get(Self::live))
@@ -305,6 +321,15 @@ impl ApiState {
             }),
         )
             .into_response()
+    }
+
+    /// Where the release stands, as the factory last wrote it.
+    async fn release(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {
+        let release = state.release.read()?;
+        Ok(Self::versioned(ReleaseBody {
+            release: release.as_ref().map(ReleaseView::from),
+        })
+        .into_response())
     }
 
     async fn metrics(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {

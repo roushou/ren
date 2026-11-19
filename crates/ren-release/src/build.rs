@@ -26,7 +26,7 @@ pub enum Revision {
 }
 
 /// A git object name: 40 (SHA-1) or 64 (SHA-256) lowercase hex digits.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub struct Commit(String);
 
 /// Whether tracked files matched the commit when the binary was compiled.

@@ -57,7 +57,9 @@ mod timeout;
 pub mod tools;
 pub mod user;
 
-pub use api::{ApiRead, ControlOptions, ControlRefusal, ControlToken, ManagementSetup};
+pub use api::{
+    ApiRead, ControlOptions, ControlRefusal, ControlToken, ManagementSetup, ReleaseFile,
+};
 pub use build::{Environment, InstanceOptions};
 pub use forward::GatewayError;
 pub use forward::buffer::{
@@ -167,6 +169,7 @@ impl<U: Upstream> Gateway<U> {
                 retention: management.retention,
                 build: management.build,
                 instance: management.instance,
+                release: management.release,
             },
             self.recorder.clone(),
             self.controls.clone(),

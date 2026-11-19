@@ -1,7 +1,16 @@
 //! How a build of Ren moves from `main` to production
 //! (docs/plans/self-build.md, phase 4), pure: which build an instance runs
-//! ([`Build`], its [`Revision`]).
+//! ([`Build`], its [`Revision`]); what the canary's checks found of a build
+//! ([`Verdict`]); when production takes a build that passed ([`Policy`]);
+//! and where a release stands, with what promotion decided ([`Release`],
+//! its [`Decision`]). The factory (`cargo xtask canary`) does the I/O.
 
 mod build;
+mod policy;
+mod release;
+mod verdict;
 
 pub use build::{Build, Commit, Comparison, Revision, RevisionError, Tree};
+pub use policy::{MinuteOfDay, Policy, PolicyError, ReleaseOptions, Window};
+pub use release::{Assessment, Canary, Decision, Lineage, Release};
+pub use verdict::{Check, CheckKind, Outcome, Verdict};

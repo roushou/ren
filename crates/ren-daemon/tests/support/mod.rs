@@ -8,8 +8,8 @@ pub mod agent;
 use axum::Router;
 use ren_daemon::config::Config;
 use ren_gateway::{
-    ControlToken, Gateway, Ingress, IngressError, ManagementSetup, ReqwestUpstream, Shutdown,
-    Stopped, Upstream, control::Controls,
+    ControlToken, Gateway, Ingress, IngressError, ManagementSetup, ReleaseFile, ReqwestUpstream,
+    Shutdown, Stopped, Upstream, control::Controls,
 };
 use ren_harness::{endpoint::GatewayEndpoint, lines::LineLimit};
 use ren_protocol::{direction::Direction, label::Stored};
@@ -334,6 +334,7 @@ impl TestGateway {
             instance: runtime.instance(),
             runs: supervisor,
             tools,
+            release: ReleaseFile::in_data(dir),
         });
         let ingress = Ingress::new(listener, router.clone());
         let server = tokio::spawn(ingress.serve(shutdown.clone(), Self::DRAIN_DEADLINE));

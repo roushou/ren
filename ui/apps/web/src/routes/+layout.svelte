@@ -15,6 +15,7 @@
   import { addressView } from '#lib/address.svelte.ts';
   import { GatewayPlace, type Network } from '#lib/place.ts';
   import { RecorderReport } from '#lib/recorder.ts';
+  import { ReleaseLine } from '#lib/release.ts';
   import CopyButton from '#lib/CopyButton.svelte';
   import DevToolbar from '#lib/DevToolbar.svelte';
   import RedlineLayer from 'redline/RedlineLayer.svelte';
@@ -51,6 +52,11 @@
     }
   });
   const storage = $derived(gateway.current.value?.storage);
+  /** Where the release stands, once the factory has run against this gateway. */
+  const release = $derived.by(() => {
+    const view = gateway.current.value?.release;
+    return view ? ReleaseLine.of(view) : null;
+  });
   /** The tab row, which scrolls sideways on a phone. */
   let tabs = $state<HTMLElement>();
   // Keep the current view's tab in sight when the row is narrower than its tabs.
@@ -328,6 +334,12 @@
             ? RecorderReport.lossText(capture)
             : 'No capture loss recorded'}</button
     >
+    {#if release}<span
+        class="release-status"
+        class:warning={release.tone === 'warning'}
+        class:error={release.tone === 'bad'}
+        title={release.detail}>{release.text}</span
+      >{/if}
     <span class="status-context mono"
       >{selected && (view === 'traffic' || view === 'recording')
         ? `${short(selected.id)} · ${captureState(selected, gateway.current.value?.storage.capture?.body_limit_bytes ?? null).toLowerCase()}`
