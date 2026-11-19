@@ -197,7 +197,7 @@ impl ProjectCmd {
         let unit = Self::unit(workspace);
         Steps::stop(&unit)?;
         let step = serve.step().expand(&place.place)?;
-        Steps::start(&unit, &step, &place.place.workspace)?;
+        Steps::start(&unit, &step, &place.place.workspace, ctx.env.get("PATH"))?;
         let open = serve.open(&place.place)?;
         Self::healthy(&open, serve.health()).await?;
         let mut origin: PreviewUrl = open
@@ -460,8 +460,10 @@ impl Steps {
         Ok(status.success())
     }
 
-    /// Starts `step` as the transient user unit `unit`, in `dir`.
-    pub(super) fn start(unit: &str, step: &Expanded, dir: &Path) -> Result<()> {
+    /// Starts `step` as the transient user unit `unit`, in `dir`, with the
+    /// caller's `path`: a unit otherwise gets the user manager's, which
+    /// lacks the programs installed in the operator's home (Node, Bun).
+    pub(super) fn start(unit: &str, step: &Expanded, dir: &Path, path: Option<&str>) -> Result<()> {
         let mut argv = vec![
             "systemd-run".to_owned(),
             "--user".to_owned(),
@@ -470,6 +472,9 @@ impl Steps {
             format!("--unit={unit}"),
             format!("--working-directory={}", dir.display()),
         ];
+        if let Some(path) = path {
+            argv.push(format!("--setenv=PATH={path}"));
+        }
         argv.extend(
             step.env
                 .iter()

@@ -40,6 +40,8 @@ pub(super) struct ProjectFactory {
     state: PathBuf,
     /// `~/.config/ren/release.toml`.
     options: PathBuf,
+    /// The caller's search path, which the serve unit runs with.
+    path: Option<String>,
     git: Git,
 }
 
@@ -73,6 +75,7 @@ impl ProjectFactory {
             worktrees: data.join("worktrees"),
             state: data.join("projects").join(&name),
             options: home.join(".config/ren/release.toml"),
+            path: ctx.env.get("PATH").map(str::to_owned),
             git: Git::inherited(),
             name,
             repo,
@@ -94,7 +97,7 @@ impl ProjectFactory {
             ports: Some(workspace.ports()),
         };
         let contract = ProjectCmd::contract(&place.workspace)?;
-        let verdict = Self::check(&contract, &place, &workspace).await?;
+        let verdict = self.check(&contract, &place, &workspace).await?;
         let commit = Self::release_commit(&tip)?;
         let canary = Canary::new(commit.clone(), verdict);
         let deployed = self.read()?.map(|release| release.production().clone());
@@ -176,6 +179,7 @@ impl ProjectFactory {
     /// serve step up and answering, then each declared check against it.
     /// A check that cannot run fails.
     async fn check(
+        &self,
         contract: &ProjectContract,
         place: &Place,
         workspace: &Workspace,
@@ -186,57 +190,35 @@ impl ProjectFactory {
             .map(|check| check.name().to_owned())
             .collect();
         let mut checks = Vec::new();
-        let mut built = true;
+        let mut built = Outcome::Passed;
         for step in contract.build() {
-            let step = step.expand(place)?;
-            println!("==> {}", step.argv.join(" "));
-            if !Steps::run(&step, &place.workspace)? {
-                built = false;
-                checks.push(Check::new(
-                    CheckKind::Build,
-                    Outcome::Failed {
-                        detail: format!("`{}` failed", step.argv.join(" ")),
-                    },
-                ));
+            built = Self::step(step, place);
+            if !matches!(built, Outcome::Passed) {
                 break;
             }
         }
-        if built {
-            checks.push(Check::new(CheckKind::Build, Outcome::Passed));
-        }
-        let unit = ProjectCmd::unit(workspace);
-        let serving = match (built, contract.serve()) {
+        let built_ok = matches!(built, Outcome::Passed);
+        checks.push(Check::new(CheckKind::Build, built));
+        let serving = match (built_ok, contract.serve()) {
             (false, _) => Outcome::Failed {
                 detail: "not run: the build failed".to_owned(),
             },
             (true, None) => Outcome::Failed {
                 detail: format!("{} declares no [serve] step", ProjectContract::FILE),
             },
-            (true, Some(serve)) => {
-                Steps::stop(&unit)?;
-                let step = serve.step().expand(place)?;
-                Steps::start(&unit, &step, &place.workspace)?;
-                match ProjectCmd::healthy(&serve.open(place)?, serve.health()).await {
-                    Ok(()) => Outcome::Passed,
-                    Err(error) => Outcome::Failed {
-                        detail: error.to_string(),
-                    },
-                }
-            }
+            (true, Some(serve)) => self.serve(serve, place, workspace).await.map_or_else(
+                |error| Outcome::Failed {
+                    detail: format!("{error:#}"),
+                },
+                |()| Outcome::Passed,
+            ),
         };
         let served = matches!(serving, Outcome::Passed);
         checks.push(Check::new(CheckKind::Serve, serving));
         for check in contract.checks() {
             let outcome = if served {
                 println!("==> {}", check.name());
-                let step = check.step().expand(place)?;
-                if Steps::run(&step, &place.workspace)? {
-                    Outcome::Passed
-                } else {
-                    Outcome::Failed {
-                        detail: format!("`{}` failed", step.argv.join(" ")),
-                    }
-                }
+                Self::step(check.step(), place)
             } else {
                 Outcome::Failed {
                     detail: "not run: the project did not serve".to_owned(),
@@ -254,6 +236,41 @@ impl ProjectFactory {
             }
         }
         Ok(Verdict::project(declared, checks))
+    }
+
+    /// One step's outcome: a step that cannot expand or start fails, as one
+    /// that exits unsuccessfully does.
+    fn step(step: &ren_project::Step, place: &Place) -> Outcome {
+        let ran = step
+            .expand(place)
+            .map_err(anyhow::Error::from)
+            .and_then(|step| {
+                println!("==> {}", step.argv.join(" "));
+                Steps::run(&step, &place.workspace).map(|succeeded| (succeeded, step))
+            });
+        match ran {
+            Ok((true, _)) => Outcome::Passed,
+            Ok((false, step)) => Outcome::Failed {
+                detail: format!("`{}` failed", step.argv.join(" ")),
+            },
+            Err(error) => Outcome::Failed {
+                detail: format!("{error:#}"),
+            },
+        }
+    }
+
+    /// Starts the serve step in the canary's workspace and waits for it.
+    async fn serve(
+        &self,
+        serve: &ren_project::Serve,
+        place: &Place,
+        workspace: &Workspace,
+    ) -> Result<()> {
+        let unit = ProjectCmd::unit(workspace);
+        Steps::stop(&unit)?;
+        let step = serve.step().expand(place)?;
+        Steps::start(&unit, &step, &place.workspace, self.path.as_deref())?;
+        ProjectCmd::healthy(&serve.open(place)?, serve.health()).await
     }
 
     /// Where the release stands with `main` at `tip` and production at
