@@ -80,18 +80,28 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
 
 ## Phases
 
-1. **Compatibility contract.** Not built. Enforced in CI, not by review:
-   - Shipped migrations are frozen. A schema change is expand then
-     contract: a column is never dropped or tightened in the release that
-     stops writing it.
-   - A check opens a store made by the previous release's schema, filled
-     with synthetic rows, with the change's build, and reads it through
-     every `ReadRequest`.
-   - The read and control APIs' wire types, the `labels.txt` tables, and
-     the control refusals are compared with the previous release. A
-     breaking difference fails the check unless the change carries a
-     migration note naming what it breaks and how an existing install
-     moves on.
+1. **Compatibility contract.** Partly built. Enforced in CI, not by
+   review, by the Compatibility workflow (`cargo xtask compat`):
+   - Shipped migrations are frozen. Built: each is pinned by the checksum
+     a store keeps for it (`crates/ren-store/tests/fixtures/migrations.txt`),
+     and the gate refuses a changed or removed pin. A schema change is
+     expand then contract: a new migration that drops, renames, or deletes
+     is a breaking change (built, read from its statements).
+   - A store written at each earlier migration opens with the change's
+     build and serves every read. Built: each migration has a store
+     fixture (`crates/ren-store/tests/fixtures/stores/<version>.sql`),
+     recorded once through the recorder and frozen, and
+     `crates/ren-store/tests/upgrade.rs` opens each with today's
+     migrations and serves every `ReadRequest` and session read from it.
+   - The `labels.txt` tables, the control refusals among them, are
+     compared with the base: a label may be added, never removed. Built.
+   - The read and control APIs' wire types are compared with the base.
+     Not built: they are pinned as generated TypeScript
+     (`ui/apps/web/src/lib/wire`), and telling an added response field
+     from a removed one needs a structural comparison, not a text diff.
+   - A breaking difference passes only when the change's message declares
+     it: a `!` in its header and a `BREAKING CHANGE:` footer naming what
+     breaks and how an existing install moves on. Built.
 2. **Runs outlive the daemon.** Not built. Each agent process runs in its
    own transient systemd user unit, holding its client's stdio on a socket
    the daemon reconnects to when it starts. The supervisor's run machine
@@ -153,4 +163,13 @@ things faster. Each phase is useful on its own.
 
 ## Deviations
 
-None yet.
+- **The base is `main`, not a release.** Ren has no tagged releases, and
+  production follows `main`, so the contract compares a change with the
+  revision it lands on: a pull request's base, or `main` before a push.
+- **Store fixtures are recorded, not written by an earlier build.** Each
+  is recorded once, through the recorder at the migration it belongs to,
+  and frozen. Building every earlier release in CI would be slower and
+  would need its toolchain; a frozen fixture checks the same upgrade.
+- **The gate is its own workflow.** It reads the pull request's title and
+  body, so it runs again when they are edited, which would otherwise
+  rerun all of CI.

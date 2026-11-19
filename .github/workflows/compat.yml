@@ -1,0 +1,60 @@
+name: Compatibility
+
+# The compatibility contract (docs/plans/self-build.md, phase 1): what an
+# install of the base depends on (the store's migration pins and fixtures,
+# its migrations, and every crate's labels) changes only when the change's
+# message declares the break. A pull request is checked again when its
+# title or body is edited, since they are its message.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compat:
+    name: Compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          # The base is read through git.
+          fetch-depth: 0
+
+      - name: Install the repository's pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # A pull request's message is its title and body, which a squash merge
+      # makes main's commit; a push's is its newest commit's. They are passed
+      # through the environment, never into the script.
+      - name: Compare with the base
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          message="$RUNNER_TEMP/message"
+          if [ "$EVENT" = pull_request ]; then
+            printf '%s\n\n%s\n' "$TITLE" "$BODY" > "$message"
+          else
+            git log -1 --format=%B > "$message"
+          fi
+          cargo xtask compat --base "$BASE" --message "$message"

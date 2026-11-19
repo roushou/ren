@@ -99,7 +99,8 @@ Ren-specific applications:
   `#[strum(to_string = "…")]` on its variant. Never add `#[serde(rename…)]`, which
   would be a second table. Every label is pinned in its crate's `tests/fixtures/labels.txt`
   (`tests/labels.rs`); add a new vocabulary there, and treat a changed line as a
-  storage format change. Labels read from storage or the wire use `Stored<T>`,
+  storage format change: a label may be added, and removing one is a breaking
+  change (`cargo xtask compat`, section 5). Labels read from storage or the wire use `Stored<T>`,
   which keeps unknown text.
 - **Keep the unknown:** wire enums for Anthropic Messages, OpenAI Responses, OpenAI
   Chat Completions, and SSE
@@ -199,8 +200,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
 - `crates/ren-git`: git as Ren reads and runs it, with `Git` as its primary
   type: the git program found on a search path (`Git::find`) or this
   process's own (`Git::inherited`), the commands Ren runs with it (`init`,
-  a checkout's commit, tree, and whether a remote holds it, and
-  `revision_files`, the files git rewrites for a new commit), and a folder's
+  a checkout's commit, tree, and whether a remote holds it,
+  `revision_files`, the files git rewrites for a new commit, and a
+  `Revision`'s commit and files, `Git::commit_of`, `files_at`, and
+  `file_at`), and a folder's
   repository read from disk without it (`Git::repository`: its `HEAD`,
   through a linked worktree's `.git` file). It is the one place Ren reads or
   runs git, and the one `disallowed_methods` exemption for it. It performs
@@ -343,7 +346,14 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `RecordSink::undigested` lists calls to derive again), and implements the recorder's `RecordSink`;
   every time it binds goes through `SqlMillis` (`millis`). It owns the versioned migrations for
   `ren.sqlite3` (`crates/ren-store/migrations`); never edit one that has
-  shipped. Every history read is a `ReadRequest` that `Reader::serve` answers
+  shipped. Each is pinned by the checksum a store keeps for it
+  (`tests/fixtures/migrations.txt`), and each has a store fixture, the rows
+  a store held at that migration (`tests/fixtures/stores/<version>.sql`,
+  written once through the recorder by the ignored
+  `write_the_newest_store_fixture`); `tests/upgrade.rs` opens every fixture
+  with today's migrations and serves every read from it. A new migration
+  only adds: what it stops using is removed by a later one, declared as a
+  breaking change. Every history read is a `ReadRequest` that `Reader::serve` answers
   (`read`), and `ReadRequest::decode` reads the API's body back as the same
   typed `ReadResponse`; the API, the CLI, and MCP all ask through it. Its tests include
   `tests/recorder.rs`, the recorder against the real store.
@@ -609,6 +619,14 @@ dependencies under "Crates" below. Read the code for current module ownership.
   Pi owns provider authentication, refresh, payload conversion, and retries.
 - `xtask`: repository tasks run with `cargo xtask` (alias in `.cargo/config.toml`),
   with `Xtask` as its primary type; unpublished and outside `default-members`.
+  `cargo xtask compat --base <revision> [--message <file>]` is the
+  compatibility gate (`compat`; `docs/plans/self-build.md`, phase 1): it
+  compares the store's migration pins, store fixtures, and new migrations,
+  and every crate's labels, with the base revision (read through `ren_git`),
+  and refuses a break the message does not declare with a `!` and a
+  `BREAKING CHANGE:` footer; its comparison is pure and unit-tested
+  (`compat::contract`), and the Compatibility workflow runs it on every pull
+  request (again when its title or body is edited) and push to main.
   `cargo xtask install-vps` installs or upgrades Ren from a checkout as a
   systemd user service and can publish it with Tailscale Serve; it restarts a
   running daemon only between calls and between runs' turns, paused (a pause
@@ -747,6 +765,18 @@ cargo check --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
+
+A change to what an existing install depends on (the store's migrations and
+their fixtures, or a crate's labels) is checked against the base it will
+land on:
+
+```sh
+cargo xtask compat --base origin/main --message <file with the change's message>
+```
+
+A new migration gets its pin (the failing `every_migration_is_pinned` prints
+it) and its store fixture, written once with
+`cargo test -p ren-store --test upgrade -- --ignored`.
 
 UI changes, in `ui`, the workspace root, whose scripts run each member's (Bun
 from `package.json`, Node 22.17+):
