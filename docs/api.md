@@ -254,6 +254,8 @@ the body was stored whole; otherwise `not_found`. At most two run at once
 | `GET /api/runs?limit=100`                                                | Recorded [runs](#runs), newest first: harness, folder, the `operator_session` it served, the client's `thread` and the `session` (recording) it names, `started_at`, the `model`, `effort`, and `approvals` it started with (`null` is the client's own), the `toolset` generation on its `PATH` (`0` with no tools installed; `null` when unknown or recorded before this was), and once ended `ended_at`, `end`, and `exit`; `shelf=archived` lists archived ended runs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `GET /api/runs/{run-id}/conversation`                                    | A run's [conversation](#run-conversation), whole: its own entries and those of the runs before it on its thread, oldest first                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `GET /api/runs/{run-id}`                                                 | One recorded run                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `GET /api/work?limit=&shelf=`                                            | Work items, most recently changed first: [work items](#work-items) under way, or with `shelf=archived` those shipped or dismissed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `GET /api/work/{work-item-id}`                                           | One work item                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `GET /api/live?after={seq}`                                              | Server-sent events as observations commit                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 Omit `after` for the first page; pass the returned `next` cursor unchanged for the
@@ -380,6 +382,38 @@ Each edit is recorded (a `history_edited` observation with the actor) and
 applied by the recorder after what it was recording; the answer is `202`
 `{api_version, subject, change}` once it is queued. `404` `not_found` is an
 unknown subject or change.
+
+### Work items
+
+A work item is what an operator marked to be done, carried from queued to
+shipped ([the plan](plans/self-build.md), phase 5). Redline records one for
+every brief it sends, and its Later button keeps one queued; the UI's Work
+view lists them and sends queued ones together, as one brief, to a new
+session in a workspace of its own.
+
+- `POST /control/v1/work` queues an order: `{page, marks, evidence}`, where
+  `page` is the page it was marked on (`path`, `route`, `title`, `width`,
+  `height`, `theme` (`light` or `dark`), and the `revision` of the build that
+  served it, or `null`), `marks` each a `selector`, `text`, `source`, `width`,
+  `height`, and `note`, and `evidence` the errors the page logged
+  (`console`) and the read API paths behind it (`reads`). Marks without a
+  note are left out; at least one must remain, with at most 20, each text
+  at most 4096 bytes (`422` `invalid_order`). Evidence keeps its newest 50
+  entries of each. The answer is `201` `{api_version, id, state}`.
+- `POST /control/v1/work/{work-item-id}/{change}` moves one on: `send`
+  (`{session}`: an operator session takes it up; a sent item can be sent
+  again, to another), `land` (`{commit}`: its change is on `main`), `ship`
+  (`{revision}`: production runs a build with it), or `dismiss`. The answer
+  is `202` `{api_version, id, state}`. A change its state does not take is
+  `409` `work_state`: only a queued or sent item is sent or dismissed, only a
+  sent one lands, only a landed one ships; shipped and dismissed are final.
+  A session that was never recorded is `404` `not_found`.
+
+`/api/work` lists each item with its `order` as it was queued, its `state`
+(`queued`, `sent`, `landed`, `shipped`, or `dismissed`), and its `session`,
+`landed` commit, and `shipped` revision once known. Each change is recorded
+(a `work_queued`, `work_sent`, `work_landed`, `work_shipped`, or
+`work_dismissed` observation).
 
 ### Tools
 

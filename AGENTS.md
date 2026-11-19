@@ -325,7 +325,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   owns what is recorded: Ren's identities and `IdSource` (`id`), `Clock`
   (`time`), terminals and other recorded facts (`capture`), routing facts and
   `OperatorRevision` (`routing`), who called (`caller`: `UserId`,
-  `TailscaleLogin`, and `Caller`), batches (`batch`), the content-defined
+  `TailscaleLogin`, and `Caller`), work items (`work`, pure: `WorkOrder`, what
+  was marked, checked by `WorkOrder::checked`, and the `WorkState` machine,
+  queued to shipped, whose `apply` refuses an event a state does not take;
+  `WorkSlot` records each `WorkFact`), batches (`batch`), the content-defined
   `Chunker` (`chunk`), the stored inspection format (`inspection`), and
   `RetentionPolicy` (`retention`), and credential detection and redaction
   (`secrets`: `SecretScanner`, well-known formats only, never storing a secret),
@@ -624,7 +627,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `REN_SOURCE_DIR`, a brief can go to, where its change is made, and what
   the brief says of Ren; `Recipients` in `src/lib/briefing.svelte.ts`
   reads them, and `BriefingPanel.svelte` fills Redline's pane with them,
-  sending through the same session routes),
+  sending through the same session routes and recording each brief as a
+  work item first), `src/lib/work.ts` work items (`WorkApi` through
+  `/api/work` and `/control/work`, the order a pane makes, `PageEvidence`,
+  what a page logged and read, kept by the layout, and `Work.batch`, one
+  brief for several items, which the Work view, `src/routes/work`, sends),
   `Markdown.svelte` from `ui/packages/markdown` draws Markdown, and
   `src/lib/server/runsStart.ts` makes the Sessions page's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the

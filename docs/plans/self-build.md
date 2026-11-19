@@ -195,17 +195,34 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
    - Not run: a promotion into the installed service and the timer. They
      install into production, which stays a step the operator asks for;
      the install's own steps are the ones `install-vps` has always run.
-5. **Work items and Redline.** Not built.
-   - A mark becomes a work item carrying what was on screen: the revision,
-     route, screenshot, the data shown, the API response behind it, and
-     console errors. Marks are not limited to the UI: a recording, a call,
-     a transcript step, or an error can be marked.
-   - A work item is carried out in its own workspace (phase 3). Its preview
-     opens the marked page on the branch's build, beside production's.
-   - Accepting it sends it through the queue and canary. The mark closes
-     with the revision that shipped it, linked to the recordings of the
-     work that made it.
-   - Marks can wait in a queue and be sent as one batch.
+5. **Work items and Redline.** Its first step built: work items, from a
+   mark to a session. Landing and shipping are recorded but not yet
+   detected, and previews are not built.
+   - A work item is what was marked to be done: the page (its path, route,
+     size, theme, and the build that served it), the noted marks, and what
+     else was on screen (the errors the page logged and the API reads
+     behind it, kept by the UI's layout). Its lifecycle is a pure state
+     machine (`ren_recorder::work::WorkState`): queued, sent to a session,
+     landed on `main` as a commit, shipped in the build production runs, or
+     dismissed. It is stored in `work_items` (migration 0002, pinned with
+     its fixture) and served at `/api/work`; the control API queues and
+     moves it on.
+   - Every Redline brief records a work item, names it, and carries its
+     evidence; Later keeps one queued. The Work view lists them and sends
+     queued items together as one brief to a new session in a workspace of
+     its own (phase 3).
+   - Marks on a recording, a call, a transcript step, or an error are marks
+     on the page that shows it: its path names the subject.
+   - Verified in the dev slot, in a headless browser driven through the real
+     UI: a mark kept for Later was stored with its route, the build, and the
+     page's reads; two queued items were sent as one brief to a new session
+     in its own worktree, whose first prompt held both; a Redline Send
+     recorded its item as sent to the session it made.
+   - Next: the factory lands an item when its session's branch merges and
+     ships it when production's build holds that commit, so the mark closes
+     with the revision that shipped it; a preview opens the marked page on
+     the branch's build beside production's; a screenshot travels with the
+     marks.
 6. **Projects.** Not built. A project declares its build, run, checks, and
    quiesce steps, and gets workspaces, previews, canary, and promotion as
    Ren does.
@@ -270,6 +287,14 @@ things faster. Each phase is useful on its own.
 - **Build identity moved to `ren-release`.** `Build`, `Revision`, and
   `Commit` left the gateway for the new crate that owns how builds move,
   so the gateway, the CLI, and xtask share one commit type for releases.
+- **The UI's evidence, not the server's.** What was on screen is what the
+  browser had: the errors the page logged and its reads of the API, as
+  resource timing saw them. The API responses themselves are not copied:
+  the reads name them, and the agent can read them again.
+- **`ReadBody` is no longer a wire type.** Adding the work reads widened
+  the union of every read's answer, which the compatibility gate rightly
+  calls a break for a type decoded whole. No client decodes it whole, so
+  it stopped being written to the UI's wire types, declared as a break.
 - **The gate is its own workflow.** It reads the pull request's title and
   body, so it runs again when they are edited, which would otherwise
   rerun all of CI.
