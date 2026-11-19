@@ -464,6 +464,9 @@ run = ["npm", "test"]
 
 [quiesce]
 run = ["curl", "-fsS", "-X", "POST", "http://127.0.0.1:{port}/drain"]
+
+[deploy]
+run = ["./deploy.sh", "production"]
 ```
 
 Every command is an argv, never a shell line. Arguments and values may
@@ -483,7 +486,37 @@ for its health path, publishes the port its page opens on with
 `--publish`, and records the preview on the sent work items the branch's
 commits name (`Work-Item: <id>`) or `--work` gives, through this host's
 daemon. Deleting the workspace's session stops it. The dev slot's fake
-projects declare one: a static page served by Python.
+projects declare one: a static page served by Python, deployed by copying
+it into a folder under the canary's data.
+
+A project gets a canary and promotion too:
+
+```sh
+ren project canary --dir ~/dev/acme   # fetch main, build, serve, check, deploy by policy
+ren project promote --dir ~/dev/acme  # deploy the canary's passed build now
+ren project release --dir ~/dev/acme  # main, production, the canary, and the decision
+```
+
+A pass fetches the project's `main` (`--remote`, `--branch`) and checks its
+tip out, detached, in a workspace the factory keeps for the project, in
+Ren's worktrees folder, so its slot's ports are its own. It runs the build
+steps, starts the serve step there and waits for its health path, then
+runs each declared check against it; a check that cannot run fails. The
+verdict, the build last deployed (none before the first promotion), and the
+operator's policy make the project's release, kept in
+`<data>/projects/<name>`. The policy is the project's table in
+`~/.config/ren/release.toml`, by its folder's name, manual unless named:
+
+```toml
+[projects.acme]
+promote = "automatic" # or "manual", or a daily UTC window like "02:00-05:00"
+```
+
+When it promotes (a passed build that follows the one deployed), the
+contract's `[deploy]` step runs in the checked build, and production is then
+that commit; a deploy that fails is marked and not tried again unless you
+promote it. A project that declares no deploy step is never promoted. The
+canary stays served on its workspace's port until the next pass.
 
 ### Manual steps
 

@@ -242,8 +242,8 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      without the browser asking, or a library), and clearing a preview from
      its items when its workspace goes; the link then fails until the item
      lands.
-6. **Projects.** Its first step built: a project's contract, checks, and
-   previews. Canary and promotion for other projects are not built.
+6. **Projects.** Built: a project's contract, checks, previews, canary,
+   and promotion. Not surfaced in the UI, and with no timer of its own.
    - A repository declares in `ren-project.toml` how it is built, served,
      checked, and quiesced (`ren-project`, sans-IO): argv steps whose
      values name the workspace's ports, data, and folder through parsed
@@ -257,11 +257,24 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      in a new `acme-web` workspace, its check passed, its preview served
      the page on the slot's first port and was recorded on the session's
      work item, and deleting the session stopped it.
-   - Not built: a project's canary and promotion. Ren's are its own
-     (`install-vps`, a systemd service of a known shape); a project's
-     production is wherever it deploys, so its canary would run its checks
-     against a build of `main`, and its promotion would be a declared
-     `deploy` step under the same policy.
+   - `ren project canary` checks a project's `main` as Ren's canary does:
+     in a workspace the factory keeps for it, it runs the build, serves it,
+     and runs each declared check against it, into a verdict whose suite
+     requires all of them (`ren_release::Suite::Project`). The operator's
+     policy for the project (`[projects.<name>]` in `release.toml`) decides,
+     through the same `Decision` and `Lineage` rules as Ren's, whether its
+     `[deploy]` step runs; a failed deploy is not retried on its own.
+     `ren project promote` deploys by hand; `ren project release` prints
+     where it stands.
+   - Verified with the dev slot's `acme-web`: a first pass was
+     `unconfirmed` (nothing deployed yet) and was promoted by hand; under an
+     automatic policy a new commit was checked and deployed in one pass; a
+     commit whose check failed was not deployed, leaving production one
+     commit behind.
+   - Not built: the project's release in the UI and the read API (it is in
+     `<data>/projects/<name>`, and `ren project release` prints it), and a
+     timer for project passes (run `ren project canary` from any
+     scheduler).
 
 Phases 1 and 2 come first: without them, upgrading automatically only breaks
 things faster. Each phase is useful on its own.

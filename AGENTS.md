@@ -220,8 +220,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`{port}`, `{port+N}`, `{data}`, `{workspace}`; an unknown placeholder is
   refused as the contract is read, a port past the place's range as a step
   expands). Sans-IO; `ren project` (`crates/ren-cli/src/commands/project.rs`,
-  the one place the CLI runs a project's steps) runs its checks and
-  previews a workspace of it.
+  the one place the CLI runs a project's steps) runs its checks,
+  previews a workspace of it, and runs its canary and promotion
+  (`commands/project/canary.rs`: `ProjectFactory`, with its release in
+  `<data>/projects/<name>`).
 - `crates/ren-release`: how a build of Ren moves from `main` to production,
   sans-IO: which build an instance runs (`Build`, its `Revision`, `Commit`,
   and `Tree`, and how two compare, `Comparison`). Its manifest allows only
