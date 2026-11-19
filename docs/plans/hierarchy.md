@@ -133,7 +133,9 @@ Records outside the tree stay, and each says why it is outside:
      name to its registered name. Only dev-slot data has one today, so no
      fallback is kept.
    - `install-vps` registers its checkout as the `Ren` project, named `ren`,
-     if no project has that repository.
+     unless a project not archived is already built as Ren: a promotion
+     installs from the factory's own worktree, which must not take its
+     place.
 2. **Ownership.** Built.
    - Migration `0005_ownership.sql` adds nullable
      `operator_sessions.project` and `work_items.project`, with indexes.
