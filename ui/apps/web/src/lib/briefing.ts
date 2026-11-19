@@ -21,11 +21,12 @@ import {
 export type Destination = { kind: 'new' } | { kind: 'session'; session: DeskSession };
 
 /**
- * Where a brief's change is made: in the checkout itself, when no other
- * session is open there, or in a git worktree, so it stays clear of the
- * sessions that are.
+ * Where a brief's change is made: in the workspace Ren makes for a new
+ * session (a worktree of the checkout on a branch of its own, with its own
+ * ports and data folder), or, sent into an open session, where that session
+ * works, on a branch of its own.
  */
-export type WorkPlace = 'checkout' | 'worktree';
+export type WorkPlace = 'workspace' | 'session';
 
 /** How a brief reaches an open session: the prompt to send, or why it waits. */
 export type Handoff =
@@ -112,27 +113,27 @@ export class Briefing {
     );
   }
 
-  /**
-   * Where a brief sent to `destination` makes its change: in the checkout
-   * when no session of `offered` other than the destination is open there,
-   * else in a worktree. A worktree in Rust costs a cold build and a target
-   * folder of its own, so it is asked for only when another session could
-   * be editing the same files or be switched onto the brief's branch.
-   */
-  static place(destination: Destination, offered: readonly DeskSession[]): WorkPlace {
-    const others = offered.filter(
-      (session) => destination.kind === 'new' || session.session !== destination.session.session,
-    );
-    return others.length ? 'worktree' : 'checkout';
+  /** Where a brief sent to `destination` makes its change. */
+  static place(destination: Destination): WorkPlace {
+    switch (destination.kind) {
+      case 'new':
+        return 'workspace';
+      case 'session':
+        return 'session';
+      default: {
+        const never: never = destination;
+        return never;
+      }
+    }
   }
 
   /** How a change is to be made, in the brief's closing paragraph. */
   static #work(place: WorkPlace, branch: string): string {
     switch (place) {
-      case 'checkout':
-        return `make it on a new branch, ${Redline.code(branch)}, in this checkout, since no other session is open here; if ${Redline.code('git status')} shows uncommitted changes, use a git worktree of this repository instead. Run the project's checks, commit, and switch the checkout back to the branch it was on.`;
-      case 'worktree':
-        return `make it on a new branch, ${Redline.code(branch)}, in a git worktree of this repository, not in the checkout itself, since other sessions are open there, and run the project's checks.`;
+      case 'workspace':
+        return `make it here: this session works in a workspace of its own, a worktree of the repository on a branch of its own. Run the project's checks and commit on that branch.`;
+      case 'session':
+        return `make it on a new branch, ${Redline.code(branch)}, in a git worktree of this repository unless you already work in one, never in a checkout other sessions share, and run the project's checks.`;
       default: {
         const never: never = place;
         return never;

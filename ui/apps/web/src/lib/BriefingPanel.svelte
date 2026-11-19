@@ -268,17 +268,14 @@
   });
   const noted = $derived(Redline.noted(desk.marks));
   const brief = $derived(
-    Briefing.brief(
-      context,
-      { route: page.route.id, revision },
-      noted,
-      Briefing.place(destination, offered),
-    ),
+    Briefing.brief(context, { route: page.route.id, revision }, noted, Briefing.place(destination)),
   );
 
   /** A new session in `checkout`, with the brief as its first prompt. */
   async function start(checkout: string): Promise<SessionId> {
-    const made = await client.createSession(harness, checkout, { approvals });
+    // A workspace of its own: a worktree of the checkout, its own branch,
+    // ports, and data folder.
+    const made = await client.createSession(harness, checkout, { approvals }, 'worktree');
     await client.toSession(made, { kind: 'prompt', text: brief, delivery: 'start' });
     return made;
   }
