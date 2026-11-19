@@ -248,7 +248,7 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      without the browser asking, or a library).
 6. **Projects.** Built: a project's contract, checks, previews, canary,
    and promotion, shown in the Release view; with no timer of its own.
-   - A repository declares in `ren-project.toml` how it is built, served,
+   - A repository declares in `.ren/project.toml` how it is built, served,
      checked, and quiesced (`ren-project`, sans-IO): argv steps whose
      values name the workspace's ports, data, and folder through parsed
      placeholders. Its `tools` name the depot packages its steps need;

@@ -1,6 +1,6 @@
 //! A project's contract with Ren (docs/plans/self-build.md, phase 6), pure:
 //! how a repository is built, served, checked, and quiesced, declared in
-//! [`ProjectContract::FILE`] at its root, so a workspace of it gets checks
+//! [`ProjectContract::FILE`] (`.ren/project.toml`), so a workspace of it gets checks
 //! and a preview as Ren's own do.
 //!
 //! ```toml
@@ -108,17 +108,17 @@ pub struct Expanded {
 /// Why a contract does not read.
 #[derive(Debug, thiserror::Error)]
 pub enum ContractError {
-    #[error("ren-project.toml does not read: {0}")]
+    #[error(".ren/project.toml does not read: {0}")]
     Toml(#[from] toml::de::Error),
-    #[error("a command in ren-project.toml is empty")]
+    #[error("a command in .ren/project.toml is empty")]
     EmptyCommand,
-    #[error("check {0:?} is named twice in ren-project.toml")]
+    #[error("check {0:?} is named twice in .ren/project.toml")]
     DuplicateCheck(String),
-    #[error("a check in ren-project.toml has no name")]
+    #[error("a check in .ren/project.toml has no name")]
     UnnamedCheck,
     #[error("the serve health path must start with `/`: {0:?}")]
     Health(String),
-    #[error("an environment variable in ren-project.toml has an invalid name: {0:?}")]
+    #[error("an environment variable in .ren/project.toml has an invalid name: {0:?}")]
     EnvName(String),
     #[error(transparent)]
     Template(#[from] TemplateError),
@@ -174,8 +174,9 @@ struct CheckFile {
 }
 
 impl ProjectContract {
-    /// The contract's file, at the repository's root.
-    pub const FILE: &str = "ren-project.toml";
+    /// The contract's file, relative to the repository's root: in `.ren`,
+    /// the folder that holds what Ren reads from a repository.
+    pub const FILE: &str = ".ren/project.toml";
 
     /// The contract `text` declares.
     pub fn read(text: &str) -> Result<Self, ContractError> {
