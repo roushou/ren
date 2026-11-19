@@ -204,7 +204,7 @@ mod tests {
             .map(|kind| Check::new(*kind, Outcome::Passed))
             .collect();
         checks.push(Check::new(CheckKind::Pages, outcome));
-        Canary::new(MAIN.parse().unwrap(), Verdict::new(checks))
+        Canary::new(MAIN.parse().unwrap(), Verdict::ren(checks))
     }
 
     fn at(text: &str) -> MinuteOfDay {

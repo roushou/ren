@@ -25,7 +25,7 @@ test('a failed canary and an unknown decision read as such', () => {
     canary: {
       commit: '62e9e9e0000000000000000000000000000000ff',
       passed: false,
-      checks: [{ check: 'pages', passed: false, detail: 'the sessions page did not load' }],
+      checks: [{ check: 'pages', name: null, passed: false, detail: 'the sessions page did not load' }],
     },
     policy: 'automatic',
     decision: 'failed',

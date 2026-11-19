@@ -110,7 +110,7 @@ fn release() -> ren_release::Release {
             production: "07f4bb7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708".parse().unwrap(),
             behind: Some(1),
             canary: Some((
-                Canary::new(main.parse().unwrap(), Verdict::new(checks)),
+                Canary::new(main.parse().unwrap(), Verdict::ren(checks)),
                 Lineage::Ahead,
                 Attempt::Untried,
             )),

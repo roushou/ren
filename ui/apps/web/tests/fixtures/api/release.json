@@ -10,16 +10,19 @@
       "checks": [
         {
           "check": "doctor",
+          "name": null,
           "passed": true,
           "detail": null
         },
         {
           "check": "reads",
+          "name": null,
           "passed": true,
           "detail": null
         },
         {
           "check": "pages",
+          "name": null,
           "passed": true,
           "detail": null
         }

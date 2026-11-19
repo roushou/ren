@@ -340,7 +340,7 @@ export const healthStatuses = ['ok', 'degraded'] as const;
 export const environments = ['production', 'development', 'canary', 'preview'] as const;
 export type Environment = (typeof environments)[number];
 /** What the canary checks of a build. */
-export const checkKinds = ['doctor', 'reads', 'pages'] as const;
+export const checkKinds = ['doctor', 'reads', 'pages', 'build', 'serve', 'declared'] as const;
 export type CheckKind = (typeof checkKinds)[number];
 /** What promotion decided for the canary's build. */
 export const decisions = [
@@ -666,6 +666,8 @@ export interface Health {
 /** One check of the canary's build. */
 export interface CheckView {
   check: Stored<CheckKind>;
+  /** A project's declared check's name. */
+  name: string | null;
   passed: boolean;
   detail: string | null;
 }
@@ -990,6 +992,7 @@ const releaseBody = object<{ release: ReleaseView | null }, WireReleaseBody>({
           checks: array(
             object<CheckView, WireCheckView>({
               check: label(checkKinds),
+              name: nullable(string),
               passed: boolean,
               detail: nullable(string),
             }),

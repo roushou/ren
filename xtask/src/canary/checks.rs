@@ -41,18 +41,21 @@ struct Swept {
 impl Checks<'_> {
     /// Every check, in the order they run.
     pub fn run(&self) -> Verdict {
-        let checks = [CheckKind::Doctor, CheckKind::Reads, CheckKind::Pages]
+        let checks: [(CheckKind, &dyn Fn() -> Outcome); 3] = [
+            (CheckKind::Doctor, &|| self.doctor()),
+            (CheckKind::Reads, &|| {
+                ReadSweep {
+                    gateway: self.canary.daemon(),
+                }
+                .run()
+            }),
+            (CheckKind::Pages, &|| self.pages()),
+        ];
+        let checks = checks
             .into_iter()
-            .map(|kind| {
+            .map(|(kind, check)| {
                 Progress(&format!("Checking the canary: {kind}")).show();
-                let outcome = match kind {
-                    CheckKind::Doctor => self.doctor(),
-                    CheckKind::Reads => ReadSweep {
-                        gateway: self.canary.daemon(),
-                    }
-                    .run(),
-                    CheckKind::Pages => self.pages(),
-                };
+                let outcome = check();
                 match &outcome {
                     Outcome::Passed => println!("{kind}: passed"),
                     Outcome::Failed { detail } => println!("{kind}: failed: {detail}"),
@@ -60,7 +63,7 @@ impl Checks<'_> {
                 Check::new(kind, outcome)
             })
             .collect();
-        Verdict::new(checks)
+        Verdict::ren(checks)
     }
 
     /// `ren doctor` of the build: nothing failed, and the daemon runs the

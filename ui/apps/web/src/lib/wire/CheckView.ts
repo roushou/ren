@@ -3,7 +3,11 @@
 /**
  * One check of the canary's build.
  */
-export type CheckView = { check: string, passed: boolean, 
+export type CheckView = { check: string, 
+/**
+ * A project's declared check's name.
+ */
+name: string | null, passed: boolean, 
 /**
  * What failed, for a failed check.
  */

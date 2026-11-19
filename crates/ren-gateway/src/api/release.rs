@@ -112,6 +112,8 @@ pub struct CanaryView {
 pub struct CheckView {
     #[ts(type = "string")]
     pub check: Stored<CheckKind>,
+    /// A project's declared check's name.
+    pub name: Option<String>,
     pub passed: bool,
     /// What failed, for a failed check.
     pub detail: Option<String>,
@@ -137,6 +139,7 @@ impl From<&Release> for ReleaseView {
                         };
                         CheckView {
                             check: check.check().clone(),
+                            name: check.name().map(str::to_owned),
                             passed,
                             detail,
                         }

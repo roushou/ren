@@ -43,7 +43,9 @@ export const ReleaseLine = {
     const checks = canary
       ? canary.checks
           .map((check) =>
-            check.passed ? `${check.check} passed` : `${check.check} failed${check.detail ? `: ${check.detail}` : ''}`,
+            check.passed
+              ? `${check.name ?? check.check} passed`
+              : `${check.name ?? check.check} failed${check.detail ? `: ${check.detail}` : ''}`,
           )
           .join('\n  ')
       : '';

@@ -63,10 +63,16 @@ impl ReleaseCmd {
                 let checks: Vec<String> = canary
                     .checks
                     .iter()
-                    .map(|check| match (&check.detail, check.passed) {
-                        (_, true) => format!("{} passed", check.check),
-                        (Some(detail), false) => format!("{} failed: {detail}", check.check),
-                        (None, false) => format!("{} failed", check.check),
+                    .map(|check| {
+                        let named = check
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| check.check.to_string());
+                        match (&check.detail, check.passed) {
+                            (_, true) => format!("{named} passed"),
+                            (Some(detail), false) => format!("{named} failed: {detail}"),
+                            (None, false) => format!("{named} failed"),
+                        }
                     })
                     .collect();
                 let verdict = if canary.passed { "passed" } else { "failed" };
