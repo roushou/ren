@@ -100,6 +100,7 @@ function stored(id: string, workdir: string, createdAt: number, archived = false
   return {
     session: id as SessionId,
     served: null,
+    worktree: null,
     stored: {
       id: id as SessionId,
       harness: 'codex',

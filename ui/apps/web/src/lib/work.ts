@@ -9,7 +9,6 @@ import { API_VERSION, revision, type Project, type Revision, type Shelf } from '
 import {
   Uuid,
   array,
-  boolean,
   count,
   isRecord,
   label,
@@ -34,9 +33,6 @@ import type { WorkItems as WireWorkItems } from './wire/WorkItems.ts';
 import type { WorkMarkBody as WireWorkMark } from './wire/WorkMarkBody.ts';
 import type { WorkOrderBody as WireWorkOrder } from './wire/WorkOrderBody.ts';
 import type { WorkPreviewBody as WireWorkPreview } from './wire/WorkPreviewBody.ts';
-import type { ProjectWorkspaces as WireProjectWorkspaces } from './wire/ProjectWorkspaces.ts';
-import type { WorkspaceBody as WireWorkspace } from './wire/WorkspaceBody.ts';
-import type { WorkspaceWork as WireWorkspaceWork } from './wire/WorkspaceWork.ts';
 
 export type WorkItemId = Brand<string, 'WorkItemId'>;
 export const WorkItemId = new Uuid<'WorkItemId'>();
@@ -84,29 +80,6 @@ export interface WorkItem {
   shipped: Revision | null;
   /** A preview of its change, while one is up. */
   preview: { ui: string; revision: Revision } | null;
-}
-
-/** A workspace: a worktree of a project's repository one session works
- * in, with the ports and data folder its slot holds, and the work items
- * its session took up. */
-export interface Workspace {
-  /** `<repo>-<slot>`, its folder's name. */
-  name: string;
-  folder: string;
-  data: string;
-  /** Its ports, first and last. */
-  ports: [number, number];
-  session: SessionId;
-  /** The first line of its session's first prompt; none until asked. */
-  prompt: string | null;
-  running: boolean;
-  work: {
-    id: WorkItemId;
-    title: string;
-    state: Stored<WorkState>;
-    /** Where its preview is served, while one is up. */
-    preview: string | null;
-  }[];
 }
 
 /** A change to a work item. */
@@ -164,31 +137,6 @@ const workItem = object<WorkItem, WireWorkItem>({
   ),
 });
 const workItems = object<{ work: WorkItem[] }, WireWorkItems>({ work: array(workItem) });
-const ports = (value: unknown, path: string): [number, number] => {
-  if (!Array.isArray(value) || value.length !== 2) throw new ShapeError(path, 'two ports');
-  return [count(value[0], `${path}[0]`), count(value[1], `${path}[1]`)];
-};
-const workspaces = object<{ workspaces: Workspace[] }, WireProjectWorkspaces>({
-  workspaces: array(
-    object<Workspace, WireWorkspace>({
-      name: string,
-      folder: string,
-      data: string,
-      ports,
-      session: SessionId.decode,
-      prompt: nullable(string),
-      running: boolean,
-      work: array(
-        object<Workspace['work'][number], WireWorkspaceWork>({
-          id: WorkItemId.decode,
-          title: string,
-          state: label(workStates),
-          preview: nullable(string),
-        }),
-      ),
-    }),
-  ),
-});
 const workAnswer = object<{ id: WorkItemId; state: Stored<WorkState> }, WireWorkAnswer>({
   id: WorkItemId.decode,
   state: label(workStates),
@@ -215,13 +163,6 @@ export class WorkApi {
     const search = params.toString();
     const path = search ? `/api/work?${search}` : '/api/work';
     return (await this.#request('GET', path, undefined, workItems, signal)).work;
-  }
-
-  /** The workspaces of the project named `project`: its current
-   * sessions' worktrees. */
-  async workspaces(project: string, signal?: AbortSignal): Promise<Workspace[]> {
-    const path = `/api/projects/${encodeURIComponent(project)}/workspaces`;
-    return (await this.#request('GET', path, undefined, workspaces, signal)).workspaces;
   }
 
   /** Queue `order`, and return the new item's id. */

@@ -56,6 +56,7 @@ const listing = {
         runs: [recorded(runA2, 300, false), recorded(runA1, 100, true)],
       },
       served: null,
+      worktree: null,
     },
     {
       session: sessionB,
@@ -74,6 +75,7 @@ const listing = {
         runs: [recorded(runB, 50, true)],
       },
       served: null,
+      worktree: null,
     },
     {
       // Just made: served, not stored yet.
@@ -87,6 +89,7 @@ const listing = {
         state: { shelf: 'open', phase: 'draft' },
         process: null,
       },
+      worktree: null,
     },
   ],
 };
@@ -222,4 +225,24 @@ test('session commands go to their routes', async () => {
     `POST /control/sessions/${sessionA}/archive {}`,
     `POST /control/sessions/${sessionA}/delete {}`,
   ]);
+});
+
+test('a session in a worktree Ren made carries it, with its ports', async () => {
+  const worktree = { name: 'acme-1', data: '/worktrees/.data/acme-1', ports: [20000, 20099] };
+  const inWorktree = {
+    ...listing,
+    sessions: [{ ...listing.sessions[0]!, worktree }, ...listing.sessions.slice(1)],
+  };
+  const client = new RunsClient((async () => Response.json(inWorktree)) as unknown as typeof fetch);
+  const [first, second] = await client.sessions('current', undefined, 'acme');
+  assert.deepEqual(first?.worktree, worktree);
+  assert.deepEqual(Sessions.desk(first!, [])?.worktree, worktree);
+  assert.equal(second?.worktree, null);
+  const malformed = {
+    ...listing,
+    sessions: [{ ...listing.sessions[0]!, worktree: { ...worktree, ports: [20000] } }],
+  };
+  await assert.rejects(
+    new RunsClient((async () => Response.json(malformed)) as unknown as typeof fetch).sessions(),
+  );
 });

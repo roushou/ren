@@ -80,6 +80,7 @@ import type { ClientCommand as WireClientCommand } from './wire/ClientCommand.ts
 import type { ClientsBody as WireClientsBody } from './wire/ClientsBody.ts';
 import type { CommandsBody as WireCommandsBody } from './wire/CommandsBody.ts';
 import type { Created as WireCreated } from './wire/Created.ts';
+import type { WorktreeBody as WireWorktree } from './wire/WorktreeBody.ts';
 import type { FileMatch as WireFileMatch } from './wire/FileMatch.ts';
 import type { FilesBody as WireFilesBody } from './wire/FilesBody.ts';
 import type { Model as WireModel } from './wire/Model.ts';
@@ -697,11 +698,23 @@ export interface StoredSession {
   runs: RecordedRun[];
 }
 
+/** A worktree of a project's repository Ren made for one session, on a
+ * branch of its own, with the ports and data folder its runs are given. */
+export interface Worktree {
+  /** `<repo>-<slot>`, its folder's name. */
+  name: string;
+  data: string;
+  /** Its ports, first and last. */
+  ports: [number, number];
+}
+
 /** One session: as stored and as served; either may be missing for a moment. */
 export interface SessionBody {
   session: SessionId;
   stored: StoredSession | null;
   served: ServedSession | null;
+  /** The worktree it works in; null in any other folder. */
+  worktree: Worktree | null;
 }
 
 const servedSession = object<ServedSession, WireSessionSnapshot>({
@@ -733,10 +746,15 @@ const storedSession = object<StoredSession, WireSessionView>({
   runs: array(recordedRun),
 });
 
+const ports = (value: unknown, path: string): [number, number] => {
+  if (!Array.isArray(value) || value.length !== 2) throw new ShapeError(path, 'two ports');
+  return [count(value[0], `${path}[0]`), count(value[1], `${path}[1]`)];
+};
 const sessionBody = object<SessionBody, WireSessionBody>({
   session: SessionId.decode,
   stored: nullable(storedSession),
   served: nullable(servedSession),
+  worktree: nullable(object<Worktree, WireWorktree>({ name: string, data: string, ports })),
 });
 const sessionList = versioned(
   object<{ sessions: SessionBody[] }, WireSessionsBody>({ sessions: array(sessionBody) }),
@@ -1094,9 +1112,14 @@ export class RunsClient {
     const path = `/control/runs/clients/${harness}/models`;
     return (await this.#send('GET', path, undefined, runModels, signal, 30_000)).models;
   }
-  /** Sessions on `shelf`, most recently active first. */
-  async sessions(shelf: Shelf = 'current', signal?: AbortSignal): Promise<SessionBody[]> {
-    const path = `/control/sessions?${query<WireListRequest>({ shelf })}`;
+  /** Sessions on `shelf`, most recently active first; with `project`,
+   * only those working for the project of that name. */
+  async sessions(
+    shelf: Shelf = 'current',
+    signal?: AbortSignal,
+    project?: string,
+  ): Promise<SessionBody[]> {
+    const path = `/control/sessions?${query<WireListRequest>({ shelf, project })}`;
     return (await this.#send('GET', path, undefined, sessionList, signal)).sessions;
   }
   async session(session: SessionId, signal?: AbortSignal): Promise<SessionBody> {
@@ -2028,6 +2051,8 @@ export interface DeskSession {
   runs: RecordedRun[];
   /** Whether its client takes images; null until the daemon serves it. */
   images: Stored<ImageTaking> | null;
+  /** The worktree it works in; null in any other folder. */
+  worktree: Worktree | null;
 }
 
 /** Sessions grouped by folder, folders that need you first. */
@@ -2072,6 +2097,7 @@ export class Sessions {
       state,
       runs: stored?.runs ?? [],
       images: served?.images ?? null,
+      worktree: body.worktree,
     };
   }
 

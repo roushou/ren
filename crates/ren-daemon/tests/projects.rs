@@ -260,7 +260,7 @@ async fn sessions_and_work_items_belong_to_the_project_they_are_for() {
 }
 
 #[tokio::test]
-async fn a_projects_workspaces_are_its_sessions_worktrees() {
+async fn a_session_in_a_worktree_is_listed_with_it() {
     let upstream = mock(Router::new()).await;
     let dir = tempfile::tempdir().unwrap();
     let gateway = TestGateway::with_runs(
@@ -278,7 +278,7 @@ async fn a_projects_workspaces_are_its_sessions_worktrees() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     settled(dir.path(), |projects| !projects.is_empty()).await;
-    // One session in a workspace of its own, one in the folder itself.
+    // One session in a worktree of its own, one in the folder itself.
     let (status, body) = send(
         &gateway,
         "/sessions",
@@ -286,51 +286,46 @@ async fn a_projects_workspaces_are_its_sessions_worktrees() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    let in_workspace = body["session"].as_str().unwrap().to_owned();
-    send(
+    let in_worktree = body["session"].as_str().unwrap().to_owned();
+    let (status, body) = send(
         &gateway,
         "/sessions",
         Some(json!({ "harness": "codex", "project": "acme", "workspace": "folder" })),
     )
     .await;
-    let read = || async {
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let in_folder = body["session"].as_str().unwrap().to_owned();
+    // The store records a session a moment after it is made.
+    let mut listed = Value::Null;
+    for _ in 0..200 {
         let response = client()
-            .get(format!("{}/api/projects/acme/workspaces", gateway.base()))
+            .get(format!("{}/control/v1/sessions", gateway.base()))
+            .bearer_auth(TestGateway::CONTROL_TOKEN)
             .send()
             .await
             .unwrap();
         assert!(response.status().is_success());
-        serde_json::from_slice::<Value>(&response.bytes().await.unwrap()).unwrap()
-    };
-    let mut listed = Value::Null;
-    for _ in 0..200 {
-        listed = read().await;
-        if listed["workspaces"]
+        listed = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+        if listed["sessions"]
             .as_array()
-            .is_some_and(|all| !all.is_empty())
+            .is_some_and(|all| all.len() == 2)
         {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let workspaces = listed["workspaces"].as_array().unwrap();
-    assert_eq!(workspaces.len(), 1, "{listed}");
-    assert_eq!(workspaces[0]["session"], in_workspace.as_str());
-    assert_eq!(workspaces[0]["name"], "acme-1");
-    assert_eq!(workspaces[0]["ports"], json!([20000, 20099]));
-    assert!(
-        workspaces[0]["data"]
-            .as_str()
+    let worktree = |id: &str| {
+        listed["sessions"]
+            .as_array()
             .unwrap()
-            .ends_with(".data/acme-1")
-    );
-    let missing = client()
-        .get(format!(
-            "{}/api/projects/acme-none/workspaces",
-            gateway.base()
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+            .iter()
+            .find(|session| session["session"] == id)
+            .unwrap_or_else(|| panic!("{id} in {listed}"))["worktree"]
+            .clone()
+    };
+    let made = worktree(&in_worktree);
+    assert_eq!(made["name"], "acme-1", "{listed}");
+    assert_eq!(made["ports"], json!([20000, 20099]));
+    assert!(made["data"].as_str().unwrap().ends_with(".data/acme-1"));
+    assert_eq!(worktree(&in_folder), Value::Null);
 }

@@ -1,8 +1,9 @@
 <!--
   A project (docs/plans/hierarchy.md): what it is, where its release
-  stands, its work items by state, the workspaces its sessions work in, and
-  their runs. Each item opens in a drawer, each workspace and run in
-  Sessions, and Ren's release in full in Release.
+  stands, its work items by state, its sessions (each in the worktree or
+  folder it works in, with the work it took up), and their runs. Each item
+  opens in a drawer, each session and run in Sessions, and Ren's release in
+  full in Release.
 -->
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
@@ -14,6 +15,7 @@
   import { Work, WorkApi, WorkError, type WorkItem } from '#lib/work.ts';
   import { ago } from '#lib/overview.ts';
   import { harnessLabel } from '#lib/activity.ts';
+  import { Sessions } from '#lib/runs.ts';
   import { ProjectBoard } from '#lib/projects.ts';
   import { ReleaseLine, ReleasePage } from '#lib/release.ts';
   import type { PageProps } from './$types';
@@ -177,21 +179,24 @@
       </ul>
     {/each}
 
-    <h2>Workspaces</h2>
-    {#if !data.workspaces.length}
-      <p class="empty">
-        No session works in a worktree of {project.name}. Sending work makes one.
-      </p>
+    <h2>Sessions</h2>
+    {#if !data.sessions.length}
+      <p class="empty">No session works for {project.name} now.</p>
     {:else}
-      <ul class="rows workspaces">
-        {#each data.workspaces as workspace (workspace.session)}
+      <ul class="rows sessions">
+        {#each data.sessions as session (session.session)}
+          {@const taken = data.work.filter((item) => item.session === session.session)}
           <li>
-            <span class="workspace">
-              <a href={`/sessions?session=${workspace.session}`}
-                ><span class="mono">{workspace.name}</span></a
+            <span class="session">
+              <a href={`/sessions?session=${session.session}`}
+                >{session.asked ?? 'Not asked anything yet'}</a
               >
-              <span class="muted asked">{workspace.prompt ?? 'not asked anything yet'}</span>
-              {#each workspace.work as item (item.id)}
+              <span class="muted where">
+                {harnessLabel(session.harness)} in
+                {#if session.worktree}worktree <span class="mono">{session.worktree.name}</span
+                  >{:else}<span class="mono">{session.workdir}</span>{/if}
+              </span>
+              {#each taken as item (item.id)}
                 <span class="taken">
                   <span class="work-state state-{item.state}">{Work.state(item.state)}</span>
                   <a
@@ -201,18 +206,21 @@
                   >
                   {#if item.preview}<a
                       class="muted"
-                      href={item.preview}
+                      href={item.preview.ui}
                       target="_blank"
                       rel="noopener">preview up</a
                     >{/if}
                 </span>
               {/each}
             </span>
-            <span class="muted mono" title={`Data in ${workspace.data}`}
-              >ports {workspace.ports[0]}–{workspace.ports[1]}</span
-            >
+            <span class="muted mono">
+              {#if session.worktree}<span title={`Data in ${session.worktree.data}`}
+                  >ports {session.worktree.ports[0]}–{session.worktree.ports[1]}</span
+                >{/if}
+            </span>
             <span class="muted">
-              {#if workspace.running}<span class="live"><span class="dot"></span>running</span
+              {#if Sessions.running(session)}<span class="live"
+                  ><span class="dot"></span>running</span
                 >{:else}idle{/if}
             </span>
           </li>
@@ -502,18 +510,18 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .rows.workspaces li {
+  .rows.sessions li {
     grid-template-columns: minmax(0, 1fr) 140px 90px;
   }
-  .rows.workspaces li > :first-child {
+  .rows.sessions li > :first-child {
     white-space: normal;
   }
-  .workspace {
+  .session {
     display: flex;
     flex-direction: column;
     gap: 4px;
   }
-  .asked {
+  .where {
     font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;

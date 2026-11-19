@@ -145,7 +145,7 @@ Records outside the tree stay, and each says why it is outside:
 3. **The API.** Built.
    - Reads: `ReadRequest::Projects` and `ReadRequest::Project`. A project
      view holds its work items counted by state, its release summary, its
-     sessions with a run starting or working, and its workspaces.
+     sessions with a run starting or working, and the worktrees they work in.
      `WorkItems`, sessions, and `Runs` gain a project filter.
    - `/api/projects/{name}/release` replaces both release reads, as a
      declared break (`feat!` and a `BREAKING CHANGE:` footer). The Release
@@ -197,14 +197,14 @@ Records outside the tree stay, and each says why it is outside:
    clears it, and switching between those two keeps it. A project's page
    links its calls and recordings.
 
-   A project's page lists its workspaces
-   (`/api/projects/{name}/workspaces`): each current session of the
-   project's that works in a worktree of its repository, with the folder's
-   name, its port range and data folder, what its session was first asked,
-   whether a run is under way, and the open work items it took up (each
-   opening in the drawer, with its preview). They are read from the
-   sessions' folders, so no separate list is kept; a shipped item is
-   archived and leaves its workspace's row.
+   A project's page lists its current sessions, each with the worktree it
+   works in (or its folder), the worktree's ports, whether it runs, and
+   the work items it took up, which open in the drawer. A worktree is a
+   property of its session (`worktree` on a session body), not a list of
+   its own: a project holds sessions, and a session works in a worktree.
+   Deviation: the plan named them the project's workspaces; "workspace"
+   usually means something bigger than a project, so the concept is
+   renamed to worktree, in its own change after this one.
 
 Each phase is verified in the dev slot, whose fake projects are registered
 as projects (and the slot's checkout as `Ren`), and by the compatibility

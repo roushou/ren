@@ -119,7 +119,6 @@ test('every allowlisted read uses the same bounded read bridge', async () => {
     '/api/projects/acme-web',
     '/api/projects/ren/release',
     '/api/projects/ren/release/shots/overview',
-    '/api/projects/acme-web/workspaces',
     '/api/calls',
     `/api/calls/${id}`,
     `/api/calls/${id}/body/request`,

@@ -430,11 +430,12 @@ impl SessionsApi {
                 let at = served
                     .iter()
                     .position(|snapshot| snapshot.session == stored.id);
-                SessionBody {
-                    session: stored.id,
-                    served: at.map(|at| served.remove(at).into()),
-                    stored: Some(stored.into()),
-                }
+                SessionBody::new(
+                    stored.id,
+                    Some(stored.into()),
+                    at.map(|at| served.remove(at).into()),
+                    supervisor.worktrees(),
+                )
             })
             .collect();
         // Served sessions the store has not recorded yet, on their shelf.
@@ -454,11 +455,12 @@ impl SessionsApi {
                 .map_err(|_| ControlRefusal::Unavailable)?
                 .is_none()
             {
-                fresh.push(SessionBody {
-                    session: snapshot.session,
-                    stored: None,
-                    served: Some(snapshot.into()),
-                });
+                fresh.push(SessionBody::new(
+                    snapshot.session,
+                    None,
+                    Some(snapshot.into()),
+                    supervisor.worktrees(),
+                ));
             }
         }
         fresh.append(&mut sessions);
@@ -487,11 +489,12 @@ impl SessionsApi {
             return Err(ControlRefusal::NotFound);
         }
         Ok(ControlApi::answer(OneSession {
-            session: SessionBody {
+            session: SessionBody::new(
                 session,
-                stored: stored.map(Into::into),
-                served: served.map(Into::into),
-            },
+                stored.map(Into::into),
+                served.map(Into::into),
+                supervisor.worktrees(),
+            ),
         }))
     }
 

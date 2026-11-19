@@ -95,6 +95,11 @@ impl Workspace {
             .is_some_and(|name| self.name == format!("{name}-{}", self.slot.0))
     }
 
+    /// `<repo>-<slot>`, its folder's name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn folder(&self) -> PathBuf {
         self.root.join(&self.name)
     }
