@@ -3,7 +3,19 @@
 // the operator across them: a canary to promote, a preview to check, work
 // still queued. Read from `/api/projects` and `/api/work`.
 import type { Project } from './api.ts';
+import type { ApprovalAsk, ApprovalId, RunSnapshot, SessionBody, SessionId } from './runs.ts';
 import type { WorkItem } from './work.ts';
+
+/** An approval a running session waits on, with the project it works for. */
+export interface Approval {
+  session: SessionId;
+  approval: ApprovalId;
+  ask: ApprovalAsk;
+  /** The project's name; null when the session works for none. */
+  project: string | null;
+  /** The first line of the session's first prompt, to know it by. */
+  prompt: string | null;
+}
 
 /** A queued work item's project, by name; null when it names none. */
 export interface Queued {
@@ -24,10 +36,36 @@ export interface WorkGroup {
 export class ProjectBoard {
   readonly projects: readonly Project[];
   readonly work: readonly WorkItem[];
+  /** The runs the daemon holds now; none when this UI only reads. */
+  readonly live: readonly RunSnapshot[];
+  /** The current sessions, for the project each running one works for. */
+  readonly sessions: readonly SessionBody[];
 
-  constructor(projects: readonly Project[], work: readonly WorkItem[]) {
+  constructor(
+    projects: readonly Project[],
+    work: readonly WorkItem[],
+    live: readonly RunSnapshot[] = [],
+    sessions: readonly SessionBody[] = [],
+  ) {
     this.projects = projects;
     this.work = work;
+    this.live = live;
+    this.sessions = sessions;
+  }
+
+  /** Every approval a running session waits on, oldest run first. */
+  get approvals(): Approval[] {
+    return this.live.flatMap((run) => {
+      if (run.state.phase !== 'working') return [];
+      const stored = this.sessions.find((body) => body.session === run.session)?.stored ?? null;
+      return run.state.approvals.map((waiting) => ({
+        session: run.session,
+        approval: waiting.approval,
+        ask: waiting.ask,
+        project: this.nameOf(stored?.project ?? null),
+        prompt: stored?.first_prompt ?? null,
+      }));
+    });
   }
 
   /** The projects being built: unarchived, Ren itself first, then by name. */
@@ -73,7 +111,12 @@ export class ProjectBoard {
 
   /** Whether anything waits on the operator. */
   get pending(): boolean {
-    return this.toPromote.length > 0 || this.previews.length > 0 || this.queued.length > 0;
+    return (
+      this.approvals.length > 0 ||
+      this.toPromote.length > 0 ||
+      this.previews.length > 0 ||
+      this.queued.length > 0
+    );
   }
 
   /** The name of the project with `id`; null for none, or one not listed. */

@@ -7,12 +7,35 @@
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
   import Icon from '#lib/Icon.svelte';
-  import { ProjectBoard } from '#lib/projects.ts';
+  import { invalidateAll } from '$app/navigation';
+  import { ProjectBoard, type Approval } from '#lib/projects.ts';
   import { ReleaseLine } from '#lib/release.ts';
+  import { RunCommandError, Runs, RunsClient, type Decision } from '#lib/runs.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
-  const board = $derived(new ProjectBoard(data.projects, data.work));
+  const board = $derived(new ProjectBoard(data.projects, data.work, data.live, data.sessions));
+  const runs = new RunsClient();
+  /** The approval being answered, and what went wrong with the last answer. */
+  let answering = $state<string | null>(null);
+  let failed = $state<string | null>(null);
+
+  async function answer(waiting: Approval, decision: Decision) {
+    answering = waiting.approval;
+    failed = null;
+    try {
+      await runs.toSession(waiting.session, {
+        kind: 'answer',
+        approval: waiting.approval,
+        decision,
+      });
+      await invalidateAll();
+    } catch (failure) {
+      failed = failure instanceof RunCommandError ? failure.message : 'The answer did not go.';
+    } finally {
+      answering = null;
+    }
+  }
   const running = $derived(board.active.reduce((sum, project) => sum + project.running, 0));
 </script>
 
@@ -91,6 +114,38 @@
     <h2>Pending</h2>
     {#if !board.pending}
       <p class="muted quiet">Nothing waits on you.</p>
+    {/if}
+    {#if board.approvals.length}
+      <h3>Approvals</h3>
+      {#if failed}<p class="error quiet" role="alert">{failed}</p>{/if}
+      <ul>
+        {#each board.approvals as waiting (waiting.approval)}
+          {@const said = Runs.ask(waiting.ask)}
+          <li>
+            <span class="muted"
+              >{[waiting.project ?? 'no project', waiting.prompt]
+                .filter((part) => part !== null)
+                .join(' · ')}</span
+            >
+            <span>{said.action}</span>
+            {#if said.detail}<code class="ask">{said.detail}</code>{/if}
+            {#if said.reason}<span class="muted">{said.reason}</span>{/if}
+            <span class="actions">
+              <button
+                class="button primary small"
+                disabled={answering !== null}
+                onclick={() => void answer(waiting, 'accept')}>Approve</button
+              >
+              <button
+                class="button small"
+                disabled={answering !== null}
+                onclick={() => void answer(waiting, 'decline')}>Decline</button
+              >
+              <a class="button small" href={`/sessions?session=${waiting.session}`}>Open session</a>
+            </span>
+          </li>
+        {/each}
+      </ul>
     {/if}
     {#if board.toPromote.length}
       <h3>Ready to promote</h3>
@@ -268,5 +323,16 @@
   .quiet {
     padding: 12px 16px;
     margin: 0;
+  }
+  .ask {
+    font-size: 12px;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
   }
 </style>

@@ -173,16 +173,15 @@ Records outside the tree stay, and each says why it is outside:
    Release. Overview, the gateway's traffic, moves to `/overview` under
    Inspect.
 
-   Left for later rounds: approvals among what is pending (the read API
-   does not carry a session's phase), Inspect scoped to a project (calls
-   are tied to runs only through their conversation), a work item opened
-   in a drawer over its project, and a project's workspaces.
-   - First, an audit: the operator's tasks in the loop, the screen that
-     serves each today, and the gaps. Then the navigation in decision 6,
-     rendered on the dev slot (with Ren and the fake projects registered)
-     and shown before it is built out.
-   - The 11 links go. Today's pages survive as views inside the tree or in
-     Inspect, not as top-level destinations.
+   Approvals are among what is pending: when this UI drives sessions, the
+   Projects view reads the daemon's live runs (`/control/v1/runs`) and the
+   current sessions, and lists each approval a working run waits on with
+   its project and the session's first prompt, to approve, decline, or
+   open. A UI that only reads shows none.
+
+   Left for later rounds: Inspect scoped to a project (calls are tied to
+   runs only through their conversation), a work item opened in a drawer
+   over its project, and a project's workspaces.
 
 Each phase is verified in the dev slot, whose fake projects are registered
 as projects (and the slot's checkout as `Ren`), and by the compatibility

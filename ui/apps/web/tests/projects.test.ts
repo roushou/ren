@@ -128,3 +128,60 @@ test("a project's work groups by state, open first, and its open work reads in w
   assert.equal(ProjectBoard.releaseHref(project('ren', { factory: 'ren' })), '/release');
   assert.equal(ProjectBoard.releaseHref(project('acme')), '/projects/acme#release');
 });
+
+test('approvals come from working runs, each named by its session and project', () => {
+  const working = {
+    run: 'run-1' as never,
+    session: 'session-1' as never,
+    harness: 'codex',
+    workdir: '/work/acme-web',
+    state: {
+      phase: 'working',
+      thread: 'thread' as never,
+      turn: null,
+      approvals: [
+        {
+          approval: 'approval-1' as never,
+          ask: { kind: 'command', command: 'cargo test', cwd: null, reason: null },
+        },
+      ],
+      queued: null,
+    },
+    settings: { model: null, effort: null, approvals: null },
+  } as const;
+  const idle = {
+    ...working,
+    run: 'run-2' as never,
+    session: 'session-2' as never,
+    state: { phase: 'idle', thread: 'thread' as never },
+  } as const;
+  const sessions = [
+    {
+      session: 'session-1' as never,
+      served: null,
+      stored: {
+        id: 'session-1' as never,
+        project: 'acme-id',
+        first_prompt: 'Fix the pricing table',
+      },
+    },
+  ] as never;
+  const board = new ProjectBoard(
+    [project('acme-web', { id: 'acme-id' })],
+    [],
+    [working, idle] as never,
+    sessions,
+  );
+  assert.deepEqual(board.approvals, [
+    {
+      session: 'session-1',
+      approval: 'approval-1',
+      ask: { kind: 'command', command: 'cargo test', cwd: null, reason: null },
+      project: 'acme-web',
+      prompt: 'Fix the pricing table',
+    },
+  ]);
+  assert.ok(board.pending);
+  // A run whose session is not listed still asks, for no project.
+  assert.equal(new ProjectBoard([], [], [working] as never, []).approvals[0]?.project, null);
+});

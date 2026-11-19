@@ -204,6 +204,8 @@ export type RunState =
 
 export interface RunSnapshot {
   run: RunId;
+  /** The session the run serves. */
+  session: SessionId;
   harness: Stored<Harness>;
   workdir: string;
   state: RunState;
@@ -507,6 +509,7 @@ const itemRead = tagged<ItemRead, WireItemRead, 'as'>(
 
 const runSnapshot = object<RunSnapshot, WireRunSnapshot>({
   run: RunId.decode,
+  session: SessionId.decode,
   harness: label(harnesses),
   workdir: string,
   state: runState,
@@ -680,6 +683,8 @@ export interface StoredSession {
   id: SessionId;
   harness: Stored<Harness>;
   workdir: string;
+  /** The project it works for, by id; null outside every project. */
+  project: string | null;
   created_at: UnixMillis;
   model: ModelId | null;
   effort: Stored<Effort> | null;
@@ -717,6 +722,7 @@ const storedSession = object<StoredSession, WireSessionView>({
   id: SessionId.decode,
   harness: label(harnesses),
   workdir: string,
+  project: nullable(string),
   created_at: brandedCount<'UnixMillis'>(),
   model: nullable(branded<'ModelId'>()),
   effort: nullable(label(EFFORTS)),

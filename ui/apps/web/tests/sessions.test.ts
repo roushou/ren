@@ -45,6 +45,7 @@ const listing = {
         id: sessionA,
         harness: 'codex',
         workdir: '/work/acme',
+        project: null,
         created_at: 100,
         model: 'gpt-deep',
         effort: 'high',
@@ -62,6 +63,7 @@ const listing = {
         id: sessionB,
         harness: 'claude_code',
         workdir: '/work/acme',
+        project: null,
         created_at: 50,
         model: null,
         effort: null,
@@ -99,6 +101,7 @@ test('sessions read as stored and served, and group by folder with the busiest f
   const live: RunSnapshot[] = [
     {
       run: runA2,
+      session: 'session' as never,
       harness: 'codex',
       workdir: '/work/acme',
       state: {
