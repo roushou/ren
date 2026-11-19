@@ -115,12 +115,30 @@ Both definitions restart after failure, run without a shell, use owner-only file
 creation permissions, disable core dumps, and allow 30 seconds for SIGTERM shutdown.
 The daemon lets running calls continue for 10 seconds, cancels what remains,
 then has a separate 10-second budget to drain the recorder.
-The systemd unit uses `KillMode=mixed`: SIGTERM goes to the daemon alone, so it
-ends the [runs](api.md#runs) it drives itself, after its calls, and records each
-as `drained` (a kill Ren sent, so the exit is usually `signal 9`). A run whose
-process exits before the daemon reaches it is recorded as `exited` with the
-exit seen. Whatever is still running when the stop timeout passes is killed
-with the rest of the unit.
+The systemd unit uses `KillMode=mixed`: SIGTERM goes to the daemon alone. Runs
+a run host holds ([below](#runs-through-a-restart)) are not in the unit and go
+on. Any other [run](api.md#runs) the daemon ends itself, after its calls, and
+records as `drained` (a kill Ren sent, so the exit is usually `signal 9`). A
+run whose process exits before the daemon reaches it is recorded as `exited`
+with the exit seen. Whatever is still running when the stop timeout passes is
+killed with the rest of the unit.
+
+#### Runs through a restart
+
+With `[runs] hold = "auto"` (the default) and the daemon running under systemd
+on Linux, each run's client is started by a run host, `ren run-host`, in a
+transient user unit of its own, `ren-run-<run>`. Stopping, restarting, or
+upgrading `ren.service` leaves the client working, mid-turn: the host keeps its
+stdin open and every byte it writes (in `<data>/runs/<run>`). The next daemon
+takes each run up where the last one left it, from what the last one journaled,
+and records a `run_detached` and a `run_rejoined` observation around the time
+no daemon watched it. A run whose host cannot be taken up is stopped and
+recorded as `recovered`. The run's model calls made while no daemon listened
+fail like any call to a stopped gateway, and its client retries them as it
+retries any. `hold = "systemd"` holds runs wherever `systemd-run` works;
+`hold = "off"`, and every host without systemd (macOS), ends runs with the
+daemon as above. `ren runs ls` says which: each run's `tenure` is `held` or
+`bound`.
 Systemd limits repeated startup failures to five in a minute; fix the cause and
 run `systemctl --user reset-failed ren` before restarting if it hits that limit.
 Launchd throttles respawns to at most once every 10 seconds. Neither manager's
@@ -174,15 +192,18 @@ no remote branch. It builds the release binary while the old daemon keeps
 serving, creates `~/.config/ren/ren.toml` only if missing, and checks the
 configuration with Ren's own parser before stopping anything.
 
-It then replaces a running daemon only between calls and between runs' turns. It
-waits until no call is running and no [run](api.md#runs) is starting, working
-(also while it waits for an approval), or stopping, naming each run it waits for
-(up to `--idle-timeout`, 900 seconds by default, then stops without changing
-anything). `--drain-runs` restarts without waiting for runs: their turns are lost
-and their processes end with the daemon; running calls are still waited for. It then pauses
-admission so new calls get `503` with `retry-after: 10` and clients wait (a run
-prompted between the check and the pause is waited for too). Idle runs end with
-the old daemon: before stopping it, it lists each with how to continue it.
+It then replaces a running daemon only between calls and, for runs bound to the
+daemon, between their turns. Runs a run host holds go on through the restart
+([runs through a restart](#runs-through-a-restart)) and are not waited for. It
+waits until no call is running and no bound [run](api.md#runs) is starting,
+working (also while it waits for an approval), or stopping, naming each run it
+waits for (up to `--idle-timeout`, 900 seconds by default, then stops without
+changing anything). `--drain-runs` restarts without waiting for bound runs:
+their turns are lost and their processes end with the daemon; running calls
+are still waited for. It then pauses admission so new calls get `503` with
+`retry-after: 10` and clients wait (a run prompted between the check and the
+pause is waited for too). Idle bound runs end with the old daemon: before
+stopping it, it lists each with how to continue it.
 Writing to its session (from the UI's Sessions page or
 `ren runs say <session> <prompt>`) starts its client again, which resumes the
 conversation where it left off; a run from a daemon without sessions is
@@ -311,17 +332,205 @@ or building and changes files for ones that mention fixing, editing, changing,
 adding, or writing (Codex and Claude Code ask first; Pi asks for no approvals;
 OpenCode asks when the run's approval policy says so), and sends each
 turn's model call through the dev gateway to the fake provider, so a run's
-turns are recorded under its recording. `dev up` restarts the daemon as
-`install-vps` does for runs: it waits for every run starting, working, or stopping
-(up to `--idle-timeout`, 300 seconds by default; `--drain-runs` does not wait), and
-names the idle runs that end with the restart, which can be continued. It does not
-wait for calls, since the fake traffic never stops.
+turns are recorded under its recording. The slot holds its runs as the
+installed service does ([runs through a restart](#runs-through-a-restart)), so
+`dev up` restarts its daemon with their turns going on. For runs bound to the
+daemon, `dev up` does as `install-vps` does: it waits for every one starting,
+working, or stopping (up to `--idle-timeout`, 300 seconds by default;
+`--drain-runs` does not wait), and names the idle ones that end with the
+restart, which can be continued. It does not wait for calls, since the fake
+traffic never stops. `dev down` and `dev reset` also stop the slot's run hosts.
 
 `--ui` publishes the preview with the same Serve step as `install-vps` (with
 `sudo -n` if it last did, or `--sudo-tailscale`); `--local` keeps it on
 loopback. `down` removes each preview route only while it still points at the
 slot. `shot` needs a headless Chromium: `REN_CHROME`, `chrome-headless-shell` or
 `chromium` on `PATH`, or Playwright's downloaded headless shell.
+
+### Canary and promotion
+
+`cargo xtask canary` checks `main`'s tip before production takes it, and
+promotes it as you decide ([the plan](plans/self-build.md), phase 4). One
+pass:
+
+```sh
+cargo xtask canary run              # fetch main, build, check, promote by policy
+cargo xtask canary promote          # install the canary's build now, once it passed
+ren release                         # main, production, the canary, and the decision
+cargo xtask canary enable --every 10   # a pass every 10 minutes, on a user timer
+cargo xtask canary disable
+cargo xtask canary down             # stop the canary
+```
+
+A pass fetches `main` from `origin` and checks its tip out, detached, in
+Ren's own worktree, `~/.local/share/ren/factory`, then goes on with that
+commit's own xtask, so a commit is checked by its own checks. It builds the
+commit once into `~/.local/share/ren/builds/<commit>` (the release `ren`
+and the UI's deployable copy; the newest few are kept). It backs up
+production's history with the running daemon (`ren control backup`) and
+starts the build as the canary on a copy of it: the units `ren-canary-daemon`
+and `ren-canary-ui`, on loopback `17787` and `17000`, with
+`~/.config/ren-canary` and `~/.local/state/ren-canary`, both replaced on every
+pass. Its configuration is production's with its own listener, `[instance]
+environment = "canary"`, no `[runs]`, and a placeholder for every operator
+key, so it drives no runs and forwards no operator-keyed call; its UI only
+reads. `--publish` also publishes it on the tailnet, gateway `9445` and UI
+`9446`, with the install's saved Tailscale choice.
+
+It then checks the canary: `ren doctor` (nothing failed, and the daemon runs
+the build its CLI is), every read of the read API over the copied history
+(each listing, then one item of each), and every page of the UI in a headless
+Chromium (as `dev shot` finds it; the captures are kept in
+`~/.local/share/ren-canary/shots`). A check that cannot run fails. It writes
+where the release stands to production's data folder (`release.json`): `main`'s
+tip, the build production runs and how many commits it is behind, the
+canary's build and each check, and the decision. `/api/release` serves it,
+`ren release` prints it, the UI's status line shows it, and its Release view
+shows all of it: the three builds, each check, the pages the canary
+captured (kept in production's data folder, `release-shots`), what the
+policy decided, the work items production's build shipped and those on
+`main` waiting for it, and each project's release. The view's Promote asks
+for the canary's passed build; the next pass installs it, as `canary
+promote` would, and drops a request that is no longer the canary's passed
+build. With `canary enable`, that is within one timer period.
+
+When the build passed and follows production's commit, the policy in
+`~/.config/ren/release.toml` decides:
+
+```toml
+promote = "manual" # the default: `cargo xtask canary promote`
+# promote = "automatic"      # as soon as it passes
+# promote = "02:00-05:00"    # as soon as it passes inside this daily UTC window
+```
+
+Promoting runs `install-vps --build <commit>` with the saved publishing
+flags: the install's own steps (the wait for calls and bound runs' turns, the
+pause, the backup, the build check, and the rollback on failure), with the
+kept build instead of building the checkout. No policy promotes a build that failed its checks, that production already runs, or that lacks commits production has, nor one over a production build that is not a clean commit of `main`; `canary promote` promotes any build that passed. A promotion that fails is rolled back by the install and marked on the build, and is not tried again unless you promote
+it. `install-vps --build <commit>` also installs a kept build by hand.
+
+Every pass also closes work items ([work items](api.md#work-items)): it
+lands each sent item that a commit in `main`'s recent history names in a
+`Work-Item: <id>` trailer, waits for production to store the landings, and
+ships each landed item whose commit production's clean build holds, through
+production's own control API with its control token (read from its data
+folder and handed to curl in a private file). `cargo xtask canary work` does
+only this, against this checkout's commit as `main` (or `--main <commit>`).
+A production whose daemon keeps no work items yet is left alone.
+
+`canary enable` writes `ren-canary.service` and `ren-canary.timer` to
+`~/.config/systemd/user`, running `cargo xtask canary run` from the checkout
+it was enabled in; follow a pass with `journalctl --user -u ren-canary`.
+`--of dev` rehearses all of it with the dev slot as production: its fake
+history, its `release.json`, and never a promotion.
+
+### Previews
+
+`cargo xtask preview` runs one workspace's branch on a copy of production's
+history, so its change is judged on the page it was marked on, beside
+production's. It runs in a workspace Ren made: it reads `REN_WORKSPACE`,
+which the workspace's runs are told, refuses a folder that is not one of
+Ren's worktrees named `<repo>-<slot>`, and takes the data folder and ports
+Ren gives that slot. A brief asks the agent to start one once its change is
+ready:
+
+```sh
+cargo xtask preview up --publish   # build, copy production's history, start, record
+cargo xtask preview down --publish # stop, unpublish, take it off the work items
+```
+
+`up` builds the branch (debug) into `<data>/preview`, backs up production's
+history with production's own `ren`, and starts the build as a replica, as
+the canary is: `ren-preview-<workspace>-daemon` on the slot's first port and
+`ren-preview-<workspace>-ui` on the next, with production's configuration but
+`environment = "preview"`, no runs, no operator key, and a UI that only reads.
+`--publish` publishes both on the tailnet on the same port numbers, with the
+install's saved Tailscale choice. It then records the preview on every sent
+work item the branch's recent commits name (`Work-Item: <id>`), and on each
+`--work <id>`: the Work view opens the marked page on it beside production's.
+`--of dev` copies the dev slot instead. Deleting the workspace's session
+stops its preview with it, and takes it off the session's work items.
+
+### Projects
+
+A repository declares how Ren builds, serves, checks, and quiesces it in
+`ren-project.toml` at its root, and a workspace of it then gets checks and
+a preview as Ren's own do:
+
+```toml
+[[build]]
+run = ["npm", "ci"]
+
+[serve]
+run = ["node", "build/index.js"]
+env = { PORT = "{port}", HOST = "127.0.0.1" }
+open = "http://127.0.0.1:{port}"
+health = "/health"
+
+[[check]]
+name = "tests"
+run = ["npm", "test"]
+
+[quiesce]
+run = ["curl", "-fsS", "-X", "POST", "http://127.0.0.1:{port}/drain"]
+
+[deploy]
+run = ["./deploy.sh", "production"]
+```
+
+Every command is an argv, never a shell line. Arguments and values may
+name the workspace's first port `{port}`, another `{port+N}` (within its
+100), its data folder `{data}`, and its folder `{workspace}`.
+
+```sh
+ren project check                  # run the declared checks; fails when one does
+ren project preview up --publish   # build, serve on the workspace's ports, record
+ren project preview down --publish # quiesce, stop, take it off the work items
+```
+
+`check` runs in the workspace it is started in (or `--dir`; outside a
+workspace a step that names a port does not run). `preview up` runs the
+build steps, starts the serve step as `ren-preview-<workspace>-serve` (with
+the caller's `PATH`, so programs installed in your home are found), waits
+for its health path, and records the preview on the sent work items the
+branch's commits name (`Work-Item: <id>`) or `--work` gives, through this
+host's daemon. With `--publish` it publishes the port its page opens on, as
+`install-vps` does: a free port is published, and one Serve already uses
+for anything else, or exposes through Funnel, is refused; `down` removes
+the route only while it still points at the preview. Like Ren's, it works
+in a workspace read from `REN_WORKSPACE` alone. Deleting the workspace's
+session stops it and takes it off its work items. The dev slot's fake
+projects declare one: a static page served by Python, deployed by copying
+it into a folder under the canary's data.
+
+A project gets a canary and promotion too:
+
+```sh
+ren project canary --dir ~/dev/acme   # fetch main, build, serve, check, deploy by policy
+ren project promote --dir ~/dev/acme  # deploy the canary's passed build now
+ren project release --dir ~/dev/acme  # main, production, the canary, and the decision
+```
+
+A pass fetches the project's `main` (`--remote`, `--branch`) and checks its
+tip out, detached, in a workspace the factory keeps for the project, in
+Ren's worktrees folder, so its slot's ports are its own. It runs the build
+steps, starts the serve step there and waits for its health path, then
+runs each declared check against it; a check that cannot run fails. The
+verdict, the build last deployed (none before the first promotion), and the
+operator's policy make the project's release, kept in
+`<data>/projects/<name>`. The policy is the project's table in
+`~/.config/ren/release.toml`, by its folder's name, manual unless named:
+
+```toml
+[projects.acme]
+promote = "automatic" # or "manual", or a daily UTC window like "02:00-05:00"
+```
+
+When it promotes (a passed build that follows the one deployed), the
+contract's `[deploy]` step runs in the checked build, and production is then
+that commit; a deploy that fails is marked and not tried again unless you
+promote it. A project that declares no deploy step is never promoted. The
+canary stays served on its workspace's port until the next pass.
 
 ### Manual steps
 

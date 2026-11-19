@@ -14,7 +14,7 @@ pub(super) use crate::recording::{Piece, Record, Track};
 use crate::{
     batch::{
         BodyEnd, CloseChannel, HistoryEdit, OpenCall, OperatorAction, ResponseHead, RunEntry,
-        RunRecord, SessionRecord, Stamp, StartAttempt,
+        RunRecord, SessionRecord, Stamp, StartAttempt, WorkRecord,
     },
     capture::{CallRejection, Omission, TerminalRecord},
     id::{AttemptId, IdSource},
@@ -72,6 +72,11 @@ pub(super) enum Item {
     },
     Session {
         record: SessionRecord,
+        /// Released when dequeued.
+        _slot: OwnedSemaphorePermit,
+    },
+    Work {
+        record: WorkRecord,
         /// Released when dequeued.
         _slot: OwnedSemaphorePermit,
     },
@@ -154,6 +159,7 @@ impl Item {
             ),
             Self::Operator { action, _slot } => (Record::Operator(action), None),
             Self::Session { record, _slot } => (Record::Session(record), None),
+            Self::Work { record, _slot } => (Record::Work(record), None),
             Self::Run { record, _slot } => (Record::Run(record), None),
             Self::History { edit, _slot } => (Record::History(edit), None),
             Self::RunEntry {

@@ -82,6 +82,21 @@ impl UiDeploy {
         Ok(self.build.build_into(&self.staged)?)
     }
 
+    /// Stages a copy of a deployable UI already built (a kept build's),
+    /// beside the running one. Nothing running is touched.
+    pub fn stage(&self, built: &Path) -> Result<(), InstallError> {
+        Progress(&format!("Staging the UI in {}", self.staged.display())).show();
+        if self.staged.exists() {
+            fs::remove_dir_all(&self.staged).map_err(FileError::at(&self.staged))?;
+        }
+        Invocation::new("cp")
+            .arg("-R")
+            .arg(built)
+            .arg(&self.staged)
+            .run()?;
+        Ok(())
+    }
+
     /// Swaps in the staged copy, writes `ui.env` if missing, starts the
     /// service, and checks that the UI answers through to the daemon. If it
     /// does not, the copy it replaced is put back with its unit.

@@ -12,9 +12,10 @@ use crate::caller::{Caller, TailscaleLogin};
 use crate::digest::CallDigest;
 use crate::{
     capture::{BodyEnding, CallRejection, ChannelEnd, ProcessExit, RunEnd, TerminalRecord},
-    id::{AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId},
+    id::{AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, WorkItemId},
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     time::{Moment, UnixMillis},
+    work::{WorkOrder, WorkPreview, WorkStateKind},
 };
 use bytes::Bytes;
 use ren_depot::toolset::Generation;
@@ -29,6 +30,7 @@ use ren_protocol::{
     route::{Endpoint, Method, Provider, Transport, Wire},
     websocket::Payload,
 };
+use ren_release::{Commit, Revision};
 use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -100,6 +102,7 @@ impl Batch {
                     | Op::CloseChannel(_)
                     | Op::Operator(_)
                     | Op::Session(_)
+                    | Op::Work(_)
                     | Op::Run(_)
                     | Op::RunEntry(_)
                     | Op::History(_) => true,
@@ -194,6 +197,7 @@ pub enum Op {
     CloseChannel(CloseChannel),
     Operator(OperatorAction),
     Session(SessionRecord),
+    Work(WorkRecord),
     Run(RunRecord),
     /// One entry of a run's conversation. It is stored, not logged: the
     /// run feed carries it live.
@@ -352,6 +356,70 @@ impl SessionFact {
     }
 }
 
+/// A fact about a work item, when it happened. Not tied to a channel or
+/// call.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkRecord {
+    #[serde(skip)]
+    pub at: Moment,
+    pub item: WorkItemId,
+    #[serde(flatten)]
+    pub fact: WorkFact,
+}
+
+/// What happened to a work item: each a transition of its `WorkState`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case", tag = "fact")]
+pub enum WorkFact {
+    /// It was marked: what it asks, waiting to be sent.
+    Queued {
+        order: Box<WorkOrder>,
+    },
+    /// `session` took it up.
+    Sent {
+        session: SessionId,
+    },
+    /// Its change is on `main` as `commit`.
+    Landed {
+        commit: Commit,
+    },
+    /// Production runs `revision`, which holds its change.
+    Shipped {
+        revision: Revision,
+    },
+    Dismissed,
+    /// A preview of its change is up, or none any longer.
+    Previewed {
+        preview: Option<WorkPreview>,
+    },
+}
+
+impl WorkFact {
+    /// The states the fact moves an item from: as `WorkState::apply` takes
+    /// its event. The store applies it only to an item still in one, so of
+    /// two changes accepted at once, the second does not undo the first.
+    /// A queued item is new: it moves from none.
+    pub fn from_states(&self) -> &'static [WorkStateKind] {
+        match self {
+            Self::Queued { .. } => &[],
+            Self::Sent { .. } | Self::Dismissed => &[WorkStateKind::Queued, WorkStateKind::Sent],
+            Self::Landed { .. } | Self::Previewed { .. } => &[WorkStateKind::Sent],
+            Self::Shipped { .. } => &[WorkStateKind::Landed],
+        }
+    }
+
+    pub fn kind(&self) -> ObservationKind {
+        match self {
+            Self::Queued { .. } => ObservationKind::WorkQueued,
+            Self::Sent { .. } => ObservationKind::WorkSent,
+            Self::Landed { .. } => ObservationKind::WorkLanded,
+            Self::Shipped { .. } => ObservationKind::WorkShipped,
+            Self::Dismissed => ObservationKind::WorkDismissed,
+            Self::Previewed { .. } => ObservationKind::WorkPreviewed,
+        }
+    }
+}
+
 /// A fact about a run, when it happened. Not tied to a channel or call.
 #[derive(Debug, Clone, Serialize)]
 pub struct RunRecord {
@@ -381,6 +449,12 @@ pub enum RunFact {
     Opened { thread: NativeThreadId },
     /// The run moved to these settings, from its next turn on.
     Configured { settings: RunSettings },
+    /// The daemon stopped while the run went on under its run host: from
+    /// here until it is rejoined, no daemon watched it.
+    Detached,
+    /// A daemon took the run up again from its run host. What the run did
+    /// while detached is recorded from here, as this daemon reads it.
+    Rejoined,
     Ended {
         end: RunEnd,
         exit: Option<ProcessExit>,
@@ -393,6 +467,8 @@ impl RunFact {
             Self::Started { .. } => ObservationKind::RunStarted,
             Self::Opened { .. } => ObservationKind::RunOpened,
             Self::Configured { .. } => ObservationKind::RunConfigured,
+            Self::Detached => ObservationKind::RunDetached,
+            Self::Rejoined => ObservationKind::RunRejoined,
             Self::Ended { .. } => ObservationKind::RunEnded,
         }
     }
@@ -472,6 +548,21 @@ pub enum ObservationKind {
     SessionDetached,
     /// A session's attachments went out with a prompt.
     SessionAttachmentsSent,
+    /// A daemon stopped while a run went on under its run host.
+    RunDetached,
+    /// A daemon took up a run it had detached from.
+    RunRejoined,
+    /// An operator marked something to be done. Not tied to a call.
+    WorkQueued,
+    /// A session took up a work item.
+    WorkSent,
+    /// A work item's change landed on main.
+    WorkLanded,
+    /// Production took a build with a work item's change.
+    WorkShipped,
+    WorkDismissed,
+    /// A work item's preview went up or down.
+    WorkPreviewed,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

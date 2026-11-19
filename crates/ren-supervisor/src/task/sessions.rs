@@ -5,6 +5,7 @@
 use super::{Composing, Reading, Served, SupervisorTask, Walked};
 use crate::attachments::AttachmentUse;
 use crate::host::Scratch;
+use crate::workspace::{Slot, Workspace};
 use crate::{
     Create, Reply, SessionError, SessionRequest, SessionSeed, StartError, StartPlace,
     files::{FileListing, FileMatch, FileQuery},
@@ -148,6 +149,17 @@ impl<H: AgentHost> SupervisorTask<H> {
     ) -> Result<(), SessionError> {
         if served.process(session).is_some() {
             return Err(SessionError::Running);
+        }
+        // Its workspace goes with it, unless it holds changes not committed.
+        let workspace = served.sessions.get(&session).and_then(|serving| {
+            Workspace::of(self.bounds.worktrees()?, serving.workdir().as_path())
+        });
+        if let Some(workspace) = workspace
+            && let Err(error) = self
+                .off_task(move |host| host.remove_worktree(&workspace, &host.tools()))
+                .await
+        {
+            tracing::warn!(%session, %error, "a deleted session's workspace was kept");
         }
         // Its attachments go with it, served or not.
         if let Some(folders) = &self.attachments {
@@ -385,7 +397,11 @@ impl<H: AgentHost> SupervisorTask<H> {
             .map_err(|error| SessionError::Start(StartError::Workdir(error)))?;
         let workdir = self.confirm(&requested).map_err(SessionError::Start)?;
         let session = seed.session;
-        let restored = Session::restore(seed, workdir);
+        let mut restored = Session::restore(seed, workdir);
+        // A process taken up from its run host serves it again.
+        if let Some(run) = served.rejoined.remove(&session) {
+            restored.started(run);
+        }
         self.publish_session(session, &restored);
         served.sessions.insert(session, restored);
         Ok(())
@@ -414,7 +430,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         let outcome = match served.serving(&serving) {
             Some(run) => match served.runs.get_mut(&run) {
                 None => Err(SessionError::NoProcess),
-                Some(live) => match live.process.command(command) {
+                Some(live) => match Self::command(live, command) {
                     Err(error) => Err(SessionError::Command(error)),
                     Ok(effects) => {
                         self.carry_out(live, effects, &mut served.idles);
@@ -652,6 +668,38 @@ impl<H: AgentHost> SupervisorTask<H> {
                 folder
                     .to_str()
                     .ok_or(StartError::NoScratch)?
+                    .parse::<RequestedDir>()
+                    .map_err(StartError::Workdir)?
+            }
+            StartPlace::Worktree(repo) => {
+                let repo =
+                    self.confirm(&repo.parse::<RequestedDir>().map_err(StartError::Workdir)?)?;
+                let root = self
+                    .bounds
+                    .worktrees()
+                    .ok_or(StartError::NoWorktrees)?
+                    .to_path_buf();
+                let looking = root.clone();
+                let look = self
+                    .off_task(move |host| host.look(&looking))
+                    .await
+                    .map_err(StartError::Worktree)?;
+                let slot = Slot::free(&Workspace::taken(look.folders.iter().map(String::as_str)))
+                    .ok_or(StartError::NoSlot)?;
+                let workspace =
+                    Workspace::new(&root, repo.as_path(), slot).ok_or(StartError::NoWorktrees)?;
+                let id = self.ids.next_uuid().simple().to_string();
+                let branch = workspace.branch(id.get(id.len().saturating_sub(8)..).unwrap_or(&id));
+                let (folder, data) = (workspace.folder(), workspace.data());
+                let making = folder.clone();
+                self.off_task(move |host| {
+                    host.make_worktree(repo.as_path(), &making, &data, &branch, &host.tools())
+                })
+                .await
+                .map_err(StartError::Worktree)?;
+                folder
+                    .to_str()
+                    .ok_or(StartError::NoWorktrees)?
                     .parse::<RequestedDir>()
                     .map_err(StartError::Workdir)?
             }

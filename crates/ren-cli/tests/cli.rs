@@ -762,7 +762,8 @@ fn tools_lists_the_catalog_and_refuses_what_it_cannot_change_offline() {
     assert_eq!(
         ids,
         [
-            "claude", "codex", "pi", "opencode", "node", "bun", "git", "jq", "fd", "ripgrep"
+            "claude", "codex", "pi", "opencode", "node", "bun", "git", "jq", "fd", "ripgrep",
+            "sccache"
         ]
     );
     let node = &listing["packages"][4];

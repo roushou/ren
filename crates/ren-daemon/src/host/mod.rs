@@ -19,8 +19,10 @@ use std::time::{Instant, SystemTime};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
+pub mod held;
 mod process;
 
+pub use held::{HeldRuns, Launcher, RunHost};
 pub use process::ProcessHost;
 
 /// The host's clocks. Monotonic time counts from [`SystemClock::start`].

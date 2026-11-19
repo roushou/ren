@@ -4,6 +4,7 @@
 //! clients cannot drift apart; `crates/ren-daemon/tests/contract.rs` sends
 //! each one to the router.
 
+use crate::api::read::work::{WorkOrderBody, WorkPreviewBody};
 use ren_harness::{
     Harness,
     drive::Decision,
@@ -13,11 +14,81 @@ use ren_protocol::native::NativeSessionId;
 use ren_recorder::{
     batch::{HistoryChange, HistorySubject},
     caller::UserId,
-    id::{AttachmentId, CallId, SessionId},
+    id::{AttachmentId, CallId, SessionId, WorkItemId},
 };
+use ren_release::{Commit, Revision};
 use ren_supervisor::Delivery;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+/// `POST work/{item}/send`: `session` takes the item up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct SendWorkRequest {
+    #[ts(as = "String")]
+    pub session: SessionId,
+}
+
+/// `POST work/{item}/land`: the item's change is on `main` as `commit`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct LandWorkRequest {
+    #[ts(as = "String")]
+    pub commit: Commit,
+}
+
+/// `POST work/{item}/ship`: production runs `revision`, which holds the
+/// item's change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct ShipWorkRequest {
+    #[ts(as = "String")]
+    pub revision: Revision,
+}
+
+/// `POST work/{item}/preview`: a preview of the item's change, or none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewWorkRequest {
+    pub preview: Option<WorkPreviewBody>,
+}
+
+/// `POST release/promote`: production is to take the canary's build of
+/// `commit`, on the factory's next pass.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct PromoteRequest {
+    #[ts(as = "String")]
+    pub commit: Commit,
+}
+
+/// What happens to a work item, as a request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkChange {
+    Send(SendWorkRequest),
+    Land(LandWorkRequest),
+    Ship(ShipWorkRequest),
+    Dismiss,
+    Preview(PreviewWorkRequest),
+}
+
+impl WorkChange {
+    /// Its path segment under `work/{item}/`.
+    pub fn path(&self) -> &'static str {
+        match self {
+            Self::Send(_) => "send",
+            Self::Land(_) => "land",
+            Self::Ship(_) => "ship",
+            Self::Dismiss => "dismiss",
+            Self::Preview(_) => "preview",
+        }
+    }
+}
 
 /// `POST pause`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -71,6 +142,31 @@ pub struct CreateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(as = "Option<String>")]
     pub resume: Option<uuid::Uuid>,
+    /// Where in `dir` it works; left out, in the folder itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(as = "Option<String>")]
+    pub workspace: Option<WorkspaceKind>,
+}
+
+/// Where a session with a folder works: in the folder itself, or in a
+/// workspace of its own, a new worktree of the repository in the folder.
+#[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub enum WorkspaceKind {
+    #[default]
+    Folder,
+    Worktree,
 }
 
 impl CreateRequest {
@@ -83,6 +179,22 @@ impl CreateRequest {
             effort: None,
             approvals: None,
             resume: None,
+            workspace: None,
+        }
+    }
+
+    /// Where it starts: its folder, a workspace of the repository in it,
+    /// or, with no folder, a new scratch folder. A workspace needs a folder.
+    pub fn place(&self) -> Option<ren_supervisor::StartPlace> {
+        match (&self.dir, self.workspace.unwrap_or_default()) {
+            (Some(dir), WorkspaceKind::Folder) => {
+                Some(ren_supervisor::StartPlace::Folder(dir.clone()))
+            }
+            (Some(dir), WorkspaceKind::Worktree) => {
+                Some(ren_supervisor::StartPlace::Worktree(dir.clone()))
+            }
+            (None, WorkspaceKind::Folder) => Some(ren_supervisor::StartPlace::Scratch),
+            (None, WorkspaceKind::Worktree) => None,
         }
     }
 }
@@ -183,6 +295,15 @@ pub enum ControlRequest {
     },
     Interrupt(SessionId),
     Stop(SessionId),
+    /// Queue a work item.
+    QueueWork(Box<WorkOrderBody>),
+    /// Ask that production take the canary's build.
+    Promote(PromoteRequest),
+    /// Move a work item on.
+    Work {
+        item: WorkItemId,
+        change: WorkChange,
+    },
 }
 
 /// Whether a request reads or changes.
@@ -228,7 +349,10 @@ impl ControlRequest {
             | Self::Prompt { .. }
             | Self::Answer { .. }
             | Self::Interrupt(_)
-            | Self::Stop(_) => ControlMethod::Post,
+            | Self::Stop(_)
+            | Self::QueueWork(_)
+            | Self::Promote(_)
+            | Self::Work { .. } => ControlMethod::Post,
         }
     }
 
@@ -265,6 +389,9 @@ impl ControlRequest {
             } => format!("sessions/{session}/approvals/{approval}"),
             Self::Interrupt(session) => format!("sessions/{session}/interrupt"),
             Self::Stop(session) => format!("sessions/{session}/stop"),
+            Self::QueueWork(_) => "work".to_owned(),
+            Self::Promote(_) => "release/promote".to_owned(),
+            Self::Work { item, change } => format!("work/{item}/{}", change.path()),
         }
     }
 
@@ -279,6 +406,15 @@ impl ControlRequest {
             Self::Create(create) => serde_json::to_vec(create).map(Some),
             Self::Prompt { prompt, .. } => serde_json::to_vec(prompt).map(Some),
             Self::Answer { answer, .. } => serde_json::to_vec(answer).map(Some),
+            Self::QueueWork(order) => serde_json::to_vec(order).map(Some),
+            Self::Promote(promote) => serde_json::to_vec(promote).map(Some),
+            Self::Work { change, .. } => match change {
+                WorkChange::Send(send) => serde_json::to_vec(send).map(Some),
+                WorkChange::Land(land) => serde_json::to_vec(land).map(Some),
+                WorkChange::Ship(ship) => serde_json::to_vec(ship).map(Some),
+                WorkChange::Dismiss => Ok(None),
+                WorkChange::Preview(preview) => serde_json::to_vec(preview).map(Some),
+            },
             Self::State
             | Self::Resume
             | Self::UnblockSession(_)

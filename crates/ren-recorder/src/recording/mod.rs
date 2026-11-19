@@ -9,7 +9,7 @@ use crate::{
     batch::{
         AttemptBody, Batch, BodyEnd, BodyKey, CloseChannel, FinishAttempt, FinishCall, HistoryEdit,
         MessageMark, Op, OpenCall, OperatorAction, ResponseHead, RunEntry, RunRecord, Segment,
-        SessionRecord, Stamp, StartAttempt,
+        SessionRecord, Stamp, StartAttempt, WorkRecord,
     },
     capture::{CallRejection, TerminalRecord},
     chunk::Chunker,
@@ -61,6 +61,7 @@ pub(crate) enum Record {
     },
     Operator(OperatorAction),
     Session(SessionRecord),
+    Work(WorkRecord),
     Run(RunRecord),
     RunEntry(Box<RunEntry>),
     History(HistoryEdit),
@@ -80,6 +81,7 @@ impl Record {
             }
             Self::Operator(action) => action.at.monotonic,
             Self::Session(record) => record.at.monotonic,
+            Self::Work(record) => record.at.monotonic,
             Self::Run(record) => record.at.monotonic,
             Self::History(edit) => edit.at.monotonic,
             Self::RunEntry(entry) => entry.at.monotonic,
@@ -343,6 +345,7 @@ impl RecorderCore {
             Record::Close(close) => self.batch.push(Op::CloseChannel(close)),
             Record::Operator(action) => self.batch.push(Op::Operator(action)),
             Record::Session(record) => self.batch.push(Op::Session(record)),
+            Record::Work(record) => self.batch.push(Op::Work(record)),
             Record::Run(record) => self.batch.push(Op::Run(record)),
             Record::History(edit) => self.batch.push(Op::History(edit)),
             Record::RunEntry(entry) => self.batch.push(Op::RunEntry(*entry)),

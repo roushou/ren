@@ -18,8 +18,10 @@ ren-daemon.workspace = true
 ren-gateway.workspace = true
 ren-git.workspace = true
 ren-harness.workspace = true
+ren-project.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
+ren-release.workspace = true
 ren-supervisor.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -31,6 +33,7 @@ tokio-tungstenite.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+ren-store.workspace = true
 uuid.workspace = true
 
 [lints]

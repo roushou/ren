@@ -25,6 +25,7 @@ ren-depot.workspace = true
 ren-harness.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
+ren-release.workspace = true
 ren-store.workspace = true
 ren-supervisor.workspace = true
 reqwest.workspace = true
@@ -36,7 +37,7 @@ serde_with.workspace = true
 strum.workspace = true
 sync_wrapper = { version = "1.0", features = ["futures"] }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "net", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "macros", "net", "sync", "time"] }
 tokio-tungstenite.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true

@@ -139,6 +139,11 @@ identity!(
     /// One file uploaded to an operator session, to go with a prompt.
     AttachmentId as "attachment"
 );
+identity!(
+    /// One work item: something an operator marked to be done, carried
+    /// from queued to shipped.
+    WorkItemId as "work_item"
+);
 
 #[cfg(test)]
 mod tests {

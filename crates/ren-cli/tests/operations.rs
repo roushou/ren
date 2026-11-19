@@ -12,11 +12,11 @@ use ren_cli::{
     doctor::{CheckId, CheckName, Report, Status},
 };
 use ren_daemon::{Daemon, config::Config};
-use ren_gateway::build::{Revision, Tree};
 use ren_harness::{
     endpoint::{GatewayEndpoint, UserToken},
     host::HostEnv,
 };
+use ren_release::{Revision, Tree};
 use std::{
     process::{Command, Stdio},
     sync::{

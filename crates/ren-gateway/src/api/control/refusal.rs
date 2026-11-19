@@ -58,6 +58,11 @@ pub enum ControlRefusal {
     NotDrivable,
     NoApprovals,
     NoScratch,
+    /// A workspace could not be made: no folder for workspaces here, or the
+    /// folder named is not a git repository with a commit.
+    NoWorkspace,
+    /// Every workspace slot is taken.
+    WorkspacesFull,
     SpawnFailed,
     /// The client's model listing failed.
     ModelsUnavailable,
@@ -114,6 +119,17 @@ pub enum ControlRefusal {
     ToolsUnsupported,
     ToolsRefused,
     ToolsFailed,
+
+    // Work items.
+    /// An order with no noted mark, too many marks, or text past its limit.
+    InvalidOrder,
+    /// The item's state does not take the change (a shipped item cannot be
+    /// dismissed, a queued one cannot land).
+    WorkState,
+
+    // Release.
+    /// The commit is not the canary's, or its build did not pass.
+    NotPromotable,
 }
 
 impl ControlRefusal {
@@ -158,7 +174,9 @@ impl ControlRefusal {
             | Self::RedirectElsewhere
             | Self::RedirectIncomplete
             | Self::ToolsBusy
-            | Self::ToolsCollected => StatusCode::CONFLICT,
+            | Self::ToolsCollected
+            | Self::WorkState
+            | Self::NotPromotable => StatusCode::CONFLICT,
             Self::AttachmentTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::BlankPrompt
             | Self::TooManyAttachments
@@ -167,7 +185,8 @@ impl ControlRefusal {
             | Self::AttachmentUnrecognized
             | Self::AttachmentUnreadable
             | Self::AttachmentTooWide
-            | Self::ToolsRefused => StatusCode::UNPROCESSABLE_ENTITY,
+            | Self::ToolsRefused
+            | Self::InvalidOrder => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Unrecordable
             | Self::BackupFailed
             | Self::Unreadable
@@ -181,6 +200,8 @@ impl ControlRefusal {
             | Self::Unrecorded
             | Self::BackupIncomplete
             | Self::NoScratch
+            | Self::NoWorkspace
+            | Self::WorkspacesFull
             | Self::NoAttachments
             | Self::ToolsDisabled => StatusCode::SERVICE_UNAVAILABLE,
         }

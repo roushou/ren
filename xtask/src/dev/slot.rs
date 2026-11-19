@@ -10,14 +10,17 @@ use crate::progress::Progress;
 use crate::{
     daemon::{Busy, Ending, RunPolicy, Runs, StillBusy},
     invocation::{Echo, Invocation, InvocationError},
-    tailscale::{Route, ServeStatus, TailscaleCli, TailscaleError},
+    tailscale::{TailscaleCli, TailscaleError},
     ui::UiBuild,
+    unit::{KillMode, Listener, TransientUnit},
 };
-use ren_daemon::config::{Config, RunsOptions, ToolsOptions, UpstreamConfig};
+use ren_daemon::config::{Config, RunHold, RunsOptions, ToolsOptions, UpstreamConfig};
+use ren_daemon::host::HeldRuns;
 use ren_gateway::{
     ControlToken, EntryIngress, Environment, InstanceOptions,
     user::{TokenDigest, UserConfig},
 };
+use ren_git::{Author, Git, Repository};
 use ren_harness::{endpoint::UserToken, host::HostEnv};
 use ren_protocol::route::{Provider, Wire};
 use ren_recorder::{
@@ -26,8 +29,7 @@ use ren_recorder::{
 };
 use std::{
     fs,
-    io::{Read as _, Write as _},
-    net::{SocketAddr, TcpStream},
+    net::SocketAddr,
     path::{Path, PathBuf},
     thread,
     time::Duration,
@@ -46,51 +48,37 @@ impl Unit {
     /// Every unit, in the order they stop.
     pub const ALL: [Self; 4] = [Self::Traffic, Self::Ui, Self::Daemon, Self::Provider];
 
-    /// The transient unit's name; every one starts with `ren-dev-`.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Provider => "ren-dev-provider",
-            Self::Daemon => "ren-dev-daemon",
-            Self::Ui => "ren-dev-ui",
-            Self::Traffic => "ren-dev-traffic",
+    /// The transient unit; every one's name starts with `ren-dev-`.
+    pub fn unit(self) -> TransientUnit {
+        let (name, description) = match self {
+            Self::Provider => ("ren-dev-provider", "Ren dev slot: ren-dev-provider"),
+            Self::Daemon => ("ren-dev-daemon", "Ren dev slot: ren-dev-daemon"),
+            Self::Ui => ("ren-dev-ui", "Ren dev slot: ren-dev-ui"),
+            Self::Traffic => ("ren-dev-traffic", "Ren dev slot: ren-dev-traffic"),
+        };
+        // The daemon is signalled alone, as the installed unit does; the
+        // rest stop as a whole.
+        let kill = match self {
+            Self::Daemon => KillMode::Mixed,
+            Self::Provider | Self::Ui | Self::Traffic => KillMode::ControlGroup,
+        };
+        TransientUnit {
+            name: name.to_owned(),
+            description: description.to_owned(),
+            kill,
         }
     }
 
-    fn service(self) -> String {
-        format!("{}.service", self.name())
-    }
-
-    /// Which of the unit's processes systemd signals when it stops. The
-    /// daemon is signalled alone, as the installed unit does, so it drains
-    /// its runs itself before the final kill covers what is left; the rest
-    /// stop as a whole.
-    fn kill_mode(self) -> &'static str {
-        match self {
-            Self::Daemon => "mixed",
-            Self::Provider | Self::Ui | Self::Traffic => "control-group",
-        }
+    pub fn name(self) -> String {
+        self.unit().name
     }
 
     pub fn active(self) -> Result<bool, InvocationError> {
-        Invocation::new("systemctl")
-            .args(["--user", "is-active", "--quiet"])
-            .arg(self.service())
-            .succeeds(Echo::Hide)
+        self.unit().active()
     }
 
     pub fn stop(self) -> Result<(), InvocationError> {
-        if self.active()? {
-            Invocation::new("systemctl")
-                .args(["--user", "stop"])
-                .arg(self.service())
-                .run()?;
-        }
-        // A failed transient unit stays loaded until reset.
-        Invocation::new("systemctl")
-            .args(["--user", "reset-failed"])
-            .arg(self.service())
-            .succeeds(Echo::Hide)?;
-        Ok(())
+        self.unit().stop()
     }
 
     /// Run `command` as this unit, with `environment`, until stopped.
@@ -101,18 +89,7 @@ impl Unit {
         args: &[String],
         environment: &[(&str, String)],
     ) -> Result<(), InvocationError> {
-        let mut run = Invocation::new("systemd-run")
-            .args(["--user", "--collect", "--quiet"])
-            .arg(format!("--unit={}", self.name()))
-            .arg(format!("--description=Ren dev slot: {}", self.name()))
-            .arg(format!("--property=KillMode={}", self.kill_mode()));
-        if let Some(dir) = dir {
-            run = run.arg(format!("--working-directory={}", dir.display()));
-        }
-        for (name, value) in environment {
-            run = run.arg(format!("--setenv={name}={value}"));
-        }
-        run.arg("--").args(command).args(args).run()
+        self.unit().start(dir, command, args, environment)
     }
 }
 
@@ -260,6 +237,10 @@ impl Slot {
                 roots: vec![self.work_dir.clone()],
                 places: vec![self.places_dir.clone()],
                 scratch: Some(self.scratch_dir.clone()),
+                // Held as the installed service holds them, so a restart
+                // of the slot leaves its runs going.
+                hold: RunHold::Auto,
+                workspace_env: Default::default(),
             },
             tools: toml::from_str::<ToolsOptions>(Self::TOOLS).map_err(|_| DevError::Config)?,
             ..Config::default()
@@ -347,8 +328,68 @@ program_at = "acme-lint"
                 )
                 .map_err(FileError::at(&readme))?;
             }
+            let git = Git::inherited();
+            let author = Author {
+                name: "Ren dev slot".into(),
+                email: "dev-slot@example.com".into(),
+            };
+            // A repository with a commit, so a session (and Redline's
+            // briefs) can work in a workspace of it.
+            if Git::repository(&folder) == Repository::None {
+                git.init(&folder)
+                    .and_then(|()| git.commit_all(&folder, "Start the fake project", &author))?;
+            }
+            // Its contract, so a workspace of it has checks and a preview.
+            let contract = folder.join(ren_project::ProjectContract::FILE);
+            if !contract.exists() {
+                for (name, text) in Self::site(project) {
+                    let path = folder.join(name);
+                    fs::write(&path, text).map_err(FileError::at(&path))?;
+                }
+                git.commit_all(
+                    &folder,
+                    "Declare how Ren builds, serves, and checks it",
+                    &author,
+                )?;
+            }
         }
         Ok(())
+    }
+
+    /// A fake project's page and its contract: a static page served by
+    /// Python's own server on the workspace's first port, checked by
+    /// parsing it.
+    fn site(project: &str) -> [(&'static str, String); 2] {
+        [
+            (
+                "index.html",
+                format!(
+                    "<!doctype html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>{project}</title></head>\n<body><main><h1>{project}</h1><p>A fake project for the dev slot's runs.</p></main></body>\n</html>\n"
+                ),
+            ),
+            (
+                ren_project::ProjectContract::FILE,
+                r#"# How Ren builds, serves, and checks this fake project.
+
+[[build]]
+run = ["python3", "-c", "print('Nothing to build: the page is static.')"]
+
+[serve]
+run = ["python3", "-m", "http.server", "{port}", "--bind", "127.0.0.1"]
+open = "http://127.0.0.1:{port}"
+health = "/"
+
+[[check]]
+name = "page"
+run = ["python3", "-c", "import html.parser; html.parser.HTMLParser().feed(open('index.html').read()); print('index.html parses')"]
+
+# Production for a fake project: a folder under its canary's data.
+[deploy]
+run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'production'; p.mkdir(parents=True, exist_ok=True); shutil.copy('index.html', p / 'index.html'); print('deployed to', p)"]
+"#
+                .to_owned(),
+            ),
+        ]
     }
 
     /// `path` as one single-quoted shell word.
@@ -371,32 +412,13 @@ program_at = "acme-lint"
         Ok(())
     }
 
-    /// Whether `address` answers `GET /health` (or `GET /` for the UI)
-    /// within a few seconds.
+    /// Whether `address` answers `path` within a few seconds.
     pub fn wait_for(address: SocketAddr, path: &str) -> Result<(), DevError> {
-        for _ in 0..100 {
-            if Self::answers(address, path) {
-                return Ok(());
-            }
-            thread::sleep(Duration::from_millis(100));
+        if Listener(address).answers_soon(path) {
+            Ok(())
+        } else {
+            Err(DevError::NotReady(address))
         }
-        Err(DevError::NotReady(address))
-    }
-
-    fn answers(address: SocketAddr, path: &str) -> bool {
-        let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(500))
-        else {
-            return false;
-        };
-        let request =
-            format!("GET {path} HTTP/1.1\r\nhost: {address}\r\nconnection: close\r\n\r\n");
-        let mut head = [0_u8; 12];
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .is_ok()
-            && stream.write_all(request.as_bytes()).is_ok()
-            && stream.read_exact(&mut head).is_ok()
-            && (head.ends_with(b"200") || head.ends_with(b"503"))
     }
 
     /// Build, configure, and (re)start the provider and daemon.
@@ -575,10 +597,22 @@ program_at = "acme-lint"
         self.config.with_file_name("traffic.toml")
     }
 
-    pub fn down() -> Result<(), DevError> {
+    /// Stop the slot's units, then its runs' run hosts, which outlive its
+    /// daemon: each in a unit of its own, named for the run.
+    pub fn down(&self) -> Result<(), DevError> {
         for unit in Unit::ALL {
             Progress(&format!("Stopping {}", unit.name())).show();
             unit.stop()?;
+        }
+        let runs = self.data_dir.join(HeldRuns::FOLDER);
+        for run in HeldRuns::folders(&runs).map_err(FileError::at(&runs))? {
+            let unit = format!("{}.service", HeldRuns::unit(run));
+            Invocation::new("systemctl")
+                .args(["--user", "stop", &unit])
+                .succeeds(Echo::Hide)?;
+            Invocation::new("systemctl")
+                .args(["--user", "reset-failed", &unit])
+                .succeeds(Echo::Hide)?;
         }
         Ok(())
     }
@@ -586,32 +620,16 @@ program_at = "acme-lint"
     /// Remove the dev preview's Serve routes, each only if it still proxies
     /// to the slot; the installed service's routes are never touched.
     pub fn unpublish(tailscale: TailscaleCli) -> Result<(), DevError> {
-        let status = Invocation::new("tailscale")
-            .args(["serve", "status", "--json"])
-            .capture()?;
-        let serve = ServeStatus::parse(&status).map_err(|_| DevError::Config)?;
-        for (port, target) in [
+        Ok(tailscale.unpublish(&[
             (Self::GATEWAY_PORT, format!("http://{}", Self::DAEMON)),
             (Self::UI_PORT, format!("http://{}", Self::UI)),
-        ] {
-            match serve.route(port, &target) {
-                Route::Target => {
-                    Progress(&format!("Unpublishing port {port}")).show();
-                    tailscale
-                        .invocation()
-                        .args(["serve", &format!("--https={port}"), "off"])
-                        .run()?;
-                }
-                Route::Free | Route::Funnel { .. } | Route::Other { .. } | Route::TcpForward => {}
-            }
-        }
-        Ok(())
+        ])?)
     }
 
     /// Stop the slot and remove its data. Only the slot's own directory is
     /// removed, and only if it is the one this slot names.
     pub fn wipe(&self) -> Result<(), DevError> {
-        Self::down()?;
+        self.down()?;
         if self.data_dir.ends_with(".local/state/ren-dev") && self.data_dir.exists() {
             Progress(&format!("Removing {}", self.data_dir.display())).show();
             fs::remove_dir_all(&self.data_dir).map_err(FileError::at(&self.data_dir))?;
@@ -652,6 +670,17 @@ mod tests {
             assert!(unit.name().starts_with("ren-dev-"), "{unit:?}");
             assert_ne!(unit.name(), "ren");
             assert_ne!(unit.name(), "ren-ui");
+        }
+    }
+
+    #[test]
+    fn every_fake_project_declares_a_contract_ren_reads() {
+        for project in Slot::PROJECTS {
+            let [_, (name, text)] = Slot::site(project);
+            assert_eq!(name, ren_project::ProjectContract::FILE);
+            let contract = ren_project::ProjectContract::read(&text).unwrap();
+            assert!(contract.serve().is_some() && !contract.checks().is_empty());
+            assert!(contract.deploy().is_some());
         }
     }
 

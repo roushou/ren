@@ -22,6 +22,12 @@ import {
   type Variant,
 } from './decode.ts';
 import type { Build as WireBuild } from './wire/Build.ts';
+import type { CanaryView as WireCanaryView } from './wire/CanaryView.ts';
+import type { CheckView as WireCheckView } from './wire/CheckView.ts';
+import type { ReleaseBody as WireReleaseBody } from './wire/ReleaseBody.ts';
+import type { ProjectRelease as WireProjectRelease } from './wire/ProjectRelease.ts';
+import type { ProjectReleases as WireProjectReleases } from './wire/ProjectReleases.ts';
+import type { ReleaseView as WireReleaseView } from './wire/ReleaseView.ts';
 import type { EventCountsRecord as WireEventCountsRecord } from './wire/EventCountsRecord.ts';
 import type { Excerpt as WireExcerpt } from './wire/Excerpt.ts';
 import type { InspectionRecord as WireInspectionRecord } from './wire/InspectionRecord.ts';
@@ -305,6 +311,14 @@ export const observationKinds = [
   'session_attached',
   'session_detached',
   'session_attachments_sent',
+  'run_detached',
+  'run_rejoined',
+  'work_queued',
+  'work_sent',
+  'work_landed',
+  'work_shipped',
+  'work_dismissed',
+  'work_previewed',
 ] as const;
 export const channelEnds = [
   'client_closed',
@@ -325,8 +339,24 @@ export type MessagePayload = (typeof messagePayloads)[number];
 export type ObservationKind = (typeof observationKinds)[number];
 export const healthStatuses = ['ok', 'degraded'] as const;
 /** What the gateway says it is: the installed service, or a development one. */
-export const environments = ['production', 'development'] as const;
+export const environments = ['production', 'development', 'canary', 'preview'] as const;
 export type Environment = (typeof environments)[number];
+/** What the canary checks of a build. */
+export const checkKinds = ['doctor', 'reads', 'pages', 'build', 'serve', 'declared'] as const;
+export type CheckKind = (typeof checkKinds)[number];
+/** What promotion decided for the canary's build. */
+export const decisions = [
+  'promote',
+  'current',
+  'failed',
+  'unchecked',
+  'production_ahead',
+  'unconfirmed',
+  'awaiting_operator',
+  'outside_window',
+  'promotion_failed',
+] as const;
+export type Decision = (typeof decisions)[number];
 export type HealthStatus = (typeof healthStatuses)[number];
 export const errorCodes = [
   'not_found',
@@ -360,6 +390,8 @@ export const controlRefusals = [
   'not_drivable',
   'no_approvals',
   'no_scratch',
+  'no_workspace',
+  'workspaces_full',
   'spawn_failed',
   'models_unavailable',
   'commands_unavailable',
@@ -404,6 +436,9 @@ export const controlRefusals = [
   'tools_unsupported',
   'tools_refused',
   'tools_failed',
+  'invalid_order',
+  'work_state',
+  'not_promotable',
 ] as const;
 export type ControlRefusal = (typeof controlRefusals)[number];
 export const previewExtents = ['complete', 'partial', 'truncated', 'gap'] as const;
@@ -630,6 +665,44 @@ export interface Health {
   instance: { environment: Stored<Environment> };
   operator: OperatorSummary;
   recorder: RecorderMetrics;
+}
+/** One check of the canary's build. */
+export interface CheckView {
+  check: Stored<CheckKind>;
+  /** A project's declared check's name. */
+  name: string | null;
+  passed: boolean;
+  detail: string | null;
+}
+/** The build on the canary and its checks. */
+export interface CanaryView {
+  commit: string;
+  passed: boolean;
+  checks: CheckView[];
+}
+/** `/api/release`: the release, the pages the canary captured (each at
+ * `/api/release/shots/{name}`), and the build the operator asked production
+ * to take, until the factory's next pass takes it up. */
+export interface ReleaseBody {
+  release: ReleaseView | null;
+  shots: string[];
+  promotion_requested: string | null;
+}
+/** One project's release, by its repository's folder name. */
+export interface ProjectRelease {
+  name: string;
+  release: ReleaseView;
+}
+/** Where the release stands, as the factory last wrote it (`/api/release`). */
+export interface ReleaseView {
+  main: string;
+  production: Revision;
+  /** Commits main has that production does not; null when production is not a commit of main. */
+  behind: number | null;
+  canary: CanaryView | null;
+  /** `manual`, `automatic`, or a daily window in UTC (`02:00-05:00`). */
+  policy: string;
+  decision: Stored<Decision>;
 }
 export interface Metrics {
   recorder: RecorderMetrics;
@@ -922,6 +995,37 @@ const health = object<Health, WireHealth>({
   recorder: recorderMetrics,
 });
 const metrics = object<Metrics, WireMetrics>({ recorder: recorderMetrics, storage: storageView });
+const releaseView = object<ReleaseView, WireReleaseView>({
+  main: string,
+  production: revision,
+  behind: nullable(count),
+  canary: nullable(
+    object<CanaryView, WireCanaryView>({
+      commit: string,
+      passed: boolean,
+      checks: array(
+        object<CheckView, WireCheckView>({
+          check: label(checkKinds),
+          name: nullable(string),
+          passed: boolean,
+          detail: nullable(string),
+        }),
+      ),
+    }),
+  ),
+  policy: string,
+  decision: label(decisions),
+});
+const releaseBody = object<ReleaseBody, WireReleaseBody>({
+  release: nullable(releaseView),
+  shots: array(string),
+  promotion_requested: nullable(string),
+});
+const projectReleases = object<{ projects: ProjectRelease[] }, WireProjectReleases>({
+  projects: array(
+    object<ProjectRelease, WireProjectRelease>({ name: string, release: releaseView }),
+  ),
+});
 const storage = object<Storage>({
   policy: object<RetentionPolicy>({
     enabled: boolean,
@@ -1453,6 +1557,18 @@ export class ManagementApi {
   }
   storage(signal?: AbortSignal): Promise<Storage> {
     return this.#read('/api/storage', storage, signal);
+  }
+  /** Where the release stands; null until the factory has run against this gateway. */
+  async release(signal?: AbortSignal): Promise<ReleaseView | null> {
+    return (await this.releaseBody(signal)).release;
+  }
+  /** The release, with the pages the canary captured and any promotion asked for. */
+  releaseBody(signal?: AbortSignal): Promise<ReleaseBody> {
+    return this.#read('/api/release', releaseBody, signal);
+  }
+  /** Each project's release, as `ren project canary` last wrote it. */
+  async projectReleases(signal?: AbortSignal): Promise<ProjectRelease[]> {
+    return (await this.#read('/api/release/projects', projectReleases, signal)).projects;
   }
   /** Newest first. `query` holds the listing filters and `after`. */
   calls(params: Query<RawCallQuery>, signal?: AbortSignal): Promise<CallPage> {

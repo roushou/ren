@@ -60,6 +60,8 @@ impl From<StartError> for ControlRefusal {
             StartError::Resolve(_) => Self::DirectoryNotFound,
             StartError::NoApprovals(_) => Self::NoApprovals,
             StartError::NoScratch | StartError::Scratch(_) => Self::NoScratch,
+            StartError::NoWorktrees | StartError::Worktree(_) => Self::NoWorkspace,
+            StartError::NoSlot => Self::WorkspacesFull,
             StartError::Unrecorded(_) => Self::Unrecorded,
             StartError::Spawn { .. } => Self::SpawnFailed,
             StartError::Gone | StartError::NilId => Self::Unavailable,

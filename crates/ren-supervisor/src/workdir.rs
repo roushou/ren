@@ -21,6 +21,8 @@ pub struct Bounds {
     scratch: Option<PathBuf>,
     /// The operator's home, for showing paths as `~/…`.
     home: Option<PathBuf>,
+    /// The folder workspaces are made in; none when it could not be set up.
+    worktrees: Option<PathBuf>,
 }
 
 /// A directory a run was asked to work in, before the host resolved it.
@@ -83,6 +85,7 @@ impl Bounds {
             others,
             scratch,
             home,
+            worktrees: None,
         })
     }
 
@@ -96,6 +99,16 @@ impl Bounds {
 
     pub fn scratch(&self) -> Option<&Path> {
         self.scratch.as_deref()
+    }
+
+    /// These bounds, with workspaces made in `worktrees`.
+    pub fn with_worktrees(mut self, worktrees: Option<PathBuf>) -> Self {
+        self.worktrees = worktrees;
+        self
+    }
+
+    pub fn worktrees(&self) -> Option<&Path> {
+        self.worktrees.as_deref()
     }
 
     /// `path` as the operator reads it: under their home as `~/…`.
@@ -118,6 +131,7 @@ impl Bounds {
             .iter()
             .chain(self.others.iter().map(PathBuf::as_path))
             .chain(self.scratch.as_deref())
+            .chain(self.worktrees.as_deref())
             .any(|bound| path.starts_with(bound))
     }
 }
@@ -162,6 +176,14 @@ impl Workdir {
         } else {
             Err(WorkdirError::OutsideRoots)
         }
+    }
+
+    /// The folder a run was confirmed in when it started, read back from
+    /// its journal: the run works there whatever the bounds are now. Still
+    /// absolute and UTF-8, or `None`.
+    pub(crate) fn journaled(path: &str) -> Option<Self> {
+        let path = PathBuf::from(path);
+        path.is_absolute().then_some(Self(path))
     }
 
     pub fn as_path(&self) -> &Path {

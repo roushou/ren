@@ -16,6 +16,8 @@ export type View =
   | 'search'
   | 'usage'
   | 'tools'
+  | 'work'
+  | 'release'
   | 'recorder';
 
 /** A tab of the header: reports, turns, and a recording sit under Recordings. */
@@ -28,6 +30,8 @@ export type Tab =
   | 'search'
   | 'usage'
   | 'tools'
+  | 'work'
+  | 'release'
   | 'recorder';
 
 export class Views {
@@ -55,6 +59,10 @@ export class Views {
         return 'usage';
       case '/tools':
         return 'tools';
+      case '/work':
+        return 'work';
+      case '/release':
+        return 'release';
       case '/recorder':
         return 'recorder';
       default:
@@ -77,6 +85,8 @@ export class Views {
       case 'search':
       case 'usage':
       case 'tools':
+      case 'work':
+      case 'release':
       case 'recorder':
         return view;
       default: {
@@ -111,6 +121,10 @@ export class Views {
         return 'Usage';
       case 'tools':
         return 'Tools';
+      case 'work':
+        return 'Work';
+      case 'release':
+        return 'Release';
       case 'recorder':
         return 'Recorder & storage';
       default: {

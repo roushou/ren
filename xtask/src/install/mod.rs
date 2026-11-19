@@ -17,6 +17,7 @@ use self::{
     ui::{UiDeploy, UiUrls},
 };
 use crate::{
+    builds::{Builds, BuildsError, StoredBuild},
     daemon::{
         AfterPause, Busy, CheckStatus, ControlState, DoctorReport, Ending, Quiesce, RunPolicy,
         Runs, StillBusy,
@@ -31,6 +32,7 @@ use clap::Args;
 use ren_daemon::config::{Config, ConfigError};
 use ren_git::{Git, GitError, Published, Tree};
 use ren_harness::host::HostEnv;
+use ren_release::Commit;
 use std::{
     fs,
     io::Write as _,
@@ -56,8 +58,12 @@ pub struct InstallVps {
     skip_backup: bool,
     /// Install even though tracked files differ from the commit; the daemon
     /// then reports a `-dirty` revision.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "build")]
     allow_dirty: bool,
+    /// Install the build of this commit kept in `~/.local/share/ren/builds`
+    /// (the one the canary checked), instead of building this checkout.
+    #[arg(long, value_name = "COMMIT")]
+    build: Option<Commit>,
     /// How long to wait for running calls and working runs to finish before
     /// giving up, without having changed anything.
     #[arg(long, value_name = "SECONDS", default_value_t = 900)]
@@ -131,6 +137,8 @@ pub enum InstallError {
     },
     #[error(transparent)]
     Tailscale(#[from] TailscaleError),
+    #[error(transparent)]
+    Builds(#[from] BuildsError),
 }
 
 /// Whether to back up history before replacing a running daemon.
@@ -316,6 +324,19 @@ impl Layout {
 }
 
 impl InstallVps {
+    /// The install a promotion makes: the kept build of `commit`, with the
+    /// saved publishing choices, waiting for runs as an operator's install.
+    pub fn promotion(commit: Commit) -> Self {
+        Self {
+            publish: Publish::default(),
+            skip_backup: false,
+            allow_dirty: false,
+            build: Some(commit),
+            idle_timeout: 900,
+            drain_runs: false,
+        }
+    }
+
     pub fn run(self, env: &HostEnv) -> Result<(), InstallError> {
         let backup = if self.skip_backup {
             Backup::Skip
@@ -343,15 +364,27 @@ impl InstallVps {
         } else {
             TailscaleCli::Direct
         };
-        let tree = Self::check_tree(&layout, self.allow_dirty)?;
         let ui = match publish.ui_https_port {
             Some(_) => Some(UiDeploy::new(env, &layout.home, &layout.repo)?),
             None => None,
         };
-        let built = Self::build(&layout)?;
-        if let Some(ui) = &ui {
-            ui.build()?;
-        }
+        let (tree, built) = match &self.build {
+            Some(commit) => {
+                let stored = Self::stored(&layout, commit)?;
+                if let Some(ui) = &ui {
+                    ui.stage(&stored.ui())?;
+                }
+                (Tree::Clean, stored.ren())
+            }
+            None => {
+                let tree = Self::check_tree(&layout, self.allow_dirty)?;
+                let built = Self::build(&layout)?;
+                if let Some(ui) = &ui {
+                    ui.build()?;
+                }
+                (tree, built)
+            }
+        };
         Self::seed_config(&layout)?;
         let config = Self::load_config(&layout)?;
         let quiesced = Self::quiesce(&layout, self.idle_timeout, policy)?;
@@ -462,6 +495,19 @@ impl InstallVps {
         }
         Progress(&format!("Installing commit {commit}")).show();
         Ok(tree)
+    }
+
+    /// The kept build of `commit`, which the canary made and checked.
+    fn stored(layout: &Layout, commit: &Commit) -> Result<StoredBuild, InstallError> {
+        let stored = Builds::new(&layout.home)
+            .get(commit)
+            .ok_or_else(|| BuildsError::NotBuilt(commit.clone()))?;
+        Progress(&format!(
+            "Installing the kept build of commit {}",
+            commit.short()
+        ))
+        .show();
+        Ok(stored)
     }
 
     /// The release binary: the installed `ren` is the operator's own, on the

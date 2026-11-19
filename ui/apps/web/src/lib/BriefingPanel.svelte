@@ -23,6 +23,7 @@
   import type { RedlineDesk } from 'redline/desk';
   import RedlinePanel from 'redline/RedlinePanel.svelte';
   import { Briefing, type Destination } from './briefing.ts';
+  import { PageEvidence, Work, WorkApi, WorkError, type WorkItemId } from './work.ts';
   import type { Recipients } from './briefing.svelte.ts';
   import {
     APPROVAL_POLICIES,
@@ -45,6 +46,7 @@
     recipients,
     source,
     revision,
+    evidence,
   }: {
     desk: RedlineDesk;
     /** Where a brief can go, read from the daemon. */
@@ -53,9 +55,12 @@
     source: string | null;
     /** What the daemon serving this page was built from, once read. */
     revision: Revision | null;
+    /** What this page logged and read, carried by the work item. */
+    evidence: PageEvidence;
   } = $props();
 
   const client = new RunsClient();
+  const work = new WorkApi(fetch);
   const KEEP = 'ren.redline';
 
   /** The client this browser last started a session on, read before the
@@ -267,25 +272,28 @@
     };
   });
   const noted = $derived(Redline.noted(desk.marks));
-  const brief = $derived(
-    Briefing.brief(
-      context,
-      { route: page.route.id, revision },
-      noted,
-      Briefing.place(destination, offered),
-    ),
-  );
+  /** The work item the marks make: the page, the noted marks, and what
+   * else was on screen until now. Read when the item is kept, since the
+   * page's evidence grows without telling the pane (an error logged after
+   * the last mark is the one the marks are about). */
+  const order = () =>
+    Work.order(context, { route: page.route.id, revision }, noted, evidence.snapshot());
+  /** The brief as the pane previews it, with what was on screen as the
+   * marks last changed. */
+  const brief = $derived(Work.brief(null, order(), Briefing.place(destination)));
 
-  /** A new session in `checkout`, with the brief as its first prompt. */
-  async function start(checkout: string): Promise<SessionId> {
-    const made = await client.createSession(harness, checkout, { approvals });
-    await client.toSession(made, { kind: 'prompt', text: brief, delivery: 'start' });
+  /** A new session in `checkout`, with `text` as its first prompt. */
+  async function start(checkout: string, text: string): Promise<SessionId> {
+    // A workspace of its own: a worktree of the checkout, its own branch,
+    // ports, and data folder.
+    const made = await client.createSession(harness, checkout, { approvals }, 'worktree');
+    await client.toSession(made, { kind: 'prompt', text, delivery: 'start' });
     return made;
   }
 
   /** The brief into an open session, as it stands now (read again: it may
    * have moved on since the pane read it); null when it cannot take one. */
-  async function into(session: SessionId): Promise<SessionId | null> {
+  async function into(session: SessionId, brief: string): Promise<SessionId | null> {
     const [bodies, live] = await Promise.all([client.sessions(), client.live()]);
     const body = bodies.find((entry) => entry.session === session);
     const now = body ? Sessions.desk(body, live) : null;
@@ -337,15 +345,47 @@
     if (!source || signedOut) return;
     sending = true;
     try {
+      // Recorded first, so the brief names it and it is kept even if the
+      // send fails; it stays queued until a session takes it up.
+      const kept = order();
+      const item = await work.queue(kept);
+      const text = Work.brief(item, kept, Briefing.place(destination));
       const target =
-        destination.kind === 'new' ? await start(source) : await into(destination.session.session);
+        destination.kind === 'new'
+          ? await start(source, text)
+          : await into(destination.session.session, text);
       if (target === null) return;
+      await work.move(item, { kind: 'send', session: target });
       if (destination.kind === 'new') keep();
       desk.clear();
       desk.toggle();
       await goto(`/sessions?session=${target}`);
     } catch (failure) {
-      error = failure instanceof RunCommandError ? failure.message : 'The brief was not sent.';
+      error =
+        failure instanceof RunCommandError || failure instanceof WorkError
+          ? failure.message
+          : 'The brief was not sent.';
+    } finally {
+      sending = false;
+    }
+  }
+
+  /** Keep the marks as a queued work item, to send later with others from
+   * the Work view. */
+  async function later() {
+    error = null;
+    if (!noted.length) {
+      error = 'Mark something and write a note first.';
+      return;
+    }
+    sending = true;
+    try {
+      const item: WorkItemId = await work.queue(order());
+      desk.clear();
+      desk.toggle();
+      await goto(`/work?item=${item}`);
+    } catch (failure) {
+      error = failure instanceof WorkError ? failure.message : 'The work item was not kept.';
     } finally {
       sending = false;
     }
@@ -421,6 +461,12 @@
           >
         {:else}
           <button
+            class="button redline-later"
+            title="Keep it as a work item, to send with others from Work"
+            disabled={sending}
+            onclick={() => void later()}>Later</button
+          >
+          <button
             class="button primary redline-send"
             title={signedOut
               ? `${harnessLabel(target?.harness ?? harness)} is signed out`
@@ -489,7 +535,8 @@
     flex: none;
     max-width: 45%;
   }
-  .redline-send {
+  .redline-send,
+  .redline-later {
     flex: none;
   }
   /* The menus open from the pane's foot, not from their chips, so both

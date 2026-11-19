@@ -15,8 +15,8 @@ use crate::context::Context;
 use crate::style::{Terminal, Tone};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use ren_gateway::build::{Build, Revision};
 use ren_harness::host::HostEnv;
+use ren_release::{Build, Revision};
 use std::{path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
@@ -60,6 +60,10 @@ enum Command {
     Users(commands::users::UsersCmd),
     Tools(commands::tools::ToolsCmd),
     Mcp(commands::mcp::McpCmd),
+    Release(commands::release::ReleaseCmd),
+    Project(commands::project::ProjectCmd),
+    #[command(hide = true)]
+    RunHost(commands::run_host::RunHostCmd),
 }
 
 impl Cli {
@@ -111,6 +115,9 @@ impl Cli {
             Command::Users(cmd) => cmd.run(&ctx),
             Command::Tools(cmd) => cmd.run(&ctx).await,
             Command::Mcp(cmd) => cmd.run(&ctx).await,
+            Command::Release(cmd) => cmd.run(&ctx).await,
+            Command::Project(cmd) => cmd.run(&ctx).await,
+            Command::RunHost(cmd) => cmd.run().await,
         }
     }
 }

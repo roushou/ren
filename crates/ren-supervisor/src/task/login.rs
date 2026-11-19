@@ -92,6 +92,7 @@ impl StatusCheck {
             mut stdout,
             exit,
             kill,
+            tenure: _,
         } = process;
         drop(stdin);
         let read = tokio::time::timeout(Self::TIMEOUT, Self::read(&mut stdout)).await;
@@ -220,6 +221,7 @@ impl LoginTalk {
             mut stdout,
             exit,
             kill,
+            tenure: _,
         } = process;
         let mut reader = LoginReader::new(harness, flow);
         let mut lines = Lines::new(limit);

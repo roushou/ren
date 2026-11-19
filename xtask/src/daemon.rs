@@ -12,7 +12,7 @@ use ren_gateway::operator::PauseState;
 use ren_harness::Harness;
 use ren_protocol::label::Stored;
 use ren_recorder::id::RunId;
-use ren_supervisor::RunPhase;
+use ren_supervisor::{RunPhase, RunTenure};
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt;
@@ -230,6 +230,10 @@ pub struct LiveRun {
     harness: Stored<Harness>,
     workdir: String,
     state: LiveState,
+    /// Whether it outlives the daemon; a daemon that does not say holds
+    /// none, as before run hosts.
+    #[serde(default)]
+    tenure: Option<Stored<RunTenure>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -252,6 +256,23 @@ enum Restart {
     Ends,
     /// It has already ended.
     Spares,
+    /// A run host holds it: it goes on through the restart, mid-turn, and
+    /// the next daemon takes it up.
+    GoesOn,
+}
+
+impl LiveRun {
+    /// What restarting the daemon does to it. A tenure this task does not
+    /// know is treated as bound to the daemon.
+    fn restart(&self) -> Restart {
+        let held = self.tenure.as_ref().and_then(Stored::known) == Some(RunTenure::Held);
+        match self.state.restart() {
+            Restart::CutsOff | Restart::Ends if held => Restart::GoesOn,
+            restart @ (Restart::CutsOff | Restart::Ends | Restart::Spares | Restart::GoesOn) => {
+                restart
+            }
+        }
+    }
 }
 
 impl LiveState {
@@ -285,7 +306,7 @@ impl Runs {
             RunPolicy::Wait => self
                 .0
                 .iter()
-                .filter(|run| run.state.restart() == Restart::CutsOff)
+                .filter(|run| run.restart() == Restart::CutsOff)
                 .cloned()
                 .collect(),
         }
@@ -302,7 +323,7 @@ impl Runs {
         Ending(
             self.0
                 .iter()
-                .filter(|run| run.state.restart() != Restart::Spares)
+                .filter(|run| matches!(run.restart(), Restart::CutsOff | Restart::Ends))
                 .cloned()
                 .collect(),
         )
@@ -435,6 +456,10 @@ impl DoctorReport {
         serde_json::from_str(json)
     }
 
+    pub fn checks(&self) -> &[DoctorCheck] {
+        &self.checks
+    }
+
     /// The check comparing the daemon's build with the CLI's.
     pub fn build(&self) -> Option<&DoctorCheck> {
         self.checks.iter().find(|check| check.name == "build")
@@ -442,6 +467,10 @@ impl DoctorReport {
 }
 
 impl DoctorCheck {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn status(&self) -> &CheckStatus {
         &self.status
     }
@@ -639,6 +668,49 @@ mod tests {
             state("paused", 0).after_pause(&listed, RunPolicy::Wait),
             AfterPause::Quiet
         );
+    }
+
+    #[test]
+    fn held_runs_go_on_through_a_restart_and_hold_nothing_up() {
+        let held = |mut run: serde_json::Value| {
+            run["tenure"] = "held".into();
+            run
+        };
+        let listed = runs(&[
+            held(run(1, "codex", "working")),
+            held(run(2, "claude_code", "idle")),
+            held(run(3, "pi", "ended")),
+            // A tenure this build does not know is bound to the daemon.
+            {
+                let mut run = run(4, "opencode", "idle");
+                run["tenure"] = "orbiting".into();
+                run
+            },
+        ]);
+        assert_eq!(
+            state("running", 0).quiesce(&listed, RunPolicy::Wait),
+            Quiesce::Pause
+        );
+        let ending: Vec<_> = listed
+            .ending()
+            .runs()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            ending,
+            ["opencode run 0193e0f1-0000-7000-8000-000000000004 in /home/op/acme-4: idle"]
+        );
+        // Bound, as a daemon before run hosts reports every run.
+        let bound = runs(&[{
+            let mut run = run(5, "codex", "working");
+            run["tenure"] = "bound".into();
+            run
+        }]);
+        assert!(matches!(
+            state("running", 0).quiesce(&bound, RunPolicy::Wait),
+            Quiesce::Wait(_)
+        ));
     }
 
     #[test]

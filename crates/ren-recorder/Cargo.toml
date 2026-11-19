@@ -19,6 +19,7 @@ regex = { version = "1.13", default-features = false, features = ["std", "perf",
 ren-depot.workspace = true
 ren-harness.workspace = true
 ren-protocol.workspace = true
+ren-release.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_with.workspace = true

@@ -9,7 +9,7 @@
 use ren_harness::launch::LaunchPlan;
 use ren_supervisor::{
     AgentHost, AgentProcess, FoundPath, KillSignal, KillSwitch, Look, PathKind, ProcessExit,
-    RunTools, WalkLimits, Workdir,
+    RunTools, Tenure, WalkLimits, Workdir,
 };
 use ren_supervisor::{ProjectGit, Scratch};
 use serde_json::{Value, json};
@@ -142,6 +142,7 @@ impl AgentHost for ScriptedHost {
             stdout: Box::new(stdout),
             exit: Box::pin(async move { exit_rx.await.unwrap_or(ProcessExit::Unknown) }),
             kill,
+            tenure: Tenure::Bound,
         })
     }
 
