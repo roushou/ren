@@ -215,6 +215,9 @@ impl MetadataTx<'_> {
                     .await?;
                 }
             }
+            // Observations alone: the gap between them is the time no daemon
+            // watched the run.
+            RunFact::Detached | RunFact::Rejoined => {}
             RunFact::Opened { thread } => {
                 sqlx::query("UPDATE runs SET thread = ? WHERE id = ?")
                     .bind(thread.to_string())

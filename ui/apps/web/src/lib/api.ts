@@ -305,6 +305,8 @@ export const observationKinds = [
   'session_attached',
   'session_detached',
   'session_attachments_sent',
+  'run_detached',
+  'run_rejoined',
 ] as const;
 export const channelEnds = [
   'client_closed',

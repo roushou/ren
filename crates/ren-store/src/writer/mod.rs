@@ -117,6 +117,18 @@ impl Store {
         clock: &C,
         ids: Arc<dyn IdSource>,
     ) -> Result<(Self, Recovery), StoreError> {
+        Self::open_holding(dir, clock, ids, &[]).await
+    }
+
+    /// [`Store::open`], leaving the runs in `held` open: their run hosts
+    /// kept them going while no daemon ran, and this one rejoins them.
+    /// Every other run the previous daemon never saw end is recovered.
+    pub async fn open_holding<C: Clock + ?Sized>(
+        dir: &Path,
+        clock: &C,
+        ids: Arc<dyn IdSource>,
+        held: &[RunId],
+    ) -> Result<(Self, Recovery), StoreError> {
         let mut builder = std::fs::DirBuilder::new();
         builder.recursive(true);
         #[cfg(unix)]
@@ -148,7 +160,7 @@ impl Store {
             _lock: lock,
         };
         recovery.calls = store.recover(clock.now()).await?;
-        recovery.runs = store.recover_runs(clock.now()).await?;
+        recovery.runs = store.recover_runs(clock.now(), held).await?;
         recovery.operator = store.operator_state().await?;
         Ok((store, recovery))
     }
@@ -274,14 +286,19 @@ impl Store {
 
     /// Runs the previous daemon never saw end keep an unknown outcome: they
     /// are marked recovered, and get an observation.
-    async fn recover_runs(&mut self, now: Moment) -> Result<u64, StoreError> {
+    async fn recover_runs(&mut self, now: Moment, held: &[RunId]) -> Result<u64, StoreError> {
         let mut tx = MetadataTx {
             tx: self.connection.begin().await?,
             ids: self.ids.as_ref(),
         };
-        let open: Vec<String> = sqlx::query_scalar("SELECT id FROM runs WHERE run_end IS NULL")
-            .fetch_all(&mut *tx.tx)
-            .await?;
+        let held: Vec<String> = held.iter().map(ToString::to_string).collect();
+        let open: Vec<String> =
+            sqlx::query_scalar::<_, String>("SELECT id FROM runs WHERE run_end IS NULL")
+                .fetch_all(&mut *tx.tx)
+                .await?
+                .into_iter()
+                .filter(|run| !held.contains(run))
+                .collect();
         for run in &open {
             sqlx::query("UPDATE runs SET run_end = ?, ended_at = ? WHERE id = ?")
                 .bind(RunEnd::Recovered.label())

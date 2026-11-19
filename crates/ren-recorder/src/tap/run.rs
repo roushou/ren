@@ -36,7 +36,10 @@ impl RunSession {
 
 /// Capture of one run's lifecycle. Its start is recorded when it is made, and
 /// its end's slot is reserved until [`RunTap::end`]. Dropping it without an
-/// end records nothing more: the next startup marks the run recovered.
+/// end records nothing more: the next startup marks the run recovered,
+/// unless its run host still holds it. A run its host holds is detached
+/// ([`RunTap::detach`]) as the daemon stops, and rejoined
+/// ([`crate::Recorder::rejoin`]) by the next.
 pub struct RunTap {
     shared: Arc<Shared>,
     run: RunId,
@@ -92,8 +95,30 @@ impl RunTap {
         Ok(tap)
     }
 
+    /// Take up `run` again after a daemon restart: recorded as rejoined,
+    /// with its end's slot reserved again.
+    pub(crate) fn rejoin(shared: Arc<Shared>, run: RunId) -> Result<Self, RunUnrecorded> {
+        let rejoined = shared.reserve_close().ok_or(RunUnrecorded)?;
+        let end = shared.reserve_close().ok_or(RunUnrecorded)?;
+        let tap = Self {
+            shared,
+            run,
+            end: Some(end),
+        };
+        tap.send(rejoined, RunFact::Rejoined);
+        Ok(tap)
+    }
+
     pub fn run(&self) -> RunId {
         self.run
+    }
+
+    /// The daemon stops while the run goes on under its run host: recorded
+    /// in its end's slot, as the end of what this daemon saw.
+    pub fn detach(mut self) {
+        if let Some(slot) = self.end.take() {
+            self.send(slot, RunFact::Detached);
+        }
     }
 
     /// The client opened its conversation as `thread`. Without room this is

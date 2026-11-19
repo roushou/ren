@@ -223,6 +223,13 @@ impl Recorder {
         )
     }
 
+    /// Take up `run` again, which a previous daemon detached from: its run
+    /// host kept it going. Recorded as rejoined; without room, it is not
+    /// taken up.
+    pub fn rejoin(&self, run: crate::id::RunId) -> Result<RunTap, RunUnrecorded> {
+        RunTap::rejoin(self.shared.clone(), run)
+    }
+
     /// Reserve the end record of a WebSocket channel whose handshake call
     /// already opened it. Never blocks; without a reservation the end is not
     /// recorded and the channel is counted as unrecorded.

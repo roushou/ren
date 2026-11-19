@@ -923,3 +923,91 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
         Some(Stored::Known(RunEnd::Stopped))
     );
 }
+
+/// A run its host holds through a daemon restart: detached as the daemon
+/// stops, left open by the next store, rejoined, and ended. Another run left
+/// open is recovered as before.
+#[tokio::test]
+async fn a_held_run_is_detached_left_open_and_rejoined() {
+    use ren_recorder::capture::{ProcessExit, RunEnd};
+    use ren_recorder::id::{RunId, SessionId};
+    let harness = Harness::new(CaptureOptions::default(), 8).await;
+    let ids = SequentialIds::starting_at(100);
+    let (held, lost) = (RunId::generate(&ids), RunId::generate(&ids));
+    let session = SessionId::generate(&ids);
+    for (run, recorded) in [
+        (held, ren_recorder::RunSession::New(session)),
+        (lost, ren_recorder::RunSession::Existing(session)),
+    ] {
+        let tap = harness
+            .recorder
+            .run(
+                run,
+                recorded,
+                ren_harness::Harness::Codex,
+                "/work/acme".into(),
+                ren_harness::settings::RunSettings::default(),
+                None,
+            )
+            .unwrap();
+        if run == held {
+            tap.detach();
+        }
+    }
+    let (dir, _, reader) = harness.drain().await;
+    reader.close().await;
+
+    let clock = ManualClock::at(UnixMillis::from_millis(9_000));
+    let (store, recovery) = Store::open_holding(
+        dir.path(),
+        &clock,
+        Arc::new(SequentialIds::starting_at(500)),
+        &[held],
+    )
+    .await
+    .unwrap();
+    assert_eq!(recovery.runs, 1, "only the run no host held");
+    let setup = RecorderSetup {
+        options: CaptureOptions::default(),
+        retention: RetentionPolicy::default(),
+        max_calls: 8,
+        live_buffer: 64,
+        scanner: Arc::new(SecretScanner::new().unwrap()),
+    };
+    let (recorder, task) = Recorder::new(
+        store,
+        0,
+        setup,
+        Arc::new(clock),
+        Arc::new(SequentialIds::starting_at(600)),
+    )
+    .unwrap();
+    let tap = recorder.rejoin(held).unwrap();
+    tap.end(RunEnd::Exited, Some(ProcessExit::Code(0)));
+    drop(recorder);
+    task.run().await.unwrap();
+
+    let reader = Reader::open(dir.path(), 1).await.unwrap();
+    assert_eq!(
+        reader.run(lost).await.unwrap().unwrap().end,
+        Some(Stored::Known(RunEnd::Recovered))
+    );
+    assert_eq!(
+        reader.run(held).await.unwrap().unwrap().end,
+        Some(Stored::Known(RunEnd::Exited))
+    );
+    let kinds: Vec<_> = reader
+        .observations_after(0, ren_store::query::PageLimit::DEFAULT)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|observation| observation.kind)
+        .collect();
+    let detached = kinds
+        .iter()
+        .position(|kind| *kind == Stored::Known(ObservationKind::RunDetached));
+    let rejoined = kinds
+        .iter()
+        .position(|kind| *kind == Stored::Known(ObservationKind::RunRejoined));
+    assert!(detached.is_some() && rejoined > detached, "{kinds:?}");
+}

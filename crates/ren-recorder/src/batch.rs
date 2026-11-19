@@ -381,6 +381,12 @@ pub enum RunFact {
     Opened { thread: NativeThreadId },
     /// The run moved to these settings, from its next turn on.
     Configured { settings: RunSettings },
+    /// The daemon stopped while the run went on under its run host: from
+    /// here until it is rejoined, no daemon watched it.
+    Detached,
+    /// A daemon took the run up again from its run host. What the run did
+    /// while detached is recorded from here, as this daemon reads it.
+    Rejoined,
     Ended {
         end: RunEnd,
         exit: Option<ProcessExit>,
@@ -393,6 +399,8 @@ impl RunFact {
             Self::Started { .. } => ObservationKind::RunStarted,
             Self::Opened { .. } => ObservationKind::RunOpened,
             Self::Configured { .. } => ObservationKind::RunConfigured,
+            Self::Detached => ObservationKind::RunDetached,
+            Self::Rejoined => ObservationKind::RunRejoined,
             Self::Ended { .. } => ObservationKind::RunEnded,
         }
     }
@@ -472,6 +480,10 @@ pub enum ObservationKind {
     SessionDetached,
     /// A session's attachments went out with a prompt.
     SessionAttachmentsSent,
+    /// A daemon stopped while a run went on under its run host.
+    RunDetached,
+    /// A daemon took up a run it had detached from.
+    RunRejoined,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.
