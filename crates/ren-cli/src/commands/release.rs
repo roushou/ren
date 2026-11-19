@@ -34,7 +34,7 @@ impl ReleaseCmd {
     }
 
     /// The release as lines of text.
-    fn render(body: &ReleaseBody) -> String {
+    pub(crate) fn render(body: &ReleaseBody) -> String {
         let Some(release) = &body.release else {
             return "No release yet: the factory (`cargo xtask canary`) has not run against this gateway.\n".to_owned();
         };

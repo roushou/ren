@@ -382,6 +382,10 @@ health = "/"
 [[check]]
 name = "page"
 run = ["python3", "-c", "import html.parser; html.parser.HTMLParser().feed(open('index.html').read()); print('index.html parses')"]
+
+# Production for a fake project: a folder under its canary's data.
+[deploy]
+run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'production'; p.mkdir(parents=True, exist_ok=True); shutil.copy('index.html', p / 'index.html'); print('deployed to', p)"]
 "#
                 .to_owned(),
             ),
@@ -676,6 +680,7 @@ mod tests {
             assert_eq!(name, ren_project::ProjectContract::FILE);
             let contract = ren_project::ProjectContract::read(&text).unwrap();
             assert!(contract.serve().is_some() && !contract.checks().is_empty());
+            assert!(contract.deploy().is_some());
         }
     }
 

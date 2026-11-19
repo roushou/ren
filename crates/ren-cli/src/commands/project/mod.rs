@@ -11,6 +11,9 @@
 //!
 //! This module is the one place the CLI runs a project's declared steps.
 
+mod canary;
+
+use self::canary::ProjectFactory;
 use super::history::TargetArgs;
 use crate::{context::Context, management::Management};
 use anyhow::{Context as _, Result, bail};
@@ -56,6 +59,30 @@ enum ProjectAction {
         #[command(subcommand)]
         action: PreviewAction,
     },
+    /// One canary pass: fetch the project's main, build it, serve it,
+    /// check it, and deploy it if the operator's policy says so.
+    Canary(CanaryArgs),
+    /// Deploy the canary's checked build now, whatever the policy says.
+    Promote(DirArgs),
+    /// Where the project's release stands.
+    Release(DirArgs),
+}
+
+#[derive(Args)]
+struct CanaryArgs {
+    #[command(flatten)]
+    dir: DirArgs,
+    #[arg(long, default_value = "origin")]
+    remote: String,
+    #[arg(long, default_value = "main")]
+    branch: String,
+}
+
+#[derive(Args)]
+struct DirArgs {
+    /// The project's repository; by default the current folder.
+    #[arg(long)]
+    dir: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -104,10 +131,17 @@ impl ProjectCmd {
                 PreviewAction::Up(args) => Self::up(ctx, args).await,
                 PreviewAction::Down(args) => Self::down(ctx, args).await,
             },
+            ProjectAction::Canary(args) => {
+                ProjectFactory::new(ctx, args.dir.dir)?
+                    .pass(&args.remote, &args.branch)
+                    .await
+            }
+            ProjectAction::Promote(args) => ProjectFactory::new(ctx, args.dir)?.promote(),
+            ProjectAction::Release(args) => ProjectFactory::new(ctx, args.dir)?.show(),
         }
     }
 
-    fn contract(dir: &Path) -> Result<ProjectContract> {
+    pub(super) fn contract(dir: &Path) -> Result<ProjectContract> {
         let path = dir.join(ProjectContract::FILE);
         let text = std::fs::read_to_string(&path).with_context(|| {
             format!(
@@ -250,13 +284,13 @@ impl ProjectCmd {
 
     /// The unit the workspace's preview runs as: the one removing the
     /// workspace stops.
-    fn unit(workspace: &Workspace) -> String {
+    pub(super) fn unit(workspace: &Workspace) -> String {
         let [_, _, serve] = workspace.preview_units();
         serve
     }
 
     /// Waits up to a minute for `open` to answer `health`.
-    async fn healthy(open: &str, health: &str) -> Result<()> {
+    pub(super) async fn healthy(open: &str, health: &str) -> Result<()> {
         let url = format!("{}{health}", open.trim_end_matches('/'));
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(2))
@@ -412,7 +446,7 @@ impl Steps {
         clippy::disallowed_methods,
         reason = "the one place the CLI runs a project's declared steps"
     )]
-    fn run(step: &Expanded, dir: &Path) -> Result<bool> {
+    pub(super) fn run(step: &Expanded, dir: &Path) -> Result<bool> {
         let [program, args @ ..] = step.argv.as_slice() else {
             bail!("an empty command");
         };
@@ -427,7 +461,7 @@ impl Steps {
     }
 
     /// Starts `step` as the transient user unit `unit`, in `dir`.
-    fn start(unit: &str, step: &Expanded, dir: &Path) -> Result<()> {
+    pub(super) fn start(unit: &str, step: &Expanded, dir: &Path) -> Result<()> {
         let mut argv = vec![
             "systemd-run".to_owned(),
             "--user".to_owned(),
@@ -455,7 +489,7 @@ impl Steps {
     }
 
     /// Stops `unit` if it runs; one that does not is fine.
-    fn stop(unit: &str) -> Result<()> {
+    pub(super) fn stop(unit: &str) -> Result<()> {
         for verb in ["stop", "reset-failed"] {
             let argv = ["systemctl", "--user", verb, unit]
                 .map(str::to_owned)

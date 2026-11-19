@@ -100,6 +100,11 @@ impl Workspace {
         format!("ren/{}-{id}", self.name)
     }
 
+    /// Its slot's ports, first and last.
+    pub fn ports(&self) -> (u16, u16) {
+        self.slot.ports()
+    }
+
     /// The transient units its preview runs as, stopped when the workspace
     /// is removed: Ren's own (`cargo xtask preview`: its UI's, then its
     /// daemon's), and a project's (`ren project preview`: its serve step).
