@@ -909,8 +909,8 @@ test('the page’s opening reads each stand on their own', async () => {
   const client = new RunsClient((async (url: string) => {
     if (url === '/control/runs/clients') return Response.json({ error: 'busy' }, { status: 503 });
     if (url === '/control/runs') return Response.json({ api_version: 1, runs: [] });
-    if (url === '/control/runs/projects') {
-      return Response.json({ api_version: 1, projects: [], scratch: '/s' });
+    if (url === '/control/runs/places') {
+      return Response.json({ api_version: 1, places: [], scratch: '/s' });
     }
     if (url === '/control/runs/clients/codex/models') {
       return Response.json({ api_version: 1, harness: 'codex', models: [] });
@@ -919,7 +919,7 @@ test('the page’s opening reads each stand on their own', async () => {
   }) as typeof fetch);
   const opening = await client.opening();
   assert.deepEqual(opening.live, { state: 'read', value: [] });
-  assert.deepEqual(opening.places, { state: 'read', value: { projects: [], scratch: '/s' } });
+  assert.deepEqual(opening.places, { state: 'read', value: { places: [], scratch: '/s' } });
   assert.equal(opening.clients.state, 'failed');
   assert.equal(opening.recorded.state, 'read');
 });

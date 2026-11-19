@@ -344,6 +344,11 @@ pub enum SessionFact {
     AttachmentsSent {
         attachments: Vec<AttachmentId>,
     },
+    /// It works for `project`, or for none: set when it is made, when a
+    /// draft moves to another folder, and when a project adopts it.
+    Assigned {
+        project: Option<ProjectId>,
+    },
 }
 
 impl SessionFact {
@@ -355,6 +360,7 @@ impl SessionFact {
             Self::FolderChosen { .. } => ObservationKind::SessionFolderChosen,
             Self::Archived => ObservationKind::SessionArchived,
             Self::Unarchived => ObservationKind::SessionUnarchived,
+            Self::Assigned { .. } => ObservationKind::SessionAssigned,
             Self::Attached { .. } => ObservationKind::SessionAttached,
             Self::Detached { .. } => ObservationKind::SessionDetached,
             Self::AttachmentsSent { .. } => ObservationKind::SessionAttachmentsSent,
@@ -377,9 +383,11 @@ pub struct WorkRecord {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case", tag = "fact")]
 pub enum WorkFact {
-    /// It was marked: what it asks, waiting to be sent.
+    /// It was marked: what it asks, waiting to be sent, and the project
+    /// it is for, when one is named.
     Queued {
         order: Box<WorkOrder>,
+        project: Option<ProjectId>,
     },
     /// `session` took it up.
     Sent {
@@ -609,6 +617,8 @@ pub enum ObservationKind {
     ProjectRegistered,
     ProjectArchived,
     ProjectUnarchived,
+    /// A session was given a project, or none.
+    SessionAssigned,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

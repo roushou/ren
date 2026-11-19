@@ -86,7 +86,7 @@ import type { Model as WireModel } from './wire/Model.ts';
 import type { ModelsBody as WireModelsBody } from './wire/ModelsBody.ts';
 import type { OneSession as WireOneSession } from './wire/OneSession.ts';
 import type { Places as WirePlaces } from './wire/Places.ts';
-import type { Project as WireProject } from './wire/Project.ts';
+import type { Place as WirePlace } from './wire/Place.ts';
 import type { RunSettings as WireRunSettings } from './wire/RunSettings.ts';
 import type { RunSnapshot as WireRunSnapshot } from './wire/RunSnapshot.ts';
 import type { RunsBody as WireRunsBody } from './wire/RunsBody.ts';
@@ -97,7 +97,7 @@ import type { SessionView as WireSessionView } from './wire/SessionView.ts';
 import type { SessionsBody as WireSessionsBody } from './wire/SessionsBody.ts';
 import type { Waiting as WireWaiting } from './wire/Waiting.ts';
 import type { RunState as WireRunState } from './wire/RunState.ts';
-import type { ProjectGit as WireProjectGit } from './wire/ProjectGit.ts';
+import type { PlaceGit as WirePlaceGit } from './wire/PlaceGit.ts';
 import type { RunUpdate as WireRunUpdate } from './wire/RunUpdate.ts';
 import type { AnswerRequest as WireAnswerRequest } from './wire/AnswerRequest.ts';
 import type { ClientRequest as WireClientRequest } from './wire/ClientRequest.ts';
@@ -741,8 +741,8 @@ const oneSession = versioned(
 const createdSession = versioned(
   object<{ session: SessionId }, WireCreated>({ session: SessionId.decode }),
 );
-/** A project's repository, as its `HEAD` reads. */
-export type ProjectGit =
+/** A place's repository, as its `HEAD` reads. */
+export type PlaceGit =
   | { kind: 'branch'; name: string }
   | { kind: 'detached'; commit: string }
   | { kind: 'unreadable' }
@@ -757,25 +757,25 @@ export type PlaceKind = (typeof placeKinds)[number];
  * or a root's own folder), a folder of another configured place, or the
  * folder of an earlier scratch run.
  */
-export interface RunProject {
+export interface RunPlace {
   path: string;
   name: string;
   /** The path as the operator reads it: `~/…` under their home. */
   shown: string;
   kind: Stored<PlaceKind>;
-  git: ProjectGit;
+  git: PlaceGit;
 }
 
 /** Where runs can start, and the folder scratch runs get theirs in. */
 export interface RunPlaces {
-  projects: RunProject[];
+  places: RunPlace[];
   /** Null when runs cannot start in scratch on the daemon's host. */
   scratch: string | null;
 }
 
-type GitOf<K> = Extract<ProjectGit, { kind: K }>;
-type SentGit<K> = Variant<WireProjectGit, 'kind', K>;
-const projectGit = tagged<ProjectGit, WireProjectGit, 'kind'>(
+type GitOf<K> = Extract<PlaceGit, { kind: K }>;
+type SentGit<K> = Variant<WirePlaceGit, 'kind', K>;
+const placeGit = tagged<PlaceGit, WirePlaceGit, 'kind'>(
   'kind',
   {
     branch: object<GitOf<'branch'>, SentGit<'branch'>>({ kind: tagValue('branch'), name: string }),
@@ -793,15 +793,15 @@ const projectGit = tagged<ProjectGit, WireProjectGit, 'kind'>(
     return { kind: 'unreadable' };
   },
 );
-const runProjects = versioned(
+const runPlaces = versioned(
   object<RunPlaces, WirePlaces>({
-    projects: array(
-      object<RunProject, WireProject>({
+    places: array(
+      object<RunPlace, WirePlace>({
         path: string,
         name: string,
         shown: string,
         kind: label(placeKinds),
-        git: projectGit,
+        git: placeGit,
       }),
     ),
     scratch: nullable(string),
@@ -1014,7 +1014,7 @@ export class RunsClient {
     const [live, places, clients, recorded, archived, sessions, archivedSessions] =
       await Promise.all([
         read(this.live()),
-        read(this.projects()),
+        read(this.places()),
         read(this.clients()),
         read(this.recorded(100)),
         read(this.recorded(100, 'archived')),
@@ -1032,8 +1032,8 @@ export class RunsClient {
     };
   }
   /** Where runs can start, and the scratch folder. */
-  async projects(signal?: AbortSignal): Promise<RunPlaces> {
-    return this.#send('GET', '/control/runs/projects', undefined, runProjects, signal);
+  async places(signal?: AbortSignal): Promise<RunPlaces> {
+    return this.#send('GET', '/control/runs/places', undefined, runPlaces, signal);
   }
   /** Every client, and whether a run can start with it on the daemon's host. */
   async clients(signal?: AbortSignal): Promise<RunClient[]> {
@@ -1721,7 +1721,7 @@ export class Runs {
    * Where a run works, as the operator would say it: Scratch for a scratch
    * run, else its folder as `~/…` where a place offered shows the home.
    */
-  static place(workdir: string, scratch: string | null, offered: readonly RunProject[]): string {
+  static place(workdir: string, scratch: string | null, offered: readonly RunPlace[]): string {
     if (scratch && (workdir === scratch || workdir.startsWith(`${scratch}/`))) return 'Scratch';
     const known = offered.find((place) => place.path === workdir);
     if (known) return known.shown;
@@ -1768,8 +1768,8 @@ export class Runs {
    * each group's projects by name.
    */
   /** Places by the folder they are in, as the operator reads it (`~/dev`). */
-  static places(projects: readonly RunProject[]): { parent: string; projects: RunProject[] }[] {
-    const groups = new Map<string, RunProject[]>();
+  static places(projects: readonly RunPlace[]): { parent: string; projects: RunPlace[] }[] {
+    const groups = new Map<string, RunPlace[]>();
     for (const project of projects) {
       const cut = project.shown.lastIndexOf('/');
       const parent = cut > 0 ? project.shown.slice(0, cut) : project.shown;
@@ -1784,7 +1784,7 @@ export class Runs {
   }
 
   /** The projects matching what is typed, by name or path, ignoring case. */
-  static choose(projects: readonly RunProject[], typed: string): RunProject[] {
+  static choose(projects: readonly RunPlace[], typed: string): RunPlace[] {
     const text = typed.trim().toLowerCase();
     return projects.filter(
       (project) =>
@@ -1794,11 +1794,11 @@ export class Runs {
 
   /** What a project's repository is on, in a few words. */
   /** Whether a folder is a git repository whose `HEAD` was read. */
-  static versioned(git: ProjectGit): boolean {
+  static versioned(git: PlaceGit): boolean {
     return git.kind === 'branch' || git.kind === 'detached';
   }
 
-  static branch(git: ProjectGit): string {
+  static branch(git: PlaceGit): string {
     switch (git.kind) {
       case 'branch':
         return git.name;
@@ -1955,13 +1955,13 @@ export class Desk {
   /** The projects runs worked in, most recently started first, at most `count`. */
   static recent(
     runs: readonly { workdir: string; started_at: UnixMillis | null }[],
-    offered: readonly RunProject[],
+    offered: readonly RunPlace[],
     count = 3,
-  ): RunProject[] {
+  ): RunPlace[] {
     const newest = runs
       .filter((run) => run.started_at !== null)
       .toSorted((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0));
-    const recent: RunProject[] = [];
+    const recent: RunPlace[] = [];
     for (const run of newest) {
       const project = offered.find((project) => project.path === run.workdir);
       if (project && !recent.includes(project)) recent.push(project);

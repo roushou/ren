@@ -3,4 +3,4 @@
 /**
  * A project's repository, as its `HEAD` reads.
  */
-export type ProjectGit = { "kind": "branch", name: string, } | { "kind": "detached", commit: string, } | { "kind": "unreadable" } | { "kind": "none" };
+export type PlaceGit = { "kind": "branch", name: string, } | { "kind": "detached", commit: string, } | { "kind": "unreadable" } | { "kind": "none" };

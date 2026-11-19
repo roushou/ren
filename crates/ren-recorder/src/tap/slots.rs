@@ -143,13 +143,15 @@ impl WorkSlot {
         })
     }
 
-    /// Queue `order` as a new work item, and return its id.
-    pub fn queue(self, order: WorkOrder) -> WorkItemId {
+    /// Queue `order` as a new work item for `project`, if one is named,
+    /// and return its id.
+    pub fn queue(self, order: WorkOrder, project: Option<ProjectId>) -> WorkItemId {
         let item = WorkItemId::generate(self.shared.ids.as_ref());
         self.record(
             item,
             WorkFact::Queued {
                 order: Box::new(order),
+                project,
             },
         );
         item

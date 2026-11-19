@@ -8,6 +8,7 @@ use ren_harness::settings::ApprovalPolicy;
 use ren_harness::settings::Effort;
 use ren_protocol::label::Stored;
 use ren_recorder::id::AttachmentId;
+use ren_recorder::id::ProjectId;
 use ren_recorder::id::RunId;
 use ren_recorder::id::SessionId;
 use ren_recorder::time::UnixMillis;
@@ -92,6 +93,10 @@ pub struct SessionView {
     #[ts(as = "String")]
     pub harness: Stored<Harness>,
     pub workdir: String,
+    /// The project it works for; `None` outside every project, or from
+    /// before projects.
+    #[ts(as = "Option<String>")]
+    pub project: Option<ProjectId>,
     #[ts(as = "u64")]
     pub created_at: UnixMillis,
     /// The settings its next turn runs on; `None` is the client's own.
@@ -119,6 +124,7 @@ impl From<ren_store::view::SessionView> for SessionView {
             id,
             harness,
             workdir,
+            project,
             created_at,
             model,
             effort,
@@ -132,6 +138,7 @@ impl From<ren_store::view::SessionView> for SessionView {
             id,
             harness,
             workdir,
+            project,
             created_at,
             model,
             effort,

@@ -7,6 +7,9 @@
 //!   that is not a name, an absolute repository path, or a factory is `422`
 //!   `invalid_project`.
 //! - `POST /control/v1/projects/{name}/archive` and `/unarchive`: `202`.
+//! - `POST /control/v1/projects/{name}/adopt`: assign it the sessions no
+//!   project owns whose folder is in its repository, or is one of its
+//!   workspaces; `202` with the sessions it took.
 //!
 //! Each is recorded with the recorder, after everything queued before it.
 //! The store keeps the first project to take a name or a repository, so two
@@ -20,12 +23,14 @@ use axum::{
     routing::post,
 };
 use http::{HeaderMap, StatusCode};
+use ren_protocol::label::Stored;
 use ren_recorder::{
-    batch::ProjectFact,
-    id::ProjectId,
+    batch::{ProjectFact, SessionFact},
+    id::{ProjectId, SessionId},
     project::{Factory, ProjectName, ProjectRegistration, RepositoryPath},
 };
-use ren_store::Reader;
+use ren_store::{Reader, view::ProjectView};
+use ren_supervisor::{Supervisor, Workspace};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ts_rs::TS;
@@ -33,6 +38,84 @@ use ts_rs::TS;
 pub(super) struct ProjectsApi {
     pub control: Arc<ControlApi>,
     pub reader: Reader,
+    /// Where workspaces are, to tell a project's workspaces apart.
+    pub supervisor: Option<Supervisor>,
+}
+
+/// What an adoption answers: the project, and the sessions it took.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ProjectAdoption {
+    #[ts(as = "String")]
+    pub id: ProjectId,
+    #[ts(as = "String")]
+    pub name: ProjectName,
+    #[ts(as = "Vec<String>")]
+    pub sessions: Vec<SessionId>,
+}
+
+/// The registered projects, read once for one request: what owns a
+/// folder, and which project a name or Ren itself is.
+pub(super) struct ProjectRoster(Vec<ProjectView>);
+
+impl ProjectRoster {
+    pub(super) async fn read(reader: &Reader) -> Result<Self, ControlRefusal> {
+        reader.projects().await.map(Self).map_err(|error| {
+            tracing::warn!(%error, "projects unreadable");
+            ControlRefusal::Unreadable
+        })
+    }
+
+    /// The project a session in `folder` works for: the unarchived one
+    /// whose repository holds it, the innermost when repositories nest.
+    pub(super) fn owning(&self, folder: &str) -> Option<ProjectId> {
+        self.0
+            .iter()
+            .filter(|project| project.archived_at.is_none() && project.repository.holds(folder))
+            .max_by_key(|project| project.repository.to_string().len())
+            .map(|project| project.id)
+    }
+
+    /// The project `name` names, to work in: none is `not_found`, and an
+    /// archived one `archived`.
+    pub(super) fn named(&self, name: &str) -> Result<&ProjectView, ControlRefusal> {
+        let project = self
+            .0
+            .iter()
+            .find(|project| project.name.as_str() == name)
+            .ok_or(ControlRefusal::NotFound)?;
+        match project.archived_at {
+            None => Ok(project),
+            Some(_) => Err(ControlRefusal::Archived),
+        }
+    }
+
+    /// Ren itself: the one unarchived project built as Ren, when there is
+    /// exactly one.
+    pub(super) fn ren(&self) -> Option<ProjectId> {
+        let mut ren = self.0.iter().filter(|project| {
+            project.archived_at.is_none() && project.factory == Stored::Known(Factory::Ren)
+        });
+        match (ren.next(), ren.next()) {
+            (Some(project), None) => Some(project.id),
+            (Some(_), Some(_)) | (None, _) => None,
+        }
+    }
+
+    /// Whether `workdir` is a workspace of `project`'s repository, in the
+    /// worktrees folder `root`. Workspaces are named for their repository's
+    /// folder, so one shared with another project's repository says
+    /// nothing.
+    fn workspace_of(&self, project: &ProjectView, root: &std::path::Path, workdir: &str) -> bool {
+        let repository = project.repository.as_path();
+        let shared = self.0.iter().any(|other| {
+            other.id != project.id
+                && other.repository.as_path().file_name() == repository.file_name()
+        });
+        !shared
+            && Workspace::of(root, std::path::Path::new(workdir))
+                .is_some_and(|workspace| workspace.is_of(repository))
+    }
 }
 
 /// A project to register. The repository is its folder's canonical absolute
@@ -89,6 +172,7 @@ impl ProjectsApi {
                 "/control/v1/projects/{name}/unarchive",
                 post(Self::unarchive),
             )
+            .route("/control/v1/projects/{name}/adopt", post(Self::adopt))
             .with_state(Arc::new(self))
     }
 
@@ -155,6 +239,59 @@ impl ProjectsApi {
         headers: HeaderMap,
     ) -> Response {
         api.shelve(&headers, &name, Shelving::Unarchive).await
+    }
+
+    async fn adopt(
+        State(api): State<Arc<Self>>,
+        Path(name): Path<String>,
+        headers: HeaderMap,
+    ) -> Response {
+        if let Err(refusal) = api.control.authorize(&headers) {
+            return refusal.into_response();
+        }
+        let roster = match ProjectRoster::read(&api.reader).await {
+            Ok(roster) => roster,
+            Err(refusal) => return refusal.into_response(),
+        };
+        let project = match roster.named(&name) {
+            Ok(project) => project,
+            Err(refusal) => return refusal.into_response(),
+        };
+        let unassigned = match api.reader.unassigned_sessions().await {
+            Ok(unassigned) => unassigned,
+            Err(error) => {
+                tracing::warn!(%error, "sessions unreadable");
+                return ControlRefusal::Unreadable.into_response();
+            }
+        };
+        let root = api.supervisor.as_ref().and_then(Supervisor::worktrees);
+        let mut sessions = Vec::new();
+        for (session, workdir) in unassigned {
+            let ours = project.repository.holds(&workdir)
+                || root.is_some_and(|root| roster.workspace_of(project, root, &workdir));
+            if !ours {
+                continue;
+            }
+            let Some(slot) = api.control.recorder.session_slot() else {
+                return ControlRefusal::Unrecorded.into_response();
+            };
+            slot.record(
+                session,
+                SessionFact::Assigned {
+                    project: Some(project.id),
+                },
+            );
+            sessions.push(session);
+        }
+        (
+            StatusCode::ACCEPTED,
+            ControlApi::answer(ProjectAdoption {
+                id: project.id,
+                name: project.name.clone(),
+                sessions,
+            }),
+        )
+            .into_response()
     }
 
     async fn shelve(&self, headers: &HeaderMap, name: &str, shelving: Shelving) -> Response {

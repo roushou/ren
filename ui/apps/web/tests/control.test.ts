@@ -75,7 +75,7 @@ test('commands reach the control API with the token from the file, never browser
   assert.equal(daemon.seen, 1);
 });
 
-test('starting, listing, projects, models, answering, history edits, and the feed map to their control routes', async () => {
+test('starting, listing, places, models, answering, history edits, and the feed map to their control routes', async () => {
   const seen: string[] = [];
   const daemon = host((url, init) => {
     seen.push(`${init.method} ${url.pathname}`);
@@ -91,7 +91,7 @@ test('starting, listing, projects, models, answering, history edits, and the fee
     new Request('http://ui.test/control/runs', { headers: { 'sec-fetch-site': 'same-origin' } }),
   );
   await proxy.respond(
-    new Request('http://ui.test/control/runs/projects', {
+    new Request('http://ui.test/control/runs/places', {
       headers: { 'sec-fetch-site': 'same-origin' },
     }),
   );
@@ -130,7 +130,7 @@ test('starting, listing, projects, models, answering, history edits, and the fee
   assert.deepEqual(seen, [
     'POST /control/v1/sessions',
     'GET /control/v1/runs',
-    'GET /control/v1/runs/projects',
+    'GET /control/v1/runs/places',
     'GET /control/v1/runs/clients',
     'GET /control/v1/runs/clients/pi/models',
     'POST /control/v1/runs/clients/claude_code/sign-in',

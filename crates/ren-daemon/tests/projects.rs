@@ -1,7 +1,10 @@
 //! Projects through the control API end to end: registered, refused when
 //! the name or the repository is taken (archived or not) or the text is
-//! not a project, archived and unarchived, each read back from the store.
-//! Assembled with `TestGateway`.
+//! not a project, archived and unarchived; and what they own: the sessions
+//! made in their repository or asked for by name, the work items queued
+//! for them (Ren's by default), sends checked against both, and earlier
+//! sessions adopted. Each read back from the store. Assembled with
+//! `TestGateway`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -16,8 +19,9 @@ use axum::Router;
 use http::StatusCode;
 use ren_store::{Reader, view::ProjectView};
 use serde_json::{Value, json};
+use std::path::PathBuf;
 use std::{path::Path, time::Duration};
-use support::{TestGateway, client, config, mock};
+use support::{TestGateway, agent::ScriptedHost, client, config, mock};
 
 async fn send(gateway: &TestGateway, path: &str, body: Option<Value>) -> (StatusCode, Value) {
     let mut request = client()
@@ -112,4 +116,145 @@ async fn a_project_is_registered_refused_when_taken_and_archived_through_the_api
     settled(dir.path(), |projects| projects[0].archived_at.is_none()).await;
     let (status, _) = send(&gateway, "/projects/acme-none/archive", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// `session`'s project once the recorder has stored one that `done` takes.
+async fn owner(dir: &Path, session: &str, done: impl Fn(Option<String>) -> bool) -> Option<String> {
+    let session = session.parse().unwrap();
+    for _ in 0..200 {
+        let reader = Reader::open(dir, 1).await.unwrap();
+        let view = reader.session(session).await.unwrap();
+        reader.close().await;
+        let project = view.and_then(|view| view.project).map(|id| id.to_string());
+        if done(project.clone()) {
+            return project;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("{session} never settled");
+}
+
+/// A work item's project once it is stored.
+async fn item_project(dir: &Path, item: &str) -> Option<String> {
+    let item = item.parse().unwrap();
+    for _ in 0..200 {
+        let reader = Reader::open(dir, 1).await.unwrap();
+        let view = reader.work_item(item).await.unwrap();
+        reader.close().await;
+        if let Some(view) = view {
+            return view.project.map(|id| id.to_string());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("{item} was never stored");
+}
+
+fn order() -> Value {
+    json!({
+        "page": { "path": "/", "route": "/", "title": "Overview", "width": 1440,
+                  "height": 900, "theme": "light", "revision": null },
+        "marks": [{ "selector": "main", "text": "", "source": null, "width": 10,
+                    "height": 10, "note": "Make it clearer" }],
+    })
+}
+
+#[tokio::test]
+async fn sessions_and_work_items_belong_to_the_project_they_are_for() {
+    let upstream = mock(Router::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::with_runs(
+        &config(&upstream),
+        dir.path(),
+        vec![PathBuf::from("/work")],
+        ScriptedHost,
+    )
+    .await;
+    let create = |body: Value| send(&gateway, "/sessions", Some(body));
+
+    // A session from before acme was registered works for none.
+    let (status, body) = create(json!({ "harness": "codex", "dir": "/work/acme" })).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let earlier = body["session"].as_str().unwrap().to_owned();
+
+    let (_, acme) = send(
+        &gateway,
+        "/projects",
+        Some(json!({ "name": "acme", "repository": "/work/acme", "factory": "contract" })),
+    )
+    .await;
+    let acme = acme["id"].as_str().unwrap().to_owned();
+    let (_, ren) = send(
+        &gateway,
+        "/projects",
+        Some(json!({ "name": "ren", "repository": "/work/web", "factory": "ren" })),
+    )
+    .await;
+    let ren = ren["id"].as_str().unwrap().to_owned();
+    settled(dir.path(), |projects| projects.len() == 2).await;
+
+    // In its repository, or asked for by name, a session works for acme;
+    // in scratch, for none.
+    let (_, body) = create(json!({ "harness": "codex", "dir": "/work/acme" })).await;
+    let in_repository = body["session"].as_str().unwrap().to_owned();
+    let (status, body) =
+        create(json!({ "harness": "codex", "project": "acme", "workspace": "folder" })).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let by_name = body["session"].as_str().unwrap().to_owned();
+    let (_, body) = create(json!({ "harness": "codex" })).await;
+    let scratch = body["session"].as_str().unwrap().to_owned();
+    for session in [&in_repository, &by_name] {
+        assert_eq!(
+            owner(dir.path(), session, |project| project.is_some()).await,
+            Some(acme.clone())
+        );
+    }
+    assert_eq!(owner(dir.path(), &scratch, |_| true).await, None);
+    assert_eq!(owner(dir.path(), &earlier, |_| true).await, None);
+    // A project and a folder together, or a project that is not one.
+    let (status, _) =
+        create(json!({ "harness": "codex", "project": "acme", "dir": "/work/acme" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = create(json!({ "harness": "codex", "project": "acme-none" })).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Queued with no project, an item is Ren's; named, it is that one's.
+    let (status, body) = send(&gateway, "/work", Some(order())).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let for_ren = body["id"].as_str().unwrap().to_owned();
+    let (_, body) = send(&gateway, "/work?project=acme", Some(order())).await;
+    let for_acme = body["id"].as_str().unwrap().to_owned();
+    assert_eq!(item_project(dir.path(), &for_ren).await, Some(ren));
+    assert_eq!(
+        item_project(dir.path(), &for_acme).await,
+        Some(acme.clone())
+    );
+
+    // Ren's item does not go to a session working for acme; acme's does.
+    let (status, body) = send(
+        &gateway,
+        &format!("/work/{for_ren}/send"),
+        Some(json!({ "session": in_repository })),
+    )
+    .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::CONFLICT, Some("project_mismatch"))
+    );
+    let (status, body) = send(
+        &gateway,
+        &format!("/work/{for_acme}/send"),
+        Some(json!({ "session": in_repository })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    // Adopting takes the earlier session in acme's repository, not scratch.
+    let (status, body) = send(&gateway, "/projects/acme/adopt", None).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["sessions"], json!([earlier]));
+    assert_eq!(
+        owner(dir.path(), &earlier, |project| project.is_some()).await,
+        Some(acme)
+    );
+    assert_eq!(owner(dir.path(), &scratch, |_| true).await, None);
 }

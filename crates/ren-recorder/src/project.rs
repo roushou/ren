@@ -97,6 +97,16 @@ impl RepositoryPath {
         Path::new(&self.0)
     }
 
+    /// Whether `folder` is this repository or in it, by its text: the
+    /// shell resolves a folder before it asks, as it does a repository.
+    /// `/dev/acme-web2` is not in `/dev/acme-web`.
+    pub fn holds(&self, folder: &str) -> bool {
+        folder == self.0
+            || folder
+                .strip_prefix(self.0.as_str())
+                .is_some_and(|rest| rest.starts_with('/') || self.0 == "/")
+    }
+
     /// The repository at `path`, which must already be canonical.
     pub fn of(path: &Path) -> Result<Self, ProjectTextError> {
         let text = path
@@ -171,6 +181,21 @@ mod tests {
             "",
         ] {
             assert!(path.parse::<RepositoryPath>().is_err(), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn a_repository_holds_itself_and_what_is_in_it() {
+        let repository: RepositoryPath = "/home/op/dev/acme-web".parse().unwrap();
+        for folder in ["/home/op/dev/acme-web", "/home/op/dev/acme-web/src/ui"] {
+            assert!(repository.holds(folder), "{folder}");
+        }
+        for folder in [
+            "/home/op/dev/acme-web2",
+            "/home/op/dev",
+            "/home/op/dev/acme-api",
+        ] {
+            assert!(!repository.holds(folder), "{folder}");
         }
     }
 }

@@ -547,6 +547,7 @@ ren project add --dir ~/dev/acme    # its folder's name unless --name; --factory
 ren project list                    # name, factory, repository, archived
 ren project archive acme            # keeps its name and repository; not built
 ren project unarchive acme
+ren project adopt acme              # its sessions from before it was registered
 ```
 
 Adding a project already registered just so does nothing; a name or a

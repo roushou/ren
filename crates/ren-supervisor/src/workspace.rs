@@ -87,6 +87,14 @@ impl Workspace {
             .then_some(Slot(slot))
     }
 
+    /// Whether it is a workspace of the repository in `repo`: its name is
+    /// that folder's name and a slot.
+    pub fn is_of(&self, repo: &Path) -> bool {
+        repo.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| self.name == format!("{name}-{}", self.slot.0))
+    }
+
     pub fn folder(&self) -> PathBuf {
         self.root.join(&self.name)
     }

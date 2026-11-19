@@ -148,6 +148,11 @@ pub struct CreateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(as = "Option<String>")]
     pub workspace: Option<WorkspaceKind>,
+    /// A registered project to work for, by name, in place of `dir`: the
+    /// session works in its repository, in a workspace of its own unless
+    /// `workspace` says `folder`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 /// Where a session with a folder works: in the folder itself, or in a
@@ -182,11 +187,13 @@ impl CreateRequest {
             approvals: None,
             resume: None,
             workspace: None,
+            project: None,
         }
     }
 
     /// Where it starts: its folder, a workspace of the repository in it,
     /// or, with no folder, a new scratch folder. A workspace needs a folder.
+    /// A session asked for by `project` starts where its project is.
     pub fn place(&self) -> Option<ren_supervisor::StartPlace> {
         match (&self.dir, self.workspace.unwrap_or_default()) {
             (Some(dir), WorkspaceKind::Folder) => {
@@ -284,7 +291,7 @@ pub enum ControlRequest {
     /// The current sessions.
     Sessions,
     /// The places a session can start in.
-    Projects,
+    Places,
     Create(CreateRequest),
     Prompt {
         session: SessionId,
@@ -297,8 +304,11 @@ pub enum ControlRequest {
     },
     Interrupt(SessionId),
     Stop(SessionId),
-    /// Queue a work item.
-    QueueWork(Box<WorkOrderBody>),
+    /// Queue a work item, for the project named, or else Ren itself.
+    QueueWork {
+        order: Box<WorkOrderBody>,
+        project: Option<ProjectName>,
+    },
     /// Ask that production take the canary's build.
     Promote(PromoteRequest),
     /// Move a work item on.
@@ -310,6 +320,9 @@ pub enum ControlRequest {
     RegisterProject(RegisterProjectRequest),
     ArchiveProject(ProjectName),
     UnarchiveProject(ProjectName),
+    /// Assign a project the unowned sessions in its repository or its
+    /// workspaces.
+    AdoptSessions(ProjectName),
 }
 
 /// Whether a request reads or changes.
@@ -341,7 +354,7 @@ impl ControlFeed {
 impl ControlRequest {
     pub fn method(&self) -> ControlMethod {
         match self {
-            Self::State | Self::Runs | Self::Sessions | Self::Projects => ControlMethod::Get,
+            Self::State | Self::Runs | Self::Sessions | Self::Places => ControlMethod::Get,
             Self::Pause(_)
             | Self::Resume
             | Self::BlockSession { .. }
@@ -356,11 +369,12 @@ impl ControlRequest {
             | Self::Answer { .. }
             | Self::Interrupt(_)
             | Self::Stop(_)
-            | Self::QueueWork(_)
+            | Self::QueueWork { .. }
             | Self::Promote(_)
             | Self::RegisterProject(_)
             | Self::ArchiveProject(_)
             | Self::UnarchiveProject(_)
+            | Self::AdoptSessions(_)
             | Self::Work { .. } => ControlMethod::Post,
         }
     }
@@ -390,7 +404,7 @@ impl ControlRequest {
             },
             Self::Runs => "runs".to_owned(),
             Self::Sessions => "sessions".to_owned(),
-            Self::Projects => "runs/projects".to_owned(),
+            Self::Places => "runs/places".to_owned(),
             Self::Create(_) => "sessions".to_owned(),
             Self::Prompt { session, .. } => format!("sessions/{session}/prompt"),
             Self::Answer {
@@ -398,11 +412,15 @@ impl ControlRequest {
             } => format!("sessions/{session}/approvals/{approval}"),
             Self::Interrupt(session) => format!("sessions/{session}/interrupt"),
             Self::Stop(session) => format!("sessions/{session}/stop"),
-            Self::QueueWork(_) => "work".to_owned(),
+            Self::QueueWork { project, .. } => match project {
+                Some(project) => format!("work?project={project}"),
+                None => "work".to_owned(),
+            },
             Self::Promote(_) => "release/promote".to_owned(),
             Self::RegisterProject(_) => "projects".to_owned(),
             Self::ArchiveProject(name) => format!("projects/{name}/archive"),
             Self::UnarchiveProject(name) => format!("projects/{name}/unarchive"),
+            Self::AdoptSessions(name) => format!("projects/{name}/adopt"),
             Self::Work { item, change } => format!("work/{item}/{}", change.path()),
         }
     }
@@ -418,7 +436,7 @@ impl ControlRequest {
             Self::Create(create) => serde_json::to_vec(create).map(Some),
             Self::Prompt { prompt, .. } => serde_json::to_vec(prompt).map(Some),
             Self::Answer { answer, .. } => serde_json::to_vec(answer).map(Some),
-            Self::QueueWork(order) => serde_json::to_vec(order).map(Some),
+            Self::QueueWork { order, .. } => serde_json::to_vec(order).map(Some),
             Self::Promote(promote) => serde_json::to_vec(promote).map(Some),
             Self::RegisterProject(project) => serde_json::to_vec(project).map(Some),
             Self::Work { change, .. } => match change {
@@ -436,11 +454,12 @@ impl ControlRequest {
             | Self::Edit { .. }
             | Self::Runs
             | Self::Sessions
-            | Self::Projects
+            | Self::Places
             | Self::Interrupt(_)
             | Self::Stop(_)
             | Self::ArchiveProject(_)
-            | Self::UnarchiveProject(_) => Ok(None),
+            | Self::UnarchiveProject(_)
+            | Self::AdoptSessions(_) => Ok(None),
         }
     }
 }

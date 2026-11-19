@@ -122,7 +122,30 @@ impl Registry {
             );
         }
         println!("Registered {name}: {repository} ({})", args.factory);
+        let reader = ctx.reader().await?;
+        let unowned = reader
+            .unassigned_sessions()
+            .await?
+            .iter()
+            .filter(|(_, workdir)| repository.holds(workdir))
+            .count();
+        reader.close().await;
+        if unowned > 0 {
+            println!(
+                "{unowned} session(s) in it work for no project: `ren project adopt {name}` assigns them."
+            );
+        }
         Ok(ExitCode::SUCCESS)
+    }
+
+    /// Assign `args.name` the sessions no project owns in its repository
+    /// or its workspaces.
+    pub(super) async fn adopt(ctx: &Context, args: NameArgs) -> Result<ExitCode> {
+        let target = ControlTarget::select(&args.target, ctx)?;
+        Ok(target
+            .send(&ControlRequest::AdoptSessions(args.name))
+            .await?
+            .report()?)
     }
 
     pub(super) async fn list(ctx: &Context) -> Result<ExitCode> {

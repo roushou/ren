@@ -192,16 +192,16 @@ impl From<ren_supervisor::StopCause> for StopCause {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Places {
-    pub projects: Vec<Project>,
+    pub places: Vec<Place>,
     /// None when runs cannot start in scratch here.
     pub scratch: Option<String>,
 }
 
 impl From<ren_supervisor::Places> for Places {
     fn from(value: ren_supervisor::Places) -> Self {
-        let ren_supervisor::Places { projects, scratch } = value;
+        let ren_supervisor::Places { places, scratch } = value;
         Self {
-            projects: projects.into_iter().map(Into::into).collect(),
+            places: places.into_iter().map(Into::into).collect(),
             scratch,
         }
     }
@@ -210,7 +210,7 @@ impl From<ren_supervisor::Places> for Places {
 /// A place a run can start in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct Project {
+pub struct Place {
     /// The absolute path to start a run in.
     pub path: String,
     /// Its folder's name, with its parent's when two of a kind share it.
@@ -219,12 +219,12 @@ pub struct Project {
     pub shown: String,
     #[ts(as = "String")]
     pub kind: PlaceKind,
-    pub git: ProjectGit,
+    pub git: PlaceGit,
 }
 
-impl From<ren_supervisor::Project> for Project {
-    fn from(value: ren_supervisor::Project) -> Self {
-        let ren_supervisor::Project {
+impl From<ren_supervisor::Place> for Place {
+    fn from(value: ren_supervisor::Place) -> Self {
+        let ren_supervisor::Place {
             path,
             name,
             shown,
@@ -245,7 +245,7 @@ impl From<ren_supervisor::Project> for Project {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[ts(export)]
-pub enum ProjectGit {
+pub enum PlaceGit {
     /// On a branch.
     Branch { name: String },
     /// At a commit, not on a branch: its abbreviated id.
@@ -256,13 +256,13 @@ pub enum ProjectGit {
     None,
 }
 
-impl From<ren_supervisor::ProjectGit> for ProjectGit {
-    fn from(value: ren_supervisor::ProjectGit) -> Self {
+impl From<ren_supervisor::PlaceGit> for PlaceGit {
+    fn from(value: ren_supervisor::PlaceGit) -> Self {
         match value {
-            ren_supervisor::ProjectGit::Branch { name } => Self::Branch { name },
-            ren_supervisor::ProjectGit::Detached { commit } => Self::Detached { commit },
-            ren_supervisor::ProjectGit::Unreadable => Self::Unreadable,
-            ren_supervisor::ProjectGit::None => Self::None,
+            ren_supervisor::PlaceGit::Branch { name } => Self::Branch { name },
+            ren_supervisor::PlaceGit::Detached { commit } => Self::Detached { commit },
+            ren_supervisor::PlaceGit::Unreadable => Self::Unreadable,
+            ren_supervisor::PlaceGit::None => Self::None,
         }
     }
 }

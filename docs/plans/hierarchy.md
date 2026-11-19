@@ -134,7 +134,7 @@ Records outside the tree stay, and each says why it is outside:
      fallback is kept.
    - `install-vps` registers its checkout as the `Ren` project, named `ren`,
      if no project has that repository.
-2. **Ownership.** Not built.
+2. **Ownership.** Built.
    - Migration `0005_ownership.sql` adds nullable
      `operator_sessions.project` and `work_items.project`, with indexes.
    - Session creation resolves the project from its folder (decision 3) and
@@ -208,4 +208,23 @@ gate against `main`.
   under the configured roots, not a registered project. Renaming it would
   change the API, so phase 1 names its new types apart
   (`RegisterProjectRequest`, `ProjectAnswer`); phase 2, where a session is
-  asked for by project, renames that listing to places.
+  asked for by project, renames that listing to places. Done in phase 2:
+  `GET /control/v1/runs/places` answers `{places, scratch}` with `Place`
+  and `PlaceGit` (`ren runs places`), a declared break.
+- **Phase 2: a session's project is its own fact.** `SessionFact::Created`
+  is recorded by the supervisor and by `ren run`'s tap alike; the project
+  is a separate `SessionFact::Assigned`, recorded by the gateway right
+  after (and when a draft moves, and on adoption), so the supervisor needs
+  no project list. A session `ren run` makes is unassigned until adopted.
+- **Phase 2: a queued item's project is a query parameter.**
+  `WorkOrderBody` is what was marked, and is also read back as the item's
+  `order`; the project is not part of it, so queueing takes
+  `?project=<name>`.
+- **Phase 2: a send is refused only when both projects are known and
+  differ.** An unassigned item or session, from before projects or
+  outside them, is sent as before.
+- **Phase 2: adoption is its own command.** The doc had `ren project add`
+  offer it; `add` says how many sessions in the repository have no
+  project, and `ren project adopt` (`POST /control/v1/projects/{name}/adopt`)
+  assigns them, with the project's workspaces matched by folder name
+  (skipped when another project's repository shares it).

@@ -17,8 +17,8 @@ mod entries;
 mod files;
 mod host;
 mod journal;
+mod place;
 mod process;
-mod project;
 #[cfg(test)]
 mod purity;
 mod run;
@@ -34,7 +34,7 @@ pub use host::{
     AgentHost, AgentProcess, ClientStamp, HeldRun, KillSignal, KillSwitch, RunTools, Scratch,
     Tenure, Untracked,
 };
-pub use project::{Look, PlaceKind, Project, ProjectGit, Search};
+pub use place::{Look, Place, PlaceGit, PlaceKind, Search};
 pub use run::{
     Approvals, Delivery, ProcessExit, RunAction, RunCommand, RunEvent, RunPhase, RunRefused,
     RunState, RunTenure, StopCause, Transition, Waiting,
@@ -69,7 +69,11 @@ use ren_recorder::{
     Recorder, RunUnrecorded,
     id::{AttachmentId, IdSource, RunId, SessionId},
 };
-use std::{io, path::PathBuf, sync::Arc};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 /// What a supervisor is set up with.
@@ -129,6 +133,9 @@ pub struct Supervisor {
     sessions: broadcast::Sender<SessionSnapshot>,
     /// The attachment limits; `None` when sessions take no attachments.
     attachment_limits: Option<Limits>,
+    /// The folder workspaces are made in, resolved; `None` when there is
+    /// none.
+    worktrees: Option<PathBuf>,
 }
 
 /// A session as the supervisor serves it: what it is, where it stands,
@@ -270,7 +277,7 @@ pub enum StartPlace {
 /// theirs in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Places {
-    pub projects: Vec<Project>,
+    pub places: Vec<Place>,
     /// None when runs cannot start in scratch here.
     pub scratch: Option<String>,
 }
@@ -547,7 +554,7 @@ impl Supervisor {
         });
         let bounds = Bounds::new(roots, places, scratch, options.home)
             .map_err(SupervisorError::Roots)?
-            .with_worktrees(worktrees);
+            .with_worktrees(worktrees.clone());
         // An attachments folder that cannot be made leaves sessions without
         // attachments, not the supervisor without sessions.
         let attachments = options.attachments.and_then(|root| {
@@ -583,9 +590,15 @@ impl Supervisor {
                 updates,
                 sessions,
                 attachment_limits,
+                worktrees,
             },
             task,
         ))
+    }
+
+    /// The folder workspaces are made in, when there is one.
+    pub fn worktrees(&self) -> Option<&Path> {
+        self.worktrees.as_deref()
     }
 
     /// Every run the supervisor knows of, ended ones included.
@@ -600,7 +613,7 @@ impl Supervisor {
 
     /// The projects a run can start in: the git repositories under the
     /// roots, and each root's folders with none below them.
-    pub async fn projects(&self) -> Result<Places, Gone> {
+    pub async fn places(&self) -> Result<Places, Gone> {
         let (reply, answer) = oneshot::channel();
         self.requests
             .send(Request::Projects { reply })

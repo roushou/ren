@@ -11,7 +11,7 @@ fn pure_modules_stay_free_of_runtime_and_io_dependencies() {
         ("attachments.rs", include_str!("attachments.rs")),
         ("workdir.rs", include_str!("workdir.rs")),
         ("workspace.rs", include_str!("workspace.rs")),
-        ("project.rs", include_str!("project.rs")),
+        ("place.rs", include_str!("place.rs")),
         ("entries.rs", include_str!("entries.rs")),
         ("files.rs", include_str!("files.rs")),
         ("session.rs", include_str!("session.rs")),

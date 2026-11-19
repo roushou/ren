@@ -136,6 +136,8 @@ pub enum ControlRefusal {
     InvalidProject,
     /// Another project holds the name or the repository.
     ProjectTaken,
+    /// The session works for another project than the work item is for.
+    ProjectMismatch,
 }
 
 impl ControlRefusal {
@@ -183,7 +185,8 @@ impl ControlRefusal {
             | Self::ToolsCollected
             | Self::WorkState
             | Self::NotPromotable
-            | Self::ProjectTaken => StatusCode::CONFLICT,
+            | Self::ProjectTaken
+            | Self::ProjectMismatch => StatusCode::CONFLICT,
             Self::AttachmentTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::BlankPrompt
             | Self::TooManyAttachments

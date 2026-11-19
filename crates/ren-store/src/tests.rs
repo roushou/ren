@@ -2272,6 +2272,7 @@ mod conversation {
         for fact in [
             WorkFact::Queued {
                 order: Box::new(order),
+                project: None,
             },
             WorkFact::Sent { session },
             WorkFact::Dismissed,

@@ -38,7 +38,7 @@ use ren_recorder::{
         AttemptPhase, AttemptTerminal, CallRejection, ChannelEnd, ProcessExit, RunEnd,
         TerminalCause, TerminalRecord,
     },
-    id::{AttachmentId, ChannelId, RunId, SequentialIds, SessionId},
+    id::{AttachmentId, ChannelId, ProjectId, RunId, SequentialIds, SessionId},
     retention::RetentionPolicy,
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     secrets::SecretScanner,
@@ -571,13 +571,14 @@ impl Scenario {
         tap.end(RunEnd::Stopped, Some(ProcessExit::Code(0)));
         self.archived_run(session);
         self.later(1_000);
-        self.work(session);
+        let ren = self.projects();
         self.later(1_000);
-        self.projects();
+        self.work(session, ren);
     }
 
-    /// Two projects registered, one of them archived.
-    fn projects(&self) {
+    /// Two projects registered, one of them archived; returns the one
+    /// that is not.
+    fn projects(&self) -> ProjectId {
         use ren_recorder::{
             batch::ProjectFact,
             project::{Factory, ProjectRegistration},
@@ -592,7 +593,7 @@ impl Scenario {
                     factory,
                 })
         };
-        register("ren", "/home/op/ren", Factory::Ren);
+        let ren = register("ren", "/home/op/ren", Factory::Ren);
         self.later(1_000);
         let api = register("acme-api", "/home/op/dev/acme-api", Factory::Contract);
         self.later(1_000);
@@ -600,11 +601,12 @@ impl Scenario {
             .project_slot()
             .unwrap()
             .record(api, ProjectFact::Archived);
+        ren
     }
 
     /// Two work items: one carried from queued to shipped by the session,
     /// one dismissed.
-    fn work(&self, session: SessionId) {
+    fn work(&self, session: SessionId, ren: ProjectId) {
         use ren_recorder::batch::WorkFact;
         use ren_recorder::id::WorkItemId;
         use ren_recorder::work::{Evidence, MarkedPage, PageTheme, WorkMark, WorkOrder};
@@ -634,11 +636,17 @@ impl Scenario {
         let record = |item: WorkItemId, fact: WorkFact| {
             self.recorder.work_slot().unwrap().record(item, fact);
         };
+        // The session works for ren; the dismissed item names no project.
+        self.recorder
+            .session_slot()
+            .unwrap()
+            .record(session, SessionFact::Assigned { project: Some(ren) });
         let shipped = WorkItemId::generate(self.ids.as_ref());
         record(
             shipped,
             WorkFact::Queued {
                 order: Box::new(order("Show each recording's turn count")),
+                project: Some(ren),
             },
         );
         self.later(1_000);
@@ -675,6 +683,7 @@ impl Scenario {
             dismissed,
             WorkFact::Queued {
                 order: Box::new(order("Move the archive button")),
+                project: None,
             },
         );
         self.later(1_000);

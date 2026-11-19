@@ -319,6 +319,10 @@ export const observationKinds = [
   'work_shipped',
   'work_dismissed',
   'work_previewed',
+  'project_registered',
+  'project_archived',
+  'project_unarchived',
+  'session_assigned',
 ] as const;
 export const channelEnds = [
   'client_closed',
@@ -439,6 +443,9 @@ export const controlRefusals = [
   'invalid_order',
   'work_state',
   'not_promotable',
+  'invalid_project',
+  'project_taken',
+  'project_mismatch',
 ] as const;
 export type ControlRefusal = (typeof controlRefusals)[number];
 export const previewExtents = ['complete', 'partial', 'truncated', 'gap'] as const;

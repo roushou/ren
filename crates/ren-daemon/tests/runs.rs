@@ -164,7 +164,7 @@ async fn a_session_is_started_prompted_approved_and_stopped_through_the_control_
     let projects: serde_json::Value = serde_json::from_slice(
         &control
             .http
-            .get(format!("{}/runs/projects", control.base))
+            .get(format!("{}/runs/places", control.base))
             .bearer_auth(TestGateway::CONTROL_TOKEN)
             .send()
             .await
@@ -175,7 +175,7 @@ async fn a_session_is_started_prompted_approved_and_stopped_through_the_control_
     )
     .unwrap();
     assert_eq!(
-        projects["projects"],
+        projects["places"],
         json!([
             { "path": "/work/acme", "name": "acme", "shown": "~/acme", "kind": "project",
               "git": { "kind": "branch", "name": "main" } },
@@ -1470,7 +1470,7 @@ async fn every_control_request_reaches_its_route() {
         },
         ControlRequest::Runs,
         ControlRequest::Sessions,
-        ControlRequest::Projects,
+        ControlRequest::Places,
         ControlRequest::Create(CreateRequest::new(
             Harness::Codex,
             Some("/elsewhere".into()),
@@ -1488,15 +1488,18 @@ async fn every_control_request_reaches_its_route() {
         },
         ControlRequest::Interrupt(session),
         ControlRequest::Stop(session),
-        ControlRequest::QueueWork(Box::new(
-            serde_json::from_value(json!({
-                "page": { "path": "/", "route": "/", "title": "Overview", "width": 1440,
-                          "height": 900, "theme": "light", "revision": null },
-                "marks": [{ "selector": "main", "text": "", "source": null, "width": 10,
-                            "height": 10, "note": "Make it clearer" }],
-            }))
-            .unwrap(),
-        )),
+        ControlRequest::QueueWork {
+            order: Box::new(
+                serde_json::from_value(json!({
+                    "page": { "path": "/", "route": "/", "title": "Overview", "width": 1440,
+                              "height": 900, "theme": "light", "revision": null },
+                    "marks": [{ "selector": "main", "text": "", "source": null, "width": 10,
+                                "height": 10, "note": "Make it clearer" }],
+                }))
+                .unwrap(),
+            ),
+            project: None,
+        },
         ControlRequest::Work {
             item: ren_recorder::id::WorkItemId::restore(id(6)),
             change: WorkChange::Send(SendWorkRequest { session }),

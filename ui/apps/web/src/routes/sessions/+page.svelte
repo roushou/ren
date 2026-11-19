@@ -31,7 +31,7 @@
     Setup,
     type RunClient,
     type Drivable,
-    type RunProject,
+    type RunPlace,
     type Deletion,
     type DeletionEvent,
     type HistoryChange,
@@ -186,7 +186,7 @@
   );
 
   /** The projects the daemon offers to start a run in. */
-  let offered = $state.raw<RunProject[]>(first(initial?.places, null)?.projects ?? []);
+  let offered = $state.raw<RunPlace[]>(first(initial?.places, null)?.places ?? []);
   /** The clients a run can start with, and whether each is ready. */
   let clients = $state.raw<RunClient[]>(first(initial?.clients, []));
   /** The client whose sign-in sheet is open. */
@@ -236,7 +236,7 @@
   async function readProjects() {
     if (!data.runsControl) return;
     try {
-      ({ projects: offered, scratch } = await client.projects());
+      ({ places: offered, scratch } = await client.places());
     } catch {
       // The list is a convenience; a typed path still starts a run.
     }

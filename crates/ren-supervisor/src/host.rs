@@ -4,7 +4,7 @@
 
 use crate::{
     files::{FoundPath, WalkLimits},
-    project::Look,
+    place::Look,
     run::ProcessExit,
     workdir::Workdir,
     workspace::Workspace,

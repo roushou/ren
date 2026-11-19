@@ -161,7 +161,7 @@ impl ControlApi {
         .router();
         let runs = RunsApi {
             control: control.clone(),
-            supervisor,
+            supervisor: supervisor.clone(),
             shutdown,
         };
         let run_routes = runs.router();
@@ -178,6 +178,7 @@ impl ControlApi {
         let project_routes = projects::ProjectsApi {
             control: control.clone(),
             reader,
+            supervisor: supervisor.clone(),
         }
         .router();
         let release_routes = release::ReleaseApi {

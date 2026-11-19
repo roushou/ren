@@ -30,7 +30,7 @@ use crate::{
     files::{FileMatch, FileQuery, FoundPath},
     host::{AgentHost, KillSwitch, RunTools},
     journal::{Entry, Start},
-    project::Search,
+    place::Search,
     run::{ProcessExit, RunCommand, RunState},
     session::{Launch, Room, Session, TurnsEnded},
     workdir::{Bounds, RequestedDir, Workdir},
@@ -358,8 +358,8 @@ impl<H: AgentHost> SupervisorTask<H> {
                 });
                 served.replies.push(
                     async move {
-                        let projects = looked.await.unwrap_or_default();
-                        let _ = reply.send(Places { projects, scratch });
+                        let places = looked.await.unwrap_or_default();
+                        let _ = reply.send(Places { places, scratch });
                     }
                     .boxed(),
                 );

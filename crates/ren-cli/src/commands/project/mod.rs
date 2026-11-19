@@ -74,6 +74,9 @@ enum ProjectAction {
     /// built.
     Archive(NameArgs),
     Unarchive(NameArgs),
+    /// Assign a project the sessions no project owns whose folder is in
+    /// its repository or is one of its workspaces.
+    Adopt(NameArgs),
     /// Run the checks `.ren/project.toml` declares, in order; fails when one
     /// does.
     Check(CheckArgs),
@@ -151,6 +154,7 @@ impl ProjectCmd {
             ProjectAction::List => Registry::list(ctx).await,
             ProjectAction::Archive(args) => Registry::archive(ctx, args).await,
             ProjectAction::Unarchive(args) => Registry::unarchive(ctx, args).await,
+            ProjectAction::Adopt(args) => Registry::adopt(ctx, args).await,
             ProjectAction::Check(args) => Self::check(ctx, args),
             ProjectAction::Preview { action } => match action {
                 PreviewAction::Up(args) => Self::up(ctx, args).await,

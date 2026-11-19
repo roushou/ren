@@ -7,7 +7,7 @@
 <script lang="ts">
   import type { UnixMillis } from '#lib/api.ts';
   import Picker, { type PickerGroup, type PickerOption } from '#lib/Picker.svelte';
-  import { Desk, Runs, Sessions, type RunProject } from '#lib/runs.ts';
+  import { Desk, Runs, Sessions, type RunPlace } from '#lib/runs.ts';
 
   let {
     workdir,
@@ -19,7 +19,7 @@
   }: {
     /** The folder the draft is in now. */
     workdir: string;
-    offered: readonly RunProject[];
+    offered: readonly RunPlace[];
     /** The folder scratch sessions get theirs in; null: no scratch here. */
     scratch: string | null;
     runs: readonly { workdir: string; started_at: UnixMillis | null }[];
@@ -42,14 +42,14 @@
   );
   const hasOthers = $derived(offered.some((place) => place.kind === 'other'));
   const recent = $derived(Desk.recent(runs, shownPlaces));
-  const option = (project: RunProject): PickerOption => ({
+  const option = (project: RunPlace): PickerOption => ({
     value: project.path,
     label: project.name,
     hint: Runs.branch(project.git),
     hintIcon: Runs.versioned(project.git) ? 'branch' : undefined,
   });
   /** A place's folders, without those already listed as recent. */
-  const placed = (kind: RunProject['kind']): PickerGroup[] =>
+  const placed = (kind: RunPlace['kind']): PickerGroup[] =>
     Runs.places(offered.filter((place) => place.kind === kind))
       .map((place) => ({
         label: place.parent === '~' ? 'Home' : `${place.parent}/`,

@@ -11,7 +11,7 @@ use ren_supervisor::{
     AgentHost, AgentProcess, FoundPath, KillSignal, KillSwitch, Look, PathKind, ProcessExit,
     RunTools, Tenure, WalkLimits, Workdir,
 };
-use ren_supervisor::{ProjectGit, Scratch};
+use ren_supervisor::{PlaceGit, Scratch};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -54,11 +54,11 @@ impl AgentHost for ScriptedHost {
         Ok(match dir.to_str() {
             Some("/work") => Look {
                 folders: vec!["acme".into(), "web".into()],
-                git: ProjectGit::None,
+                git: PlaceGit::None,
             },
             Some("/work/acme") => Look {
                 folders: vec![],
-                git: ProjectGit::Branch {
+                git: PlaceGit::Branch {
                     name: "main".into(),
                 },
             },

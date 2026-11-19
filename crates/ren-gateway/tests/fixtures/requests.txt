@@ -15,6 +15,7 @@ PauseRequest
 PreviewWorkRequest
 PromoteRequest
 PromptRequest
+QueueRequest
 RawCallQuery
 RawExposureQuery
 RawLiveQuery

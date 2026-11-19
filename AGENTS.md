@@ -220,7 +220,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   values name the `Place` a step runs for through a parsed `Template`
   (`{port}`, `{port+N}`, `{data}`, `{workspace}`; an unknown placeholder is
   refused as the contract is read, a port past the place's range as a step
-  expands). Sans-IO; `ren project` (`crates/ren-cli/src/commands/project.rs`,
+  expands). Sans-IO; `ren project` (`crates/ren-cli/src/commands/project/`,
   the one place the CLI runs a project's steps) runs its checks,
   previews a workspace of it, and runs its canary and promotion
   (`commands/project/canary.rs`: `ProjectFactory`, with its release in
@@ -424,10 +424,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   run's own git (`AgentHost::make_scratch` answers a `Scratch`, untracked and
   why when it could not be); all resolved
   by the host so links cannot escape; `files` ranks the paths of a run's folder for a prompt to
-  name (`FileListing`, walked by the host's `AgentHost::files`); `project` finds the places a run can
-  start in, each a `Project` of a `PlaceKind` (git repositories under the
+  name (`FileListing`, walked by the host's `AgentHost::files`); `place` finds the places a run can
+  start in, each a `Place` of a `PlaceKind` (git repositories under the
   roots, not looked inside; other places' folders; earlier scratch
-  folders, each with its `ProjectGit`, which the host reads); `models` lists each client's models through a short listing
+  folders, each with its `PlaceGit`, which the host reads); `models` lists each client's models through a short listing
   process and keeps the answer (`Supervisor::models`); `Client` and
   `ClientStatus` (`client`) say whether a run can start
   with each client here; `AgentHost` (`host`) is the port for resolving paths,

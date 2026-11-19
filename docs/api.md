@@ -29,7 +29,7 @@ ren runs start codex ~/dev/acme                     # prints the new session
 ren runs start claude ~/dev/acme --prompt "fix the failing test"
 ren runs ls                                         # the runs, live
 ren runs sessions
-ren runs projects                                # where a run can start
+ren runs places                                  # where a run can start
 ren runs say <session-id> fix the failing test
 ren runs answer <session-id> <approval-id>      # or: decline, cancel, accept-for-session
 ren runs interrupt <session-id>
@@ -414,9 +414,33 @@ registers its checkout as `ren`.
   `{api_version, id, name}`; `409` `archived` or `not_archived` when it
   already is or is not, `404` `not_found` for a name no project has. An
   archived project keeps its name and repository.
+- `POST /control/v1/projects/{name}/adopt` assigns the project every
+  session no project owns whose folder is in its repository, or is one of
+  its workspaces (a workspace is named for its repository's folder, so one
+  shared with another project's repository is left): `202`
+  `{api_version, id, name, sessions}`.
 
 A project is stored a moment after it is accepted. The read API does not
 list projects yet (phase 3); `ren project list` reads them from the store.
+
+What a project owns (phase 2), each as `project` (its id, or `null`) on the
+session and work item reads:
+
+- **Sessions.** A session made in an unarchived project's repository (the
+  innermost, when repositories nest) works for it, as does one asked for
+  by name with `"project"` in place of `"dir"` on `POST
+  /control/v1/sessions`: it works in the repository, in a workspace of its
+  own unless `"workspace": "folder"` (both `"project"` and `"dir"` is `400`;
+  an unknown name `404`, an archived one `409` `archived`). Moving a draft
+  to another folder resolves it again. A scratch session, one made by `ren
+  run`, and one from before projects work for none until a project adopts
+  them.
+- **Work items.** `POST /control/v1/work?project=<name>` queues an order
+  for that project; with no `project`, for Ren itself (the one unarchived
+  project registered as Ren, whose own pages Redline marks), or none when
+  there is no such project. Sending an item for one project to a session
+  working for another is `409` `project_mismatch`; an item or a session
+  with no project is sent as before.
 
 ### Work items
 
@@ -662,7 +686,7 @@ places = ["~/.config", "~/dotfiles"]
 | Endpoint                                                 | Body                                                                                      | Answer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | -------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /control/v1/runs`                                   | none                                                                                      | `{api_version, runs}`: each `{run, session, harness, workdir, state, settings, tenure}`, `session` the operator session the run serves (a session is served by one run after another), `tenure` `held` when a run host keeps its client going through a daemon restart ([deployment](deployment.md#runs-through-a-restart)) or `bound` when it ends with the daemon                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `GET /control/v1/runs/projects`                          | none                                                                                      | `{api_version, projects, scratch}`: every place a run can start in, each `{path, name, shown, kind, git}`. `kind` `project`: the git repositories under the run roots (not looked inside, three levels down at most, hidden, `node_modules`, `target`, `vendor`, `dist`, and `build` folders skipped), and each root's folders with none below them; `other`: each `[runs] places` folder's own folders, hidden ones included, or the place itself when it is a repository; `scratch`: the folders earlier scratch runs worked in. `shown` is the path under the home as `~/…`; `git` one of `{"kind": "branch", name}`, `detached` with its `commit`, `unreadable`, or `none`. `scratch` is the folder scratch runs get theirs in, or `null`                                                                                                               |
+| `GET /control/v1/runs/places`                            | none                                                                                      | `{api_version, places, scratch}`: every place a run can start in, each `{path, name, shown, kind, git}`. `kind` `project`: the git repositories under the run roots (not looked inside, three levels down at most, hidden, `node_modules`, `target`, `vendor`, `dist`, and `build` folders skipped), and each root's folders with none below them; `other`: each `[runs] places` folder's own folders, hidden ones included, or the place itself when it is a repository; `scratch`: the folders earlier scratch runs worked in. `shown` is the path under the home as `~/…`; `git` one of `{"kind": "branch", name}`, `detached` with its `commit`, `unreadable`, or `none`. `scratch` is the folder scratch runs get theirs in, or `null`                                                                                                                 |
 | `GET /control/v1/runs/clients`                           | none                                                                                      | `{api_version, clients}`: every client, each `{harness, status, approvals, midway, sign_in, sign_in_methods}`, `approvals` the policies it can run under (none for Pi), `midway` what a running conversation takes: `steer` (a message into the running turn: Codex, Pi, OpenCode) and the settings that change from the next turn (`model`, `effort`, `approvals`: Codex all three, Claude Code `model` and `approvals`, Pi and OpenCode `model` and `effort`), `status` `ready` (its program is on the daemon's path) or `not_installed`; `sign_in` its [sign-in](#client-sign-in) as last checked, and `sign_in_methods` how Ren can sign it in (`claude_subscription` and `anthropic_console` for Claude Code, `chatgpt` for Codex, and `chatgpt`, `anthropic_api_key`, and `openai_api_key` for Pi and OpenCode). Waits for sign-in checks running now |
 | `GET /control/v1/runs/clients/{harness}/models`          | none                                                                                      | `{api_version, harness, models}`: the models the client itself lists on the daemon's host, in its order, each `{id, name, description, provider, choice, efforts, effort}`; `provider` is set where the client offers several (Pi), and `choice` is `default` for the one a run gets when none is chosen, else `other`. The daemon lists every installed client's models as it starts, so the first ask is answered at once; the first non-empty answer is kept while the daemon runs; an empty list (a client not signed in) is asked again next time. `502` `models_unavailable`, with a `message`, when the client refused, exited, or took over 20 seconds                                                                                                                                                                                              |
 | `GET /control/v1/runs/clients/{harness}/commands`        | query `dir`, an absolute folder in a root or another place (left out, the scratch folder) | `{api_version, commands}`, as for a session's commands: what the client offers a prompt in that folder, with no session. Listed by starting the client briefly in the folder in its structured mode (OpenCode opens a throwaway session there and deletes it), and kept for that installed client and folder while the daemon runs: a new version of the client (its program's file changed) is listed again, and so is the list a running client gives. `400` `invalid_directory`, `404` `not_installed` when the client is not found, `502` `commands_unavailable`, with a `message`, when it refused, exited, or took over 20 seconds                                                                                                                                                                                                                    |

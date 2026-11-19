@@ -32,6 +32,7 @@
         }
       },
       "state": "queued",
+      "project": null,
       "session": null,
       "landed": null,
       "shipped": null,

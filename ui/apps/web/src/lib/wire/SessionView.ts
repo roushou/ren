@@ -5,7 +5,12 @@ import type { RunView } from "./RunView.ts";
  * One session an operator works in, as recorded, with the runs (client
  * processes) that served it.
  */
-export type SessionView = { id: string, harness: string, workdir: string, created_at: number, 
+export type SessionView = { id: string, harness: string, workdir: string, 
+/**
+ * The project it works for; `None` outside every project, or from
+ * before projects.
+ */
+project: string | null, created_at: number, 
 /**
  * The settings its next turn runs on; `None` is the client's own.
  */

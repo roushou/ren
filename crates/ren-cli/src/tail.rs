@@ -148,7 +148,8 @@ impl Shown {
                 | ObservationKind::WorkPreviewed
                 | ObservationKind::ProjectRegistered
                 | ObservationKind::ProjectArchived
-                | ObservationKind::ProjectUnarchived,
+                | ObservationKind::ProjectUnarchived
+                | ObservationKind::SessionAssigned,
                 _,
             ) => Self::Hidden,
         })

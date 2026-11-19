@@ -33,10 +33,10 @@ impl MetadataTx<'_> {
             )
         };
         match &record.fact {
-            WorkFact::Queued { order } => {
+            WorkFact::Queued { order, project } => {
                 let json = serde_json::to_string(order)?;
                 sqlx::query(
-                    "INSERT INTO work_items(id, created_at, updated_at, title, work_order, state) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO work_items(id, created_at, updated_at, title, work_order, state, project) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(&id)
                 .bind(at)
@@ -44,6 +44,7 @@ impl MetadataTx<'_> {
                 .bind(order.title())
                 .bind(json)
                 .bind(WorkStateKind::Queued.label())
+                .bind(project.map(|project| project.to_string()))
                 .execute(&mut *self.tx)
                 .await?;
             }

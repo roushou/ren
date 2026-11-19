@@ -810,6 +810,9 @@ pub struct SessionView {
     pub id: SessionId,
     pub harness: Stored<Harness>,
     pub workdir: String,
+    /// The project it works for; `None` outside every project, or from
+    /// before projects.
+    pub project: Option<ProjectId>,
     pub created_at: UnixMillis,
     /// The settings its next turn runs on; `None` is the client's own.
     pub model: Option<String>,
@@ -833,7 +836,7 @@ impl SessionView {
     pub(super) fn select() -> String {
         let turn_started = DriveEventKind::TurnStarted.label();
         format!(
-            "SELECT id, harness, workdir, created_at, model, effort, approvals, archived_at, (SELECT MIN(e.at) FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = '{turn_started}') AS first_turn_at, (SELECT e.prompt FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.prompt IS NOT NULL ORDER BY e.at, r.started_at, e.seq LIMIT 1) AS first_prompt FROM operator_sessions"
+            "SELECT id, harness, workdir, project, created_at, model, effort, approvals, archived_at, (SELECT MIN(e.at) FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = '{turn_started}') AS first_turn_at, (SELECT e.prompt FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.prompt IS NOT NULL ORDER BY e.at, r.started_at, e.seq LIMIT 1) AS first_prompt FROM operator_sessions"
         )
     }
 
@@ -847,6 +850,7 @@ impl SessionView {
             id: row.id("id")?,
             harness: row.label("harness")?,
             workdir: row.text("workdir")?.ok_or(StoreError::Corrupt("session"))?,
+            project: row.optional_id("project")?,
             created_at: row.time("created_at")?,
             model: row.text("model")?,
             effort: row.optional_label("effort")?,
@@ -1100,6 +1104,9 @@ pub struct WorkItemView {
     pub title: String,
     pub order: WorkOrder,
     pub state: Stored<WorkStateKind>,
+    /// The project it is for; `None` when none was named, or from before
+    /// projects.
+    pub project: Option<ProjectId>,
     /// The session that took it up, once sent.
     pub session: Option<SessionId>,
     /// The commit its change landed on `main` as.
@@ -1111,7 +1118,7 @@ pub struct WorkItemView {
 }
 
 impl WorkItemView {
-    pub(super) const SELECT: &'static str = "SELECT id, created_at, updated_at, title, work_order, state, operator_session, landed_commit, shipped_revision, preview_url, preview_revision FROM work_items";
+    pub(super) const SELECT: &'static str = "SELECT id, created_at, updated_at, title, work_order, state, project, operator_session, landed_commit, shipped_revision, preview_url, preview_revision FROM work_items";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -1124,6 +1131,7 @@ impl WorkItemView {
             title: row.text("title")?.ok_or_else(corrupt)?,
             order: serde_json::from_str(&order)?,
             state: row.label("state")?,
+            project: row.optional_id("project")?,
             session: row.optional_id("operator_session")?,
             landed: row
                 .text("landed_commit")?

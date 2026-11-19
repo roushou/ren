@@ -407,6 +407,24 @@ impl Reader {
         .transpose()
     }
 
+    /// The sessions no project owns, archived ones too, with their folders:
+    /// what `ren project adopt` looks through.
+    pub async fn unassigned_sessions(&self) -> Result<Vec<(SessionId, String)>, StoreError> {
+        sqlx::query("SELECT id, workdir FROM operator_sessions WHERE project IS NULL ORDER BY created_at, id")
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(|row| {
+                let row = Columns(row);
+                Ok((
+                    row.id("id")?,
+                    row.text("workdir")?
+                        .ok_or(StoreError::Corrupt("session"))?,
+                ))
+            })
+            .collect()
+    }
+
     /// Every registered project, archived ones too, by name.
     pub async fn projects(&self) -> Result<Vec<ProjectView>, StoreError> {
         sqlx::query(AssertSqlSafe(format!(

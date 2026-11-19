@@ -18,12 +18,12 @@ pub struct Look {
     /// The names of the folders directly inside it, links not followed.
     pub folders: Vec<String>,
     /// Whether it holds a git repository, and where its `HEAD` stands.
-    pub git: ProjectGit,
+    pub git: PlaceGit,
 }
 
 /// A place a run can start in.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Project {
+pub struct Place {
     /// The absolute path to start a run in.
     pub path: String,
     /// Its folder's name, with its parent's when two of a kind share it.
@@ -31,7 +31,7 @@ pub struct Project {
     /// The path as the operator reads it: `~/…` under their home.
     pub shown: String,
     pub kind: PlaceKind,
-    pub git: ProjectGit,
+    pub git: PlaceGit,
 }
 
 /// What kind of place a run can start in.
@@ -49,7 +49,7 @@ pub enum PlaceKind {
 
 /// A project's repository, as its `HEAD` reads.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum ProjectGit {
+pub enum PlaceGit {
     /// On a branch.
     Branch { name: String },
     /// At a commit, not on a branch: its abbreviated id.
@@ -61,7 +61,7 @@ pub enum ProjectGit {
     None,
 }
 
-impl ProjectGit {
+impl PlaceGit {
     /// Whether the folder holds a repository, readable or not.
     pub fn is_repository(&self) -> bool {
         match self {
@@ -75,7 +75,7 @@ impl ProjectGit {
 struct Walk {
     search: Search,
     looks: usize,
-    found: Vec<(PathBuf, ProjectGit)>,
+    found: Vec<(PathBuf, PlaceGit)>,
 }
 
 impl Walk {
@@ -113,7 +113,7 @@ impl Walk {
             // A root's own folder with no repository below it is offered
             // as it is.
             if self.folder(&child, depth + 1, look) && depth == 0 && self.found.len() == before {
-                self.found.push((child, ProjectGit::None));
+                self.found.push((child, PlaceGit::None));
             }
         }
         true
@@ -163,7 +163,7 @@ impl Bounds {
         &self,
         search: Search,
         mut look: impl FnMut(&Path) -> Option<Look>,
-    ) -> Vec<Project> {
+    ) -> Vec<Place> {
         let projects = self.named(self.roots().found(search, &mut look), PlaceKind::Project);
         let mut looks = 0;
         let mut seen = |path: &Path| {
@@ -210,7 +210,7 @@ impl Bounds {
         inside: &Look,
         skips: fn(&str) -> bool,
         look: &mut impl FnMut(&Path) -> Option<Look>,
-    ) -> Vec<(PathBuf, ProjectGit)> {
+    ) -> Vec<(PathBuf, PlaceGit)> {
         inside
             .folders
             .iter()
@@ -232,7 +232,7 @@ impl Roots {
         &self,
         search: Search,
         look: &mut impl FnMut(&Path) -> Option<Look>,
-    ) -> Vec<(PathBuf, ProjectGit)> {
+    ) -> Vec<(PathBuf, PlaceGit)> {
         let mut walk = Walk {
             search,
             looks: 0,
@@ -251,7 +251,7 @@ impl Roots {
 impl Bounds {
     /// Names places of `kind` by their folder, adding the parent's name
     /// where two would read the same. Paths that are not UTF-8 are left out.
-    fn named(&self, found: Vec<(PathBuf, ProjectGit)>, kind: PlaceKind) -> Vec<Project> {
+    fn named(&self, found: Vec<(PathBuf, PlaceGit)>, kind: PlaceKind) -> Vec<Place> {
         let last = |path: &Path| -> String {
             path.file_name()
                 .and_then(|name| name.to_str())
@@ -268,7 +268,7 @@ impl Bounds {
                     (true, Some(parent)) => format!("{}/{name}", last(parent)),
                     (true, None) | (false, _) => name.clone(),
                 };
-                Some(Project {
+                Some(Place {
                     path: path.to_str()?.to_owned(),
                     name,
                     shown: self.shown(path),
@@ -282,7 +282,7 @@ impl Bounds {
 
 #[cfg(test)]
 mod tests {
-    use super::{Look, PlaceKind, ProjectGit, Search};
+    use super::{Look, PlaceGit, PlaceKind, Search};
     use crate::workdir::{Bounds, Roots};
     use std::{collections::BTreeMap, path::PathBuf};
 
@@ -290,9 +290,9 @@ mod tests {
     fn tree() -> BTreeMap<&'static str, Look> {
         let folder = |names: &[&str]| Look {
             folders: names.iter().map(|name| (*name).to_owned()).collect(),
-            git: ProjectGit::None,
+            git: PlaceGit::None,
         };
-        let repo = |git: ProjectGit, names: &[&str]| Look {
+        let repo = |git: PlaceGit, names: &[&str]| Look {
             folders: names.iter().map(|name| (*name).to_owned()).collect(),
             git,
         };
@@ -308,7 +308,7 @@ mod tests {
             (
                 "/dev/work/api",
                 repo(
-                    ProjectGit::Detached {
+                    PlaceGit::Detached {
                         commit: "0123456".into(),
                     },
                     &[],
@@ -317,7 +317,7 @@ mod tests {
             ("/dev/work/web", repo(branch("feat/upload"), &[])),
             ("/srv/ren", repo(branch("agent-runs"), &["crates", "ui"])),
             ("/srv/other", folder(&["acme"])),
-            ("/srv/other/acme", repo(ProjectGit::Unreadable, &[])),
+            ("/srv/other/acme", repo(PlaceGit::Unreadable, &[])),
         ])
     }
 
@@ -346,7 +346,7 @@ mod tests {
         .unwrap();
         let folder = |names: &[&str], git: Option<&str>| Look {
             folders: names.iter().map(|name| (*name).to_owned()).collect(),
-            git: git.map_or(ProjectGit::None, branch),
+            git: git.map_or(PlaceGit::None, branch),
         };
         let tree = BTreeMap::from([
             ("/home/op/dev", folder(&["acme"], None)),
@@ -391,7 +391,7 @@ mod tests {
             looked.push(path.to_str().unwrap().to_owned());
             tree.get(path.to_str().unwrap()).cloned()
         });
-        let listed: Vec<(&str, &str, &ProjectGit)> = projects
+        let listed: Vec<(&str, &str, &PlaceGit)> = projects
             .iter()
             .map(|project| (project.name.as_str(), project.path.as_str(), &project.git))
             .collect();
@@ -401,23 +401,23 @@ mod tests {
                 (
                     "acme",
                     "/dev/acme",
-                    &ProjectGit::Branch {
+                    &PlaceGit::Branch {
                         name: "main".into()
                     }
                 ),
                 // A root's folder with no repository below it is offered.
-                ("notes", "/dev/notes", &ProjectGit::None),
+                ("notes", "/dev/notes", &PlaceGit::None),
                 (
                     "api",
                     "/dev/work/api",
-                    &ProjectGit::Detached {
+                    &PlaceGit::Detached {
                         commit: "0123456".into()
                     }
                 ),
                 (
                     "web",
                     "/dev/work/web",
-                    &ProjectGit::Branch {
+                    &PlaceGit::Branch {
                         name: "feat/upload".into()
                     }
                 ),
@@ -425,7 +425,7 @@ mod tests {
                 (
                     "ren",
                     "/srv/ren",
-                    &ProjectGit::Branch {
+                    &PlaceGit::Branch {
                         name: "agent-runs".into()
                     }
                 ),
@@ -464,7 +464,7 @@ mod tests {
             .find(|project| project.path == "/srv/other/acme");
         assert_eq!(
             unreadable.map(|project| &project.git),
-            Some(&ProjectGit::Unreadable)
+            Some(&PlaceGit::Unreadable)
         );
 
         let mut looks = 0;
@@ -488,7 +488,7 @@ mod tests {
         );
     }
 
-    fn branch(name: &str) -> ProjectGit {
-        ProjectGit::Branch { name: name.into() }
+    fn branch(name: &str) -> PlaceGit {
+        PlaceGit::Branch { name: name.into() }
     }
 }
