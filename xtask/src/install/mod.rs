@@ -32,7 +32,9 @@ use clap::Args;
 use ren_daemon::config::{Config, ConfigError};
 use ren_git::{Git, GitError, Published, Tree};
 use ren_harness::host::HostEnv;
+use ren_recorder::project::{Factory, ProjectName, RepositoryPath};
 use ren_release::Commit;
+use serde::Deserialize;
 use std::{
     fs,
     io::Write as _,
@@ -188,6 +190,34 @@ impl Linger {
             "yes" => Self::Enabled,
             _ => Self::Disabled,
         }
+    }
+}
+
+/// The registered projects, as `ren project list --json` prints them and the
+/// install reads them: enough to tell whether one is Ren itself.
+#[derive(Debug, Deserialize)]
+struct Listed {
+    projects: Vec<ListedProject>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListedProject {
+    name: ProjectName,
+    repository: RepositoryPath,
+    factory: Factory,
+    archived_at: Option<u64>,
+}
+
+impl Listed {
+    fn parse(text: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(text)
+    }
+
+    /// The project built as Ren itself, not archived, if one is.
+    fn ren(&self) -> Option<&ListedProject> {
+        self.projects
+            .iter()
+            .find(|project| project.archived_at.is_none() && project.factory == Factory::Ren)
     }
 }
 
@@ -581,10 +611,26 @@ impl InstallVps {
     const RETRY_AFTER: &str = "10";
 
     /// Registers this checkout as the project `ren`, built as Ren itself
-    /// (docs/plans/hierarchy.md), unless it is already. The install is done
-    /// by now, so a refusal (another project holds the name or the
-    /// repository) is reported, not failed.
+    /// (docs/plans/hierarchy.md), unless a project already is: a promotion
+    /// installs from the factory's own worktree, never the checkout Ren is
+    /// registered at. The install is done by now, so a refusal (another
+    /// project holds the name or the repository) is reported, not failed.
     fn register(layout: &Layout) {
+        let listed = layout
+            .ren(&layout.binary)
+            .args(["project", "list", "--json"])
+            .json("ren project list", Listed::parse);
+        // A list that does not read leaves it to `project add` to say.
+        if let Ok(listed) = &listed
+            && let Some(ren) = listed.ren()
+        {
+            Progress(&format!(
+                "Ren is registered as {} at {}",
+                ren.name, ren.repository
+            ))
+            .show();
+            return;
+        }
         let registered = layout
             .ren(&layout.binary)
             .args([
@@ -919,6 +965,39 @@ impl InstallVps {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ren_is_registered_when_a_project_not_archived_is_built_as_ren() {
+        let listed = |projects: &str| {
+            super::Listed::parse(&format!("{{\"projects\":[{projects}]}}")).unwrap()
+        };
+        let project = |name: &str, factory: &str, archived: &str| {
+            format!(
+                "{{\"id\":\"x\",\"name\":\"{name}\",\"repository\":\"/home/op/{name}\",\"factory\":\"{factory}\",\"archived_at\":{archived},\"sessions\":0}}"
+            )
+        };
+        let ren = listed(&project("ren", "ren", "null"));
+        assert_eq!(
+            ren.ren().map(|found| found.name.to_string()).as_deref(),
+            Some("ren")
+        );
+        assert_eq!(
+            ren.ren()
+                .map(|found| found.repository.to_string())
+                .as_deref(),
+            Some("/home/op/ren")
+        );
+        // Under another name, Ren is still registered.
+        assert!(listed(&project("factory", "ren", "null")).ren().is_some());
+        // Archived, or only contract projects: not yet.
+        assert!(listed(&project("ren", "ren", "1")).ren().is_none());
+        assert!(
+            listed(&project("acme-web", "contract", "null"))
+                .ren()
+                .is_none()
+        );
+        assert!(listed("").ren().is_none());
+    }
+
     use super::*;
 
     #[test]

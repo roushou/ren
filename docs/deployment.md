@@ -542,7 +542,9 @@ it into a folder under the canary's data.
 
 A project Ren builds is registered first, by name
 ([the plan](plans/hierarchy.md)); `install-vps` registers its checkout as
-`ren`, Ren itself, and the dev slot registers its fake projects:
+`ren`, Ren itself, unless a project is already built as Ren (a promotion
+installs from the factory's own worktree), and the dev slot registers its
+fake projects:
 
 ```sh
 ren project add --dir ~/dev/acme    # its folder's name unless --name; --factory contract by default
