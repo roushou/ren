@@ -4,7 +4,7 @@
 //! started with stays whole until no run uses it.
 
 use crate::{
-    Depot,
+    Depot, ToolHost,
     package::{PackageId, ProgramName},
     source::{Artifact, Platform, RelativePath, Sha256, Source},
 };
@@ -116,6 +116,24 @@ pub struct Link {
     pub target: RelativePath,
 }
 
+/// A package something needs (a project's steps) that neither a toolset
+/// nor its host gives it.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Lack {
+    #[error("no package is named {0}")]
+    Unknown(PackageId),
+    /// Ren installs it, and the toolset does not hold it.
+    #[error("{0} is not in Ren's toolset")]
+    NotInstalled(PackageId),
+    /// Ren only adopts it from the host, and the host's search path has
+    /// no `program`.
+    #[error("{package} is only adopted from the system, and {program} is not on its search path")]
+    NotOnHost {
+        package: PackageId,
+        program: ProgramName,
+    },
+}
+
 /// What the operator asks to change: packages to add (or bring to the
 /// catalog's release) and packages to remove, applied to whichever
 /// generation is current when the change is made.
@@ -197,6 +215,36 @@ impl Toolset {
     /// The install of `package`, if this toolset has one.
     pub fn install(&self, package: &PackageId) -> Option<&Install> {
         self.installs.get(package)
+    }
+
+    /// What of `needed` this toolset and `host` do not give: a package Ren
+    /// installs must be in the toolset (the host's own copy does not
+    /// count, so what runs is the release Ren pins), and one Ren only
+    /// adopts must be on the host's search path.
+    pub fn lacks(
+        &self,
+        depot: &Depot,
+        host: &impl ToolHost,
+        needed: &BTreeSet<PackageId>,
+    ) -> Vec<Lack> {
+        needed
+            .iter()
+            .filter(|id| !self.installs.contains_key(*id))
+            .filter_map(|id| match depot.package(id) {
+                None => Some(Lack::Unknown(id.clone())),
+                Some(package) => match package.source() {
+                    Source::Release(_) => Some(Lack::NotInstalled(id.clone())),
+                    Source::System => {
+                        host.locate(package.program())
+                            .is_none()
+                            .then(|| Lack::NotOnHost {
+                                package: id.clone(),
+                                program: package.program().clone(),
+                            })
+                    }
+                },
+            })
+            .collect()
     }
 
     /// The programs this toolset puts on a run's search path.
@@ -370,7 +418,7 @@ impl Plan {
 
 #[cfg(test)]
 mod tests {
-    use super::{Change, Edit, Generation, PlanError, Toolset};
+    use super::{Change, Edit, Generation, Lack, PlanError, Toolset};
     use crate::{
         Depot,
         package::{Kind, Package, PackageId},
@@ -420,6 +468,66 @@ mod tests {
 
     fn wanted(ids: &[PackageId]) -> BTreeSet<PackageId> {
         ids.iter().cloned().collect()
+    }
+
+    /// A host whose search path has `codex` and `node`.
+    struct Host;
+
+    impl crate::ToolHost for Host {
+        fn locate(&self, program: &crate::package::ProgramName) -> Option<std::path::PathBuf> {
+            ["codex", "node"]
+                .contains(&program.as_str())
+                .then(|| std::path::Path::new("/usr/bin").join(program.as_str()))
+        }
+
+        fn probe(
+            &self,
+            _: &std::path::Path,
+            _: &[&str],
+        ) -> Result<String, crate::version::ProbeFailure> {
+            Ok(String::new())
+        }
+    }
+
+    #[test]
+    fn what_a_toolset_and_its_host_lack_of_what_is_needed() {
+        let depot = depot("22.17.1", 'a');
+        let empty = Toolset::empty();
+        let one = empty
+            .plan(&depot, Platform::LinuxX64, &wanted(&[PackageId::JQ]))
+            .unwrap()
+            .apply(&empty)
+            .unwrap();
+        let unknown: PackageId = "go".parse().unwrap();
+        // jq is held; codex, adopted only, is on the host's path; node is
+        // on it too, but Ren installs node, so the host's does not count.
+        assert_eq!(
+            one.lacks(
+                &depot,
+                &Host,
+                &wanted(&[
+                    PackageId::JQ,
+                    PackageId::CODEX,
+                    PackageId::NODE,
+                    unknown.clone()
+                ])
+            ),
+            [Lack::Unknown(unknown), Lack::NotInstalled(PackageId::NODE)]
+        );
+        let bare = Depot::of(vec![Package::new(
+            PackageId::GIT,
+            Kind::Utility,
+            "git".parse().unwrap(),
+            Source::System,
+        )]);
+        assert_eq!(
+            one.lacks(&bare, &Host, &wanted(&[PackageId::GIT])),
+            [Lack::NotOnHost {
+                package: PackageId::GIT,
+                program: "git".parse().unwrap()
+            }]
+        );
+        assert!(one.lacks(&depot, &Host, &BTreeSet::new()).is_empty());
     }
 
     #[test]

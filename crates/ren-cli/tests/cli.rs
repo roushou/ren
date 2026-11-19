@@ -787,3 +787,111 @@ fn tools_lists_the_catalog_and_refuses_what_it_cannot_change_offline() {
         "nothing to remove\n"
     );
 }
+
+/// Hands the store one program's bytes, whatever URL it asks for.
+struct OneProgram(Vec<u8>);
+
+impl ren_daemon::tools::fetch::Fetch for OneProgram {
+    async fn fetch(
+        &self,
+        _: &ren_depot::source::ArtifactUrl,
+        into: &std::path::Path,
+        _: ren_daemon::tools::fetch::ByteLimit,
+    ) -> Result<(), ren_depot::job::HostFailure> {
+        std::fs::write(into, &self.0).map_err(|_| ren_depot::job::HostFailure::Filesystem)
+    }
+}
+
+#[tokio::test]
+async fn project_steps_run_with_rens_toolset_and_refuse_tools_it_lacks() {
+    use ren_daemon::tools::{Changed, HostTools, ToolStore};
+    use ren_depot::{
+        Depot,
+        package::{Kind, Package},
+        source::{ArchiveFormat, Artifact, Release, Sha256, Source},
+        toolset::Edit,
+    };
+    use sha2::Digest as _;
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("ren.toml");
+    std::fs::write(&config, "version = 1\n").unwrap();
+    let data = temp.path().join("state");
+    // A toolset holding acme-tool, a program found nowhere else.
+    let program = b"#!/bin/sh\necho acme-tool ran\n".to_vec();
+    let platform = HostTools::platform().unwrap();
+    let depot = Depot::of(vec![
+        Package::new(
+            "acme-tool".parse().unwrap(),
+            Kind::Utility,
+            "acme-tool".parse().unwrap(),
+            Source::Release(Release {
+                version: "0.3.0".parse().unwrap(),
+                artifacts: vec![Artifact {
+                    platform,
+                    url: "https://example.test/acme-tool".parse().unwrap(),
+                    sha256: Sha256::from_bytes(sha2::Sha256::digest(&program).into()),
+                    format: ArchiveFormat::Bare,
+                    program_at: "acme-tool".parse().unwrap(),
+                }],
+            }),
+        )
+        .operator(),
+    ]);
+    let store = ToolStore::new(data.join(ToolStore::FOLDER), OneProgram(program));
+    let edit = Edit {
+        add: ["acme-tool".parse().unwrap()].into(),
+        remove: Default::default(),
+    };
+    assert!(matches!(
+        store.change(&depot, platform, &edit).await.unwrap(),
+        Changed::Activated { .. }
+    ));
+
+    let project = temp.path().join("acme");
+    std::fs::create_dir(&project).unwrap();
+    let check = |tools: &str| {
+        std::fs::write(
+            project.join("ren-project.toml"),
+            format!("tools = [{tools}]\n[[check]]\nname = \"tool\"\nrun = [\"acme-tool\"]\n"),
+        )
+        .unwrap();
+        Command::new(env!("CARGO_BIN_EXE_ren"))
+            .args([
+                "--config",
+                config.to_str().unwrap(),
+                "--data-dir",
+                data.to_str().unwrap(),
+                "project",
+                "check",
+                "--dir",
+                project.to_str().unwrap(),
+            ])
+            .env("PATH", "/usr/bin:/bin")
+            .env_remove("REN_WORKSPACE")
+            .output()
+            .unwrap()
+    };
+
+    let output = check("\"acme-tool\"");
+    success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("==> Tools: generation 1 (acme-tool 0.3.0)"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("acme-tool ran"), "{stdout}");
+    assert!(stdout.contains("Every check passed."), "{stdout}");
+
+    // A tool Ren installs but has not, and one it does not know, are
+    // refused before any step runs, each with what to do.
+    let output = check("\"acme-tool\", \"bun\", \"acme-none\"");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("bun is not in Ren's toolset: run `ren tools install bun`"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("no package is named acme-none"), "{stderr}");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("acme-tool ran"));
+}

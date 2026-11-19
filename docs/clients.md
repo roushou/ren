@@ -174,7 +174,10 @@ then the daemon's own, and records that generation (`toolset` in
 [`/api/runs`](api.md#runs)). A run keeps the generation it started with: a
 later change makes a new generation for later runs, and `gc` keeps every
 generation a run without an end still uses (as the database records it).
-With nothing installed, runs get the daemon's `PATH` unchanged.
+With nothing installed, runs get the daemon's `PATH` unchanged. A
+project's declared steps get the current generation the same way, and
+`tools` in its `ren-project.toml` names what they need
+([deployment.md](deployment.md#projects)).
 
 The web UI's Tools view shows the same on the daemon's host, filterable by
 name or path and by source: a row per package with the version runs use and
