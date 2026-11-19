@@ -2,22 +2,28 @@
 //! `ren project add`, `list`, `archive`, and `unarchive`, and the project a
 //! canary, promotion, or release command is for.
 //!
-//! A registration goes through the control API, which records it; `list`
-//! reads the read API. Resolving a project for a local command (`canary`,
-//! `promote`) reads the store directly, beside the running daemon, as the
-//! repository it builds is on this host. A registration is recorded after it
+//! A registration goes through the control API, which records it; `add`
+//! and `list` read the read API of the gateway they target. Resolving a
+//! project for a local command (`canary`, `promote`) reads the store
+//! directly, beside the running daemon, as the repository it builds is on
+//! this host. A registration is recorded after it
 //! is answered, so `add` waits for it to be stored and checks that it is
 //! the project it registered. Adding a project already registered just so
 //! does nothing.
 
 use super::super::history::TargetArgs;
-use crate::{commands::control::ControlTarget, context::Context};
+use crate::{
+    commands::control::ControlTarget,
+    context::Context,
+    management::{Management, Target},
+};
 use anyhow::{Context as _, Result, bail};
 use clap::Args;
 use ren_gateway::api::control::{
     projects::{ProjectAnswer, RegisterProjectRequest},
     request::ControlRequest,
 };
+use ren_gateway::api::projects::ProjectBody;
 use ren_git::{Git, Repository};
 use ren_protocol::label::Stored;
 use ren_recorder::project::{Factory, ProjectName, RepositoryPath};
@@ -92,13 +98,20 @@ impl Registry {
             })?,
         };
         let repository = RepositoryPath::of(&dir)?;
+        // Read through the gateway registered on, this host's or another.
+        let gateway = args.target.gateway(ctx)?;
         // The same project registered again is already done, so a script
         // (install-vps) can register on every run.
-        let same = Self::read(ctx).await?.into_iter().find(|project| {
-            project.name == name
-                && project.repository == repository
-                && project.factory == Stored::Known(args.factory)
-        });
+        let same = gateway
+            .projects()
+            .await?
+            .projects
+            .into_iter()
+            .find(|project| {
+                project.name == name
+                    && project.repository == repository
+                    && project.factory == Stored::Known(args.factory)
+            });
         if let Some(same) = same {
             let archived = if same.archived_at.is_some() {
                 ", archived"
@@ -124,7 +137,7 @@ impl Registry {
         }
         let ProjectAnswer { id, .. } = serde_json::from_value(answer.body)
             .context("the daemon answered a registration with something else")?;
-        let stored = Self::settled(ctx, &name).await?;
+        let stored = Self::settled(&gateway, &name).await?;
         if stored.id != id {
             bail!(
                 "{name} was registered meanwhile as another project, at {}",
@@ -132,14 +145,22 @@ impl Registry {
             );
         }
         println!("Registered {name}: {repository} ({})", args.factory);
-        let reader = ctx.reader().await?;
-        let unowned = reader
-            .unassigned_sessions()
-            .await?
-            .iter()
-            .filter(|(_, workdir)| repository.holds(workdir))
-            .count();
-        reader.close().await;
+        // Sessions with no project are read from this host's store only:
+        // the read API does not list them.
+        let unowned = match args.target.select(ctx)? {
+            Target::Local => {
+                let reader = ctx.reader().await?;
+                let unowned = reader
+                    .unassigned_sessions()
+                    .await?
+                    .iter()
+                    .filter(|(_, workdir)| repository.holds(workdir))
+                    .count();
+                reader.close().await;
+                unowned
+            }
+            Target::Remote(_) => 0,
+        };
         if unowned > 0 {
             println!(
                 "{unowned} session(s) in it work for no project: `ren project adopt {name}` assigns them."
@@ -247,18 +268,13 @@ impl Registry {
         Ok(found)
     }
 
-    async fn read(ctx: &Context) -> Result<Vec<ProjectView>> {
-        let reader = ctx.reader().await?;
-        let projects = reader.projects().await?;
-        reader.close().await;
-        Ok(projects)
-    }
-
-    /// The project named `name` once the daemon has stored it.
-    async fn settled(ctx: &Context, name: &ProjectName) -> Result<ProjectView> {
+    /// The project named `name` once the gateway has stored it.
+    async fn settled(gateway: &Management, name: &ProjectName) -> Result<ProjectBody> {
         for _ in 0..100 {
-            if let Some(project) = Self::read(ctx)
+            if let Some(project) = gateway
+                .projects()
                 .await?
+                .projects
                 .into_iter()
                 .find(|project| &project.name == name)
             {

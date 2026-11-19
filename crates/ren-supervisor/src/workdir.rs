@@ -178,6 +178,18 @@ impl Workdir {
         }
     }
 
+    /// A registered project's repository, resolved by the host: absolute
+    /// and UTF-8, whatever the bounds, since the operator registered it.
+    pub(crate) fn registered(resolved: PathBuf) -> Result<Self, WorkdirError> {
+        if !resolved.is_absolute() {
+            return Err(WorkdirError::Relative);
+        }
+        if resolved.to_str().is_none() {
+            return Err(WorkdirError::NotUtf8);
+        }
+        Ok(Self(resolved))
+    }
+
     /// The folder a run was confirmed in when it started, read back from
     /// its journal: the run works there whatever the bounds are now. Still
     /// absolute and UTF-8, or `None`.

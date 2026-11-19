@@ -2363,6 +2363,68 @@ mod conversation {
     }
 
     #[tokio::test]
+    async fn a_projects_running_runs_count_those_of_archived_sessions() {
+        use ren_recorder::{
+            batch::{ProjectFact, ProjectRecord, SessionFact, SessionRecord},
+            id::{ProjectId, SessionId},
+            project::{Factory, ProjectRegistration},
+        };
+        let mut fixture = Fixture::new().await;
+        let project = ProjectId::generate(fixture.ids.as_ref());
+        let session = SessionId::generate(fixture.ids.as_ref());
+        let run = RunId::generate(fixture.ids.as_ref());
+        let mut batch = Batch::default();
+        batch.push(Op::Project(ProjectRecord {
+            at: fixture.clock.now(),
+            project,
+            fact: ProjectFact::Registered {
+                registration: ProjectRegistration {
+                    name: "acme-web".parse().unwrap(),
+                    repository: "/work/acme-web".parse().unwrap(),
+                    factory: Factory::Contract,
+                },
+            },
+        }));
+        for fact in [
+            SessionFact::Created {
+                harness: ren_harness::Harness::Codex,
+                workdir: "/work/acme-web".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+            },
+            SessionFact::Assigned {
+                project: Some(project),
+            },
+        ] {
+            batch.push(Op::Session(SessionRecord {
+                at: fixture.clock.now(),
+                session,
+                fact,
+            }));
+        }
+        batch.push(Op::Run(RunRecord {
+            at: fixture.clock.now(),
+            run,
+            fact: RunFact::Started {
+                session,
+                harness: ren_harness::Harness::Codex,
+                workdir: "/work/acme-web".into(),
+                settings: ren_harness::settings::RunSettings::default(),
+                toolset: Some(ren_depot::toolset::Generation::NONE),
+            },
+        }));
+        batch.push(Op::Session(SessionRecord {
+            at: fixture.clock.now(),
+            session,
+            fact: SessionFact::Archived,
+        }));
+        fixture.store.commit(&batch).await.unwrap();
+        let activity = fixture.reader.project_activity().await.unwrap();
+        let acme = activity.get(&project).unwrap();
+        // Archived, the session is not counted; its run still runs.
+        assert_eq!((acme.sessions, acme.running), (0, 1));
+    }
+
+    #[tokio::test]
     async fn a_session_is_named_by_the_first_line_of_its_first_prompt() {
         use ren_recorder::{
             batch::{SessionFact, SessionRecord},

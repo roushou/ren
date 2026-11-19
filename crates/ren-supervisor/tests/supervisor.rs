@@ -359,7 +359,8 @@ impl AgentHost for FakeHost {
                 if ["/work", "/scratch", "/home/op/.config"]
                     .iter()
                     .any(|bound| path.starts_with(bound))
-                    || path == "/elsewhere" =>
+                    || path == "/elsewhere"
+                    || path == "/elsewhere/acme" =>
             {
                 Ok(path.into())
             }
@@ -2538,5 +2539,51 @@ async fn each_workspace_session_works_in_its_own_worktree_and_slot() {
     assert_eq!(
         worktrees.lock().unwrap()[1].0,
         PathBuf::from("/worktrees/acme-1")
+    );
+}
+
+/// A registered project's repository gets a workspace though it lies
+/// outside every root; the same folder asked for as a plain worktree does
+/// not.
+#[tokio::test]
+async fn a_registered_project_gets_a_workspace_outside_the_roots() {
+    let host = FakeHost::new(Script::Codex);
+    let worktrees = host.worktrees.clone();
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
+    let create = |place| ren_supervisor::Create {
+        harness: Harness::Codex,
+        place,
+        settings: ren_harness::settings::RunSettings::default(),
+        resume: None,
+    };
+    let refused = start(
+        supervisor,
+        (
+            create(ren_supervisor::StartPlace::Worktree(
+                "/elsewhere/acme".into(),
+            )),
+            None,
+        ),
+    )
+    .await;
+    assert!(refused.is_err());
+    start(
+        supervisor,
+        (
+            create(ren_supervisor::StartPlace::Project(
+                "/elsewhere/acme".into(),
+            )),
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        *worktrees.lock().unwrap(),
+        [(
+            PathBuf::from("/worktrees/acme-1"),
+            PathBuf::from("/elsewhere/acme")
+        )]
     );
 }

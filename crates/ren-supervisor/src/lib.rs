@@ -271,6 +271,10 @@ pub enum StartPlace {
     /// folder, on a branch of its own, with ports and a data folder no other
     /// workspace shares.
     Worktree(String),
+    /// A workspace of its own in a registered project's repository: as
+    /// `Worktree`, but the repository need not lie inside a root, since the
+    /// operator registered it; the worktree itself still must.
+    Project(String),
 }
 
 /// Where runs can start: every place, and the folder scratch runs get

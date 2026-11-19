@@ -168,7 +168,7 @@ impl ProjectCmd {
             }
             ProjectAction::Promote(args) => {
                 let project = Registry::resolve(ctx, &args).await?;
-                ProjectFactory::new(ctx, &project)?.promote(ctx)
+                ProjectFactory::new(ctx, &project)?.promote(ctx).await
             }
             ProjectAction::Release(args) => {
                 let project = Registry::resolve(ctx, &args).await?;

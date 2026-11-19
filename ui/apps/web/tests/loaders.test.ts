@@ -60,13 +60,13 @@ test('gateway reads health, storage, and the release together and accept degrade
     switch (path(input)) {
       case '/health':
         return versioned(healthBody({ storage_errors: 1 }), { status: 503 });
-      case '/api/projects':
-        return versioned({ projects: [] });
+      case '/api/projects/ren/release':
+        return versioned({ release: null, shots: [], promotion_requested: null });
       default:
         return versioned(storageFixture());
     }
   });
-  assert.deepEqual(calls, ['/health', '/api/storage', '/api/projects']);
+  assert.deepEqual(calls, ['/health', '/api/storage', '/api/projects/ren/release']);
   assert.ok(result.value);
   assert.equal(result.value.health.status, 'degraded');
   assert.equal(result.value.health.recorder.storage_errors, 1);

@@ -433,7 +433,8 @@ session and work item reads:
   innermost, when repositories nest) works for it, as does one asked for
   by name with `"project"` in place of `"dir"` on `POST
   /control/v1/sessions`: it works in the repository, in a workspace of its
-  own unless `"workspace": "folder"` (both `"project"` and `"dir"` is `400`;
+  own (the repository need not lie inside a run root: the operator
+  registered it) unless `"workspace": "folder"` (both `"project"` and `"dir"` is `400`;
   an unknown name `404`, an archived one `409` `archived`). Moving a draft
   to another folder resolves it again. A scratch session, one made by `ren
   run`, and one from before projects work for none until a project adopts

@@ -29,9 +29,11 @@
   );
   let drawer = $state<HTMLElement>();
   let failed = $state<string | null>(null);
+  /** The open item's id: a refresh rebuilds the item, not which one is open. */
+  const openId = $derived(shown?.id ?? null);
   $effect(() => {
-    // Opening an item moves focus into the drawer.
-    if (shown) void tick().then(() => drawer?.focus());
+    // Opening an item moves focus into the drawer, once per item.
+    if (openId) void tick().then(() => drawer?.focus());
   });
   /** Whether this page opened the drawer, so closing it steps back. */
   let opened = false;
@@ -210,7 +212,7 @@
       tabindex="-1"
       onclick={() => void close()}
     ></button>
-    <aside
+    <div
       class="drawer"
       role="dialog"
       aria-modal="true"
@@ -235,7 +237,7 @@
           ondismiss={(item) => void dismiss(item)}
         />
       </div>
-    </aside>
+    </div>
   {/if}
 </div>
 

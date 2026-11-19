@@ -368,7 +368,8 @@ export async function trafficSnapshot(
     const hiddenQuery = changed(params, { kind: 'other', limit: 100, after: null });
     const [page, recordings, hidden] = await Promise.all([
       api.calls(params),
-      api.recordings(100),
+      // The picker offers the scope's recordings: another's would list none.
+      api.recordings(100, undefined, 'current', named.get('project')),
       hiding ? api.calls(hiddenQuery).then((other) => other.calls.length) : Promise.resolve(null),
     ]);
     const details = await RecordingDetails.shared.read(

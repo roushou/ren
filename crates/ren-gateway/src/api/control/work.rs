@@ -138,12 +138,23 @@ impl WorkApi {
             }
         };
         // An item for one project is not sent to a session working for
-        // another; either one unassigned says nothing.
-        if let (Some(works_for), Ok(item)) = (works_for, item.parse::<WorkItemId>())
-            && let Ok(Some(stored)) = api.reader.work_item(item).await
-            && stored.project.is_some_and(|project| project != works_for)
-        {
-            return ControlRefusal::ProjectMismatch.into_response();
+        // another; either one unassigned says nothing. An item that cannot
+        // be read is refused, never sent unchecked.
+        if let Some(works_for) = works_for {
+            let Ok(id) = item.parse::<WorkItemId>() else {
+                return ControlRefusal::NotFound.into_response();
+            };
+            match api.reader.work_item(id).await {
+                Ok(Some(stored)) if stored.project.is_some_and(|project| project != works_for) => {
+                    return ControlRefusal::ProjectMismatch.into_response();
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => return ControlRefusal::NotFound.into_response(),
+                Err(error) => {
+                    tracing::warn!(%error, "work item unreadable");
+                    return ControlRefusal::Unreadable.into_response();
+                }
+            }
         }
         api.change(
             &headers,

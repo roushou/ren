@@ -463,7 +463,7 @@ impl Reader {
                 .add(&row.label("state")?, row.count("count")?);
         }
         for row in sqlx::query(
-            "SELECT s.project AS project, COUNT(DISTINCT s.id) AS sessions, COUNT(r.id) AS running FROM operator_sessions s LEFT JOIN runs r ON r.operator_session = s.id AND r.ended_at IS NULL WHERE s.project IS NOT NULL AND s.archived_at IS NULL GROUP BY s.project",
+            "SELECT s.project AS project, SUM(s.archived_at IS NULL) AS sessions, SUM((SELECT COUNT(*) FROM runs r WHERE r.operator_session = s.id AND r.ended_at IS NULL)) AS running FROM operator_sessions s WHERE s.project IS NOT NULL GROUP BY s.project",
         )
         .fetch_all(&self.pool)
         .await?

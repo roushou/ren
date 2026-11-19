@@ -11,21 +11,37 @@
 //! When the policy promotes, the contract's deploy step runs in the checked
 //! build; a deploy that fails is marked and not tried again on its own.
 //! A tool the contract names that cannot be had fails the build check.
+//! Each pass, and each promotion, closes the project's work items as Ren's
+//! canary closes Ren's: landed from `main`'s trailers, shipped by the build
+//! production runs.
 
 use super::{ProjectCmd, Steps};
+use crate::commands::{control::ControlTarget, history::TargetArgs};
 use crate::context::Context;
 use anyhow::{Context as _, Result, anyhow, bail};
 use ren_daemon::host::SystemClock;
 use ren_gateway::api::release::{ReleaseBody, ReleaseView};
+use ren_gateway::api::{
+    control::request::{ControlRequest, LandWorkRequest, ShipWorkRequest, WorkChange},
+    read::ReadBody,
+};
 use ren_git::{Branch, CommitId, Git};
 use ren_project::{Place, ProjectContract};
 use ren_protocol::label::Stored;
+use ren_recorder::{
+    id::WorkItemId,
+    work::{Landing, WorkStateKind},
+};
 use ren_recorder::{project::Factory, time::Clock as _};
 use ren_release::{
     Assessment, Attempt, Canary, Check, CheckKind, Commit, Decision, Lineage, MinuteOfDay, Outcome,
     Release, ReleaseOptions, Revision, Tree, Verdict,
 };
 use ren_store::view::ProjectView;
+use ren_store::{
+    query::{PageLimit, Shelf},
+    read::ReadRequest,
+};
 use ren_supervisor::{Slot, Workspace};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, process::ExitCode};
@@ -136,11 +152,12 @@ impl ProjectFactory {
             let steps = steps.map_err(|error| anyhow!("{error:#}"))?;
             self.deploy(&steps, &contract, &place, &commit)?;
         }
+        self.close_work(ctx, &tip).await?;
         Ok(ExitCode::SUCCESS)
     }
 
     /// `ren project promote`: the canary's checked build, now.
-    pub(super) fn promote(&self, ctx: &Context) -> Result<ExitCode> {
+    pub(super) async fn promote(&self, ctx: &Context) -> Result<ExitCode> {
         let release = self
             .read()?
             .context("no canary pass has run for this project")?;
@@ -159,6 +176,8 @@ impl ProjectFactory {
         let steps = Steps::of(ctx, &contract)?;
         let _ = fs::remove_file(self.failed(&commit));
         self.deploy(&steps, &contract, &place, &commit)?;
+        let tip: CommitId = release.main().to_string().parse()?;
+        self.close_work(ctx, &tip).await?;
         Ok(ExitCode::SUCCESS)
     }
 
@@ -394,6 +413,100 @@ impl ProjectFactory {
         } else {
             bail!("the deploy step failed; production keeps what it ran")
         }
+    }
+
+    /// Closes the project's work items from what the canary sees, as Ren's
+    /// canary does for Ren: a sent item lands when a commit on `main` (from
+    /// `tip`, the newest 500) names it (`Work-Item: <id>`), and a landed item
+    /// ships once production runs a clean build whose history holds its
+    /// commit. An item landed in this pass ships in the next, once the daemon
+    /// has stored it. Each change goes through this host's daemon, which
+    /// checks it against the item's state.
+    async fn close_work(&self, ctx: &Context, tip: &CommitId) -> Result<()> {
+        const HISTORY: u32 = 500;
+        let host = TargetArgs::this_host();
+        let ReadBody::WorkItems(listed) = host
+            .gateway(ctx)?
+            .serve(&ReadRequest::WorkItems {
+                limit: PageLimit::LARGEST,
+                shelf: Shelf::Current,
+                project: Some(self.name.parse().map_err(anyhow::Error::msg)?),
+            })
+            .await?
+        else {
+            bail!("the daemon answered a work listing with another read");
+        };
+        let sent: Vec<WorkItemId> = listed
+            .work
+            .iter()
+            .filter(|item| item.state == Stored::Known(WorkStateKind::Sent))
+            .map(|item| item.id)
+            .collect();
+        let landed: Vec<(WorkItemId, CommitId)> = listed
+            .work
+            .iter()
+            .filter(|item| item.state == Stored::Known(WorkStateKind::Landed))
+            .filter_map(|item| Some((item.id, item.landed.as_ref()?.to_string().parse().ok()?)))
+            .collect();
+        let control = ControlTarget::select(&host, ctx)?;
+        let send = async |item: WorkItemId, change: WorkChange| -> Result<()> {
+            let answer = control.send(&ControlRequest::Work { item, change }).await?;
+            if !answer.status.is_success() {
+                bail!("moving work item {item} on answered {}", answer.status);
+            }
+            Ok(())
+        };
+        if !sent.is_empty() {
+            let mut log = self.git.log(&self.repo, tip, HISTORY)?;
+            // Oldest first: an item named twice lands as the first commit.
+            log.reverse();
+            let mut done = Vec::new();
+            for (commit, message) in log {
+                let release_commit = Self::release_commit(&commit)?;
+                for item in Landing::read(release_commit.clone(), &message).items {
+                    if sent.contains(&item) && !done.contains(&item) {
+                        send(
+                            item,
+                            WorkChange::Land(LandWorkRequest {
+                                commit: release_commit.clone(),
+                            }),
+                        )
+                        .await?;
+                        println!("Work item {item} landed as {}", release_commit.short());
+                        done.push(item);
+                    }
+                }
+            }
+        }
+        let production = match self.read()?.map(|release| release.production().clone()) {
+            Some(Revision::Commit {
+                commit,
+                tree: Tree::Clean,
+            }) => commit,
+            Some(Revision::Commit {
+                tree: Tree::Modified,
+                ..
+            })
+            | Some(Revision::Unknown)
+            | None => return Ok(()),
+        };
+        let running: CommitId = production.to_string().parse()?;
+        for (item, commit) in &landed {
+            if self.git.contains(&self.repo, &running, commit)? {
+                send(
+                    *item,
+                    WorkChange::Ship(ShipWorkRequest {
+                        revision: Revision::Commit {
+                            commit: production.clone(),
+                            tree: Tree::Clean,
+                        },
+                    }),
+                )
+                .await?;
+                println!("Work item {item} shipped in {}", production.short());
+            }
+        }
+        Ok(())
     }
 
     fn failed(&self, commit: &Commit) -> PathBuf {

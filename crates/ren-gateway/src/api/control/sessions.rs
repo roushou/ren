@@ -511,14 +511,17 @@ impl SessionsApi {
                 let project = roster.named(name)?;
                 let dir = project.repository.to_string();
                 let place = match request.workspace.unwrap_or(WorkspaceKind::Worktree) {
-                    WorkspaceKind::Worktree => StartPlace::Worktree(dir),
+                    WorkspaceKind::Worktree => StartPlace::Project(dir),
                     WorkspaceKind::Folder => StartPlace::Folder(dir),
                 };
                 (place, Some(project.id))
             }
             (None, dir) => (
                 request.place().ok_or(ControlRefusal::InvalidRequest)?,
-                dir.as_deref().and_then(|dir| roster.owning(dir)),
+                match dir {
+                    Some(dir) => roster.owning_folder(dir).await,
+                    None => None,
+                },
             ),
         };
         let settings = SettingsRequest {
@@ -644,7 +647,12 @@ impl SessionsApi {
         let session = Self::session(&session)?;
         let dir = RunsApi::body(body)?.dir;
         let project = match &dir {
-            Some(dir) => ProjectRoster::read(&api.reader).await?.owning(dir),
+            Some(dir) => {
+                ProjectRoster::read(&api.reader)
+                    .await?
+                    .owning_folder(dir)
+                    .await
+            }
             None => None,
         };
         let place = match dir {

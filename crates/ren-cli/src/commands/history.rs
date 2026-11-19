@@ -31,6 +31,11 @@ pub struct TargetArgs {
 }
 
 impl TargetArgs {
+    /// No `--gateway`: this host's daemon, as the command line would pick it.
+    pub(crate) fn this_host() -> Self {
+        Self { gateway: None }
+    }
+
     pub fn select(&self, ctx: &Context) -> Result<Target> {
         let host = if ctx.config_path.is_some() || ctx.data_dir_override.is_some() {
             HostFlags::Named

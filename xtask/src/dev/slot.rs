@@ -539,15 +539,16 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
             ],
         )?;
         Self::wait_for(Self::DAEMON, "/health")?;
-        self.register_projects()?;
+        self.register_projects();
         ending.remind();
         self.start_traffic()
     }
 
     /// Registers the fake projects, and this checkout as Ren itself, as
     /// `install-vps` registers production's (docs/plans/hierarchy.md). One
-    /// registered already is left as it is.
-    fn register_projects(&self) -> Result<(), DevError> {
+    /// registered already is left as it is; a refusal is reported, not
+    /// failed.
+    fn register_projects(&self) {
         let projects = Self::PROJECTS
             .iter()
             .map(|project| (*project, self.work_dir.join(project), "contract"))
@@ -566,10 +567,19 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                     "--dir",
                 ])
                 .arg(&dir)
-                .capture()?;
-            Progress(said.trim()).show();
+                .capture();
+            // The slot's data is the host's: another checkout may hold the
+            // name already. The slot runs either way.
+            match said {
+                Ok(said) => Progress(said.trim()).show(),
+                Err(error) => {
+                    println!(
+                        "warning: {name} is not registered for {}: {error}",
+                        dir.display()
+                    );
+                }
+            }
         }
-        Ok(())
     }
 
     /// Waits until the running dev daemon has no run mid-way (calls are not

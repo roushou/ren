@@ -1620,10 +1620,20 @@ export class ManagementApi {
   projectRelease(name: string, signal?: AbortSignal): Promise<ReleaseBody> {
     return this.#read(`/api/projects/${encodeURIComponent(name)}/release`, releaseBody, signal);
   }
-  /** Ren's own release; null until its canary has run, or while no project is Ren. */
+  /** Ren's own release; null until its canary has run, or while no project
+   * is Ren. Read as the project `install-vps` registers, `ren`, with one
+   * file read; only a Ren registered under another name lists them all. */
   async release(signal?: AbortSignal): Promise<ReleaseView | null> {
-    return ManagementApi.ren(await this.projects(signal))?.release ?? null;
+    try {
+      return (await this.projectRelease(ManagementApi.REN, signal)).release;
+    } catch (failure) {
+      if (!(failure instanceof ApiError && failure.status === 404)) throw failure;
+    }
+    const ren = ManagementApi.ren(await this.projects(signal));
+    return ren ? (await this.projectRelease(ren.name, signal)).release : null;
   }
+  /** The name `install-vps` registers Ren itself under. */
+  static readonly REN = 'ren';
   /** Ren itself among `projects`: the one unarchived project registered as Ren. */
   static ren(projects: readonly Project[]): Project | null {
     const ren = projects.filter(

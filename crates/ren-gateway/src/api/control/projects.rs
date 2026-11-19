@@ -66,6 +66,17 @@ impl ProjectRoster {
         })
     }
 
+    /// The project a session in `folder` works for, as the host resolves
+    /// the folder (a link or another spelling of a registered repository
+    /// still names it); the folder as given when it does not resolve.
+    pub(super) async fn owning_folder(&self, folder: &str) -> Option<ProjectId> {
+        let resolved = tokio::fs::canonicalize(folder)
+            .await
+            .ok()
+            .and_then(|path| path.to_str().map(str::to_owned));
+        self.owning(resolved.as_deref().unwrap_or(folder))
+    }
+
     /// The project a session in `folder` works for: the unarchived one
     /// whose repository holds it, the innermost when repositories nest.
     pub(super) fn owning(&self, folder: &str) -> Option<ProjectId> {

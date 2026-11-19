@@ -559,7 +559,10 @@ ren project release --project acme  # main, production, the canary, and the deci
 ```
 
 Ren itself (`--factory ren`) is refused there: its canary is `cargo xtask
-canary`. A pass fetches the project's `main` (`--remote`, `--branch`) and checks its
+canary`. Each pass and each promotion also closes the project's work items
+as Ren's canary does: a sent item lands when a commit on `main` names it
+(`Work-Item: <id>`), and a landed item ships once production runs a build
+that holds it (in the next pass after it lands). A pass fetches the project's `main` (`--remote`, `--branch`) and checks its
 tip out, detached, in a workspace the factory keeps for the project, in
 Ren's worktrees folder, so its slot's ports are its own. It runs the build
 steps, starts the serve step there and waits for its health path, then
