@@ -1,10 +1,11 @@
 <!--
-  Release: how far production is behind main, and what stands between them.
-  The canary's build and each of its checks, the pages it captured on a copy
-  of production's history, what the operator's policy decided, and a
-  Promote that asks the factory's next pass to install it. Below, the work
-  items production's build shipped and those on main waiting for it, and
-  each project's release.
+  A project's release: how far production is behind main, and what stands
+  between them. The canary's build and each of its checks, the pages it
+  captured on a copy of production's history (Ren's canary captures them),
+  what the operator's policy decided, and, for Ren, a Promote that asks the
+  factory's next pass to install it (another project promotes with
+  `ren project promote`). Below, the project's work items production's
+  build shipped and those on main waiting for it.
 -->
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
@@ -12,6 +13,7 @@
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import { ReleaseLine, ReleaseApi, ReleasePage } from '#lib/release.ts';
+  import { Work } from '#lib/work.ts';
   import type { ReleaseView } from '#lib/api.ts';
   import type { PageProps } from './$types';
 
@@ -59,9 +61,15 @@
     <p class="error" role="alert">{data.failed}</p>
   {:else if !view}
     <p class="empty">
-      Nothing checked yet. A canary pass (<code>cargo xtask canary run</code>, or on its timer with
-      <code>cargo xtask canary enable</code>) builds main, checks it on a copy of production's
-      history, and writes what it found here.
+      {#if data.project.factory === 'ren'}
+        Nothing checked yet. A canary pass (<code>cargo xtask canary run</code>, or on its timer
+        with <code>cargo xtask canary enable</code>) builds main, checks it on a copy of
+        production's history, and writes what it found here.
+      {:else}
+        Nothing checked yet. A canary pass (<code
+          >ren project canary --project {data.project.name}</code
+        >) builds main, runs the project's checks, and writes what it found here.
+      {/if}
     </p>
   {:else}
     {@const release = view.release}
@@ -92,6 +100,8 @@
         <span class="lane-decision tone-{tone}">{decision}</span>
         {#if view.asked}
           <span class="lane-note">Asked: the factory's next pass installs it.</span>
+        {:else if view.promotable && release.canary && data.project.factory !== 'ren'}
+          <span class="lane-note mono">ren project promote --project {data.project.name}</span>
         {:else if view.promotable && release.canary}
           {@const commit = release.canary.commit}
           <button
@@ -127,12 +137,12 @@
         {#each shots as shot (shot)}
           <a
             class="shot"
-            href={`/api/projects/${data.project}/release/shots/${shot}`}
+            href={`/api/projects/${data.project.name}/release/shots/${shot}`}
             target="_blank"
             rel="noopener"
           >
             <img
-              src={`/api/projects/${data.project}/release/shots/${shot}`}
+              src={`/api/projects/${data.project.name}/release/shots/${shot}`}
               alt={`The ${shot} page on the canary`}
               loading="lazy"
             />
@@ -149,7 +159,11 @@
         {#if shipped.length}
           <ul class="work-list">
             {#each shipped as item (item.id)}
-              <li><a href={`/work?shelf=archived&item=${item.id}`}>{item.title}</a></li>
+              <li>
+                <a href={Work.href(data.project.name, { shelf: 'archived', item: item.id })}
+                  >{item.title}</a
+                >
+              </li>
             {/each}
           </ul>
         {:else}<p class="muted">None.</p>{/if}
@@ -160,7 +174,7 @@
           <ul class="work-list">
             {#each waiting as item (item.id)}
               <li>
-                <a href={`/work?item=${item.id}`}>{item.title}</a>
+                <a href={Work.href(data.project.name, { item: item.id })}>{item.title}</a>
                 <span class="muted mono">{ReleasePage.short(item.landed)}</span>
               </li>
             {/each}
@@ -168,39 +182,6 @@
         {:else}<p class="muted">None.</p>{/if}
       </div>
     </div>
-  {/if}
-
-  {#if data.projects.length}
-    <h2>Projects</h2>
-    <table class="projects">
-      <thead>
-        <tr>
-          <th>Project</th>
-          <th>Production</th>
-          <th>Canary</th>
-          <th>Promotion</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each data.projects as project (project.name)}
-          {@const line = new ReleasePage(project.release, null)}
-          {@const [said, tone] = decided(project.release)}
-          <tr>
-            <td><strong>{project.name}</strong></td>
-            <td class="mono">{ReleasePage.short(line.production)} · {line.behind}</td>
-            <td class="mono"
-              >{ReleasePage.short(project.release.canary?.commit ?? null)}
-              {project.release.canary
-                ? project.release.canary.passed
-                  ? 'passed'
-                  : 'failed'
-                : ''}</td
-            >
-            <td><span class="tone-{tone}">{project.release.policy}: {said}</span></td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
   {/if}
 </section>
 
@@ -340,22 +321,6 @@
   }
   .work-list li + li {
     margin-top: 4px;
-  }
-  .projects {
-    width: 100%;
-    border-collapse: collapse;
-  }
-  .projects th {
-    text-align: left;
-    font-weight: 500;
-    color: var(--muted);
-    padding: 6px 16px;
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-  }
-  .projects td {
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--line);
   }
   .empty {
     padding: 16px;

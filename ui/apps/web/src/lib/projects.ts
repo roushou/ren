@@ -167,9 +167,9 @@ export class ProjectBoard {
     return `/projects/${encodeURIComponent(name)}`;
   }
 
-  /** Where a project's release is shown in full: Ren's has its own view. */
+  /** Where a project's release is shown in full: its Release page. */
   static releaseHref(project: Project): string {
-    return project.factory === 'ren' ? '/release' : `${ProjectBoard.href(project.name)}#release`;
+    return `${ProjectBoard.href(project.name)}/release`;
   }
 
   /** A project's open work, in words: what is queued, sent, and landed. */

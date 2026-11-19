@@ -2,7 +2,7 @@
   A project (docs/plans/hierarchy.md): what it is, where its release
   stands, its work items by state, its sessions (each in the worktree or
   folder it works in, with the work it took up), and their runs. Each item
-  opens in a drawer, each session and run in Sessions, and Ren's release in
+  opens in a drawer, each session and run in Sessions, and the release in
   full in Release.
 -->
 <script lang="ts">
@@ -118,11 +118,7 @@
         <div class="lane">
           <span class="lane-label">Promotion · {release.policy}</span>
           <span class="tone-{tone}">{decision}</span>
-          {#if project.factory === 'ren'}
-            <a class="lane-note" href="/release">The full release, with the canary's pages</a>
-          {:else}
-            <span class="lane-note mono">ren project promote --project {project.name}</span>
-          {/if}
+          <a class="lane-note" href={ProjectBoard.releaseHref(project)}>The full release</a>
         </div>
       </div>
       {#if release.canary}

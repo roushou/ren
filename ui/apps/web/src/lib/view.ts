@@ -4,8 +4,8 @@
  * are tested without a browser.
  *
  * Three destinations hold every view: Projects (the factory: each
- * project, with its work and sessions under it, Scratch for sessions that
- * work for none, and Ren's release), Inspect (everything recorded), and
+ * project, with its work, sessions, and release under it, and Scratch for
+ * sessions that work for none), Inspect (everything recorded), and
  * Host (this machine). The header names the three; under it, the current
  * destination's own pages, or inside a project, the project's.
  */
@@ -82,6 +82,8 @@ export class Views {
         return 'work';
       case '/projects/[name]/sessions':
         return 'sessions';
+      case '/projects/[name]/release':
+        return 'release';
       case '/scratch':
         return 'scratch';
       case '/overview':
@@ -102,8 +104,6 @@ export class Views {
         return 'usage';
       case '/tools':
         return 'tools';
-      case '/release':
-        return 'release';
       case '/recorder':
         return 'recorder';
       default:
@@ -178,12 +178,12 @@ export class Views {
             { tab: 'project', href: base, label: 'Overview' },
             { tab: 'work', href: `${base}/work`, label: 'Work' },
             { tab: 'sessions', href: `${base}/sessions`, label: 'Sessions' },
+            { tab: 'release', href: `${base}/release`, label: 'Release' },
           ];
         }
         return [
           { tab: 'projects', href: '/', label: 'Projects' },
           { tab: 'scratch', href: '/scratch', label: 'Scratch' },
-          { tab: 'release', href: '/release', label: 'Release' },
         ];
       }
       case 'inspect':

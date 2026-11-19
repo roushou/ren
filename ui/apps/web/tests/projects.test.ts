@@ -126,8 +126,11 @@ test("a project's work groups by state, open first, and its open work reads in w
   );
   assert.equal(ProjectBoard.openWork(project('acme')), 'none open');
   assert.equal(ProjectBoard.href('acme-web'), '/projects/acme-web');
-  assert.equal(ProjectBoard.releaseHref(project('ren', { factory: 'ren' })), '/release');
-  assert.equal(ProjectBoard.releaseHref(project('acme')), '/projects/acme#release');
+  assert.equal(
+    ProjectBoard.releaseHref(project('ren', { factory: 'ren' })),
+    '/projects/ren/release',
+  );
+  assert.equal(ProjectBoard.releaseHref(project('acme')), '/projects/acme/release');
 });
 
 test('approvals come from working runs, each named by its session and project', () => {

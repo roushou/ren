@@ -386,7 +386,7 @@ applied by the recorder after what it was recording; the answer is `202`
 `{api_version, subject, change}` once it is queued. `404` `not_found` is an
 unknown subject or change.
 
-### Promoting from the Release view
+### Promoting from the Release page
 
 `POST /control/v1/release/promote` with `{commit}` asks that production take
 the canary's build of that commit. The gateway records the request
@@ -394,7 +394,8 @@ the canary's build of that commit. The gateway records the request
 `{api_version, commit}`; the factory's next canary pass carries it out with
 the install's steps, since an install restarts the daemon. `404`
 `not_found` before any pass; `409` `not_promotable` unless the commit is the
-canary's and its build passed. The UI's Release view sends it.
+canary's and its build passed. Ren's Release page in the UI
+(`/projects/<name>/release`) sends it.
 
 ### Projects
 

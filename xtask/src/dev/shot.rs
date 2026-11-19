@@ -81,7 +81,7 @@ impl Page {
         match self {
             Self::Projects => Some("/".into()),
             Self::Work => Some("/projects/acme-web/work".into()),
-            Self::Release => Some("/release".into()),
+            Self::Release => Some("/projects/ren/release".into()),
             Self::Overview => Some("/overview".into()),
             Self::Live => Some("/live".into()),
             Self::Traffic => Some("/traffic".into()),

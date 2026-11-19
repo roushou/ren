@@ -382,7 +382,7 @@ where the release stands to production's data folder (`release.json`): `main`'s
 tip, the build production runs and how many commits it is behind, the
 canary's build and each check, and the decision. Ren's project's release
 (`/api/projects/ren/release`, or whatever name it is registered under)
-serves it, `ren release` prints it (another project's with `--project`), the UI's status line shows it, and its Release view
+serves it, `ren release` prints it (another project's with `--project`), the UI's status line shows it, and Ren's Release page (`/projects/ren/release`)
 shows all of it: the three builds, each check, the pages the canary
 captured (kept in production's data folder, `release-shots`), what the
 policy decided, the work items production's build shipped and those on

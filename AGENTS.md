@@ -499,7 +499,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   every configured timeout, 1 to 3600 seconds), the `Controls` that hold
   it with the running-call registry (`control`), the instance's
   environment that `/health` reports beside its `ren_release::Build`
-  (`build`), what the factory keeps for the Release view (`api::release`:
+  (`build`), what the factory keeps for the Release page (`api::release`:
   `ReleaseFolder`, Ren's release, the canary's shots, project releases, and
   the operator's promotion request), and
   pure call planning
