@@ -369,21 +369,12 @@ impl Factory {
             .and_then(|running| between(running, &main_id));
         let canary = match canary {
             Some((checked, build)) => {
-                let lineage = match &running {
-                    None => Lineage::Unknown,
-                    Some(running) => {
-                        let candidate = Self::id(checked.commit())?;
-                        if *running == candidate {
-                            Lineage::Same
-                        } else {
-                            match (between(&candidate, running), between(running, &candidate)) {
-                                (Some(0), Some(_)) => Lineage::Ahead,
-                                (Some(_), Some(_)) => Lineage::Behind,
-                                (None, _) | (_, None) => Lineage::Unknown,
-                            }
-                        }
-                    }
-                };
+                let candidate = Self::id(checked.commit())?;
+                let running_commit = running.as_ref().and_then(|id| Self::commit(id).ok());
+                let lacks = running
+                    .as_ref()
+                    .and_then(|running| between(&candidate, running));
+                let lineage = Lineage::read(running_commit.as_ref(), checked.commit(), lacks);
                 Some((checked, lineage, build.attempt()))
             }
             None => None,

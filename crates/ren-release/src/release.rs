@@ -106,6 +106,28 @@ impl Canary {
     }
 }
 
+impl Lineage {
+    /// How `candidate` relates to `running`, the clean commit production
+    /// runs (none when it runs no clean commit), given how many commits
+    /// `running` has that `candidate` lacks, as git counted them (none when
+    /// it could not, as for a commit it does not have).
+    pub fn read(
+        running: Option<&Commit>,
+        candidate: &Commit,
+        candidate_lacks: Option<u64>,
+    ) -> Self {
+        match running {
+            None => Self::Unknown,
+            Some(running) if running == candidate => Self::Same,
+            Some(_) => match candidate_lacks {
+                Some(0) => Self::Ahead,
+                Some(_) => Self::Behind,
+                None => Self::Unknown,
+            },
+        }
+    }
+}
+
 impl Decision {
     /// What `policy` decides at `now` for a canary build in `lineage` to
     /// production, after `attempt`.
@@ -267,6 +289,29 @@ mod tests {
                 now
             ),
             Decision::PromotionFailed
+        );
+    }
+
+    #[test]
+    fn a_candidate_follows_production_only_when_it_lacks_none_of_its_commits() {
+        let (production, candidate): (crate::Commit, crate::Commit) =
+            (PRODUCTION.parse().unwrap(), MAIN.parse().unwrap());
+        assert_eq!(Lineage::read(None, &candidate, Some(0)), Lineage::Unknown);
+        assert_eq!(
+            Lineage::read(Some(&candidate), &candidate, None),
+            Lineage::Same
+        );
+        assert_eq!(
+            Lineage::read(Some(&production), &candidate, Some(0)),
+            Lineage::Ahead
+        );
+        assert_eq!(
+            Lineage::read(Some(&production), &candidate, Some(2)),
+            Lineage::Behind
+        );
+        assert_eq!(
+            Lineage::read(Some(&production), &candidate, None),
+            Lineage::Unknown
         );
     }
 
