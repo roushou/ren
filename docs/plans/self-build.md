@@ -169,7 +169,9 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
    - Its checks: `ren doctor` (with the build check), a sweep of every read
      of the read API over the copied history (a test matches every
      `ReadRequest` against it), and every page of the UI in a headless
-     browser. A check that cannot run fails; a check left out is never a
+     browser, which fails unless the UI answers it with a success (a
+     project's pages are a project's in the copied history). A check that
+     cannot run fails; a check left out is never a
      pass (`ren_release::Verdict`).
    - The pure `ren-release` crate decides: the operator's policy
      (`~/.config/ren/release.toml`: `manual`, `automatic`, or a daily UTC

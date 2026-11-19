@@ -377,7 +377,11 @@ It then checks the canary: `ren doctor` (nothing failed, and the daemon runs
 the build its CLI is), every read of the read API over the copied history
 (each listing, then one item of each), and every page of the UI in a headless
 Chromium (as `dev shot` finds it; the captures are kept in
-`~/.local/share/ren-canary/shots`). A check that cannot run fails. It writes
+`~/.local/share/ren-canary/shots`). A page fails unless the UI answers it,
+after its redirects, with a success, so an error page is a failure; a
+project's pages are those of a project in the copied history (Ren's, else the
+first), and a page with nothing to show yet is skipped. A check that cannot
+run fails. It writes
 where the release stands to production's data folder (`release.json`): `main`'s
 tip, the build production runs and how many commits it is behind, the
 canary's build and each check, and the decision. Ren's project's release

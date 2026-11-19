@@ -117,15 +117,12 @@ impl Checks<'_> {
         match shots {
             Ok(shots) if shots.failed.is_empty() => Outcome::Passed,
             Ok(shots) => Outcome::Failed {
-                detail: format!(
-                    "did not load: {}",
-                    shots
-                        .failed
-                        .iter()
-                        .map(|page| page.name())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
+                detail: shots
+                    .failed
+                    .iter()
+                    .map(|(page, failure)| format!("{}: {failure}", page.name()))
+                    .collect::<Vec<_>>()
+                    .join("; "),
             },
             Err(error) => Outcome::Failed {
                 detail: error.to_string(),
