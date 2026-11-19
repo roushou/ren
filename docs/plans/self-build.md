@@ -30,8 +30,8 @@ everyone using it, the agents included.**
    use a git worktree when another session is open in the checkout
    (`ui/apps/web/src/lib/briefing.ts`, `WorkPlace`). Nothing enforces it,
    each worktree is a cold Rust build, and checks run in parallel collide.
-   `main` is unprotected, so merges are not queued; CI already accepts
-   `merge_group` events.
+   `main` was unprotected, so a change could land untested or on a stale
+   base.
 5. **Feedback goes one way.** A Redline brief reaches a session, and there
    the loop ends: the mark never learns which branch answered it, cannot be
    checked on that branch's build, and is never closed by a release.
@@ -135,7 +135,7 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      answered through it, and the turn completed and was recorded, with
      `run_detached` and `run_rejoined` around the restart. Stopping the run
      ended its unit and removed its folder.
-3. **Workspaces.** Built, but for the merge queue.
+3. **Workspaces.** Built; `main` is guarded by required checks, not a queue.
    - A session can work in a workspace of its own (`workspace:
      "worktree"`, `ren runs start --workspace worktree`): a worktree of
      the repository named, in `<data>/worktrees/<repo>-<slot>`, on a new
@@ -153,9 +153,9 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      workspace session ran in its own worktree and branch with its
      variables, and deleting it removed the worktree, its data, and its
      merged branch.
-   - Not built: merges through a queue. CI already runs on GitHub's
-     `merge_group` events; turning the queue on means protecting `main`,
-     which changes how changes land and is the operator's to decide.
+   - `main` is protected by its ruleset: every change lands through a pull
+     request, squashed, once **CI** and **Compatibility** pass on a branch
+     up to date with `main`. No one bypasses it, agents included.
 4. **Canary and promotion.** Not built.
    - Each merge to `main` is built once. The build is installed as canary
      on a fresh copy of production's latest backup.
@@ -229,6 +229,12 @@ things faster. Each phase is useful on its own.
   is built, installed, and upgraded with the daemon; a host started by an
   older build goes on running that build, which is why its frames keep
   what they do not know.
+- **Required checks, not a merge queue.** GitHub offers its merge queue
+  only to repositories an organization owns, and `ren` is a user's. A
+  branch must instead be up to date with `main` before it merges, which
+  keeps the queue's guarantee (nothing lands untested against the current
+  `main`); what is lost is the automatic retest, so a waiting pull request
+  is updated by hand (`gh pr update-branch`) after `main` moves.
 - **The gate is its own workflow.** It reads the pull request's title and
   body, so it runs again when they are edited, which would otherwise
   rerun all of CI.
