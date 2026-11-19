@@ -5,7 +5,8 @@
 
 use super::ApiError;
 use super::params::{
-    RawCallQuery, RawExposureQuery, RawPageQuery, RawSearchQuery, RawShelfQuery, RawUsageQuery,
+    RawCallQuery, RawExposureQuery, RawOwnedQuery, RawPageQuery, RawSearchQuery, RawShelfQuery,
+    RawUsageQuery,
 };
 use axum::extract::Query;
 use http::Uri;
@@ -96,22 +97,32 @@ impl ApiRead {
                     .opt("recording", query.recording)
                     .range(query.time),
             ),
-            ReadRequest::Runs { limit, shelf } => (
+            ReadRequest::Runs {
+                limit,
+                shelf,
+                project,
+            } => (
                 "/api/runs".to_owned(),
                 QueryParams::default()
                     .with("limit", limit.get())
-                    .shelf(*shelf),
+                    .shelf(*shelf)
+                    .opt("project", project.as_ref()),
             ),
             ReadRequest::Run(run) => (format!("/api/runs/{run}"), QueryParams::default()),
             ReadRequest::Conversation(run) => (
                 format!("/api/runs/{run}/conversation"),
                 QueryParams::default(),
             ),
-            ReadRequest::WorkItems { limit, shelf } => (
+            ReadRequest::WorkItems {
+                limit,
+                shelf,
+                project,
+            } => (
                 "/api/work".to_owned(),
                 QueryParams::default()
                     .with("limit", limit.get())
-                    .shelf(*shelf),
+                    .shelf(*shelf)
+                    .opt("project", project.as_ref()),
             ),
             ReadRequest::WorkItem(item) => (format!("/api/work/{item}"), QueryParams::default()),
         };
@@ -171,14 +182,22 @@ impl ApiRead {
                 ReadRequest::Exposures(ExposureQuery::try_from(raw)?)
             }
             ["runs"] => {
-                let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
-                ReadRequest::Runs { limit, shelf }
+                let (limit, shelf, project) = Self::query::<RawOwnedQuery>(uri)?.parse()?;
+                ReadRequest::Runs {
+                    limit,
+                    shelf,
+                    project,
+                }
             }
             ["runs", run] => ReadRequest::Run(Self::id(run)?),
             ["runs", run, "conversation"] => ReadRequest::Conversation(Self::id(run)?),
             ["work"] => {
-                let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
-                ReadRequest::WorkItems { limit, shelf }
+                let (limit, shelf, project) = Self::query::<RawOwnedQuery>(uri)?.parse()?;
+                ReadRequest::WorkItems {
+                    limit,
+                    shelf,
+                    project,
+                }
             }
             ["work", item] => ReadRequest::WorkItem(Self::id(item)?),
             _ => return Err(ApiError::NotFound),

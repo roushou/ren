@@ -2,9 +2,10 @@
 //! `ren project add`, `list`, `archive`, and `unarchive`, and the project a
 //! canary, promotion, or release command is for.
 //!
-//! A registration goes through the control API, which records it; the
-//! registry is read from the store directly, beside the running daemon,
-//! until the read API serves projects. A registration is recorded after it
+//! A registration goes through the control API, which records it; `list`
+//! reads the read API. Resolving a project for a local command (`canary`,
+//! `promote`) reads the store directly, beside the running daemon, as the
+//! repository it builds is on this host. A registration is recorded after it
 //! is answered, so `add` waits for it to be stored and checks that it is
 //! the project it registered. Adding a project already registered just so
 //! does nothing.
@@ -35,6 +36,15 @@ pub(super) struct AddArgs {
     /// or `ren` (Ren itself).
     #[arg(long, default_value = "contract")]
     factory: Factory,
+    #[command(flatten)]
+    target: TargetArgs,
+}
+
+#[derive(Args)]
+pub(super) struct ListArgs {
+    /// Print the API's JSON instead.
+    #[arg(long)]
+    json: bool,
     #[command(flatten)]
     target: TargetArgs,
 }
@@ -148,8 +158,15 @@ impl Registry {
             .report()?)
     }
 
-    pub(super) async fn list(ctx: &Context) -> Result<ExitCode> {
-        let projects = Self::read(ctx).await?;
+    /// The projects, as the read API lists them: each with its work by
+    /// state, its running runs, and its release's decision.
+    pub(super) async fn list(ctx: &Context, args: ListArgs) -> Result<ExitCode> {
+        let projects = args.target.gateway(ctx)?.projects().await?;
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&projects)?);
+            return Ok(ExitCode::SUCCESS);
+        }
+        let projects = projects.projects;
         if projects.is_empty() {
             println!("No project is registered: `ren project add` registers one.");
             return Ok(ExitCode::SUCCESS);
@@ -160,16 +177,25 @@ impl Registry {
             .max()
             .unwrap_or(0);
         for project in &projects {
-            let factory = project.factory.label();
             let archived = if project.archived_at.is_some() {
                 "  archived"
             } else {
                 ""
             };
             println!(
-                "{:width$}  {factory:8}  {}{archived}",
+                "{:width$}  {:8}  {}{archived}",
                 project.name.as_str(),
+                project.factory.label(),
                 project.repository
+            );
+            let work = &project.work;
+            let release = project
+                .release
+                .as_ref()
+                .map_or("no canary yet", |release| release.decision.label());
+            println!(
+                "{:width$}  work {} queued, {} sent, {} landed; {} running; release: {release}",
+                "", work.queued, work.sent, work.landed, project.running
             );
         }
         Ok(ExitCode::SUCCESS)

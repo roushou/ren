@@ -19,6 +19,7 @@ QueueRequest
 RawCallQuery
 RawExposureQuery
 RawLiveQuery
+RawOwnedQuery
 RawPageQuery
 RawSearchQuery
 RawShelfQuery

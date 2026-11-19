@@ -61,6 +61,14 @@ async fn promote(gateway: &TestGateway, commit: &str) -> (StatusCode, Value) {
     )
 }
 
+/// A read's status and JSON body (null when it has none).
+async fn get(base: String, path: String) -> (StatusCode, Value) {
+    let response = client().get(format!("{base}{path}")).send().await.unwrap();
+    let status = response.status();
+    let body = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap_or(Value::Null);
+    (status, body)
+}
+
 #[tokio::test]
 async fn the_release_view_reads_shots_and_records_a_promotion_request() {
     let upstream = mock(Router::new()).await;
@@ -97,26 +105,71 @@ async fn the_release_view_reads_shots_and_records_a_promotion_request() {
             .unwrap();
     assert_eq!(kept.commit.to_string(), CANARY);
 
+    // Ren's release is read as its project's: registered, it reads.
+    for (name, repository, factory) in [
+        ("ren", "/home/op/ren", "ren"),
+        ("acme-web", "/home/op/dev/acme-web", "contract"),
+    ] {
+        let response = client()
+            .post(format!("{}/control/v1/projects", gateway.base()))
+            .bearer_auth(TestGateway::CONTROL_TOKEN)
+            .header("content-type", "application/json")
+            .body(json!({ "name": name, "repository": repository, "factory": factory }).to_string())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+    let base = gateway.base();
+    let read = |path: String| get(base.clone(), path);
+    for _ in 0..200 {
+        if read("/api/projects".to_owned()).await.1["projects"]
+            .as_array()
+            .is_some_and(|projects| projects.len() == 2)
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
     // The pages the canary kept, by name.
     let shots = dir.path().join(ShotName::FOLDER);
     std::fs::create_dir_all(&shots).unwrap();
     std::fs::write(shots.join("sessions.png"), b"\x89PNG fake").unwrap();
     std::fs::write(shots.join("notes.txt"), b"not a shot").unwrap();
-    let body: Value = serde_json::from_slice(
-        &client()
-            .get(format!("{}/api/release", gateway.base()))
-            .send()
-            .await
-            .unwrap()
-            .bytes()
-            .await
-            .unwrap(),
-    )
-    .unwrap();
+    let (_, body) = read("/api/projects/ren/release".to_owned()).await;
     assert_eq!(body["shots"], json!(["sessions"]));
     assert_eq!(body["promotion_requested"], CANARY);
+    assert_eq!(body["release"]["main"], CANARY);
+    // A contract project's release is its own, with no pages or request.
+    let (_, body) = read("/api/projects/acme-web/release".to_owned()).await;
+    assert_eq!(
+        (
+            &body["release"],
+            &body["shots"],
+            &body["promotion_requested"]
+        ),
+        (&Value::Null, &json!([]), &Value::Null)
+    );
+    let (_, listed) = read("/api/projects".to_owned()).await;
+    assert_eq!(listed["projects"][1]["name"], "ren");
+    assert_eq!(listed["projects"][1]["release"]["main"], CANARY);
+    assert_eq!(listed["projects"][0]["release"], Value::Null);
+    assert_eq!(
+        read("/api/projects/acme-web/release/shots/sessions".to_owned())
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        read("/api/projects/acme-none/release".to_owned()).await.0,
+        StatusCode::NOT_FOUND
+    );
     let shot = client()
-        .get(format!("{}/api/release/shots/sessions", gateway.base()))
+        .get(format!(
+            "{}/api/projects/ren/release/shots/sessions",
+            gateway.base()
+        ))
         .send()
         .await
         .unwrap();
@@ -125,7 +178,10 @@ async fn the_release_view_reads_shots_and_records_a_promotion_request() {
     assert_eq!(&shot.bytes().await.unwrap()[..], b"\x89PNG fake");
     for name in ["missing", "..%2F..%2Fetc%2Fpasswd", "Notes"] {
         let response = client()
-            .get(format!("{}/api/release/shots/{name}", gateway.base()))
+            .get(format!(
+                "{}/api/projects/ren/release/shots/{name}",
+                gateway.base()
+            ))
             .send()
             .await
             .unwrap();

@@ -12,12 +12,13 @@ use crate::client::{ClientError, GatewayChoice};
 use ren_gateway::api::ErrorCode;
 use ren_gateway::api::control::request::{ControlFeed, ControlMethod, ControlRequest};
 use ren_gateway::api::read::ReadBody;
-use ren_gateway::api::release::ReleaseBody;
+use ren_gateway::api::{projects::ProjectsBody, release::ReleaseBody};
 use ren_gateway::{ApiRead, ControlRefusal, ControlToken};
 use ren_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use ren_protocol::direction::Direction;
 use ren_protocol::label::{Labeled, Stored};
 use ren_recorder::id::CallId;
+use ren_recorder::project::ProjectName;
 use ren_store::Reader;
 use ren_store::read::ReadRequest;
 use reqwest::{Method, StatusCode};
@@ -360,9 +361,17 @@ impl Management {
         ReadBody::decode(request, Value::Object(body)).map_err(ManagementError::Answer)
     }
 
-    /// Where the release stands, `/api/release`.
-    pub async fn release(&self) -> Result<ReleaseBody, ManagementError> {
-        let body = self.read("/api/release").await?;
+    /// Every registered project, `/api/projects`.
+    pub async fn projects(&self) -> Result<ProjectsBody, ManagementError> {
+        let body = self.read("/api/projects").await?;
+        serde_json::from_value(Value::Object(body)).map_err(ManagementError::Answer)
+    }
+
+    /// Where `project`'s release stands, `/api/projects/{name}/release`.
+    pub async fn release(&self, project: &ProjectName) -> Result<ReleaseBody, ManagementError> {
+        let body = self
+            .read(&format!("/api/projects/{project}/release"))
+            .await?;
         serde_json::from_value(Value::Object(body)).map_err(ManagementError::Answer)
     }
 

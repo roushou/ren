@@ -1,20 +1,25 @@
-//! `ren release`: where the release stands, as a gateway's `/api/release`
-//! reports what the factory (`cargo xtask canary`) last found: `main`'s tip,
-//! the build production runs and how far behind it is, the canary's build
-//! and its checks, and what promotion decided.
+//! `ren release`: where a project's release stands, Ren's by default, as a
+//! gateway's `/api/projects/{name}/release` reports what its canary last
+//! found: `main`'s tip, the build production runs and how far behind it is,
+//! the canary's build and its checks, and what promotion decided.
 
 use super::history::TargetArgs;
 use crate::context::Context;
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Args;
 use ren_gateway::api::release::{ReleaseBody, ReleaseView};
 use ren_protocol::label::Stored;
+use ren_recorder::project::{Factory, ProjectName};
 use ren_release::{Decision, Policy, Revision, Tree};
 use std::{fmt::Write as _, process::ExitCode};
 
-/// Show where the release stands: main, production, and the canary.
+/// Show where a release stands: main, production, and the canary.
 #[derive(Args)]
 pub struct ReleaseCmd {
+    /// The project; by default Ren itself, the one project registered as
+    /// Ren.
+    #[arg(long)]
+    project: Option<ProjectName>,
     /// Print the API's JSON instead.
     #[arg(long)]
     json: bool,
@@ -24,7 +29,26 @@ pub struct ReleaseCmd {
 
 impl ReleaseCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
-        let body = self.target.gateway(ctx)?.release().await?;
+        let gateway = self.target.gateway(ctx)?;
+        let project = match self.project {
+            Some(project) => project,
+            None => {
+                let projects = gateway.projects().await?.projects;
+                let mut ren = projects.into_iter().filter(|project| {
+                    project.archived_at.is_none() && project.factory == Stored::Known(Factory::Ren)
+                });
+                match (ren.next(), ren.next()) {
+                    (Some(project), None) => project.name,
+                    (None, _) => bail!(
+                        "no project is registered as Ren itself: `install-vps` registers it, or pass --project"
+                    ),
+                    (Some(_), Some(_)) => {
+                        bail!("more than one project is registered as Ren: pass --project")
+                    }
+                }
+            }
+        };
+        let body = gateway.release(&project).await?;
         if self.json {
             println!("{}", serde_json::to_string_pretty(&body)?);
         } else {
@@ -36,7 +60,7 @@ impl ReleaseCmd {
     /// The release as lines of text.
     pub(crate) fn render(body: &ReleaseBody) -> String {
         let Some(release) = &body.release else {
-            return "No release yet: the factory (`cargo xtask canary`) has not run against this gateway.\n".to_owned();
+            return "No release yet: its canary has not run against this gateway.\n".to_owned();
         };
         let mut text = String::new();
         let _ = writeln!(text, "main        {}", release.main.short());
@@ -134,7 +158,7 @@ mod tests {
     #[test]
     fn a_release_reads_as_lines() {
         let body: ReleaseBody = serde_json::from_str(include_str!(
-            "../../../../ui/apps/web/tests/fixtures/api/release.json"
+            "../../../../ui/apps/web/tests/fixtures/api/project_release.json"
         ))
         .unwrap();
         assert_eq!(

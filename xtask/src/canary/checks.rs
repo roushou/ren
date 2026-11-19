@@ -147,7 +147,7 @@ impl ReadSweep {
         "/api/exposures",
         "/api/storage",
         "/api/metrics",
-        "/api/release",
+        "/api/projects",
         "/api/work?limit=5",
         "/api/work?limit=5&shelf=archived",
     ];

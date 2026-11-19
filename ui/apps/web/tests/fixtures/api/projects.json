@@ -1,0 +1,103 @@
+{
+  "api_version": 1,
+  "projects": [
+    {
+      "id": "00000000-0000-0000-0000-00000000000d",
+      "name": "acme-web",
+      "repository": "/home/op/dev/acme-web",
+      "factory": "contract",
+      "created_at": 1800000000000,
+      "archived_at": null,
+      "work": {
+        "queued": 0,
+        "sent": 0,
+        "landed": 0,
+        "shipped": 0,
+        "dismissed": 0,
+        "other": 0
+      },
+      "sessions": 0,
+      "running": 0,
+      "release": {
+        "main": "62e9e9e0000000000000000000000000000000ff",
+        "production": "07f4bb7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708",
+        "behind": 1,
+        "canary": {
+          "commit": "62e9e9e0000000000000000000000000000000ff",
+          "passed": true,
+          "checks": [
+            {
+              "check": "doctor",
+              "name": null,
+              "passed": true,
+              "detail": null
+            },
+            {
+              "check": "reads",
+              "name": null,
+              "passed": true,
+              "detail": null
+            },
+            {
+              "check": "pages",
+              "name": null,
+              "passed": true,
+              "detail": null
+            }
+          ]
+        },
+        "policy": "manual",
+        "decision": "awaiting_operator"
+      }
+    },
+    {
+      "id": "00000000-0000-0000-0000-00000000000c",
+      "name": "ren",
+      "repository": "/home/op/ren",
+      "factory": "ren",
+      "created_at": 1800000000000,
+      "archived_at": null,
+      "work": {
+        "queued": 0,
+        "sent": 0,
+        "landed": 0,
+        "shipped": 0,
+        "dismissed": 0,
+        "other": 0
+      },
+      "sessions": 0,
+      "running": 0,
+      "release": {
+        "main": "62e9e9e0000000000000000000000000000000ff",
+        "production": "07f4bb7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708",
+        "behind": 1,
+        "canary": {
+          "commit": "62e9e9e0000000000000000000000000000000ff",
+          "passed": true,
+          "checks": [
+            {
+              "check": "doctor",
+              "name": null,
+              "passed": true,
+              "detail": null
+            },
+            {
+              "check": "reads",
+              "name": null,
+              "passed": true,
+              "detail": null
+            },
+            {
+              "check": "pages",
+              "name": null,
+              "passed": true,
+              "detail": null
+            }
+          ]
+        },
+        "policy": "manual",
+        "decision": "awaiting_operator"
+      }
+    }
+  ]
+}

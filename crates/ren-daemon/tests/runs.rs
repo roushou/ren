@@ -439,7 +439,7 @@ async fn a_session_is_started_prompted_approved_and_stopped_through_the_control_
     gateway.stop().await;
     let reader = Reader::open(dir.path(), 1).await.unwrap();
     let stored = reader
-        .runs(PageLimit::DEFAULT, ren_store::query::Shelf::Archived)
+        .runs(PageLimit::DEFAULT, ren_store::query::Shelf::Archived, None)
         .await
         .unwrap();
     assert_eq!(stored.len(), 1);

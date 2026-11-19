@@ -14,8 +14,9 @@ use crate::{
     query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange},
     view::{
         AttachmentView, AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView,
-        ChannelView, Columns, DiskUsage, MessageView, OperatorActionView, ProjectView,
-        RecordingView, RunView, SessionView, StorageView, UsageGroup, UsageView, WorkItemView,
+        ChannelView, Columns, DiskUsage, MessageView, OperatorActionView, ProjectActivity,
+        ProjectView, RecordingView, RunView, SessionView, StorageView, UsageGroup, UsageView,
+        WorkItemView,
     },
     writer::BlobAccess,
 };
@@ -28,7 +29,7 @@ use ren_recorder::Observation;
 use ren_recorder::batch::BodyKey;
 use ren_recorder::{
     capture::CallState,
-    id::{CallId, RecordingId, RunId, SessionId, WorkItemId},
+    id::{CallId, ProjectId, RecordingId, RunId, SessionId, WorkItemId},
     project::{ProjectName, RepositoryPath},
 };
 use sqlx::{
@@ -263,12 +264,20 @@ impl Reader {
     }
 
     /// The newest `limit` runs on `shelf`, newest first.
-    pub async fn runs(&self, limit: PageLimit, shelf: Shelf) -> Result<Vec<RunView>, StoreError> {
+    /// Runs on `shelf`, newest first; with `project`, only those of the
+    /// sessions working for it.
+    pub async fn runs(
+        &self,
+        limit: PageLimit,
+        shelf: Shelf,
+        project: Option<&ProjectName>,
+    ) -> Result<Vec<RunView>, StoreError> {
         sqlx::query(AssertSqlSafe(format!(
-            "{} WHERE {} ORDER BY started_at DESC, id DESC LIMIT ?",
+            "{} WHERE {} AND (?1 IS NULL OR operator_session IN (SELECT id FROM operator_sessions WHERE project = (SELECT id FROM projects WHERE name = ?1))) ORDER BY started_at DESC, id DESC LIMIT ?2",
             RunView::SELECT,
             shelf.runs(),
         )))
+        .bind(project.map(ProjectName::as_str))
         .bind(i64::from(limit.get()))
         .fetch_all(&self.pool)
         .await?
@@ -283,12 +292,14 @@ impl Reader {
         &self,
         limit: PageLimit,
         shelf: Shelf,
+        project: Option<&ProjectName>,
     ) -> Result<Vec<SessionView>, StoreError> {
         let rows = sqlx::query(AssertSqlSafe(format!(
-            "{} WHERE {} ORDER BY COALESCE((SELECT MAX(started_at) FROM runs WHERE runs.operator_session = operator_sessions.id), created_at) DESC, id DESC LIMIT ?",
+            "{} WHERE {} AND (?1 IS NULL OR project = (SELECT id FROM projects WHERE name = ?1)) ORDER BY COALESCE((SELECT MAX(started_at) FROM runs WHERE runs.operator_session = operator_sessions.id), created_at) DESC, id DESC LIMIT ?2",
             SessionView::select(),
             shelf.sessions(),
         )))
+        .bind(project.map(ProjectName::as_str))
         .bind(i64::from(limit.get()))
         .fetch_all(&self.pool)
         .await?;
@@ -379,12 +390,14 @@ impl Reader {
         &self,
         limit: PageLimit,
         shelf: Shelf,
+        project: Option<&ProjectName>,
     ) -> Result<Vec<WorkItemView>, StoreError> {
         sqlx::query(AssertSqlSafe(format!(
-            "{} WHERE {} ORDER BY updated_at DESC, id DESC LIMIT ?",
+            "{} WHERE {} AND (?1 IS NULL OR project = (SELECT id FROM projects WHERE name = ?1)) ORDER BY updated_at DESC, id DESC LIMIT ?2",
             WorkItemView::SELECT,
             shelf.work(),
         )))
+        .bind(project.map(ProjectName::as_str))
         .bind(i64::from(limit.get()))
         .fetch_all(&self.pool)
         .await?
@@ -423,6 +436,38 @@ impl Reader {
                 ))
             })
             .collect()
+    }
+
+    /// What is under way for each project that has anything.
+    pub async fn project_activity(
+        &self,
+    ) -> Result<HashMap<ProjectId, ProjectActivity>, StoreError> {
+        let mut activity = HashMap::<ProjectId, ProjectActivity>::new();
+        for row in sqlx::query(
+            "SELECT project, state, COUNT(*) AS count FROM work_items WHERE project IS NOT NULL GROUP BY project, state",
+        )
+        .fetch_all(&self.pool)
+        .await?
+        {
+            let row = Columns(&row);
+            activity
+                .entry(row.id("project")?)
+                .or_default()
+                .work
+                .add(&row.label("state")?, row.count("count")?);
+        }
+        for row in sqlx::query(
+            "SELECT s.project AS project, COUNT(DISTINCT s.id) AS sessions, COUNT(r.id) AS running FROM operator_sessions s LEFT JOIN runs r ON r.operator_session = s.id AND r.ended_at IS NULL WHERE s.project IS NOT NULL AND s.archived_at IS NULL GROUP BY s.project",
+        )
+        .fetch_all(&self.pool)
+        .await?
+        {
+            let row = Columns(&row);
+            let entry = activity.entry(row.id("project")?).or_default();
+            entry.sessions = row.count("sessions")?;
+            entry.running = row.count("running")?;
+        }
+        Ok(activity)
     }
 
     /// Every registered project, archived ones too, by name.

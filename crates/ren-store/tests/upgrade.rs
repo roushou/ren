@@ -381,6 +381,7 @@ impl Reads {
             let ReadResponse::Runs { runs: listed } = serve(ReadRequest::Runs {
                 limit: PageLimit::DEFAULT,
                 shelf,
+                project: None,
             })
             .await
             else {
@@ -395,7 +396,12 @@ impl Reads {
         }
         let mut sessions = Vec::new();
         for shelf in [Shelf::Current, Shelf::Archived] {
-            sessions.extend(reader.sessions(PageLimit::DEFAULT, shelf).await.unwrap());
+            sessions.extend(
+                reader
+                    .sessions(PageLimit::DEFAULT, shelf, None)
+                    .await
+                    .unwrap(),
+            );
         }
         assert!(!sessions.is_empty(), "sessions");
         let mut attachments = 0;
@@ -409,6 +415,7 @@ impl Reads {
             let ReadResponse::WorkItems { work } = serve(ReadRequest::WorkItems {
                 limit: PageLimit::DEFAULT,
                 shelf,
+                project: None,
             })
             .await
             else {

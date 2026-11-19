@@ -155,6 +155,7 @@ impl RunsCmd {
                     .serve(&ReadRequest::Runs {
                         limit: args.limit,
                         shelf: args.shelf,
+                        project: None,
                     })
                     .await?;
                 println!("{}", serde_json::to_string_pretty(&answer)?);

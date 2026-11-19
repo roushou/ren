@@ -1095,6 +1095,43 @@ impl ProjectView {
     }
 }
 
+/// What is under way for one project: its work items by state, and its
+/// sessions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectActivity {
+    pub work: WorkCounts,
+    /// Its sessions that are not archived.
+    pub sessions: u64,
+    /// Its runs that have not ended: starting, working, or idle.
+    pub running: u64,
+}
+
+/// Work items counted by state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkCounts {
+    pub queued: u64,
+    pub sent: u64,
+    pub landed: u64,
+    pub shipped: u64,
+    pub dismissed: u64,
+    /// In a state this build does not know.
+    pub other: u64,
+}
+
+impl WorkCounts {
+    pub(super) fn add(&mut self, state: &Stored<WorkStateKind>, count: u64) {
+        let slot = match state {
+            Stored::Known(WorkStateKind::Queued) => &mut self.queued,
+            Stored::Known(WorkStateKind::Sent) => &mut self.sent,
+            Stored::Known(WorkStateKind::Landed) => &mut self.landed,
+            Stored::Known(WorkStateKind::Shipped) => &mut self.shipped,
+            Stored::Known(WorkStateKind::Dismissed) => &mut self.dismissed,
+            Stored::Unknown(_) => &mut self.other,
+        };
+        *slot += count;
+    }
+}
+
 /// One work item, as recorded: what was marked, and where it stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkItemView {

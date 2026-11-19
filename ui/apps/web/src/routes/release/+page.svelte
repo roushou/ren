@@ -125,9 +125,14 @@
       <h2>Pages on the canary</h2>
       <div class="shots">
         {#each shots as shot (shot)}
-          <a class="shot" href={`/api/release/shots/${shot}`} target="_blank" rel="noopener">
+          <a
+            class="shot"
+            href={`/api/projects/${data.project}/release/shots/${shot}`}
+            target="_blank"
+            rel="noopener"
+          >
             <img
-              src={`/api/release/shots/${shot}`}
+              src={`/api/projects/${data.project}/release/shots/${shot}`}
               alt={`The ${shot} page on the canary`}
               loading="lazy"
             />

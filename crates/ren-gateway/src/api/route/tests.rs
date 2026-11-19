@@ -64,12 +64,24 @@ fn every_read() -> Vec<ReadRequest> {
         ReadRequest::Runs {
             limit,
             shelf: Shelf::Archived,
+            project: None,
+        },
+        ReadRequest::Runs {
+            limit,
+            shelf: Shelf::Current,
+            project: Some("acme-web".parse().unwrap()),
         },
         ReadRequest::Run(RunId::restore(Uuid::from_u128(4))),
         ReadRequest::Conversation(RunId::restore(Uuid::from_u128(4))),
         ReadRequest::WorkItems {
             limit,
             shelf: Shelf::Current,
+            project: None,
+        },
+        ReadRequest::WorkItems {
+            limit,
+            shelf: Shelf::Archived,
+            project: Some("acme-web".parse().unwrap()),
         },
         ReadRequest::WorkItem(ren_recorder::id::WorkItemId::restore(Uuid::from_u128(5))),
         ReadRequest::Usage(TimeRange::default()),

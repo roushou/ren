@@ -47,6 +47,7 @@ use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
     batch::{HistoryChange, HistorySubject, SessionFact, WorkFact},
     id::{AttachmentId, ProjectId, SessionId},
+    project::ProjectName,
 };
 use ren_store::{
     Reader,
@@ -92,7 +93,8 @@ struct FolderRequest {
     dir: Option<String>,
 }
 
-/// Which sessions to list: the current ones (the default) or the archived.
+/// Which sessions to list: the current ones (the default) or the archived,
+/// of every project or of the one named.
 #[derive(serde::Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export, optional_fields)]
@@ -102,6 +104,8 @@ struct ListRequest {
     shelf: Option<Shelf>,
     #[serde(default)]
     limit: Option<u32>,
+    #[serde(default)]
+    project: Option<String>,
 }
 
 /// An upload's name, as `?name=`.
@@ -409,9 +413,14 @@ impl SessionsApi {
             .transpose()
             .map_err(|_| ControlRefusal::InvalidRequest)?
             .unwrap_or(PageLimit::DEFAULT);
+        let project = request
+            .project
+            .map(|name| name.parse::<ProjectName>())
+            .transpose()
+            .map_err(|_| ControlRefusal::InvalidRequest)?;
         let stored = api
             .reader
-            .sessions(limit, shelf)
+            .sessions(limit, shelf, project.as_ref())
             .await
             .map_err(|_| ControlRefusal::Unavailable)?;
         let mut served = supervisor.sessions().await.map_err(Self::refused)?;
@@ -740,7 +749,7 @@ impl SessionsApi {
     async fn forget_previews(&self, session: SessionId) {
         let items = match self
             .reader
-            .work_items(PageLimit::LARGEST, Shelf::Current)
+            .work_items(PageLimit::LARGEST, Shelf::Current, None)
             .await
         {
             Ok(items) => items,

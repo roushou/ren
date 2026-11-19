@@ -25,8 +25,9 @@ import type { Build as WireBuild } from './wire/Build.ts';
 import type { CanaryView as WireCanaryView } from './wire/CanaryView.ts';
 import type { CheckView as WireCheckView } from './wire/CheckView.ts';
 import type { ReleaseBody as WireReleaseBody } from './wire/ReleaseBody.ts';
-import type { ProjectRelease as WireProjectRelease } from './wire/ProjectRelease.ts';
-import type { ProjectReleases as WireProjectReleases } from './wire/ProjectReleases.ts';
+import type { ProjectBody as WireProjectBody } from './wire/ProjectBody.ts';
+import type { ProjectsBody as WireProjectsBody } from './wire/ProjectsBody.ts';
+import type { WorkCountsBody as WireWorkCounts } from './wire/WorkCountsBody.ts';
 import type { ReleaseView as WireReleaseView } from './wire/ReleaseView.ts';
 import type { EventCountsRecord as WireEventCountsRecord } from './wire/EventCountsRecord.ts';
 import type { Excerpt as WireExcerpt } from './wire/Excerpt.ts';
@@ -687,20 +688,45 @@ export interface CanaryView {
   passed: boolean;
   checks: CheckView[];
 }
-/** `/api/release`: the release, the pages the canary captured (each at
- * `/api/release/shots/{name}`), and the build the operator asked production
- * to take, until the factory's next pass takes it up. */
+/** `/api/projects/{name}/release`: a project's release, and for Ren itself
+ * the pages its canary captured (each at `…/release/shots/{shot}`) and the
+ * build the operator asked production to take, until the factory's next
+ * pass takes it up. */
 export interface ReleaseBody {
   release: ReleaseView | null;
   shots: string[];
   promotion_requested: string | null;
 }
-/** One project's release, by its repository's folder name. */
-export interface ProjectRelease {
-  name: string;
-  release: ReleaseView;
+export const factories = ['ren', 'contract'] as const;
+/** How a project is built: as Ren itself, or by its `.ren/project.toml`. */
+export type Factory = (typeof factories)[number];
+/** A project's work items, counted by state. */
+export interface WorkCounts {
+  queued: number;
+  sent: number;
+  landed: number;
+  shipped: number;
+  dismissed: number;
+  /** In a state this UI does not know. */
+  other: number;
 }
-/** Where the release stands, as the factory last wrote it (`/api/release`). */
+/** One registered project: what it is, what is under way, and its release. */
+export interface Project {
+  id: string;
+  name: string;
+  repository: string;
+  factory: Stored<Factory>;
+  created_at: number;
+  archived_at: number | null;
+  work: WorkCounts;
+  /** Its sessions that are not archived. */
+  sessions: number;
+  /** Its runs that have not ended. */
+  running: number;
+  /** Null until its canary has run. */
+  release: ReleaseView | null;
+}
+/** Where a release stands, as its canary last wrote it. */
 export interface ReleaseView {
   main: string;
   production: Revision;
@@ -1028,10 +1054,27 @@ const releaseBody = object<ReleaseBody, WireReleaseBody>({
   shots: array(string),
   promotion_requested: nullable(string),
 });
-const projectReleases = object<{ projects: ProjectRelease[] }, WireProjectReleases>({
-  projects: array(
-    object<ProjectRelease, WireProjectRelease>({ name: string, release: releaseView }),
-  ),
+const project = object<Project, WireProjectBody>({
+  id: string,
+  name: string,
+  repository: string,
+  factory: label(factories),
+  created_at: count,
+  archived_at: nullable(count),
+  work: object<WorkCounts, WireWorkCounts>({
+    queued: count,
+    sent: count,
+    landed: count,
+    shipped: count,
+    dismissed: count,
+    other: count,
+  }),
+  sessions: count,
+  running: count,
+  release: nullable(releaseView),
+});
+const projectsBody = object<{ projects: Project[] }, WireProjectsBody>({
+  projects: array(project),
 });
 const storage = object<Storage>({
   policy: object<RetentionPolicy>({
@@ -1565,17 +1608,24 @@ export class ManagementApi {
   storage(signal?: AbortSignal): Promise<Storage> {
     return this.#read('/api/storage', storage, signal);
   }
-  /** Where the release stands; null until the factory has run against this gateway. */
+  /** Every registered project, archived ones too, by name. */
+  async projects(signal?: AbortSignal): Promise<Project[]> {
+    return (await this.#read('/api/projects', projectsBody, signal)).projects;
+  }
+  /** A project's release, with Ren's captured pages and any promotion asked for. */
+  projectRelease(name: string, signal?: AbortSignal): Promise<ReleaseBody> {
+    return this.#read(`/api/projects/${encodeURIComponent(name)}/release`, releaseBody, signal);
+  }
+  /** Ren's own release; null until its canary has run, or while no project is Ren. */
   async release(signal?: AbortSignal): Promise<ReleaseView | null> {
-    return (await this.releaseBody(signal)).release;
+    return ManagementApi.ren(await this.projects(signal))?.release ?? null;
   }
-  /** The release, with the pages the canary captured and any promotion asked for. */
-  releaseBody(signal?: AbortSignal): Promise<ReleaseBody> {
-    return this.#read('/api/release', releaseBody, signal);
-  }
-  /** Each project's release, as `ren project canary` last wrote it. */
-  async projectReleases(signal?: AbortSignal): Promise<ProjectRelease[]> {
-    return (await this.#read('/api/release/projects', projectReleases, signal)).projects;
+  /** Ren itself among `projects`: the one unarchived project registered as Ren. */
+  static ren(projects: readonly Project[]): Project | null {
+    const ren = projects.filter(
+      (project) => project.archived_at === null && project.factory === 'ren',
+    );
+    return ren.length === 1 ? (ren[0] ?? null) : null;
   }
   /** Newest first. `query` holds the listing filters and `after`. */
   calls(params: Query<RawCallQuery>, signal?: AbortSignal): Promise<CallPage> {

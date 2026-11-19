@@ -7,7 +7,7 @@ import type { WorkItem } from '../src/lib/work.ts';
 
 const pinned: typeof fetch = async () =>
   Response.json(
-    JSON.parse(readFileSync(new URL('./fixtures/api/release.json', import.meta.url), 'utf8')),
+    JSON.parse(readFileSync(new URL('./fixtures/api/projects.json', import.meta.url), 'utf8')),
   );
 
 test("the daemon's release decodes and reads as one status line", async () => {

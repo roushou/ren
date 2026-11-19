@@ -2,16 +2,17 @@
 import type { ReleaseView } from "./ReleaseView.ts";
 
 /**
- * `/api/release`'s answer.
+ * `/api/projects/{name}/release`'s answer.
  */
 export type ReleaseBody = { 
 /**
- * None until the factory has run against this instance.
+ * None until the project's canary has run.
  */
 release: ReleaseView | null, 
 /**
- * The pages the canary captured, by name; each is at
- * `/api/release/shots/{name}`.
+ * The pages Ren's canary captured, by name; each is at
+ * `/api/projects/{name}/release/shots/{shot}`. None for another
+ * project.
  */
 shots: Array<string>, 
 /**

@@ -243,10 +243,37 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
             }
             listed
         }),
-        ("release", {
-            // None until the factory writes one, then as it wrote it.
+        ("project_release", {
+            // Ren's and acme-web's, registered; none until the factory
+            // writes one, then as it wrote it.
+            for (name, repository, factory) in [
+                ("ren", "/home/op/ren", "ren"),
+                ("acme-web", "/home/op/dev/acme-web", "contract"),
+            ] {
+                let registered = client()
+                    .post(format!("{base}/control/v1/projects"))
+                    .bearer_auth(TestGateway::CONTROL_TOKEN)
+                    .header("content-type", "application/json")
+                    .body(
+                        serde_json::json!({ "name": name, "repository": repository, "factory": factory })
+                            .to_string(),
+                    )
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(registered.status(), http::StatusCode::CREATED);
+            }
+            for _ in 0..200 {
+                if read("/api/projects".to_owned()).await["projects"]
+                    .as_array()
+                    .is_some_and(|projects| projects.len() == 2)
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
             assert_eq!(
-                read("/api/release".to_owned()).await["release"],
+                read("/api/projects/ren/release".to_owned()).await["release"],
                 serde_json::Value::Null
             );
             std::fs::write(
@@ -267,12 +294,9 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
                 serde_json::to_vec(&release()).unwrap(),
             )
             .unwrap();
-            read("/api/release".to_owned()).await
+            read("/api/projects/ren/release".to_owned()).await
         }),
-        (
-            "release_projects",
-            read("/api/release/projects".to_owned()).await,
-        ),
+        ("projects", read("/api/projects".to_owned()).await),
     ];
     gateway.stop().await;
 

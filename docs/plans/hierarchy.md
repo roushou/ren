@@ -142,7 +142,7 @@ Records outside the tree stay, and each says why it is outside:
      to Ren from Redline. Sending checks that the session belongs to the
      same project.
    - `ren project add` offers the assignment in decision 4.
-3. **The API.** Not built.
+3. **The API.** Built.
    - Reads: `ReadRequest::Projects` and `ReadRequest::Project`. A project
      view holds its work items counted by state, its release summary, its
      sessions with a run starting or working, and its workspaces.
@@ -228,3 +228,19 @@ gate against `main`.
   project, and `ren project adopt` (`POST /control/v1/projects/{name}/adopt`)
   assigns them, with the project's workspaces matched by folder name
   (skipped when another project's repository shares it).
+- **Phase 3: project reads are their own routes.** The doc had
+  `ReadRequest::Projects` and `ReadRequest::Project`. A project's read
+  joins the store with the release files the factory writes, which a store
+  read does not reach, so `/api/projects`, `/api/projects/{name}`, and
+  `/api/projects/{name}/release` are gateway routes, as the release reads
+  were. The filters are store reads: `project` on `/api/runs` and
+  `/api/work`, and on the control API's session list.
+- **Phase 3: a project's activity is counts.** The project read holds its
+  work items by state, its sessions not archived, and its runs not ended;
+  the items, sessions, and runs themselves are the filtered lists, and its
+  workspaces are its sessions' folders, so no separate list is kept.
+- **Phase 3: `ren project list` reads the API; resolving stays local.**
+  `list` reads `/api/projects` (and so works against a remote gateway).
+  `--project` lookups for `canary` and `promote`, which build a repository
+  on this host, still read the store beside the daemon. `ren release`
+  takes `--project`, Ren's by default.

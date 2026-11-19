@@ -15,6 +15,7 @@ pub mod health;
 pub mod live;
 mod params;
 pub mod preview;
+pub mod projects;
 pub mod read;
 pub mod release;
 mod route;
@@ -40,12 +41,11 @@ use http::{HeaderValue, StatusCode, Uri, header};
 use live::LiveFeed;
 use params::RawLiveQuery;
 use preview::Previewer;
-use release::{ProjectRelease, ProjectReleases, ReleaseBody, ReleaseFileError, ReleaseView};
+use release::ReleaseFileError;
 use ren_protocol::direction::Direction;
 use ren_recorder::time::Clock;
 use ren_recorder::{Recorder, id::CallId, retention::RetentionPolicy};
 use ren_release::Build;
-use ren_release::ShotName;
 use ren_store::{Reader, StoreError, backup::Backup, query::QueryError, search::SearchError};
 use serde::Serialize;
 use std::sync::Arc;
@@ -270,9 +270,13 @@ impl ApiState {
             .route("/api/metrics", get(Self::metrics))
             .route("/api/storage", get(Self::storage))
             .route("/api/caller", get(Self::caller))
-            .route("/api/release", get(Self::release))
-            .route("/api/release/projects", get(Self::project_releases))
-            .route("/api/release/shots/{name}", get(Self::release_shot))
+            .route("/api/projects", get(Self::projects))
+            .route("/api/projects/{name}", get(Self::project))
+            .route("/api/projects/{name}/release", get(Self::project_release))
+            .route(
+                "/api/projects/{name}/release/shots/{shot}",
+                get(Self::project_shot),
+            )
             .route("/api/calls/{id}/body/{direction}", get(Self::body))
             .route("/api/calls/{id}/body/{direction}/export", get(Self::export))
             .route("/api/live", get(Self::live))
@@ -324,47 +328,6 @@ impl ApiState {
             }),
         )
             .into_response()
-    }
-
-    /// Where the release stands, as the factory last wrote it.
-    async fn release(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {
-        let release = state.release.read().await?;
-        let requested = state.release.requested().await?;
-        Ok(Self::versioned(ReleaseBody {
-            release: release.as_ref().map(ReleaseView::from),
-            shots: state.release.shots().await,
-            promotion_requested: requested.map(|request| request.commit),
-        })
-        .into_response())
-    }
-
-    /// Each project's release, as `ren project canary` last wrote it.
-    async fn project_releases(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {
-        let projects = state
-            .release
-            .projects()
-            .await?
-            .into_iter()
-            .map(|(name, release)| ProjectRelease {
-                name,
-                release: ReleaseView::from(&release),
-            })
-            .collect();
-        Ok(Self::versioned(ProjectReleases { projects }).into_response())
-    }
-
-    /// One page the canary captured, as PNG.
-    async fn release_shot(
-        State(state): State<Arc<Self>>,
-        Path(name): Path<String>,
-    ) -> Result<Response, ApiError> {
-        let name: ShotName = name
-            .strip_suffix(".png")
-            .unwrap_or(&name)
-            .parse()
-            .map_err(|_| ApiError::NotFound)?;
-        let bytes = state.release.shot(&name).await?.ok_or(ApiError::NotFound)?;
-        Ok(([(header::CONTENT_TYPE, "image/png")], bytes).into_response())
     }
 
     async fn metrics(State(state): State<Arc<Self>>) -> Result<Response, ApiError> {

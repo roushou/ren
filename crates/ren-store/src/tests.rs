@@ -1607,7 +1607,7 @@ mod history {
 
         async fn runs(&self, shelf: Shelf) -> Vec<RunId> {
             self.reader
-                .runs(PageLimit::DEFAULT, shelf)
+                .runs(PageLimit::DEFAULT, shelf, None)
                 .await
                 .unwrap()
                 .iter()
@@ -1898,7 +1898,7 @@ mod history {
         fixture.store.commit(&batch).await.unwrap();
         let listed = fixture
             .reader
-            .sessions(PageLimit::DEFAULT, Shelf::Current)
+            .sessions(PageLimit::DEFAULT, Shelf::Current, None)
             .await
             .unwrap();
         assert_eq!(listed.len(), 2);
@@ -1916,7 +1916,7 @@ mod history {
         fixture.run(5, true).await;
         let id = fixture
             .reader
-            .sessions(PageLimit::DEFAULT, Shelf::Current)
+            .sessions(PageLimit::DEFAULT, Shelf::Current, None)
             .await
             .unwrap()[0]
             .id;
@@ -1951,7 +1951,7 @@ mod history {
         assert!(
             fixture
                 .reader
-                .sessions(PageLimit::DEFAULT, Shelf::Current)
+                .sessions(PageLimit::DEFAULT, Shelf::Current, None)
                 .await
                 .unwrap()
                 .is_empty()
@@ -1983,7 +1983,7 @@ mod history {
             let reader = fixture.reader.clone();
             async move {
                 reader
-                    .sessions(PageLimit::DEFAULT, shelf)
+                    .sessions(PageLimit::DEFAULT, shelf, None)
                     .await
                     .unwrap()
                     .iter()

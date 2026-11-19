@@ -22,7 +22,7 @@ mod registry;
 
 use self::{
     canary::ProjectFactory,
-    registry::{AddArgs, NameArgs, ProjectArgs, Registry},
+    registry::{AddArgs, ListArgs, NameArgs, ProjectArgs, Registry},
 };
 use super::history::TargetArgs;
 use crate::{context::Context, management::Management};
@@ -68,8 +68,8 @@ pub struct ProjectCmd {
 enum ProjectAction {
     /// Register a repository as a project.
     Add(AddArgs),
-    /// The registered projects.
-    List,
+    /// The registered projects, with what is under way for each.
+    List(ListArgs),
     /// Archive a project: it keeps its name and repository, and is not
     /// built.
     Archive(NameArgs),
@@ -151,7 +151,7 @@ impl ProjectCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         match self.action {
             ProjectAction::Add(args) => Registry::add(ctx, args).await,
-            ProjectAction::List => Registry::list(ctx).await,
+            ProjectAction::List(args) => Registry::list(ctx, args).await,
             ProjectAction::Archive(args) => Registry::archive(ctx, args).await,
             ProjectAction::Unarchive(args) => Registry::unarchive(ctx, args).await,
             ProjectAction::Adopt(args) => Registry::adopt(ctx, args).await,
@@ -371,6 +371,7 @@ impl ProjectCmd {
             .serve(&ReadRequest::WorkItems {
                 limit: PageLimit::LARGEST,
                 shelf: Shelf::Current,
+                project: None,
             })
             .await?;
         match body {

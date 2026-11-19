@@ -1,13 +1,17 @@
-//! The Release view's reads: where Ren's release stands, as the factory
-//! (`cargo xtask canary`) last wrote it to this instance's data folder, the
-//! pages its canary captured, and each project's release. The gateway reads
-//! and reports them, and records the operator's promotion request for the
-//! factory; the CLI reads these same views back.
+//! What the factory keeps for the Release view: where each project's
+//! release stands, as its canary last wrote it to this instance's data
+//! folder (Ren's by `cargo xtask canary`, a contract project's by `ren
+//! project canary`), and the pages Ren's canary captured. The gateway reads
+//! and reports them (`/api/projects/{name}/release`), and records the
+//! operator's promotion request for the factory; the CLI reads these same
+//! views back.
 
 use ren_protocol::label::Stored;
+use ren_recorder::project::Factory;
 use ren_release::{
     CheckKind, Commit, Decision, Outcome, Policy, PromotionRequest, Release, Revision, ShotName,
 };
+use ren_store::view::ProjectView;
 use serde::{Deserialize, Serialize};
 use std::{
     io,
@@ -55,40 +59,23 @@ impl ReleaseFolder {
         Self::json(&self.data.join(Release::FILE)).await
     }
 
-    /// Each project's release, by name; one that does not read is left out.
-    pub(super) async fn projects(&self) -> Result<Vec<(String, Release)>, ReleaseFileError> {
-        let folder = self.data.join(Release::PROJECTS);
-        let mut entries = match tokio::fs::read_dir(&folder).await {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(source) => {
-                return Err(ReleaseFileError::Io {
-                    path: folder,
-                    source,
-                });
-            }
+    /// `project`'s release, or none while its canary has written none:
+    /// Ren's where `cargo xtask canary` keeps it, a contract project's in
+    /// its folder of [`Release::PROJECTS`], by its registered name.
+    pub(super) async fn release_of(
+        &self,
+        project: &ProjectView,
+    ) -> Result<Option<Release>, ReleaseFileError> {
+        let path = match project.factory {
+            Stored::Known(Factory::Ren) => return self.read().await,
+            Stored::Known(Factory::Contract) => self
+                .data
+                .join(Release::PROJECTS)
+                .join(project.name.as_str())
+                .join(Release::FILE),
+            Stored::Unknown(_) => return Ok(None),
         };
-        let mut projects = Vec::new();
-        while let Some(entry) =
-            entries
-                .next_entry()
-                .await
-                .map_err(|source| ReleaseFileError::Io {
-                    path: folder.clone(),
-                    source,
-                })?
-        {
-            let Ok(name) = entry.file_name().into_string() else {
-                continue;
-            };
-            match Self::json::<Release>(&entry.path().join(Release::FILE)).await {
-                Ok(Some(release)) => projects.push((name, release)),
-                Ok(None) => {}
-                Err(error) => tracing::warn!(%error, "a project's release does not read"),
-            }
-        }
-        projects.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok(projects)
+        Self::json(&path).await
     }
 
     /// The pages the canary captured, by name.
@@ -156,14 +143,15 @@ impl ReleaseFolder {
     }
 }
 
-/// `/api/release`'s answer.
+/// `/api/projects/{name}/release`'s answer.
 #[derive(Debug, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ReleaseBody {
-    /// None until the factory has run against this instance.
+    /// None until the project's canary has run.
     pub release: Option<ReleaseView>,
-    /// The pages the canary captured, by name; each is at
-    /// `/api/release/shots/{name}`.
+    /// The pages Ren's canary captured, by name; each is at
+    /// `/api/projects/{name}/release/shots/{shot}`. None for another
+    /// project.
     #[serde(default)]
     #[ts(as = "Vec<String>")]
     pub shots: Vec<ShotName>,
@@ -172,21 +160,6 @@ pub struct ReleaseBody {
     #[serde(default)]
     #[ts(as = "Option<String>")]
     pub promotion_requested: Option<Commit>,
-}
-
-/// `/api/release/projects`' answer: each project's release.
-#[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct ProjectReleases {
-    pub projects: Vec<ProjectRelease>,
-}
-
-/// One project's release, by its repository's folder name.
-#[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct ProjectRelease {
-    pub name: String,
-    pub release: ReleaseView,
 }
 
 /// Where the release stands.

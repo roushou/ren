@@ -939,7 +939,12 @@ impl Supervised {
             ren_store::query::Shelf::Current,
             ren_store::query::Shelf::Archived,
         ] {
-            sessions.extend(reader.sessions(PageLimit::DEFAULT, shelf).await.unwrap());
+            sessions.extend(
+                reader
+                    .sessions(PageLimit::DEFAULT, shelf, None)
+                    .await
+                    .unwrap(),
+            );
         }
         reader.close().await;
         sessions
@@ -957,7 +962,7 @@ impl Supervised {
             .unwrap();
         let reader = Reader::open(self.dir.path(), 1).await.unwrap();
         let runs = reader
-            .runs(PageLimit::DEFAULT, ren_store::query::Shelf::Current)
+            .runs(PageLimit::DEFAULT, ren_store::query::Shelf::Current, None)
             .await
             .unwrap();
         reader.close().await;

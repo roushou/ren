@@ -12,6 +12,7 @@ use crate::view::{
 };
 use crate::{Reader, StoreError};
 use ren_recorder::id::{CallId, RecordingId, RunId, TurnId, WorkItemId};
+use ren_recorder::project::ProjectName;
 
 /// A read of recorded history.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,18 +41,20 @@ pub enum ReadRequest {
     Usage(TimeRange),
     Search(SearchQuery),
     Exposures(ExposureQuery),
-    /// Agent runs, newest first.
+    /// Agent runs, newest first; with a project, its sessions' only.
     Runs {
         limit: PageLimit,
         shelf: Shelf,
+        project: Option<ProjectName>,
     },
     Run(RunId),
     /// A run's conversation, whole, with the runs before it on its thread.
     Conversation(RunId),
-    /// Work items, most recently changed first.
+    /// Work items, most recently changed first; with a project, its only.
     WorkItems {
         limit: PageLimit,
         shelf: Shelf,
+        project: Option<ProjectName>,
     },
     WorkItem(WorkItemId),
 }
@@ -122,8 +125,12 @@ impl Reader {
             ReadRequest::Exposures(query) => ReadResponse::Exposures {
                 exposures: self.exposures(query).await?,
             },
-            ReadRequest::Runs { limit, shelf } => ReadResponse::Runs {
-                runs: self.runs(*limit, *shelf).await?,
+            ReadRequest::Runs {
+                limit,
+                shelf,
+                project,
+            } => ReadResponse::Runs {
+                runs: self.runs(*limit, *shelf, project.as_ref()).await?,
             },
             ReadRequest::Run(run) => {
                 ReadResponse::Run(Box::new(self.run(*run).await?.ok_or(StoreError::NotFound)?))
@@ -133,8 +140,12 @@ impl Reader {
                     .await?
                     .ok_or(StoreError::NotFound)?,
             ),
-            ReadRequest::WorkItems { limit, shelf } => ReadResponse::WorkItems {
-                work: self.work_items(*limit, *shelf).await?,
+            ReadRequest::WorkItems {
+                limit,
+                shelf,
+                project,
+            } => ReadResponse::WorkItems {
+                work: self.work_items(*limit, *shelf, project.as_ref()).await?,
             },
             ReadRequest::WorkItem(item) => ReadResponse::WorkItem(Box::new(
                 self.work_item(*item).await?.ok_or(StoreError::NotFound)?,

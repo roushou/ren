@@ -1,6 +1,6 @@
 //! Query strings as sent, and their parsing into typed store queries.
 
-use ren_recorder::time::UnixMillis;
+use ren_recorder::{project::ProjectName, time::UnixMillis};
 use ren_store::query::{
     CallFilter, CallQuery, Cursor, PageLimit, QueryError, SearchText, Shelf, TimeRange,
 };
@@ -61,7 +61,34 @@ pub(super) struct RawPageQuery {
     pub after: Option<String>,
 }
 
-/// `GET /api/recordings` and `/api/runs` parameters: a page of one shelf.
+/// `GET /api/runs` and `/api/work` parameters: a page of one shelf, of
+/// every project or of the one named.
+#[derive(Debug, Default, Deserialize, TS)]
+#[serde(deny_unknown_fields, default)]
+#[ts(export, optional_fields)]
+pub(super) struct RawOwnedQuery {
+    limit: Option<u32>,
+    #[ts(as = "Option<String>")]
+    shelf: RawLabel,
+    project: Option<String>,
+}
+
+impl RawOwnedQuery {
+    pub fn parse(self) -> Result<(PageLimit, Shelf, Option<ProjectName>), QueryError> {
+        let (limit, shelf) = RawShelfQuery {
+            limit: self.limit,
+            shelf: self.shelf,
+        }
+        .parse()?;
+        let project = self
+            .project
+            .map(|name| name.parse().map_err(|_| QueryError::Filter))
+            .transpose()?;
+        Ok((limit, shelf, project))
+    }
+}
+
+/// `GET /api/recordings` parameters: a page of one shelf.
 #[derive(Debug, Default, Deserialize, TS)]
 #[serde(deny_unknown_fields, default)]
 #[ts(export, optional_fields)]
