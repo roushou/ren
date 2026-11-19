@@ -15,7 +15,7 @@ use crate::{
     id::{AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, WorkItemId},
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     time::{Moment, UnixMillis},
-    work::WorkOrder,
+    work::{WorkOrder, WorkPreview},
 };
 use bytes::Bytes;
 use ren_depot::toolset::Generation;
@@ -388,6 +388,10 @@ pub enum WorkFact {
         revision: Revision,
     },
     Dismissed,
+    /// A preview of its change is up, or none any longer.
+    Previewed {
+        preview: Option<WorkPreview>,
+    },
 }
 
 impl WorkFact {
@@ -398,6 +402,7 @@ impl WorkFact {
             Self::Landed { .. } => ObservationKind::WorkLanded,
             Self::Shipped { .. } => ObservationKind::WorkShipped,
             Self::Dismissed => ObservationKind::WorkDismissed,
+            Self::Previewed { .. } => ObservationKind::WorkPreviewed,
         }
     }
 }
@@ -543,6 +548,8 @@ pub enum ObservationKind {
     /// Production took a build with a work item's change.
     WorkShipped,
     WorkDismissed,
+    /// A work item's preview went up or down.
+    WorkPreviewed,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

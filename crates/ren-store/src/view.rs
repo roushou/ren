@@ -36,7 +36,7 @@ use ren_recorder::{
         WorkItemId,
     },
     time::UnixMillis,
-    work::{WorkOrder, WorkState, WorkStateKind},
+    work::{WorkOrder, WorkPreview, WorkState, WorkStateKind},
 };
 use ren_release::{Commit, Revision};
 use serde::{Deserialize, Serialize};
@@ -1067,10 +1067,12 @@ pub struct WorkItemView {
     pub landed: Option<Commit>,
     /// The build production ran with its change.
     pub shipped: Option<Revision>,
+    /// A preview of its change, while one is up.
+    pub preview: Option<WorkPreview>,
 }
 
 impl WorkItemView {
-    pub(super) const SELECT: &'static str = "SELECT id, created_at, updated_at, title, work_order, state, operator_session, landed_commit, shipped_revision FROM work_items";
+    pub(super) const SELECT: &'static str = "SELECT id, created_at, updated_at, title, work_order, state, operator_session, landed_commit, shipped_revision, preview_url, preview_revision FROM work_items";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -1092,6 +1094,14 @@ impl WorkItemView {
                 .text("shipped_revision")?
                 .map(|text| text.parse().map_err(|_| corrupt()))
                 .transpose()?,
+            preview: match (row.text("preview_url")?, row.text("preview_revision")?) {
+                (Some(ui), Some(revision)) => Some(WorkPreview {
+                    ui: ui.parse().map_err(|_| corrupt())?,
+                    revision: revision.parse().map_err(|_| corrupt())?,
+                }),
+                (None, None) => None,
+                (Some(_), None) | (None, Some(_)) => return Err(corrupt()),
+            },
         })
     }
 

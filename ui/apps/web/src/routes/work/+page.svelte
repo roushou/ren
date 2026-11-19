@@ -224,6 +224,23 @@
           <a href={shown.order.page.path}>{shown.order.page.path}</a> · {shown.order.page.width}×{shown
             .order.page.height}, {shown.order.page.theme}
         </p>
+        {#if shown.state === 'sent'}
+          <p class="compare">
+            {#if Work.previewed(shown)}<a
+                class="button small"
+                href={Work.previewed(shown)}
+                target="_blank"
+                rel="noopener">On the branch</a
+              >{:else}<span
+                class="muted"
+                title="The agent starts one with `cargo xtask preview up --publish` in its workspace"
+                >No preview yet</span
+              >{/if}
+            <a class="button small" href={shown.order.page.path} target="_blank" rel="noopener"
+              >In production</a
+            >
+          </p>
+        {/if}
         {#if shown.landed}<p class="meta mono">Landed as {shown.landed.slice(0, 12)}</p>{/if}
         {#if shown.shipped?.kind === 'commit'}<p class="meta mono">
             Shipped in production's build of {shown.shipped.commit.slice(0, 12)}
@@ -389,6 +406,12 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin: 16px 0 6px;
+  }
+  .compare {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0;
   }
   .marks {
     margin: 0;

@@ -2,6 +2,9 @@
 //!
 //! - `POST /control/v1/work`: queue an order (`WorkOrderBody`); `201` with
 //!   the new item's id.
+//! - `POST /control/v1/work/{item}/preview`: a preview of a sent item's
+//!   change (`{preview: {ui, revision}}`), or none any longer
+//!   (`{preview: null}`); its state stays as it is.
 //! - `POST /control/v1/work/{item}/send`, `land`, `ship`, or `dismiss`:
 //!   one transition of the item's state, checked against the state the
 //!   store holds by the pure `WorkState::apply`; `202` with the state it
@@ -11,9 +14,9 @@
 
 use super::{
     ControlApi, ControlRefusal,
-    request::{LandWorkRequest, SendWorkRequest, ShipWorkRequest},
+    request::{LandWorkRequest, PreviewWorkRequest, SendWorkRequest, ShipWorkRequest},
 };
-use crate::api::read::work::WorkOrderBody;
+use crate::api::read::work::{WorkOrderBody, WorkPreviewBody};
 use axum::{
     Json, Router,
     extract::{Path, State, rejection::JsonRejection},
@@ -25,7 +28,7 @@ use ren_protocol::label::Stored;
 use ren_recorder::{
     batch::WorkFact,
     id::WorkItemId,
-    work::{WorkEvent, WorkOrder, WorkStateKind},
+    work::{WorkEvent, WorkOrder, WorkPreview, WorkStateKind},
 };
 use ren_store::Reader;
 use serde::{Deserialize, Serialize};
@@ -55,6 +58,7 @@ impl WorkApi {
             .route("/control/v1/work/{item}/land", post(Self::land))
             .route("/control/v1/work/{item}/ship", post(Self::ship))
             .route("/control/v1/work/{item}/dismiss", post(Self::dismiss))
+            .route("/control/v1/work/{item}/preview", post(Self::preview))
             .with_state(Arc::new(self))
     }
 
@@ -104,8 +108,13 @@ impl WorkApi {
                 return ControlRefusal::Unreadable.into_response();
             }
         }
-        api.change(&headers, &item, WorkEvent::Send { session })
-            .await
+        api.change(
+            &headers,
+            &item,
+            WorkEvent::Send { session },
+            WorkFact::Sent { session },
+        )
+        .await
     }
 
     async fn land(
@@ -117,8 +126,15 @@ impl WorkApi {
         let Ok(Json(LandWorkRequest { commit })) = body else {
             return ControlRefusal::InvalidRequest.into_response();
         };
-        api.change(&headers, &item, WorkEvent::Land { commit })
-            .await
+        api.change(
+            &headers,
+            &item,
+            WorkEvent::Land {
+                commit: commit.clone(),
+            },
+            WorkFact::Landed { commit },
+        )
+        .await
     }
 
     async fn ship(
@@ -130,8 +146,35 @@ impl WorkApi {
         let Ok(Json(ShipWorkRequest { revision })) = body else {
             return ControlRefusal::InvalidRequest.into_response();
         };
-        api.change(&headers, &item, WorkEvent::Ship { revision })
-            .await
+        api.change(
+            &headers,
+            &item,
+            WorkEvent::Ship {
+                revision: revision.clone(),
+            },
+            WorkFact::Shipped { revision },
+        )
+        .await
+    }
+
+    /// A preview of the item's change, or none any longer.
+    async fn preview(
+        State(api): State<Arc<Self>>,
+        Path(item): Path<String>,
+        headers: HeaderMap,
+        body: Result<Json<PreviewWorkRequest>, JsonRejection>,
+    ) -> Response {
+        let Ok(Json(PreviewWorkRequest { preview })) = body else {
+            return ControlRefusal::InvalidRequest.into_response();
+        };
+        let preview = preview.map(|WorkPreviewBody { ui, revision }| WorkPreview { ui, revision });
+        api.change(
+            &headers,
+            &item,
+            WorkEvent::Preview,
+            WorkFact::Previewed { preview },
+        )
+        .await
     }
 
     async fn dismiss(
@@ -139,11 +182,18 @@ impl WorkApi {
         Path(item): Path<String>,
         headers: HeaderMap,
     ) -> Response {
-        api.change(&headers, &item, WorkEvent::Dismiss).await
+        api.change(&headers, &item, WorkEvent::Dismiss, WorkFact::Dismissed)
+            .await
     }
 
     /// Applies `event` to the item's stored state, and records it.
-    async fn change(&self, headers: &HeaderMap, item: &str, event: WorkEvent) -> Response {
+    async fn change(
+        &self,
+        headers: &HeaderMap,
+        item: &str,
+        event: WorkEvent,
+        fact: WorkFact,
+    ) -> Response {
         if let Err(refusal) = self.control.authorize(headers) {
             return refusal.into_response();
         }
@@ -162,15 +212,9 @@ impl WorkApi {
         let Some(state) = stored.state() else {
             return ControlRefusal::WorkState.into_response();
         };
-        let next = match state.apply(event.clone()) {
+        let next = match state.apply(event) {
             Ok(next) => next,
             Err(error) => return ControlRefusal::WorkState.explained(Some(error.to_string())),
-        };
-        let fact = match event {
-            WorkEvent::Send { session } => WorkFact::Sent { session },
-            WorkEvent::Land { commit } => WorkFact::Landed { commit },
-            WorkEvent::Ship { revision } => WorkFact::Shipped { revision },
-            WorkEvent::Dismiss => WorkFact::Dismissed,
         };
         let Some(slot) = self.control.recorder.work_slot() else {
             return ControlRefusal::Unrecorded.into_response();

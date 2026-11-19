@@ -55,6 +55,12 @@ test('a brief names its work item and what else was on screen', async () => {
   // knows when it lands.
   assert.match(brief, new RegExp(`End each commit message with \`Work-Item: ${item.id}\``));
   assert.match(preview, /the work item's `Work-Item:` line/);
+  assert.match(brief, /run `cargo xtask preview up --publish` in the workspace/);
+  assert.equal(Work.previewed(item), null);
+  assert.equal(
+    Work.previewed({ ...item, preview: { ui: 'https://ren.example.ts.net:20201', revision: { kind: 'unknown' } } }),
+    'https://ren.example.ts.net:20201/recordings',
+  );
 });
 
 test('several items make one brief, each under its page, closed once', async () => {

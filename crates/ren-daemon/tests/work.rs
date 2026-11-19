@@ -163,6 +163,29 @@ async fn a_work_item_goes_from_queued_to_shipped_through_the_api() {
     }
     assert_eq!(sent["state"], "sent", "{sent}");
     settled(&gateway, &item, "sent").await;
+    // A preview of its change, kept on the item, which stays sent.
+    let preview =
+        json!({ "preview": { "ui": "https://ren.example.ts.net:20201", "revision": COMMIT } });
+    let (status, body) = send(&gateway, &format!("/work/{item}/preview"), Some(preview)).await;
+    assert_eq!(
+        (status, body["state"].as_str()),
+        (StatusCode::ACCEPTED, Some("sent"))
+    );
+    for _ in 0..200 {
+        if read(&gateway, &format!("/api/work/{item}")).await["preview"]["ui"]
+            == "https://ren.example.ts.net:20201"
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        read(&gateway, &format!("/api/work/{item}")).await["preview"]["revision"],
+        COMMIT
+    );
+    let not_a_url = json!({ "preview": { "ui": "javascript:alert(1)", "revision": COMMIT } });
+    let (status, _) = send(&gateway, &format!("/work/{item}/preview"), Some(not_a_url)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = send(
         &gateway,
         &format!("/work/{item}/land"),

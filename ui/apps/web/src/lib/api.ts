@@ -316,6 +316,7 @@ export const observationKinds = [
   'work_landed',
   'work_shipped',
   'work_dismissed',
+  'work_previewed',
 ] as const;
 export const channelEnds = [
   'client_closed',

@@ -12,6 +12,7 @@ LandWorkRequest
 ListRequest
 LoginAnswer
 PauseRequest
+PreviewWorkRequest
 PromptRequest
 RawCallQuery
 RawExposureQuery

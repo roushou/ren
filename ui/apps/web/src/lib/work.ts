@@ -32,6 +32,7 @@ import type { WorkItemView as WireWorkItem } from './wire/WorkItemView.ts';
 import type { WorkItems as WireWorkItems } from './wire/WorkItems.ts';
 import type { WorkMarkBody as WireWorkMark } from './wire/WorkMarkBody.ts';
 import type { WorkOrderBody as WireWorkOrder } from './wire/WorkOrderBody.ts';
+import type { WorkPreviewBody as WireWorkPreview } from './wire/WorkPreviewBody.ts';
 
 export type WorkItemId = Brand<string, 'WorkItemId'>;
 export const WorkItemId = new Uuid<'WorkItemId'>();
@@ -75,6 +76,8 @@ export interface WorkItem {
   session: SessionId | null;
   landed: string | null;
   shipped: Revision | null;
+  /** A preview of its change, while one is up. */
+  preview: { ui: string; revision: Revision } | null;
 }
 
 /** A change to a work item. */
@@ -126,6 +129,9 @@ const workItem = object<WorkItem, WireWorkItem>({
   session: nullable(SessionId.decode),
   landed: nullable(string),
   shipped: nullable(revision),
+  preview: nullable(
+    object<NonNullable<WorkItem['preview']>, WireWorkPreview>({ ui: string, revision }),
+  ),
 });
 const workItems = object<{ work: WorkItem[] }, WireWorkItems>({ work: array(workItem) });
 const workAnswer = object<{ id: WorkItemId; state: Stored<WorkState> }, WireWorkAnswer>({
@@ -361,7 +367,7 @@ export class Work {
     const lines = ids.length
       ? ids.map((id) => Redline.code(`Work-Item: ${id}`)).join(' and ')
       : `the work item's ${Redline.code('Work-Item:')} line`;
-    return `${closing} End each commit message with ${lines}, and put the same in the pull request's description: that is how Ren knows when the change lands.`;
+    return `${closing} End each commit message with ${lines}, and put the same in the pull request's description: that is how Ren knows when the change lands. Once the change is ready to look at, run ${Redline.code('cargo xtask preview up --publish')} in the workspace: it shows the marked page on your branch beside production's.`;
   }
 
   /** One brief for several queued items: each item's marks under its page,
@@ -443,6 +449,11 @@ export class Work {
         note: mark.note,
       })),
     };
+  }
+
+  /** Where the marked page is on `item`'s preview, if one is up. */
+  static previewed(item: WorkItem): string | null {
+    return item.preview ? `${item.preview.ui}${item.order.page.path}` : null;
   }
 
   /** What the Work view says of a state. */

@@ -66,6 +66,17 @@ impl MetadataTx<'_> {
                     .execute(&mut *self.tx)
                     .await?;
             }
+            WorkFact::Previewed { preview } => {
+                sqlx::query(
+                    "UPDATE work_items SET preview_url = ?, preview_revision = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(preview.as_ref().map(|preview| preview.ui.to_string()))
+                .bind(preview.as_ref().map(|preview| preview.revision.to_string()))
+                .bind(at)
+                .bind(&id)
+                .execute(&mut *self.tx)
+                .await?;
+            }
             WorkFact::Dismissed => {
                 let (state, sql) = update(WorkStateKind::Dismissed, None);
                 sqlx::query(sqlx::AssertSqlSafe(sql))

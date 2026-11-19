@@ -4,7 +4,7 @@
 //! clients cannot drift apart; `crates/ren-daemon/tests/contract.rs` sends
 //! each one to the router.
 
-use crate::api::read::work::WorkOrderBody;
+use crate::api::read::work::{WorkOrderBody, WorkPreviewBody};
 use ren_harness::{
     Harness,
     drive::Decision,
@@ -49,6 +49,14 @@ pub struct ShipWorkRequest {
     pub revision: Revision,
 }
 
+/// `POST work/{item}/preview`: a preview of the item's change, or none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewWorkRequest {
+    pub preview: Option<WorkPreviewBody>,
+}
+
 /// What happens to a work item, as a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkChange {
@@ -56,6 +64,7 @@ pub enum WorkChange {
     Land(LandWorkRequest),
     Ship(ShipWorkRequest),
     Dismiss,
+    Preview(PreviewWorkRequest),
 }
 
 impl WorkChange {
@@ -66,6 +75,7 @@ impl WorkChange {
             Self::Land(_) => "land",
             Self::Ship(_) => "ship",
             Self::Dismiss => "dismiss",
+            Self::Preview(_) => "preview",
         }
     }
 }
@@ -388,6 +398,7 @@ impl ControlRequest {
                 WorkChange::Land(land) => serde_json::to_vec(land).map(Some),
                 WorkChange::Ship(ship) => serde_json::to_vec(ship).map(Some),
                 WorkChange::Dismiss => Ok(None),
+                WorkChange::Preview(preview) => serde_json::to_vec(preview).map(Some),
             },
             Self::State
             | Self::Resume

@@ -144,7 +144,8 @@ impl Shown {
                 | ObservationKind::WorkSent
                 | ObservationKind::WorkLanded
                 | ObservationKind::WorkShipped
-                | ObservationKind::WorkDismissed,
+                | ObservationKind::WorkDismissed
+                | ObservationKind::WorkPreviewed,
                 _,
             ) => Self::Hidden,
         })

@@ -1412,8 +1412,8 @@ async fn every_control_request_reaches_its_route() {
     use ren_gateway::ControlRefusal;
     use ren_gateway::api::control::request::{
         AnswerRequest, BlockRequest, CancelRequest, ControlFeed, ControlMethod, ControlRequest,
-        CreateRequest, LandWorkRequest, PauseRequest, PromptRequest, SendWorkRequest,
-        ShipWorkRequest, WorkChange,
+        CreateRequest, LandWorkRequest, PauseRequest, PreviewWorkRequest, PromptRequest,
+        SendWorkRequest, ShipWorkRequest, WorkChange,
     };
     use ren_harness::{Harness, drive::Decision};
     use ren_protocol::native::NativeSessionId;
@@ -1516,6 +1516,10 @@ async fn every_control_request_reaches_its_route() {
         ControlRequest::Work {
             item: ren_recorder::id::WorkItemId::restore(id(6)),
             change: WorkChange::Dismiss,
+        },
+        ControlRequest::Work {
+            item: ren_recorder::id::WorkItemId::restore(id(6)),
+            change: WorkChange::Preview(PreviewWorkRequest { preview: None }),
         },
     ];
     let http = client();

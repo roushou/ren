@@ -609,6 +609,18 @@ impl Scenario {
         self.later(1_000);
         record(shipped, WorkFact::Sent { session });
         self.later(1_000);
+        record(
+            shipped,
+            WorkFact::Previewed {
+                preview: Some(ren_recorder::work::WorkPreview {
+                    ui: "https://ren.example.ts.net:20201".parse().unwrap(),
+                    revision: "07f4bb7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708-dirty"
+                        .parse()
+                        .unwrap(),
+                }),
+            },
+        );
+        self.later(1_000);
         let commit = "07f4bb7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708";
         record(
             shipped,

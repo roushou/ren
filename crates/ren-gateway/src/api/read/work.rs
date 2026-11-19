@@ -6,7 +6,10 @@ use ren_protocol::label::Stored;
 use ren_recorder::{
     id::{SessionId, WorkItemId},
     time::UnixMillis,
-    work::{Evidence, MarkedPage, PageTheme, WorkMark, WorkOrder, WorkStateKind},
+    work::{
+        Evidence, MarkedPage, PageTheme, PreviewUrl, WorkMark, WorkOrder, WorkPreview,
+        WorkStateKind,
+    },
 };
 use ren_release::{Commit, Revision};
 use serde::{Deserialize, Serialize};
@@ -44,6 +47,22 @@ pub struct WorkItemView {
     /// The build production ran with its change.
     #[ts(as = "Option<String>")]
     pub shipped: Option<Revision>,
+    /// A preview of its change, while one is up.
+    pub preview: Option<WorkPreviewBody>,
+}
+
+/// A preview of a work item's change: its session's branch on a copy of
+/// production's history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct WorkPreviewBody {
+    /// The preview's UI, an origin such as `https://ren.example.ts.net:20201`.
+    #[ts(as = "String")]
+    pub ui: PreviewUrl,
+    /// The build it runs: `<commit>`, `<commit>-dirty`, or `unknown`.
+    #[ts(as = "String")]
+    pub revision: Revision,
 }
 
 /// What was marked: the page, its marks, and what else was on screen.
@@ -216,6 +235,7 @@ impl From<ren_store::view::WorkItemView> for WorkItemView {
             session,
             landed,
             shipped,
+            preview,
         } = item;
         Self {
             id,
@@ -227,6 +247,7 @@ impl From<ren_store::view::WorkItemView> for WorkItemView {
             session,
             landed,
             shipped,
+            preview: preview.map(|WorkPreview { ui, revision }| WorkPreviewBody { ui, revision }),
         }
     }
 }

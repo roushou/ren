@@ -141,6 +141,55 @@ impl WorkOrder {
     }
 }
 
+/// A preview of the change a session is making: its branch's build on a
+/// copy of production's history, where the marked page can be opened.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkPreview {
+    /// The preview's UI.
+    pub ui: PreviewUrl,
+    /// The build it runs.
+    pub revision: Revision,
+}
+
+/// An `http` or `https` origin a preview's UI is reached at, such as
+/// `https://ren.example.ts.net:20201`: no path, no spaces.
+#[derive(Debug, Clone, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
+pub struct PreviewUrl(String);
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("not a preview's origin (`http(s)://host[:port]`): {0:?}")]
+pub struct NotAPreviewUrl(pub String);
+
+impl std::str::FromStr for PreviewUrl {
+    type Err = NotAPreviewUrl;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let refused = || NotAPreviewUrl(text.to_owned());
+        let rest = text
+            .strip_prefix("https://")
+            .or_else(|| text.strip_prefix("http://"))
+            .ok_or_else(refused)?;
+        let host = rest.strip_suffix('/').unwrap_or(rest);
+        let fine = !host.is_empty()
+            && host.len() <= 255
+            && host
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b".-:[]".contains(&byte));
+        if fine {
+            Ok(Self(text.trim_end_matches('/').to_owned()))
+        } else {
+            Err(refused())
+        }
+    }
+}
+
+impl std::fmt::Display for PreviewUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// A commit on `main` and the work items it names as landing: each a
 /// `Work-Item: <id>` trailer in its message, as a brief asks an agent to
 /// write in its commits and its pull request's description, so a squash
@@ -212,6 +261,9 @@ pub enum WorkEvent {
         revision: Revision,
     },
     Dismiss,
+    /// A preview of its change, or none any longer. Only a sent item has
+    /// one; it leaves the state as it is.
+    Preview,
 }
 
 /// A work item's state, as a label.
@@ -241,6 +293,7 @@ impl WorkEvent {
             Self::Land { .. } => "landed",
             Self::Ship { .. } => "shipped",
             Self::Dismiss => "dismissed",
+            Self::Preview => "previewed",
         }
     }
 }
@@ -286,6 +339,7 @@ impl WorkState {
                 revision,
             }),
             (Self::Queued | Self::Sent { .. }, WorkEvent::Dismiss) => Ok(Self::Dismissed),
+            (Self::Sent { .. }, WorkEvent::Preview) => Ok(self.clone()),
             (
                 Self::Queued | Self::Landed { .. } | Self::Shipped { .. } | Self::Dismissed,
                 event @ WorkEvent::Land { .. },
@@ -297,6 +351,10 @@ impl WorkState {
             | (
                 Self::Landed { .. } | Self::Shipped { .. } | Self::Dismissed,
                 event @ (WorkEvent::Send { .. } | WorkEvent::Dismiss),
+            )
+            | (
+                Self::Queued | Self::Landed { .. } | Self::Shipped { .. } | Self::Dismissed,
+                event @ WorkEvent::Preview,
             ) => Err(refused(&event)),
         }
     }
@@ -364,6 +422,35 @@ mod tests {
         assert_eq!(kept.evidence.console.len(), WorkOrder::EVIDENCE);
         assert_eq!(kept.evidence.console[0], "error 10");
         assert!(kept.evidence.reads[0].len() <= WorkOrder::TEXT);
+    }
+
+    #[test]
+    fn a_preview_is_an_http_origin() {
+        use super::PreviewUrl;
+        for text in [
+            "https://ren.example.ts.net:20201",
+            "http://127.0.0.1:20201/",
+            "http://[::1]:8",
+        ] {
+            assert!(text.parse::<PreviewUrl>().is_ok(), "{text}");
+        }
+        assert_eq!(
+            "http://127.0.0.1:20201/"
+                .parse::<PreviewUrl>()
+                .unwrap()
+                .to_string(),
+            "http://127.0.0.1:20201"
+        );
+        for text in [
+            "",
+            "ftp://x",
+            "https://",
+            "https://x/path",
+            "https://a b",
+            "javascript:alert(1)",
+        ] {
+            assert!(text.parse::<PreviewUrl>().is_err(), "{text}");
+        }
     }
 
     #[test]
@@ -458,6 +545,12 @@ mod tests {
             WorkState::Queued.apply(WorkEvent::Dismiss).unwrap(),
             WorkState::Dismissed
         );
+        // Only a sent item has a preview, and it keeps its state.
+        let sent = WorkState::Sent {
+            session: session(1),
+        };
+        assert_eq!(sent.apply(WorkEvent::Preview).unwrap(), sent);
+        assert!(WorkState::Queued.apply(WorkEvent::Preview).is_err());
         assert_eq!(
             WorkState::Dismissed
                 .apply(WorkEvent::Dismiss)
