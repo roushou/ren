@@ -1,6 +1,10 @@
 //! `cargo xtask dev shot`: screenshots of the dev UI's pages with a headless
-//! Chromium, for checking a UI change without a browser. Each page loads
-//! for a few seconds, then is captured; the live feed never holds it open.
+//! Chromium, for checking a UI change without a browser, and the canary's
+//! page check. Each page is first asked for, and fails unless the UI answers
+//! it (after its redirects) with a success: an error page is a failure, not
+//! a capture. Then it loads for a few seconds and is captured; the live feed
+//! never holds it open. The pages under a project are those of a project in
+//! the history being shown: Ren's, else the first.
 
 use super::DevError;
 use crate::file::FileError;
@@ -18,6 +22,8 @@ use std::{
 pub enum Page {
     /// The factory's home: every project, and what is pending.
     Projects,
+    /// A project's Overview.
+    Project,
     Work,
     Release,
     Overview,
@@ -34,16 +40,21 @@ pub enum Page {
     Tools,
 }
 
-/// The newest recording and run, which some pages show.
+/// The project, and its newest run and the newest recording, which some
+/// pages show.
 #[derive(Debug, Default)]
 struct Newest {
     recording: Option<String>,
+    /// The project's newest run.
     run: Option<String>,
+    /// The project the pages under one show, by name.
+    project: Option<String>,
 }
 
 impl Page {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Projects,
+        Self::Project,
         Self::Work,
         Self::Release,
         Self::Overview,
@@ -60,6 +71,7 @@ impl Page {
     pub fn name(self) -> &'static str {
         match self {
             Self::Projects => "projects",
+            Self::Project => "project",
             Self::Work => "work",
             Self::Release => "release",
             Self::Overview => "overview",
@@ -74,14 +86,20 @@ impl Page {
         }
     }
 
-    /// The page's path: the newest recording for `Recording`, the newest
-    /// run's session (if any) for `Sessions`, which leads to its project's
-    /// desk, else Scratch; Work is the dev slot's acme-web's.
+    /// The page's path: the newest recording for `Recording`; the project's
+    /// pages for `Project`, `Work`, `Release`, and `Sessions` (its newest
+    /// run's session open, if any). None when there is no such recording or
+    /// project, except Sessions, which is then Scratch.
     fn path(self, newest: &Newest) -> Option<String> {
+        let project = newest
+            .project
+            .as_deref()
+            .map(|name| format!("/projects/{name}"));
         match self {
             Self::Projects => Some("/".into()),
-            Self::Work => Some("/projects/acme-web/work".into()),
-            Self::Release => Some("/projects/ren/release".into()),
+            Self::Project => project,
+            Self::Work => project.map(|base| format!("{base}/work")),
+            Self::Release => project.map(|base| format!("{base}/release")),
             Self::Overview => Some("/overview".into()),
             Self::Live => Some("/live".into()),
             Self::Traffic => Some("/traffic".into()),
@@ -92,12 +110,11 @@ impl Page {
                 .map(|id| format!("/recordings/{id}")),
             Self::Usage => Some("/usage".into()),
             Self::Search => Some("/search?q=retry".into()),
-            Self::Sessions => Some(
-                newest
-                    .run
-                    .as_ref()
-                    .map_or_else(|| "/scratch".into(), |id| format!("/sessions?run={id}")),
-            ),
+            Self::Sessions => Some(match (project, newest.run.as_deref()) {
+                (Some(base), Some(run)) => format!("{base}/sessions?run={run}"),
+                (Some(base), None) => format!("{base}/sessions"),
+                (None, Some(_) | None) => "/scratch".into(),
+            }),
             Self::Tools => Some("/tools".into()),
         }
     }
@@ -107,10 +124,24 @@ impl Page {
 #[derive(Debug, Default)]
 pub struct Shots {
     pub written: Vec<PathBuf>,
-    /// Pages that did not load in time or did not capture.
-    pub failed: Vec<Page>,
-    /// Pages with nothing to show yet (no recording).
+    /// Pages the UI did not answer with a success, or that did not capture.
+    pub failed: Vec<(Page, PageFailure)>,
+    /// Pages with nothing to show yet (no recording, or no project).
     pub skipped: Vec<Page>,
+}
+
+/// Why a page failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum PageFailure {
+    /// The UI did not answer it.
+    #[error("no answer")]
+    Unanswered,
+    /// The UI answered it with an error: its error page.
+    #[error("answered {0}")]
+    Status(u16),
+    /// It answered, but did not load in time or capture.
+    #[error("did not capture")]
+    NotCaptured,
 }
 
 /// Takes screenshots of one UI.
@@ -175,32 +206,82 @@ impl Camera {
         shells.pop()
     }
 
-    /// The newest item's id in a listing of the dev gateway's API, such as
-    /// `recordings` or `runs`.
-    fn newest(&self, listing: &str) -> Option<String> {
+    /// A read of the gateway's API, at `path` (with its query).
+    fn read(&self, path: &str) -> Option<serde_json::Value> {
         let answer = Invocation::new("curl")
             .args(["--silent", "--fail", "--max-time", "5"])
-            .arg(format!("http://{}/api/{listing}?limit=1", self.gateway))
+            .arg(format!("http://{}{path}", self.gateway))
             .capture()
             .ok()?;
-        let answer: serde_json::Value = serde_json::from_str(&answer).ok()?;
+        serde_json::from_str(&answer).ok()
+    }
+
+    /// The newest item's id in a listing of the gateway's API, such as
+    /// `recordings` or `runs`, with `query` after its limit.
+    fn newest(&self, listing: &str, query: &str) -> Option<String> {
+        let answer = self.read(&format!("/api/{listing}?limit=1{query}"))?;
         answer[listing][0]["id"].as_str().map(str::to_owned)
+    }
+
+    /// The project the pages under one show: Ren's, else the first not
+    /// archived, by name.
+    fn project(&self) -> Option<String> {
+        let answer = self.read("/api/projects")?;
+        let projects = answer["projects"].as_array()?;
+        let current = projects
+            .iter()
+            .filter(|project| project["archived_at"].is_null());
+        current
+            .clone()
+            .find(|project| project["factory"] == "ren")
+            .or_else(|| current.clone().next())
+            .and_then(|project| project["name"].as_str())
+            .map(str::to_owned)
+    }
+
+    /// The status the UI answers `path` with, after its redirects; None when
+    /// it does not answer.
+    fn status(&self, path: &str) -> Option<u16> {
+        Invocation::new("curl")
+            .args(["--silent", "--location", "--max-time", "30"])
+            .args(["--output", "/dev/null", "--write-out", "%{http_code}"])
+            .arg(format!("http://{}{path}", self.ui))
+            .capture()
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+            .filter(|code| *code != 0)
     }
 
     /// Capture `pages` at `width`×`height`.
     pub fn shoot(&self, pages: &[Page], (width, height): (u16, u16)) -> Result<Shots, DevError> {
         fs::create_dir_all(&self.out).map_err(FileError::at(&self.out))?;
+        let project = self.project();
+        let run = project
+            .as_deref()
+            .and_then(|name| self.newest("runs", &format!("&project={name}")));
         let newest = Newest {
-            recording: self.newest("recordings"),
-            run: self.newest("runs"),
+            recording: self.newest("recordings", ""),
+            run,
+            project,
         };
         let mut shots = Shots::default();
         for page in pages {
             let Some(path) = page.path(&newest) else {
-                println!("skipped {}: no recording yet", page.name());
+                println!("skipped {}: nothing to show yet", page.name());
                 shots.skipped.push(*page);
                 continue;
             };
+            match self.status(&path) {
+                Some(code) if (200..300).contains(&code) => {}
+                answered => {
+                    let failure = answered.map_or(PageFailure::Unanswered, PageFailure::Status);
+                    println!("failed {}: {path} {failure}", page.name());
+                    shots.failed.push((*page, failure));
+                    continue;
+                }
+            }
             let file = self.out.join(format!("{}.png", page.name()));
             // An earlier round's file would read as this round's capture.
             if file.exists() {
@@ -223,8 +304,8 @@ impl Camera {
                 println!("{}", file.display());
                 shots.written.push(file);
             } else {
-                println!("failed {}", page.name());
-                shots.failed.push(*page);
+                println!("failed {}: {path} did not capture", page.name());
+                shots.failed.push((*page, PageFailure::NotCaptured));
             }
         }
         Ok(shots)
@@ -236,11 +317,16 @@ mod tests {
     use super::{Newest, Page};
 
     #[test]
-    fn every_page_has_a_path_and_the_recording_needs_one() {
+    fn a_projects_pages_are_the_historys_own_project() {
         let none = Newest::default();
         let some = Newest {
             recording: Some("s1".into()),
             run: Some("r1".into()),
+            project: Some("ren".into()),
+        };
+        let no_run = Newest {
+            project: Some("ren".into()),
+            ..Newest::default()
         };
         for page in Page::ALL {
             match page {
@@ -248,13 +334,30 @@ mod tests {
                     assert_eq!(page.path(&none), None);
                     assert_eq!(page.path(&some).as_deref(), Some("/recordings/s1"));
                 }
+                Page::Project => {
+                    assert_eq!(page.path(&none), None);
+                    assert_eq!(page.path(&some).as_deref(), Some("/projects/ren"));
+                }
+                Page::Work => {
+                    assert_eq!(page.path(&none), None);
+                    assert_eq!(page.path(&some).as_deref(), Some("/projects/ren/work"));
+                }
+                Page::Release => {
+                    assert_eq!(page.path(&none), None);
+                    assert_eq!(page.path(&some).as_deref(), Some("/projects/ren/release"));
+                }
                 Page::Sessions => {
                     assert_eq!(page.path(&none).as_deref(), Some("/scratch"));
-                    assert_eq!(page.path(&some).as_deref(), Some("/sessions?run=r1"));
+                    assert_eq!(
+                        page.path(&some).as_deref(),
+                        Some("/projects/ren/sessions?run=r1")
+                    );
+                    assert_eq!(
+                        page.path(&no_run).as_deref(),
+                        Some("/projects/ren/sessions")
+                    );
                 }
                 Page::Projects
-                | Page::Work
-                | Page::Release
                 | Page::Overview
                 | Page::Live
                 | Page::Traffic
