@@ -193,6 +193,7 @@ impl SearchCmd {
         let request = ReadRequest::Search(SearchQuery {
             terms: self.text.join(" ").parse::<SearchTerms>()?,
             recording: self.recording,
+            project: None,
             client: self.client,
             field: self.field,
             time: TimeRange::default(),
@@ -219,6 +220,7 @@ impl ExposuresCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         let request = ReadRequest::Exposures(ExposureQuery {
             recording: self.recording,
+            project: None,
             time: TimeRange::default(),
             limit: self.limit,
         });

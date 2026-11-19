@@ -87,11 +87,18 @@ fn every_read() -> Vec<ReadRequest> {
             project: Some("acme-web".parse().unwrap()),
         },
         ReadRequest::WorkItem(ren_recorder::id::WorkItemId::restore(Uuid::from_u128(5))),
-        ReadRequest::Usage(TimeRange::default()),
-        ReadRequest::Usage(time),
+        ReadRequest::Usage {
+            range: TimeRange::default(),
+            project: None,
+        },
+        ReadRequest::Usage {
+            range: time,
+            project: Some("acme-web".parse().unwrap()),
+        },
         ReadRequest::Search(SearchQuery {
             terms: r#"run "install vps" & co"#.parse::<SearchTerms>().unwrap(),
             recording: Some(session),
+            project: Some("acme-web".parse().unwrap()),
             client: Some(Harness::ClaudeCode),
             field: Some(SearchField::ToolInput),
             time,
@@ -99,6 +106,13 @@ fn every_read() -> Vec<ReadRequest> {
         }),
         ReadRequest::Exposures(ExposureQuery {
             recording: Some(session),
+            project: None,
+            time,
+            limit,
+        }),
+        ReadRequest::Exposures(ExposureQuery {
+            recording: None,
+            project: Some("acme-web".parse().unwrap()),
             time,
             limit,
         }),

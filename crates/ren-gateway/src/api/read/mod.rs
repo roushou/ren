@@ -135,7 +135,7 @@ impl ReadBody {
             ReadRequest::Turn(_) => Self::Turn(serde_json::from_value(body)?),
             ReadRequest::CallActivity(_) => Self::CallActivity(serde_json::from_value(body)?),
             ReadRequest::Report(_) => Self::Report(serde_json::from_value(body)?),
-            ReadRequest::Usage(_) => Self::Usage(serde_json::from_value(body)?),
+            ReadRequest::Usage { .. } => Self::Usage(serde_json::from_value(body)?),
             ReadRequest::Search(_) => Self::Search(serde_json::from_value(body)?),
             ReadRequest::Exposures(_) => Self::Exposures(serde_json::from_value(body)?),
             ReadRequest::Runs { .. } => Self::Runs(serde_json::from_value(body)?),

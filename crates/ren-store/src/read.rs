@@ -40,7 +40,12 @@ pub enum ReadRequest {
     Turn(TurnId),
     CallActivity(CallId),
     Report(RecordingId),
-    Usage(TimeRange),
+    /// Usage of the calls started in `range`; with a project, its
+    /// sessions' runs' only.
+    Usage {
+        range: TimeRange,
+        project: Option<ProjectName>,
+    },
     Search(SearchQuery),
     Exposures(ExposureQuery),
     /// Agent runs, newest first; with a project, its sessions' only.
@@ -126,7 +131,9 @@ impl Reader {
             ReadRequest::Report(recording) => {
                 ReadResponse::Report(Box::new(self.recording_report(*recording).await?))
             }
-            ReadRequest::Usage(range) => ReadResponse::Usage(self.usage(*range).await?),
+            ReadRequest::Usage { range, project } => {
+                ReadResponse::Usage(self.usage(*range, project.as_ref()).await?)
+            }
             ReadRequest::Search(query) => ReadResponse::Search(self.search(query).await?),
             ReadRequest::Exposures(query) => ReadResponse::Exposures {
                 exposures: self.exposures(query).await?,

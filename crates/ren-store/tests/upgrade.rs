@@ -353,10 +353,15 @@ impl Reads {
                 serve(ReadRequest::Turn(turn.turn)).await;
             }
         }
-        serve(ReadRequest::Usage(TimeRange::default())).await;
+        serve(ReadRequest::Usage {
+            range: TimeRange::default(),
+            project: None,
+        })
+        .await;
         let ReadResponse::Search(hits) = serve(ReadRequest::Search(SearchQuery {
             terms: "migration".parse().unwrap(),
             recording: None,
+            project: None,
             client: None,
             field: None,
             time: TimeRange::default(),
@@ -369,6 +374,7 @@ impl Reads {
         assert!(!hits.hits.is_empty(), "search");
         let ReadResponse::Exposures { exposures } = serve(ReadRequest::Exposures(ExposureQuery {
             recording: None,
+            project: None,
             time: TimeRange::default(),
             limit: PageLimit::DEFAULT,
         }))

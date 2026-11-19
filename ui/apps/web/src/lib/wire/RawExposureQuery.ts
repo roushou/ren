@@ -3,4 +3,8 @@
 /**
  * `GET /api/exposures` parameters.
  */
-export type RawExposureQuery = { recording?: string, from_ms?: number, until_ms?: number, limit?: number, };
+export type RawExposureQuery = { recording?: string, 
+/**
+ * A project's name: its sessions' runs' calls.
+ */
+project?: string, from_ms?: number, until_ms?: number, limit?: number, };

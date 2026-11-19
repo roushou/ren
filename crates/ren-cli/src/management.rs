@@ -626,7 +626,10 @@ mod tests {
     async fn an_answer_that_is_not_the_reads_response_is_refused() {
         let wrong = against_gateway(|gateway| async move {
             gateway
-                .serve(&ReadRequest::Usage(ren_store::query::TimeRange::default()))
+                .serve(&ReadRequest::Usage {
+                    range: ren_store::query::TimeRange::default(),
+                    project: None,
+                })
                 .await
         })
         .await;

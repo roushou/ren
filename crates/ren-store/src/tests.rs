@@ -1063,7 +1063,11 @@ async fn usage_totals_by_hour_and_by_model_over_a_range() {
         })
         .await;
 
-    let all = fixture.reader.usage(TimeRange::default()).await.unwrap();
+    let all = fixture
+        .reader
+        .usage(TimeRange::default(), None)
+        .await
+        .unwrap();
     assert_eq!((all.totals.calls, all.totals.errors), (3, 1));
     assert_eq!(
         (
@@ -1103,7 +1107,7 @@ async fn usage_totals_by_hour_and_by_model_over_a_range() {
         Some(UnixMillis::from_millis(start.as_millis() + 3_600_000)),
     )
     .unwrap();
-    let first = fixture.reader.usage(early).await.unwrap();
+    let first = fixture.reader.usage(early, None).await.unwrap();
     assert_eq!((first.totals.calls, first.hours.len()), (2, 1));
     let none = fixture
         .reader
@@ -1113,6 +1117,7 @@ async fn usage_totals_by_hour_and_by_model_over_a_range() {
                 Some(UnixMillis::from_millis(2)),
             )
             .unwrap(),
+            None,
         )
         .await
         .unwrap();
@@ -1264,6 +1269,7 @@ mod digests {
     };
     use ren_recorder::{
         digest::{CallDigest, DigestBudget},
+        project::ProjectName,
         secrets::SecretScanner,
     };
     use serde_json::json;
@@ -1296,6 +1302,7 @@ mod digests {
         SearchQuery {
             terms: text.parse::<SearchTerms>().unwrap(),
             recording: None,
+            project: None,
             client: None,
             field: None,
             time: TimeRange::default(),
@@ -1488,6 +1495,7 @@ mod digests {
         let exposures = reader
             .exposures(&ExposureQuery {
                 recording: None,
+                project: None,
                 time: TimeRange::default(),
                 limit: PageLimit::new(10).unwrap(),
             })
@@ -1500,6 +1508,172 @@ mod digests {
             exposures[0].client,
             Some(Stored::Known(Harness::ClaudeCode))
         );
+    }
+
+    impl Fixture {
+        /// A project named `name`, with a session working for it whose run
+        /// worked in the client session `native` names.
+        async fn project_run(&mut self, name: &str, native: u128) {
+            use ren_protocol::native::NativeThreadId;
+            use ren_recorder::{
+                batch::{
+                    ProjectFact, ProjectRecord, RunFact, RunRecord, SessionFact, SessionRecord,
+                },
+                id::{ProjectId, RunId, SessionId},
+                project::{Factory, ProjectRegistration},
+            };
+            let project = ProjectId::generate(self.ids.as_ref());
+            let session = SessionId::generate(self.ids.as_ref());
+            let run = RunId::generate(self.ids.as_ref());
+            let workdir = format!("/work/{name}");
+            let mut batch = Batch::default();
+            batch.push(Op::Project(ProjectRecord {
+                at: self.clock.now(),
+                project,
+                fact: ProjectFact::Registered {
+                    registration: ProjectRegistration {
+                        name: name.parse().unwrap(),
+                        repository: workdir.parse().unwrap(),
+                        factory: Factory::Contract,
+                    },
+                },
+            }));
+            for fact in [
+                SessionFact::Created {
+                    harness: Harness::Codex,
+                    workdir: workdir.clone(),
+                    settings: ren_harness::settings::RunSettings::default(),
+                },
+                SessionFact::Assigned {
+                    project: Some(project),
+                },
+            ] {
+                batch.push(Op::Session(SessionRecord {
+                    at: self.clock.now(),
+                    session,
+                    fact,
+                }));
+            }
+            for fact in [
+                RunFact::Started {
+                    session,
+                    harness: Harness::Codex,
+                    workdir: workdir.clone(),
+                    settings: ren_harness::settings::RunSettings::default(),
+                    toolset: Some(ren_depot::toolset::Generation::NONE),
+                },
+                RunFact::Opened {
+                    thread: NativeThreadId::new(Uuid::from_u128(native)).unwrap(),
+                },
+            ] {
+                batch.push(Op::Run(RunRecord {
+                    at: self.clock.now(),
+                    run,
+                    fact,
+                }));
+            }
+            self.store.commit(&batch).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn usage_search_and_exposures_narrow_to_one_projects_calls() {
+        let mut fixture = Fixture::new().await;
+        fixture.project_run("acme-web", 10).await;
+        fixture.project_run("acme-api", 20).await;
+        let key = format!("sk-ant-{}a1b2", "api03xY9z".repeat(5));
+        let mut calls = Vec::new();
+        // One call in each project's run's conversation, and one in a
+        // recording no run worked in.
+        for session in [Some(10), Some(20), Some(30)] {
+            let call = fixture
+                .record(CallSpec {
+                    session,
+                    ..CallSpec::default()
+                })
+                .await;
+            fixture
+                .digest(
+                    call,
+                    Some(Harness::ClaudeCode),
+                    Reading {
+                        request: prompt(&format!("Why does the migration fail with {key}?")),
+                        response: ResponseActivity::default(),
+                    },
+                )
+                .await;
+            calls.push(call);
+        }
+        let [web, api, _] = calls[..] else {
+            panic!("three calls");
+        };
+        let reader = &fixture.reader;
+        let acme_web: ProjectName = "acme-web".parse().unwrap();
+        let acme_api: ProjectName = "acme-api".parse().unwrap();
+        let unused: ProjectName = "acme-docs".parse().unwrap();
+
+        let usage = |project: Option<&ProjectName>| {
+            let project = project.cloned();
+            async move {
+                reader
+                    .usage(TimeRange::default(), project.as_ref())
+                    .await
+                    .unwrap()
+                    .totals
+                    .calls
+            }
+        };
+        assert_eq!(usage(None).await, 3);
+        assert_eq!(usage(Some(&acme_web)).await, 1);
+        assert_eq!(usage(Some(&acme_api)).await, 1);
+        assert_eq!(usage(Some(&unused)).await, 0);
+
+        let searched = |project: Option<&ProjectName>| {
+            let mut query = query("migration");
+            query.project = project.cloned();
+            async move {
+                let mut calls: Vec<_> = reader
+                    .search(&query)
+                    .await
+                    .unwrap()
+                    .hits
+                    .into_iter()
+                    .map(|hit| hit.call)
+                    .collect();
+                calls.sort();
+                calls
+            }
+        };
+        let mut all = calls.clone();
+        all.sort();
+        assert_eq!(searched(None).await, all);
+        assert_eq!(searched(Some(&acme_web)).await, [web]);
+        assert_eq!(searched(Some(&acme_api)).await, [api]);
+        assert!(searched(Some(&unused)).await.is_empty());
+
+        let exposed = |project: Option<&ProjectName>| {
+            let query = ExposureQuery {
+                recording: None,
+                project: project.cloned(),
+                time: TimeRange::default(),
+                limit: PageLimit::new(10).unwrap(),
+            };
+            async move {
+                let mut calls: Vec<_> = reader
+                    .exposures(&query)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|exposure| exposure.call)
+                    .collect();
+                calls.sort();
+                calls
+            }
+        };
+        assert_eq!(exposed(None).await, all);
+        assert_eq!(exposed(Some(&acme_web)).await, [web]);
+        assert_eq!(exposed(Some(&acme_api)).await, [api]);
+        assert!(exposed(Some(&unused)).await.is_empty());
     }
 
     #[tokio::test]
@@ -2880,7 +3054,7 @@ async fn usage_from_one_scan_matches_a_query_per_breakdown() {
     assert_eq!(per_breakdown.models.len(), 5, "provider and model pairs");
     assert_eq!(per_breakdown.users.len(), 2);
     assert_eq!(
-        reader.usage(TimeRange::default()).await.unwrap(),
+        reader.usage(TimeRange::default(), None).await.unwrap(),
         per_breakdown
     );
 }

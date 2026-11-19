@@ -67,9 +67,13 @@ test("inside a project, the row holds the project's own pages", () => {
 test('only the pages that read a project carry it between them', () => {
   const traffic = { tab: 'traffic', href: '/traffic', label: 'Traffic' } as const;
   const live = { tab: 'live', href: '/live', label: 'Live' } as const;
+  const tools = { tab: 'tools', href: '/tools', label: 'Tools' } as const;
   assert.equal(Views.scopedHref(traffic, 'acme-web'), '/traffic?project=acme-web');
   assert.equal(Views.scopedHref(traffic, null), '/traffic');
-  assert.equal(Views.scopedHref(live, 'acme-web'), '/live');
+  // Every Inspect page reads a project; Host's do not.
+  assert.equal(Views.scopedHref(live, 'acme-web'), '/live?project=acme-web');
+  assert.equal(Views.scopedHref(tools, 'acme-web'), '/tools');
   assert.ok(Views.scoped('recordings'));
-  assert.equal(Views.scoped('search'), false);
+  assert.ok(Views.scoped('search'));
+  assert.equal(Views.scoped('usage'), false);
 });

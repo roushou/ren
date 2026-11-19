@@ -369,12 +369,19 @@ fn each_pinned_answer_decodes_as_its_read_and_round_trips() {
         ),
         ("turn", ReadRequest::Turn(TurnId::restore(id))),
         ("report", ReadRequest::Report(recording)),
-        ("usage", ReadRequest::Usage(TimeRange::default())),
+        (
+            "usage",
+            ReadRequest::Usage {
+                range: TimeRange::default(),
+                project: None,
+            },
+        ),
         (
             "search",
             ReadRequest::Search(SearchQuery {
                 terms: "parser".parse::<ren_store::search::SearchTerms>().unwrap(),
                 recording: None,
+                project: None,
                 client: None,
                 field: None,
                 time: TimeRange::default(),
@@ -385,6 +392,7 @@ fn each_pinned_answer_decodes_as_its_read_and_round_trips() {
             "exposures",
             ReadRequest::Exposures(ExposureQuery {
                 recording: None,
+                project: None,
                 time: TimeRange::default(),
                 limit: PageLimit::DEFAULT,
             }),

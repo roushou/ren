@@ -68,6 +68,14 @@ impl CallQuery {
             .push(" AND r.thread IS NOT NULL)");
     }
 
+    /// An `AND` clause for calls (aliased `c`) of `project`: those whose
+    /// recording is the conversation of a run of a session working for it.
+    pub(crate) fn push_project_calls(sql: &mut QueryBuilder<Sqlite>, project: &ProjectName) {
+        sql.push(" AND c.recording IN (SELECT s.id FROM recordings s WHERE ");
+        Self::push_project_recording(sql, project);
+        sql.push(")");
+    }
+
     /// `calls`, `errors`, `input_tokens`, `output_tokens`, and
     /// `cache_read_tokens` aggregated over the rows of `calls c`. Errors are
     /// the model calls the `errors` status filter finds: a client's own
@@ -141,9 +149,7 @@ impl CallQuery {
                 .push_bind(recording.to_string());
         }
         if let Some(project) = &filter.project {
-            sql.push(" AND c.recording IN (SELECT s.id FROM recordings s WHERE ");
-            Self::push_project_recording(sql, project);
-            sql.push(")");
+            Self::push_project_calls(sql, project);
         }
         if let Some(client) = filter.client {
             Self::push_client(sql, client);

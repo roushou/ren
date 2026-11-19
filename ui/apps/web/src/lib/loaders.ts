@@ -171,39 +171,46 @@ export interface OverviewData {
  * The overview: everything read at once; each read is small. `live` keeps
  * the Live board's turn cache between refreshes in the browser.
  */
-export function overviewSnapshot(fetcher: typeof fetch, live: LiveReader) {
+export function overviewSnapshot(
+  fetcher: typeof fetch,
+  live: LiveReader,
+  project: string | null = null,
+) {
   const api = new ManagementApi(fetcher);
-  return Arrival.read('overview', async (): Promise<OverviewData> => {
-    const now = Date.now();
-    const day = 24 * 3_600_000;
-    const since = now - day;
-    const listing = (status: string, kind: string) =>
-      api
-        .calls(query<RawCallQuery>({ status, kind, limit: 100, from_ms: since }))
-        .then((page) => page.calls);
-    const [usage, previous, failed, stopped, bookkeeping, recordings, exposures, board] =
-      await Promise.all([
-        api.usage({ from_ms: rangeStart('24h', now, localDayStart) }),
-        api.usage({ from_ms: now - 2 * day, until_ms: now - day }).catch(() => null),
-        listing('errors', 'model'),
-        listing('interrupted', 'model'),
-        listing('errors', 'other'),
-        api.recordings(100),
-        api.exposures(since).then((page) => page.exposures),
-        live.read(fetcher, '15m'),
-      ]);
-    return {
-      now,
-      usage,
-      previous,
-      failed,
-      stopped,
-      bookkeeping,
-      recordings: recordings.recordings,
-      exposures,
-      live: board.value,
-    };
-  });
+  return Arrival.read(
+    project ? `overview:${project}` : 'overview',
+    async (): Promise<OverviewData> => {
+      const now = Date.now();
+      const day = 24 * 3_600_000;
+      const since = now - day;
+      const listing = (status: string, kind: string) =>
+        api
+          .calls(query<RawCallQuery>({ status, kind, limit: 100, from_ms: since, project }))
+          .then((page) => page.calls);
+      const [usage, previous, failed, stopped, bookkeeping, recordings, exposures, board] =
+        await Promise.all([
+          api.usage({ from_ms: rangeStart('24h', now, localDayStart), project }),
+          api.usage({ from_ms: now - 2 * day, until_ms: now - day, project }).catch(() => null),
+          listing('errors', 'model'),
+          listing('interrupted', 'model'),
+          listing('errors', 'other'),
+          api.recordings(100, undefined, 'current', project),
+          api.exposures(since, undefined, project).then((page) => page.exposures),
+          live.read(fetcher, '15m', project),
+        ]);
+      return {
+        now,
+        usage,
+        previous,
+        failed,
+        stopped,
+        bookkeeping,
+        recordings: recordings.recordings,
+        exposures,
+        live: board.value,
+      };
+    },
+  );
 }
 
 export interface RecordingsData {
@@ -464,14 +471,16 @@ export function searchSnapshot(fetcher: typeof fetch, url: URL) {
   const api = new ManagementApi(fetcher);
   const q = (url.searchParams.get('q') ?? '').trim();
   const field = parseSearchField(url.searchParams.get('field'));
+  const project = url.searchParams.get('project') || null;
   const key = new URLSearchParams({ q, field: field ?? '' });
+  if (project) key.set('project', project);
   return Arrival.read(`/search?${key}`, async (): Promise<SearchData> => {
     if (!q) return { q, field, page: null, details: new Map(), recordings: [] };
-    const params = query<RawSearchQuery>({ q, limit: 50, field });
+    const params = query<RawSearchQuery>({ q, limit: 50, field, project });
     // The recordings only name the hits: without them, the hits still show.
     const [page, listing] = await Promise.all([
       api.search(params),
-      api.recordings(100).catch(() => ({ recordings: [] })),
+      api.recordings(100, undefined, 'current', project).catch(() => ({ recordings: [] })),
     ]);
     const details = await RecordingDetails.shared.read(
       api,
@@ -514,6 +523,8 @@ export class RecentCalls {
   static readonly overlapMs = 60_000;
 
   readonly #calls = new Map<CallId, CallView>();
+  /** The project the held calls are narrowed to; another starts afresh. */
+  #project: string | null = null;
   #last: number | null = null;
   #complete: number | null = null;
   /** The previous read came back full: what it could not hold is not read again. */
@@ -539,10 +550,19 @@ export class RecentCalls {
     api: ManagementApi,
     now: number,
     spanMs: number,
+    project: string | null = null,
   ): Promise<{ calls: CallView[]; complete: number }> {
+    if (project !== this.#project) {
+      this.#project = project;
+      this.#calls.clear();
+      this.#last = null;
+      this.#complete = null;
+    }
     const from = now - spanMs;
     const cutoff = this.cutoff(now, spanMs);
-    const open = api.calls(query<RawCallQuery>({ kind: 'model', status: 'active', limit: 100 }));
+    const open = api.calls(
+      query<RawCallQuery>({ kind: 'model', status: 'active', limit: 100, project }),
+    );
     const fresh: CallView[] = [];
     let after: PageCursor | null = null;
     let full = false;
@@ -553,6 +573,7 @@ export class RecentCalls {
           from_ms: cutoff,
           limit: RecentCalls.pageLimit,
           after,
+          project,
         }),
       );
       fresh.push(...listing.calls);
@@ -587,20 +608,34 @@ export class LiveReader {
   readonly #calls = new RecentCalls();
   readonly #turns = new Map<TurnId, { signature: string; turn: TurnActivity }>();
 
-  /** The Live page's read, handed over pending on a navigation in the browser (`Arrival`). */
-  arrive(fetcher: typeof fetch, window: LiveWindow): Promise<Arriving<LiveData>> {
-    return Arrival.hand(`live:${window}`, this.read(fetcher, window));
+  /** A board's snapshot key: its window, and its project when narrowed. */
+  static key(window: LiveWindow, project: string | null): string {
+    return project ? `live:${window}:${project}` : `live:${window}`;
+  }
+
+  /** The Live page's read, handed over pending on a navigation in the
+   * browser (`Arrival`); with `project`, only that project's. */
+  arrive(
+    fetcher: typeof fetch,
+    window: LiveWindow,
+    project: string | null = null,
+  ): Promise<Arriving<LiveData>> {
+    return Arrival.hand(LiveReader.key(window, project), this.read(fetcher, window, project));
   }
 
   /** The board's snapshot; the overview reads it whole, inside its own. */
-  read(fetcher: typeof fetch, window: LiveWindow): Promise<Snapshot<LiveData>> {
+  read(
+    fetcher: typeof fetch,
+    window: LiveWindow,
+    project: string | null = null,
+  ): Promise<Snapshot<LiveData>> {
     const api = new ManagementApi(fetcher);
     const spec = LivePlace.windows[window];
-    return readSnapshot(`live:${window}`, async (): Promise<LiveData> => {
+    return readSnapshot(LiveReader.key(window, project), async (): Promise<LiveData> => {
       const read = Date.now();
       const [recordings, held] = await Promise.all([
-        api.recordings(spec.recordings),
-        this.#calls.read(api, read, Math.max(spec.ms, Band.spanMs)),
+        api.recordings(spec.recordings, undefined, 'current', project),
+        this.#calls.read(api, read, Math.max(spec.ms, Band.spanMs), project),
       ]);
       const recent = held.calls;
       const calls = recent.filter(

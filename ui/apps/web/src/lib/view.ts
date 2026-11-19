@@ -207,11 +207,15 @@ export class Views {
     }
   }
 
-  /** Whether `tab` can be scoped to one project with `?project=`. */
+  /** Whether `tab` can be scoped to one project with `?project=`: every
+   * Inspect page. */
   static scoped(tab: Tab): boolean {
     switch (tab) {
       case 'traffic':
       case 'recordings':
+      case 'overview':
+      case 'live':
+      case 'search':
         return true;
       case 'projects':
       case 'project':
@@ -219,9 +223,6 @@ export class Views {
       case 'sessions':
       case 'work':
       case 'release':
-      case 'overview':
-      case 'live':
-      case 'search':
       case 'tools':
       case 'usage':
       case 'recorder':
