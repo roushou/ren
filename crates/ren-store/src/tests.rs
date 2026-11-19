@@ -2237,6 +2237,65 @@ mod conversation {
     }
 
     #[tokio::test]
+    async fn a_work_change_applies_only_to_the_state_it_moves_from() {
+        use ren_recorder::{
+            batch::{WorkFact, WorkRecord},
+            id::{SessionId, WorkItemId},
+            work::{Evidence, MarkedPage, PageTheme, WorkMark, WorkOrder, WorkStateKind},
+        };
+        let mut fixture = Fixture::new().await;
+        let item = WorkItemId::generate(fixture.ids.as_ref());
+        let session = SessionId::generate(fixture.ids.as_ref());
+        let order = WorkOrder {
+            page: MarkedPage {
+                path: "/".into(),
+                route: None,
+                title: "acme".into(),
+                width: 10,
+                height: 10,
+                theme: PageTheme::Light,
+                revision: None,
+            },
+            marks: vec![WorkMark {
+                selector: "main".into(),
+                text: String::new(),
+                source: None,
+                width: 1,
+                height: 1,
+                note: "Fix the title".into(),
+            }],
+            evidence: Evidence::default(),
+        };
+        let mut batch = Batch::default();
+        // Dismissed and landed, accepted at once: the landing comes second
+        // and must not undo the dismissal.
+        for fact in [
+            WorkFact::Queued {
+                order: Box::new(order),
+            },
+            WorkFact::Sent { session },
+            WorkFact::Dismissed,
+            WorkFact::Landed {
+                commit: "62e9e9e0000000000000000000000000000000ff".parse().unwrap(),
+            },
+            WorkFact::Previewed { preview: None },
+        ] {
+            batch.push(Op::Work(WorkRecord {
+                at: fixture.clock.now(),
+                item,
+                fact,
+            }));
+        }
+        fixture.store.commit(&batch).await.unwrap();
+        let stored = fixture.reader.work_item(item).await.unwrap().unwrap();
+        assert_eq!(
+            stored.state,
+            ren_protocol::label::Stored::Known(WorkStateKind::Dismissed)
+        );
+        assert_eq!(stored.landed, None);
+    }
+
+    #[tokio::test]
     async fn a_session_is_named_by_the_first_line_of_its_first_prompt() {
         use ren_recorder::{
             batch::{SessionFact, SessionRecord},

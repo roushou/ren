@@ -437,6 +437,64 @@ mod tests {
     }
 
     #[test]
+    fn a_fact_moves_from_exactly_the_states_its_event_does() {
+        use crate::batch::WorkFact;
+        let commit: ren_release::Commit = COMMIT.parse().unwrap();
+        let landed = WorkState::Landed {
+            session: session(1),
+            commit: commit.clone(),
+        };
+        let states = [
+            WorkState::Queued,
+            WorkState::Sent {
+                session: session(1),
+            },
+            landed.clone(),
+            landed
+                .apply(WorkEvent::Ship {
+                    revision: COMMIT.parse().unwrap(),
+                })
+                .unwrap(),
+            WorkState::Dismissed,
+        ];
+        let pairs = [
+            (
+                WorkEvent::Send {
+                    session: session(2),
+                },
+                WorkFact::Sent {
+                    session: session(2),
+                },
+            ),
+            (
+                WorkEvent::Land {
+                    commit: commit.clone(),
+                },
+                WorkFact::Landed { commit },
+            ),
+            (
+                WorkEvent::Ship {
+                    revision: COMMIT.parse().unwrap(),
+                },
+                WorkFact::Shipped {
+                    revision: COMMIT.parse().unwrap(),
+                },
+            ),
+            (WorkEvent::Dismiss, WorkFact::Dismissed),
+            (WorkEvent::Preview, WorkFact::Previewed { preview: None }),
+        ];
+        for (event, fact) in pairs {
+            for state in &states {
+                assert_eq!(
+                    state.apply(event.clone()).is_ok(),
+                    fact.from_states().contains(&state.kind()),
+                    "{fact:?} from {state:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_preview_is_an_http_origin() {
         use super::PreviewUrl;
         for text in [

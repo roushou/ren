@@ -15,7 +15,7 @@ use crate::{
     id::{AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, WorkItemId},
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     time::{Moment, UnixMillis},
-    work::{WorkOrder, WorkPreview},
+    work::{WorkOrder, WorkPreview, WorkStateKind},
 };
 use bytes::Bytes;
 use ren_depot::toolset::Generation;
@@ -395,6 +395,19 @@ pub enum WorkFact {
 }
 
 impl WorkFact {
+    /// The states the fact moves an item from: as `WorkState::apply` takes
+    /// its event. The store applies it only to an item still in one, so of
+    /// two changes accepted at once, the second does not undo the first.
+    /// A queued item is new: it moves from none.
+    pub fn from_states(&self) -> &'static [WorkStateKind] {
+        match self {
+            Self::Queued { .. } => &[],
+            Self::Sent { .. } | Self::Dismissed => &[WorkStateKind::Queued, WorkStateKind::Sent],
+            Self::Landed { .. } | Self::Previewed { .. } => &[WorkStateKind::Sent],
+            Self::Shipped { .. } => &[WorkStateKind::Landed],
+        }
+    }
+
     pub fn kind(&self) -> ObservationKind {
         match self {
             Self::Queued { .. } => ObservationKind::WorkQueued,

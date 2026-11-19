@@ -14,11 +14,22 @@ impl MetadataTx<'_> {
     pub(super) async fn work(&mut self, record: &WorkRecord) -> Result<Observation, StoreError> {
         let id = record.item.to_string();
         let at = SqlMillis::at(record.at.wall);
+        // Applied only to an item still in a state the fact moves from: of
+        // two changes accepted at once, the second does not undo the first.
+        let from = record
+            .fact
+            .from_states()
+            .iter()
+            .map(|state| format!("'{}'", state.label()))
+            .collect::<Vec<_>>()
+            .join(", ");
         let update = |state: WorkStateKind, column: Option<&'static str>| {
             let set = column.map_or_else(String::new, |column| format!(", {column} = ?"));
             (
                 state,
-                format!("UPDATE work_items SET state = ?, updated_at = ?{set} WHERE id = ?"),
+                format!(
+                    "UPDATE work_items SET state = ?, updated_at = ?{set} WHERE id = ? AND state IN ({from})"
+                ),
             )
         };
         match &record.fact {
@@ -67,9 +78,9 @@ impl MetadataTx<'_> {
                     .await?;
             }
             WorkFact::Previewed { preview } => {
-                sqlx::query(
-                    "UPDATE work_items SET preview_url = ?, preview_revision = ?, updated_at = ? WHERE id = ?",
-                )
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "UPDATE work_items SET preview_url = ?, preview_revision = ?, updated_at = ? WHERE id = ? AND state IN ({from})"
+                )))
                 .bind(preview.as_ref().map(|preview| preview.ui.to_string()))
                 .bind(preview.as_ref().map(|preview| preview.revision.to_string()))
                 .bind(at)
