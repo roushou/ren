@@ -205,7 +205,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   a checkout's commit, tree, and whether a remote holds it,
   `revision_files`, the files git rewrites for a new commit, and a
   `Revision`'s commit and files, `Git::commit_of`, `files_at`, and
-  `file_at`), and a folder's
+  `file_at`; worktrees made on a new `Branch` and removed only when clean,
+  `Git::add_worktree` and `remove_worktree`, a branch deleted only once
+  merged, `delete_merged`, and `commit_all`, as a fixed `Author`), and a folder's
   repository read from disk without it (`Git::repository`: its `HEAD`,
   through a linked worktree's `.git` file). It is the one place Ren reads or
   runs git, and the one `disallowed_methods` exemption for it. It performs
@@ -445,7 +447,14 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `AgentHost::spawn_in_terminal` when it needs a terminal, and a pasted
   address is opened with `AgentHost::open_local`. What a login prints is
   cleaned of every answer typed into it.
-  `src/purity.rs` keeps `run`, `process`, `journal`, `workdir`, `project`, `entries`, `files`,
+  A session started with `StartPlace::Worktree` works in a workspace of
+  its own (`workspace`, pure): a worktree of the repository named, made by
+  `AgentHost::make_worktree` in the worktrees folder as `<repo>-<slot>` on
+  `ren/<repo>-<slot>-<id>`, its slot (the lowest free) giving it 100 ports
+  and a data folder, which its runs are told as `REN_WORKSPACE*` beside the
+  operator's `workspace_env`; forgetting the session removes it
+  (`AgentHost::remove_worktree`) unless it holds changes not committed.
+  `src/purity.rs` keeps `run`, `process`, `journal`, `workdir`, `workspace`, `project`, `entries`, `files`,
   `session`, and `sign_in` free of runtime and I/O. The daemon constructs it when `[runs]`
   roots are configured, with `ProcessHost`; the gateway's control API serves it.
 - `crates/ren-gateway`: Ren's HTTP interface, with `Gateway` as its primary type.

@@ -135,16 +135,27 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      answered through it, and the turn completed and was recorded, with
      `run_detached` and `run_rejoined` around the restart. Stopping the run
      ended its unit and removed its folder.
-3. **Workspaces.** Not built.
-   - Every change gets a branch and worktree Ren makes from `main` and
-     removes after it merges or is dropped. Redline's `WorkPlace` choice
-     goes away: a brief always lands in its own worktree.
-   - Builds share a compiler cache, so a new worktree is not a cold build.
-   - Ren allocates each worktree's ports and data folders, so checks and
-     previews cannot collide.
-   - Merges go through a queue: each change is rebased on the tip, checked,
-     and squash-merged in turn. GitHub's merge queue on a protected `main`
-     is the first form.
+3. **Workspaces.** Built, but for the merge queue.
+   - A session can work in a workspace of its own (`workspace:
+     "worktree"`, `ren runs start --workspace worktree`): a worktree of
+     the repository named, in `<data>/worktrees/<repo>-<slot>`, on a new
+     branch `ren/<repo>-<slot>-<id>`. Deleting the session removes it,
+     unless it holds changes not committed, and deletes its branch only
+     once merged. Redline's briefs always start a session in one: the
+     `WorkPlace` guess is gone.
+   - Each workspace's slot, the lowest free, gives it 100 ports and a data
+     folder no other workspace holds, which its runs are told as
+     `REN_WORKSPACE`, `REN_WORKSPACE_PORTS`, and `REN_WORKSPACE_DATA`.
+   - Builds share a compiler cache: `sccache` is in the catalog, and
+     `[runs] workspace_env` gives every workspace's runs what the
+     operator declares (`RUSTC_WRAPPER = "sccache"`).
+   - Verified in the dev slot, whose projects are now repositories: a
+     workspace session ran in its own worktree and branch with its
+     variables, and deleting it removed the worktree, its data, and its
+     merged branch.
+   - Not built: merges through a queue. CI already runs on GitHub's
+     `merge_group` events; turning the queue on means protecting `main`,
+     which changes how changes land and is the operator's to decide.
 4. **Canary and promotion.** Not built.
    - Each merge to `main` is built once. The build is installed as canary
      on a fresh copy of production's latest backup.
@@ -208,6 +219,12 @@ things faster. Each phase is useful on its own.
   same pure machine, so no machine changed. A journal that falls 4096
   entries behind or fails is broken, and its run is drained like a bound
   one.
+- **Workspaces are found by where they are, not recorded.** A session's
+  folder in the worktrees folder, named `<repo>-<slot>`, is a workspace;
+  nothing new is stored, and a slot is free once its folder is gone.
+- **The compiler cache is the operator's to declare.** Ren knows no
+  language: it installs `sccache` like any utility and passes
+  `workspace_env` to workspaces' runs.
 - **The run host is `ren` itself.** A hidden `ren run-host` command, so it
   is built, installed, and upgraded with the daemon; a host started by an
   older build goes on running that build, which is why its frames keep
