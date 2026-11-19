@@ -15,6 +15,11 @@ title: string, order: WorkOrderBody,
  */
 state: string, 
 /**
+ * The project it is for; `None` when none was named, or from before
+ * projects.
+ */
+project: string | null, 
+/**
  * The session that took it up, once sent.
  */
 session: string | null, 

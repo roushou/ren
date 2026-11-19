@@ -15,6 +15,7 @@ use ren_protocol::{
     route::{Endpoint, Method},
 };
 use ren_recorder::capture::{AttemptTerminal, CallState, TerminalClass};
+use ren_recorder::project::ProjectName;
 use sqlx::{QueryBuilder, Sqlite};
 
 impl CallQuery {
@@ -56,6 +57,23 @@ impl CallQuery {
             purposes.push_bind(purpose.label());
         }
         sql.push(")))");
+    }
+
+    /// The condition a recording `s` meets when it is the conversation of a
+    /// run of a session working for `project`: the run's thread is its
+    /// native id.
+    pub(crate) fn push_project_recording(sql: &mut QueryBuilder<Sqlite>, project: &ProjectName) {
+        sql.push("s.native_id IN (SELECT r.thread FROM runs r JOIN operator_sessions o ON o.id = r.operator_session JOIN projects p ON p.id = o.project WHERE p.name = ")
+            .push_bind(project.as_str().to_owned())
+            .push(" AND r.thread IS NOT NULL)");
+    }
+
+    /// An `AND` clause for calls (aliased `c`) of `project`: those whose
+    /// recording is the conversation of a run of a session working for it.
+    pub(crate) fn push_project_calls(sql: &mut QueryBuilder<Sqlite>, project: &ProjectName) {
+        sql.push(" AND c.recording IN (SELECT s.id FROM recordings s WHERE ");
+        Self::push_project_recording(sql, project);
+        sql.push(")");
     }
 
     /// `calls`, `errors`, `input_tokens`, `output_tokens`, and
@@ -129,6 +147,9 @@ impl CallQuery {
         if let Some(recording) = filter.recording {
             sql.push(" AND c.recording = ")
                 .push_bind(recording.to_string());
+        }
+        if let Some(project) = &filter.project {
+            Self::push_project_calls(sql, project);
         }
         if let Some(client) = filter.client {
             Self::push_client(sql, client);

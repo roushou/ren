@@ -104,6 +104,13 @@ impl MetadataTx<'_> {
                     .execute(&mut *self.tx)
                     .await?;
             }
+            SessionFact::Assigned { project } => {
+                sqlx::query("UPDATE operator_sessions SET project = ? WHERE id = ?")
+                    .bind(project.map(|project| project.to_string()))
+                    .bind(record.session.to_string())
+                    .execute(&mut *self.tx)
+                    .await?;
+            }
             SessionFact::Archived | SessionFact::Unarchived => {
                 let archived = match record.fact {
                     SessionFact::Archived => Some(at),
@@ -114,7 +121,8 @@ impl MetadataTx<'_> {
                     | SessionFact::FolderChosen { .. }
                     | SessionFact::Attached { .. }
                     | SessionFact::Detached { .. }
-                    | SessionFact::AttachmentsSent { .. } => None,
+                    | SessionFact::AttachmentsSent { .. }
+                    | SessionFact::Assigned { .. } => None,
                 };
                 sqlx::query("UPDATE operator_sessions SET archived_at = ? WHERE id = ?")
                     .bind(archived)

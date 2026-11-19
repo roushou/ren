@@ -6,6 +6,7 @@ use ren_protocol::route::Provider;
 use ren_recorder::{
     caller::UserId,
     id::{CallId, RecordingId},
+    project::ProjectName,
     time::UnixMillis,
 };
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -248,6 +249,9 @@ impl TimeRange {
 pub struct CallFilter {
     /// Calls Ren grouped into this recording.
     pub recording: Option<RecordingId>,
+    /// Calls of the runs of the sessions working for the project of this
+    /// name: those in a recording whose conversation is such a run's thread.
+    pub project: Option<ProjectName>,
     /// Calls attributed to this harness by its own headers or metadata.
     pub client: Option<Harness>,
     /// Calls a named user made.

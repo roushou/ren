@@ -643,6 +643,14 @@ impl<H: AgentHost> SupervisorTask<H> {
     /// The folder a session works in: a folder inside the bounds, or a new
     /// scratch folder of its own.
     pub(super) async fn place(&self, place: StartPlace) -> Result<Workdir, StartError> {
+        // A registered project's repository is trusted; any other folder
+        // must lie inside the bounds.
+        let place_kind = match place {
+            StartPlace::Project(_) => PlaceKind::Registered,
+            StartPlace::Scratch | StartPlace::Folder(_) | StartPlace::Worktree(_) => {
+                PlaceKind::Bounded
+            }
+        };
         let requested = match place {
             StartPlace::Folder(dir) => dir.parse::<RequestedDir>().map_err(StartError::Workdir)?,
             StartPlace::Scratch => {
@@ -671,9 +679,17 @@ impl<H: AgentHost> SupervisorTask<H> {
                     .parse::<RequestedDir>()
                     .map_err(StartError::Workdir)?
             }
-            StartPlace::Worktree(repo) => {
-                let repo =
-                    self.confirm(&repo.parse::<RequestedDir>().map_err(StartError::Workdir)?)?;
+            StartPlace::Worktree(repo) | StartPlace::Project(repo) => {
+                let requested = repo.parse::<RequestedDir>().map_err(StartError::Workdir)?;
+                let repo = match place_kind {
+                    PlaceKind::Bounded => self.confirm(&requested)?,
+                    PlaceKind::Registered => Workdir::registered(
+                        self.host
+                            .resolve(requested.as_path())
+                            .map_err(StartError::Resolve)?,
+                    )
+                    .map_err(StartError::Workdir)?,
+                };
                 let root = self
                     .bounds
                     .worktrees()
@@ -747,4 +763,11 @@ impl<H: AgentHost> SupervisorTask<H> {
         served.sessions.insert(session, serving);
         started
     }
+}
+
+/// Whether a place's repository must lie inside the bounds.
+#[derive(Debug, Clone, Copy)]
+enum PlaceKind {
+    Bounded,
+    Registered,
 }

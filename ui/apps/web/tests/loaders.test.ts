@@ -60,13 +60,13 @@ test('gateway reads health, storage, and the release together and accept degrade
     switch (path(input)) {
       case '/health':
         return versioned(healthBody({ storage_errors: 1 }), { status: 503 });
-      case '/api/release':
-        return versioned({ release: null });
+      case '/api/projects/ren/release':
+        return versioned({ release: null, shots: [], promotion_requested: null });
       default:
         return versioned(storageFixture());
     }
   });
-  assert.deepEqual(calls, ['/health', '/api/storage', '/api/release']);
+  assert.deepEqual(calls, ['/health', '/api/storage', '/api/projects/ren/release']);
   assert.ok(result.value);
   assert.equal(result.value.health.status, 'degraded');
   assert.equal(result.value.health.recorder.storage_errors, 1);
@@ -74,12 +74,12 @@ test('gateway reads health, storage, and the release together and accept degrade
   assert.equal(result.value.release, null);
 });
 
-test('a gateway without the release route still gives a snapshot', async () => {
+test('a gateway without the projects route still gives a snapshot', async () => {
   const result = await gatewaySnapshot(async (input) => {
     switch (path(input)) {
       case '/health':
         return versioned(healthBody());
-      case '/api/release':
+      case '/api/projects':
         return versioned({ error: 'not_found' }, { status: 404 });
       default:
         return versioned(storageFixture());

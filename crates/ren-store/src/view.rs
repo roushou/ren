@@ -32,9 +32,10 @@ use ren_recorder::{
         ExitParts, ProcessExit, RunEnd, TerminalCause,
     },
     id::{
-        AttachmentId, AttemptId, CallId, ChannelId, RecordingId, RunId, SessionId, TurnId,
-        WorkItemId,
+        AttachmentId, AttemptId, CallId, ChannelId, ProjectId, RecordingId, RunId, SessionId,
+        TurnId, WorkItemId,
     },
+    project::{Factory, ProjectName, RepositoryPath},
     time::UnixMillis,
     work::{WorkOrder, WorkPreview, WorkState, WorkStateKind},
 };
@@ -809,6 +810,9 @@ pub struct SessionView {
     pub id: SessionId,
     pub harness: Stored<Harness>,
     pub workdir: String,
+    /// The project it works for; `None` outside every project, or from
+    /// before projects.
+    pub project: Option<ProjectId>,
     pub created_at: UnixMillis,
     /// The settings its next turn runs on; `None` is the client's own.
     pub model: Option<String>,
@@ -832,7 +836,7 @@ impl SessionView {
     pub(super) fn select() -> String {
         let turn_started = DriveEventKind::TurnStarted.label();
         format!(
-            "SELECT id, harness, workdir, created_at, model, effort, approvals, archived_at, (SELECT MIN(e.at) FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = '{turn_started}') AS first_turn_at, (SELECT e.prompt FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.prompt IS NOT NULL ORDER BY e.at, r.started_at, e.seq LIMIT 1) AS first_prompt FROM operator_sessions"
+            "SELECT id, harness, workdir, project, created_at, model, effort, approvals, archived_at, (SELECT MIN(e.at) FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.kind = '{turn_started}') AS first_turn_at, (SELECT e.prompt FROM run_entries e JOIN runs r ON r.id = e.run WHERE r.operator_session = operator_sessions.id AND e.prompt IS NOT NULL ORDER BY e.at, r.started_at, e.seq LIMIT 1) AS first_prompt FROM operator_sessions"
         )
     }
 
@@ -846,6 +850,7 @@ impl SessionView {
             id: row.id("id")?,
             harness: row.label("harness")?,
             workdir: row.text("workdir")?.ok_or(StoreError::Corrupt("session"))?,
+            project: row.optional_id("project")?,
             created_at: row.time("created_at")?,
             model: row.text("model")?,
             effort: row.optional_label("effort")?,
@@ -1052,6 +1057,81 @@ mod tests {
     }
 }
 
+/// One registered project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectView {
+    pub id: ProjectId,
+    pub name: ProjectName,
+    pub repository: RepositoryPath,
+    pub factory: Stored<Factory>,
+    pub created_at: UnixMillis,
+    /// When it was archived, while it is.
+    pub archived_at: Option<UnixMillis>,
+}
+
+impl ProjectView {
+    pub(super) const SELECT: &'static str =
+        "SELECT id, name, repository, factory, created_at, archived_at FROM projects";
+
+    pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
+        let row = Columns(row);
+        let corrupt = || StoreError::Corrupt("project");
+        Ok(Self {
+            id: row.id("id")?,
+            name: row
+                .text("name")?
+                .ok_or_else(corrupt)?
+                .parse()
+                .map_err(|_| corrupt())?,
+            repository: row
+                .text("repository")?
+                .ok_or_else(corrupt)?
+                .parse()
+                .map_err(|_| corrupt())?,
+            factory: row.label("factory")?,
+            created_at: row.time("created_at")?,
+            archived_at: row.optional_time("archived_at")?,
+        })
+    }
+}
+
+/// What is under way for one project: its work items by state, and its
+/// sessions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectActivity {
+    pub work: WorkCounts,
+    /// Its sessions that are not archived.
+    pub sessions: u64,
+    /// Its runs that have not ended: starting, working, or idle.
+    pub running: u64,
+}
+
+/// Work items counted by state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkCounts {
+    pub queued: u64,
+    pub sent: u64,
+    pub landed: u64,
+    pub shipped: u64,
+    pub dismissed: u64,
+    /// In a state this build does not know.
+    pub other: u64,
+}
+
+impl WorkCounts {
+    pub(super) fn add(&mut self, state: &Stored<WorkStateKind>, count: u64) {
+        let slot = match state {
+            Stored::Known(WorkStateKind::Queued) => &mut self.queued,
+            Stored::Known(WorkStateKind::Sent) => &mut self.sent,
+            Stored::Known(WorkStateKind::Landed) => &mut self.landed,
+            Stored::Known(WorkStateKind::Shipped) => &mut self.shipped,
+            Stored::Known(WorkStateKind::Dismissed) => &mut self.dismissed,
+            Stored::Unknown(_) => &mut self.other,
+        };
+        *slot += count;
+    }
+}
+
 /// One work item, as recorded: what was marked, and where it stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkItemView {
@@ -1061,6 +1141,9 @@ pub struct WorkItemView {
     pub title: String,
     pub order: WorkOrder,
     pub state: Stored<WorkStateKind>,
+    /// The project it is for; `None` when none was named, or from before
+    /// projects.
+    pub project: Option<ProjectId>,
     /// The session that took it up, once sent.
     pub session: Option<SessionId>,
     /// The commit its change landed on `main` as.
@@ -1072,7 +1155,7 @@ pub struct WorkItemView {
 }
 
 impl WorkItemView {
-    pub(super) const SELECT: &'static str = "SELECT id, created_at, updated_at, title, work_order, state, operator_session, landed_commit, shipped_revision, preview_url, preview_revision FROM work_items";
+    pub(super) const SELECT: &'static str = "SELECT id, created_at, updated_at, title, work_order, state, project, operator_session, landed_commit, shipped_revision, preview_url, preview_revision FROM work_items";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -1085,6 +1168,7 @@ impl WorkItemView {
             title: row.text("title")?.ok_or_else(corrupt)?,
             order: serde_json::from_str(&order)?,
             state: row.label("state")?,
+            project: row.optional_id("project")?,
             session: row.optional_id("operator_session")?,
             landed: row
                 .text("landed_commit")?

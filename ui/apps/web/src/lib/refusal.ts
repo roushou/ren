@@ -195,6 +195,12 @@ export class Refusals {
         return 'That work item is past this step already.';
       case 'not_promotable':
         return "That is not the canary's build, or it did not pass its checks.";
+      case 'invalid_project':
+        return 'A project needs a lowercase name, an absolute repository path, and a factory.';
+      case 'project_taken':
+        return 'Another project already has that name or that repository.';
+      case 'project_mismatch':
+        return 'That session works for another project than the work item is for.';
       default:
         return `Refused: ${unrecognised(code)}.`;
     }

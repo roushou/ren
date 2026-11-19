@@ -132,7 +132,9 @@ loopback or behind private Tailscale access, like the daemon.
 
 ## Sessions
 
-The Sessions view (`/sessions`) starts and drives sessions (Codex, Claude Code, Pi, or OpenCode in a folder
+A project's Sessions page (`/projects/<name>/sessions`) starts and drives its
+sessions, and Scratch (`/scratch`) those that work for no project (Codex,
+Claude Code, Pi, or OpenCode in a folder
 under the daemon's `[runs]` roots; see [sessions](../docs/api.md#sessions)): a sidebar of
 folders and their sessions, the conversation (its recorded turns, then what
 streams in), its approvals with what each asks, and a prompt box whose bar holds

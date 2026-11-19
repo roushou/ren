@@ -1,13 +1,15 @@
 //! The single-record slots: an operator action, an archive or delete of
-//! history, and a session's facts, each reserved before it is applied.
+//! history, and a session's, work item's, or project's facts, each reserved
+//! before it is applied.
 
 use crate::item::{Item, Shared};
 use crate::{
     batch::{
-        HistoryChange, HistoryEdit, HistorySubject, OperatorAction, Recorded, SessionFact,
-        SessionRecord, WorkFact, WorkRecord,
+        HistoryChange, HistoryEdit, HistorySubject, OperatorAction, ProjectFact, ProjectRecord,
+        Recorded, SessionFact, SessionRecord, WorkFact, WorkRecord,
     },
-    id::{SessionId, WorkItemId},
+    id::{ProjectId, SessionId, WorkItemId},
+    project::ProjectRegistration,
     work::WorkOrder,
 };
 use std::sync::Arc;
@@ -141,13 +143,15 @@ impl WorkSlot {
         })
     }
 
-    /// Queue `order` as a new work item, and return its id.
-    pub fn queue(self, order: WorkOrder) -> WorkItemId {
+    /// Queue `order` as a new work item for `project`, if one is named,
+    /// and return its id.
+    pub fn queue(self, order: WorkOrder, project: Option<ProjectId>) -> WorkItemId {
         let item = WorkItemId::generate(self.shared.ids.as_ref());
         self.record(
             item,
             WorkFact::Queued {
                 order: Box::new(order),
+                project,
             },
         );
         item
@@ -159,6 +163,43 @@ impl WorkSlot {
             record: WorkRecord {
                 at: self.shared.clock.now(),
                 item,
+                fact,
+            },
+            _slot: self.permit,
+        });
+    }
+}
+
+/// A reserved slot for one fact about a project, recorded when it is used.
+pub struct ProjectSlot {
+    shared: Arc<Shared>,
+    slot: OwnedPermit<Item>,
+    permit: OwnedSemaphorePermit,
+}
+
+impl ProjectSlot {
+    pub(crate) fn reserve(shared: Arc<Shared>) -> Option<Self> {
+        let (slot, permit) = shared.reserve_close()?;
+        Some(Self {
+            shared,
+            slot,
+            permit,
+        })
+    }
+
+    /// Register `registration` as a new project, and return its id.
+    pub fn register(self, registration: ProjectRegistration) -> ProjectId {
+        let project = ProjectId::generate(self.shared.ids.as_ref());
+        self.record(project, ProjectFact::Registered { registration });
+        project
+    }
+
+    /// Record `fact` about `project`, after everything queued before.
+    pub fn record(self, project: ProjectId, fact: ProjectFact) {
+        self.slot.send(Item::Project {
+            record: ProjectRecord {
+                at: self.shared.clock.now(),
+                project,
                 fact,
             },
             _slot: self.permit,

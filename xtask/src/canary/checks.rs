@@ -147,7 +147,7 @@ impl ReadSweep {
         "/api/exposures",
         "/api/storage",
         "/api/metrics",
-        "/api/release",
+        "/api/projects",
         "/api/work?limit=5",
         "/api/work?limit=5&shelf=archived",
     ];
@@ -249,7 +249,7 @@ mod tests {
             ReadRequest::Turn(_) => "/api/turns/{turn}",
             ReadRequest::CallActivity(_) => "/api/calls/{call}/activity",
             ReadRequest::Report(_) => "/api/recordings/{recording}/report",
-            ReadRequest::Usage(_) => "/api/usage",
+            ReadRequest::Usage { .. } => "/api/usage",
             ReadRequest::Search(_) => "/api/search?",
             ReadRequest::Exposures(_) => "/api/exposures",
             ReadRequest::Runs { .. } => "/api/runs?",

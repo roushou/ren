@@ -33,7 +33,7 @@ use ren_supervisor::{
     PathKind, ProcessExit, RunCommand, RunRefused, RunState, RunTools, RunUpdate, StartError,
     Supervisor, SupervisorOptions, Tenure, WalkLimits, Workdir,
 };
-use ren_supervisor::{ProjectGit, Scratch, Workspace};
+use ren_supervisor::{PlaceGit, Scratch, Workspace};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -359,7 +359,8 @@ impl AgentHost for FakeHost {
                 if ["/work", "/scratch", "/home/op/.config"]
                     .iter()
                     .any(|bound| path.starts_with(bound))
-                    || path == "/elsewhere" =>
+                    || path == "/elsewhere"
+                    || path == "/elsewhere/acme" =>
             {
                 Ok(path.into())
             }
@@ -402,17 +403,17 @@ impl AgentHost for FakeHost {
                     .iter()
                     .filter_map(|(folder, _)| Some(folder.file_name()?.to_str()?.to_owned()))
                     .collect(),
-                git: ProjectGit::None,
+                git: PlaceGit::None,
             });
         }
         Ok(match dir.to_str() {
             Some("/work") => Look {
                 folders: vec!["acme".into(), "notes".into()],
-                git: ProjectGit::None,
+                git: PlaceGit::None,
             },
             Some("/work/acme") => Look {
                 folders: vec!["src".into()],
-                git: ProjectGit::Branch {
+                git: PlaceGit::Branch {
                     name: "main".into(),
                 },
             },
@@ -939,7 +940,12 @@ impl Supervised {
             ren_store::query::Shelf::Current,
             ren_store::query::Shelf::Archived,
         ] {
-            sessions.extend(reader.sessions(PageLimit::DEFAULT, shelf).await.unwrap());
+            sessions.extend(
+                reader
+                    .sessions(PageLimit::DEFAULT, shelf, None)
+                    .await
+                    .unwrap(),
+            );
         }
         reader.close().await;
         sessions
@@ -957,7 +963,7 @@ impl Supervised {
             .unwrap();
         let reader = Reader::open(self.dir.path(), 1).await.unwrap();
         let runs = reader
-            .runs(PageLimit::DEFAULT, ren_store::query::Shelf::Current)
+            .runs(PageLimit::DEFAULT, ren_store::query::Shelf::Current, None)
             .await
             .unwrap();
         reader.close().await;
@@ -1485,11 +1491,11 @@ async fn an_agent_that_never_reads_its_stdin_holds_up_no_other_session() {
 #[tokio::test]
 async fn projects_are_the_repositories_and_plain_folders_under_the_roots() {
     let supervised = supervise(FakeHost::new(Script::Codex)).await;
-    let places = supervised.supervisor.projects().await.unwrap();
+    let places = supervised.supervisor.places().await.unwrap();
     // The scratch folder runs get theirs in comes with them.
     assert_eq!(places.scratch.as_deref(), Some("/scratch"));
     let listed: Vec<(&str, &str)> = places
-        .projects
+        .places
         .iter()
         .map(|project| (project.name.as_str(), project.path.as_str()))
         .collect();
@@ -2533,5 +2539,51 @@ async fn each_workspace_session_works_in_its_own_worktree_and_slot() {
     assert_eq!(
         worktrees.lock().unwrap()[1].0,
         PathBuf::from("/worktrees/acme-1")
+    );
+}
+
+/// A registered project's repository gets a workspace though it lies
+/// outside every root; the same folder asked for as a plain worktree does
+/// not.
+#[tokio::test]
+async fn a_registered_project_gets_a_workspace_outside_the_roots() {
+    let host = FakeHost::new(Script::Codex);
+    let worktrees = host.worktrees.clone();
+    let supervised = supervise(host).await;
+    let supervisor = &supervised.supervisor;
+    let create = |place| ren_supervisor::Create {
+        harness: Harness::Codex,
+        place,
+        settings: ren_harness::settings::RunSettings::default(),
+        resume: None,
+    };
+    let refused = start(
+        supervisor,
+        (
+            create(ren_supervisor::StartPlace::Worktree(
+                "/elsewhere/acme".into(),
+            )),
+            None,
+        ),
+    )
+    .await;
+    assert!(refused.is_err());
+    start(
+        supervisor,
+        (
+            create(ren_supervisor::StartPlace::Project(
+                "/elsewhere/acme".into(),
+            )),
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        *worktrees.lock().unwrap(),
+        [(
+            PathBuf::from("/worktrees/acme-1"),
+            PathBuf::from("/elsewhere/acme")
+        )]
     );
 }

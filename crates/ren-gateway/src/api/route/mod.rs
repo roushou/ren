@@ -50,11 +50,16 @@ impl ApiRead {
                 format!("/api/calls/{call}/activity"),
                 QueryParams::default(),
             ),
-            ReadRequest::Recordings { limit, shelf } => (
+            ReadRequest::Recordings {
+                limit,
+                shelf,
+                project,
+            } => (
                 "/api/recordings".to_owned(),
                 QueryParams::default()
                     .with("limit", limit.get())
-                    .shelf(*shelf),
+                    .shelf(*shelf)
+                    .opt("project", project.as_ref()),
             ),
             ReadRequest::RecordingCalls {
                 recording,
@@ -75,9 +80,11 @@ impl ApiRead {
                 QueryParams::default(),
             ),
             ReadRequest::Turn(turn) => (format!("/api/turns/{turn}"), QueryParams::default()),
-            ReadRequest::Usage(range) => (
+            ReadRequest::Usage { range, project } => (
                 "/api/usage".to_owned(),
-                QueryParams::default().range(*range),
+                QueryParams::default()
+                    .range(*range)
+                    .opt("project", project.as_ref()),
             ),
             ReadRequest::Search(query) => (
                 "/api/search".to_owned(),
@@ -85,6 +92,7 @@ impl ApiRead {
                     .with("q", &query.terms)
                     .with("limit", query.limit.get())
                     .opt("recording", query.recording)
+                    .opt("project", query.project.as_ref())
                     .opt("client", query.client.map(|client| client.label()))
                     .opt("field", query.field.map(|field| field.label()))
                     .range(query.time),
@@ -94,24 +102,35 @@ impl ApiRead {
                 QueryParams::default()
                     .with("limit", query.limit.get())
                     .opt("recording", query.recording)
+                    .opt("project", query.project.as_ref())
                     .range(query.time),
             ),
-            ReadRequest::Runs { limit, shelf } => (
+            ReadRequest::Runs {
+                limit,
+                shelf,
+                project,
+            } => (
                 "/api/runs".to_owned(),
                 QueryParams::default()
                     .with("limit", limit.get())
-                    .shelf(*shelf),
+                    .shelf(*shelf)
+                    .opt("project", project.as_ref()),
             ),
             ReadRequest::Run(run) => (format!("/api/runs/{run}"), QueryParams::default()),
             ReadRequest::Conversation(run) => (
                 format!("/api/runs/{run}/conversation"),
                 QueryParams::default(),
             ),
-            ReadRequest::WorkItems { limit, shelf } => (
+            ReadRequest::WorkItems {
+                limit,
+                shelf,
+                project,
+            } => (
                 "/api/work".to_owned(),
                 QueryParams::default()
                     .with("limit", limit.get())
-                    .shelf(*shelf),
+                    .shelf(*shelf)
+                    .opt("project", project.as_ref()),
             ),
             ReadRequest::WorkItem(item) => (format!("/api/work/{item}"), QueryParams::default()),
         };
@@ -137,8 +156,12 @@ impl ApiRead {
             ["calls", call] => ReadRequest::Call(Self::id(call)?),
             ["calls", call, "activity"] => ReadRequest::CallActivity(Self::id(call)?),
             ["recordings"] => {
-                let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
-                ReadRequest::Recordings { limit, shelf }
+                let (limit, shelf, project) = Self::query::<RawShelfQuery>(uri)?.parse()?;
+                ReadRequest::Recordings {
+                    limit,
+                    shelf,
+                    project,
+                }
             }
             ["recordings", recording, "calls"] => {
                 let page = Self::query::<RawPageQuery>(uri)?;
@@ -161,7 +184,8 @@ impl ApiRead {
             ["recordings", recording, "report"] => ReadRequest::Report(Self::id(recording)?),
             ["turns", turn] => ReadRequest::Turn(Self::id(turn)?),
             ["usage"] => {
-                ReadRequest::Usage(TimeRange::try_from(Self::query::<RawUsageQuery>(uri)?)?)
+                let (range, project) = Self::query::<RawUsageQuery>(uri)?.parse()?;
+                ReadRequest::Usage { range, project }
             }
             ["search"] => {
                 ReadRequest::Search(SearchQuery::try_from(Self::query::<RawSearchQuery>(uri)?)?)
@@ -171,14 +195,22 @@ impl ApiRead {
                 ReadRequest::Exposures(ExposureQuery::try_from(raw)?)
             }
             ["runs"] => {
-                let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
-                ReadRequest::Runs { limit, shelf }
+                let (limit, shelf, project) = Self::query::<RawShelfQuery>(uri)?.parse()?;
+                ReadRequest::Runs {
+                    limit,
+                    shelf,
+                    project,
+                }
             }
             ["runs", run] => ReadRequest::Run(Self::id(run)?),
             ["runs", run, "conversation"] => ReadRequest::Conversation(Self::id(run)?),
             ["work"] => {
-                let (limit, shelf) = Self::query::<RawShelfQuery>(uri)?.parse()?;
-                ReadRequest::WorkItems { limit, shelf }
+                let (limit, shelf, project) = Self::query::<RawShelfQuery>(uri)?.parse()?;
+                ReadRequest::WorkItems {
+                    limit,
+                    shelf,
+                    project,
+                }
             }
             ["work", item] => ReadRequest::WorkItem(Self::id(item)?),
             _ => return Err(ApiError::NotFound),
@@ -203,6 +235,7 @@ impl ApiRead {
             .with("limit", query.limit.get())
             .opt("after", query.after.as_ref())
             .opt("recording", filter.recording.as_ref())
+            .opt("project", filter.project.as_ref())
             .opt("client", filter.client.map(|client| client.label()))
             .opt("user", filter.user.as_ref())
             .opt("kind", filter.kind.map(|kind| kind.label()))

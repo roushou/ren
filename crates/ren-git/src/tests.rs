@@ -149,7 +149,7 @@ fn the_first_git_on_the_path_runs_and_failures_keep_their_exit() {
     let works = fake(
         dir.path(),
         "works",
-        "[ \"$*\" = 'init --quiet' ] && touch made",
+        "[ \"$*\" = 'init --quiet --initial-branch=main' ] && touch made",
     );
     let fails = fake(dir.path(), "fails", "echo 'no such thing' >&2; exit 3");
     let not_executable = dir.path().join("plain");
@@ -170,7 +170,7 @@ fn the_first_git_on_the_path_runs_and_failures_keep_their_exit() {
     ));
     assert_eq!(
         failed.to_string(),
-        "`git init --quiet` exited with code 3: no such thing"
+        "`git init --quiet --initial-branch=main` exited with code 3: no such thing"
     );
     assert!(Git::find(&[dir.path().join("none")]).is_none());
 

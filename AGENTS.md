@@ -220,7 +220,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   values name the `Place` a step runs for through a parsed `Template`
   (`{port}`, `{port+N}`, `{data}`, `{workspace}`; an unknown placeholder is
   refused as the contract is read, a port past the place's range as a step
-  expands). Sans-IO; `ren project` (`crates/ren-cli/src/commands/project.rs`,
+  expands). Sans-IO; `ren project` (`crates/ren-cli/src/commands/project/`,
   the one place the CLI runs a project's steps) runs its checks,
   previews a workspace of it, and runs its canary and promotion
   (`commands/project/canary.rs`: `ProjectFactory`, with its release in
@@ -424,10 +424,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   run's own git (`AgentHost::make_scratch` answers a `Scratch`, untracked and
   why when it could not be); all resolved
   by the host so links cannot escape; `files` ranks the paths of a run's folder for a prompt to
-  name (`FileListing`, walked by the host's `AgentHost::files`); `project` finds the places a run can
-  start in, each a `Project` of a `PlaceKind` (git repositories under the
+  name (`FileListing`, walked by the host's `AgentHost::files`); `place` finds the places a run can
+  start in, each a `Place` of a `PlaceKind` (git repositories under the
   roots, not looked inside; other places' folders; earlier scratch
-  folders, each with its `ProjectGit`, which the host reads); `models` lists each client's models through a short listing
+  folders, each with its `PlaceGit`, which the host reads); `models` lists each client's models through a short listing
   process and keeps the answer (`Supervisor::models`); `Client` and
   `ClientStatus` (`client`) say whether a run can start
   with each client here; `AgentHost` (`host`) is the port for resolving paths,
@@ -499,7 +499,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   every configured timeout, 1 to 3600 seconds), the `Controls` that hold
   it with the running-call registry (`control`), the instance's
   environment that `/health` reports beside its `ren_release::Build`
-  (`build`), what the factory keeps for the Release view (`api::release`:
+  (`build`), what the factory keeps for the Release page (`api::release`:
   `ReleaseFolder`, Ren's release, the canary's shots, project releases, and
   the operator's promotion request), and
   pure call planning
@@ -645,14 +645,17 @@ dependencies under "Crates" below. Read the code for current module ownership.
   work item first), `src/lib/work.ts` work items (`WorkApi` through
   `/api/work` and `/control/work`, the order a pane makes, `PageEvidence`,
   what a page logged and read, kept by the layout, and `Work.batch`, one
-  brief for several items, which the Work view, `src/routes/work`, sends),
+  brief for several items, which a project's Work page,
+  `src/routes/projects/[name]/work`, sends),
   `Markdown.svelte` from `ui/packages/markdown` draws Markdown, and
-  `src/lib/server/runsStart.ts` makes the Sessions page's first reads on the UI
+  `src/lib/server/runsStart.ts` makes the session desk's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the
-  page renders as it will stay.
-  The dev slot's: with `REN_DEV_TRAFFIC_URL` set (loopback only), `/dev/traffic`
-  forwards the dev toolbar's three JSON requests to the slot's fake traffic
-  generator, never to the daemon.
+  page renders as it will stay. The desk (`src/lib/desk/SessionDesk.svelte`)
+  is one component held by a project's Sessions page
+  (`src/routes/projects/[name]/sessions`) and by Scratch (`src/routes/scratch`),
+  each with its scope (`SessionScope`: a project's sessions, or those of no
+  project). The old `/work` and `/sessions` addresses lead to where an item or
+  session now is (`src/lib/server/oldAddress.ts`).
 - `ui/packages/redline`: Redline, a Bun workspace package of the UI with
   `Redline` as its primary type (`src/redline.ts`: what a mark points at,
   and the Markdown brief its marks make, with the lines a host adds as a

@@ -387,6 +387,7 @@ test('the sidebar groups runs by folder, waiting and live ones first', () => {
   const live: RunSnapshot[] = [
     {
       run: run as never,
+      session: 'session' as never,
       harness: 'codex',
       workdir: '/work/acme',
       state: {
@@ -626,6 +627,7 @@ test('projects are grouped by the folder they are in, and the newest runs name t
 test('a folder lists its runs that have not ended before those that have', () => {
   const live: RunSnapshot = {
     run: run as never,
+    session: 'session' as never,
     harness: 'codex',
     workdir: '/work/acme',
     state: { phase: 'idle', thread: thread as never },
@@ -710,6 +712,7 @@ test('history edits and the archived shelf map to their routes and words', async
 test('an archived run the daemon still lists as ended is left out, a running one is not', () => {
   const ended: RunSnapshot = {
     run: run as never,
+    session: 'session' as never,
     harness: 'codex',
     workdir: '/work/acme',
     state: { phase: 'ended', end: 'stopped', exit: null },
@@ -717,6 +720,7 @@ test('an archived run the daemon still lists as ended is left out, a running one
   };
   const running: RunSnapshot = {
     run: other as never,
+    session: 'session' as never,
     harness: 'codex',
     workdir: '/work/acme',
     state: { phase: 'idle', thread: thread as never },
@@ -806,6 +810,7 @@ test('a client’s models read as listed, grouped by provider, the default known
 test('scratch runs share one group, whatever folder each got', () => {
   const live = (id: string, workdir: string): RunSnapshot => ({
     run: id as never,
+    session: 'session' as never,
     harness: 'codex',
     workdir,
     state: { phase: 'idle', thread: thread as never },
@@ -909,8 +914,8 @@ test('the page’s opening reads each stand on their own', async () => {
   const client = new RunsClient((async (url: string) => {
     if (url === '/control/runs/clients') return Response.json({ error: 'busy' }, { status: 503 });
     if (url === '/control/runs') return Response.json({ api_version: 1, runs: [] });
-    if (url === '/control/runs/projects') {
-      return Response.json({ api_version: 1, projects: [], scratch: '/s' });
+    if (url === '/control/runs/places') {
+      return Response.json({ api_version: 1, places: [], scratch: '/s' });
     }
     if (url === '/control/runs/clients/codex/models') {
       return Response.json({ api_version: 1, harness: 'codex', models: [] });
@@ -919,7 +924,7 @@ test('the page’s opening reads each stand on their own', async () => {
   }) as typeof fetch);
   const opening = await client.opening();
   assert.deepEqual(opening.live, { state: 'read', value: [] });
-  assert.deepEqual(opening.places, { state: 'read', value: { projects: [], scratch: '/s' } });
+  assert.deepEqual(opening.places, { state: 'read', value: { places: [], scratch: '/s' } });
   assert.equal(opening.clients.state, 'failed');
   assert.equal(opening.recorded.state, 'read');
 });

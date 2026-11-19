@@ -1,6 +1,6 @@
 //! Query strings as sent, and their parsing into typed store queries.
 
-use ren_recorder::time::UnixMillis;
+use ren_recorder::{project::ProjectName, time::UnixMillis};
 use ren_store::query::{
     CallFilter, CallQuery, Cursor, PageLimit, QueryError, SearchText, Shelf, TimeRange,
 };
@@ -33,6 +33,8 @@ pub(super) struct RawCallQuery {
     after: Option<String>,
     #[ts(as = "Option<String>")]
     recording: RawLabel,
+    /// A project's name: its sessions' runs' calls.
+    project: Option<String>,
     #[ts(as = "Option<String>")]
     client: RawLabel,
     #[ts(as = "Option<String>")]
@@ -61,7 +63,8 @@ pub(super) struct RawPageQuery {
     pub after: Option<String>,
 }
 
-/// `GET /api/recordings` and `/api/runs` parameters: a page of one shelf.
+/// `GET /api/recordings`, `/api/runs`, and `/api/work` parameters: a page
+/// of one shelf, of every project or of the one named.
 #[derive(Debug, Default, Deserialize, TS)]
 #[serde(deny_unknown_fields, default)]
 #[ts(export, optional_fields)]
@@ -69,34 +72,44 @@ pub(super) struct RawShelfQuery {
     limit: Option<u32>,
     #[ts(as = "Option<String>")]
     shelf: RawLabel,
+    project: Option<String>,
 }
 
 impl RawShelfQuery {
-    pub fn parse(self) -> Result<(PageLimit, Shelf), QueryError> {
-        Ok((
-            self.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?,
-            self.shelf.parse()?.unwrap_or_default(),
-        ))
+    pub fn parse(self) -> Result<(PageLimit, Shelf, Option<ProjectName>), QueryError> {
+        let limit = self.limit.map_or(Ok(PageLimit::DEFAULT), PageLimit::new)?;
+        let shelf = self.shelf.parse()?.unwrap_or_default();
+        let project = self
+            .project
+            .map(|name| name.parse().map_err(|_| QueryError::Filter))
+            .transpose()?;
+        Ok((limit, shelf, project))
     }
 }
 
-/// `GET /api/usage` parameters: an inclusive range of call start times.
+/// `GET /api/usage` parameters: an inclusive range of call start times,
+/// of every project or of the one named.
 #[derive(Debug, Default, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export, optional_fields)]
 pub(super) struct RawUsageQuery {
     from_ms: Option<u64>,
     until_ms: Option<u64>,
+    /// A project's name: its sessions' runs' calls.
+    project: Option<String>,
 }
 
-impl TryFrom<RawUsageQuery> for TimeRange {
-    type Error = QueryError;
-
-    fn try_from(raw: RawUsageQuery) -> Result<Self, Self::Error> {
-        TimeRange::new(
-            raw.from_ms.map(UnixMillis::from_millis),
-            raw.until_ms.map(UnixMillis::from_millis),
-        )
+impl RawUsageQuery {
+    pub fn parse(self) -> Result<(TimeRange, Option<ProjectName>), QueryError> {
+        let range = TimeRange::new(
+            self.from_ms.map(UnixMillis::from_millis),
+            self.until_ms.map(UnixMillis::from_millis),
+        )?;
+        let project = self
+            .project
+            .map(|name| name.parse().map_err(|_| QueryError::Filter))
+            .transpose()?;
+        Ok((range, project))
     }
 }
 
@@ -108,6 +121,8 @@ pub(super) struct RawSearchQuery {
     q: Option<String>,
     #[ts(as = "Option<String>")]
     recording: RawLabel,
+    /// A project's name: its sessions' runs' calls.
+    project: Option<String>,
     #[ts(as = "Option<String>")]
     client: RawLabel,
     #[ts(as = "Option<String>")]
@@ -128,6 +143,10 @@ impl TryFrom<RawSearchQuery> for SearchQuery {
                 .unwrap_or_default()
                 .parse::<SearchTerms>()?,
             recording: raw.recording.parse()?,
+            project: raw
+                .project
+                .map(|name| name.parse().map_err(|_| QueryError::Filter))
+                .transpose()?,
             client: raw.client.parse()?,
             field: raw.field.parse()?,
             time: TimeRange::new(
@@ -146,6 +165,8 @@ impl TryFrom<RawSearchQuery> for SearchQuery {
 pub(super) struct RawExposureQuery {
     #[ts(as = "Option<String>")]
     recording: RawLabel,
+    /// A project's name: its sessions' runs' calls.
+    project: Option<String>,
     from_ms: Option<u64>,
     until_ms: Option<u64>,
     limit: Option<u32>,
@@ -157,6 +178,10 @@ impl TryFrom<RawExposureQuery> for ExposureQuery {
     fn try_from(raw: RawExposureQuery) -> Result<Self, Self::Error> {
         Ok(ExposureQuery {
             recording: raw.recording.parse()?,
+            project: raw
+                .project
+                .map(|name| name.parse().map_err(|_| QueryError::Filter))
+                .transpose()?,
             time: TimeRange::new(
                 raw.from_ms.map(UnixMillis::from_millis),
                 raw.until_ms.map(UnixMillis::from_millis),
@@ -197,6 +222,10 @@ impl TryFrom<RawCallQuery> for CallQuery {
             after: raw.after.as_deref().map(Cursor::from_str).transpose()?,
             filter: CallFilter {
                 recording: raw.recording.parse()?,
+                project: raw
+                    .project
+                    .map(|name| name.parse().map_err(|_| QueryError::Filter))
+                    .transpose()?,
                 client: raw.client.parse()?,
                 user: raw.user.parse()?,
                 kind: raw.kind.parse()?,
@@ -217,9 +246,10 @@ impl TryFrom<RawCallQuery> for CallQuery {
 
 #[cfg(test)]
 mod tests {
-    use super::RawCallQuery;
+    use super::{RawCallQuery, RawExposureQuery, RawSearchQuery, RawUsageQuery};
     use ren_protocol::route::Provider;
     use ren_store::query::{CallQuery, QueryError, StatusFilter, ToolFilter};
+    use ren_store::search::{ExposureQuery, SearchQuery};
 
     fn raw(query: &str) -> Option<RawCallQuery> {
         let uri: http::Uri = format!("/api/calls?{query}").parse().unwrap();
@@ -260,5 +290,46 @@ mod tests {
             assert!(parse(invalid).is_err(), "{invalid}");
         }
         assert!(raw("extra=1").is_none());
+    }
+
+    fn query<T: serde::de::DeserializeOwned>(path: &str) -> T {
+        let uri: http::Uri = path.parse().unwrap();
+        axum::extract::Query::<T>::try_from_uri(&uri).unwrap().0
+    }
+
+    #[test]
+    fn usage_search_and_exposures_parse_a_project_name_once() {
+        let acme = Some("acme-web".parse().unwrap());
+        let (_, project) = query::<RawUsageQuery>("/api/usage?project=acme-web")
+            .parse()
+            .unwrap();
+        assert_eq!(project, acme);
+        let search = SearchQuery::try_from(query::<RawSearchQuery>(
+            "/api/search?q=migration&project=acme-web",
+        ))
+        .unwrap();
+        assert_eq!(search.project, acme);
+        let exposures =
+            ExposureQuery::try_from(query::<RawExposureQuery>("/api/exposures?project=acme-web"))
+                .unwrap();
+        assert_eq!(exposures.project, acme);
+        for invalid in ["Acme", "acme%20web", "-acme", ""] {
+            assert!(matches!(
+                query::<RawUsageQuery>(&format!("/api/usage?project={invalid}")).parse(),
+                Err(QueryError::Filter)
+            ));
+            assert!(matches!(
+                SearchQuery::try_from(query::<RawSearchQuery>(&format!(
+                    "/api/search?q=migration&project={invalid}"
+                ))),
+                Err(crate::api::ApiError::Query(QueryError::Filter))
+            ));
+            assert!(matches!(
+                ExposureQuery::try_from(query::<RawExposureQuery>(&format!(
+                    "/api/exposures?project={invalid}"
+                ))),
+                Err(QueryError::Filter)
+            ));
+        }
     }
 }

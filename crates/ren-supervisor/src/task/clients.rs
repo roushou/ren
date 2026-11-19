@@ -231,6 +231,16 @@ impl<H: AgentHost> SupervisorTask<H> {
             StartPlace::Folder(dir) | StartPlace::Worktree(dir) => {
                 self.confirm(&dir.parse::<RequestedDir>().map_err(StartError::Workdir)?)
             }
+            StartPlace::Project(dir) => Workdir::registered(
+                self.host
+                    .resolve(
+                        dir.parse::<RequestedDir>()
+                            .map_err(StartError::Workdir)?
+                            .as_path(),
+                    )
+                    .map_err(StartError::Resolve)?,
+            )
+            .map_err(StartError::Workdir),
             StartPlace::Scratch => {
                 let scratch = self.bounds.scratch().ok_or(StartError::NoScratch)?;
                 Workdir::confirm(&self.bounds, scratch.to_path_buf()).map_err(StartError::Workdir)

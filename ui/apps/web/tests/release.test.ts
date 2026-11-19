@@ -5,10 +5,15 @@ import { ManagementApi, type ReleaseView } from '../src/lib/api.ts';
 import { ReleaseLine, ReleasePage } from '../src/lib/release.ts';
 import type { WorkItem } from '../src/lib/work.ts';
 
-const pinned: typeof fetch = async () =>
-  Response.json(
-    JSON.parse(readFileSync(new URL('./fixtures/api/release.json', import.meta.url), 'utf8')),
-  );
+const fixture = (name: string) =>
+  JSON.parse(readFileSync(new URL(`./fixtures/api/${name}.json`, import.meta.url), 'utf8'));
+/** The pinned answers: Ren's project's release, and the project list. */
+const pinned: typeof fetch = async (input) => {
+  const path = new URL(String(input), 'http://ui.test').pathname;
+  return path === '/api/projects/ren/release'
+    ? Response.json(fixture('project_release'))
+    : Response.json(fixture('projects'));
+};
 
 test("the daemon's release decodes and reads as one status line", async () => {
   const release = await new ManagementApi(pinned).release();
@@ -89,4 +94,30 @@ test('the Release view promotes only a passed build production does not run, onc
   ];
   assert.equal(page.shipped(items).length, 1);
   assert.equal(ReleasePage.waiting(items).length, 1);
+});
+
+test("Ren's release is read as `ren`'s, else as the project registered as Ren", async () => {
+  const asked: string[] = [];
+  const renamed: typeof fetch = async (input) => {
+    const path = new URL(String(input), 'http://ui.test').pathname;
+    asked.push(path);
+    if (path === '/api/projects/ren/release') {
+      return Response.json({ api_version: 1, error: 'not_found' }, { status: 404 });
+    }
+    if (path === '/api/projects') {
+      const listed = fixture('projects');
+      for (const project of listed.projects) {
+        if (project.factory === 'ren') project.name = 'ren-main';
+      }
+      return Response.json(listed);
+    }
+    return Response.json(fixture('project_release'));
+  };
+  const release = await new ManagementApi(renamed).release();
+  assert.ok(release);
+  assert.deepEqual(asked, [
+    '/api/projects/ren/release',
+    '/api/projects',
+    '/api/projects/ren-main/release',
+  ]);
 });

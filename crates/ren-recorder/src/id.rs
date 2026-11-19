@@ -144,6 +144,10 @@ identity!(
     /// from queued to shipped.
     WorkItemId as "work_item"
 );
+identity!(
+    /// One project: a repository Ren builds, registered by the operator.
+    ProjectId as "project"
+);
 
 #[cfg(test)]
 mod tests {

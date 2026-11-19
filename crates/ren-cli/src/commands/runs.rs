@@ -41,9 +41,9 @@ enum RunsAction {
     /// List the daemon's sessions: each as stored, with its runs, and as
     /// served now.
     Sessions,
-    /// The projects a session can start in: the git repositories under the
+    /// The places a session can start in: the git repositories under the
     /// run roots, and each root's folders with none below them.
-    Projects,
+    Places,
     /// Start a session: a client in a folder under the daemon's run roots.
     Start(StartArgs),
     /// Send a prompt to a session: start a turn, starting its client again
@@ -155,6 +155,7 @@ impl RunsCmd {
                     .serve(&ReadRequest::Runs {
                         limit: args.limit,
                         shelf: args.shelf,
+                        project: None,
                     })
                     .await?;
                 println!("{}", serde_json::to_string_pretty(&answer)?);
@@ -166,7 +167,7 @@ impl RunsCmd {
             }
             RunsAction::Ls => ControlRequest::Runs,
             RunsAction::Sessions => ControlRequest::Sessions,
-            RunsAction::Projects => ControlRequest::Projects,
+            RunsAction::Places => ControlRequest::Places,
             RunsAction::Start(args) => {
                 let local = matches!(self.target.select(ctx)?, Target::Local);
                 let dir = Self::dir(args.dir.clone(), local)?;

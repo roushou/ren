@@ -1,25 +1,33 @@
 //! `/control/v1/work`: queuing work items and moving them on.
 //!
-//! - `POST /control/v1/work`: queue an order (`WorkOrderBody`); `201` with
-//!   the new item's id.
+//! - `POST /control/v1/work`: queue an order (`WorkOrderBody`) for the
+//!   project `?project=` names, or else for Ren itself (the one project
+//!   registered as Ren), since Redline marks Ren's own pages; `201` with
+//!   the new item's id. With no such project, it is for none.
 //! - `POST /control/v1/work/{item}/preview`: a preview of a sent item's
 //!   change (`{preview: {ui, revision}}`), or none any longer
 //!   (`{preview: null}`); its state stays as it is.
 //! - `POST /control/v1/work/{item}/send`, `land`, `ship`, or `dismiss`:
 //!   one transition of the item's state, checked against the state the
 //!   store holds by the pure `WorkState::apply`; `202` with the state it
-//!   moves to. A change its state does not take is `409` `work_state`.
+//!   moves to. A change its state does not take is `409` `work_state`; a
+//!   session that works for another project than the item's is `409`
+//!   `project_mismatch`.
 //!
 //! Each is recorded with the recorder, after everything queued before it.
 
 use super::{
     ControlApi, ControlRefusal,
+    projects::ProjectRoster,
     request::{LandWorkRequest, PreviewWorkRequest, SendWorkRequest, ShipWorkRequest},
 };
 use crate::api::read::work::{WorkOrderBody, WorkPreviewBody};
 use axum::{
     Json, Router,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{
+        Path, Query, State,
+        rejection::{JsonRejection, QueryRejection},
+    },
     response::{IntoResponse, Response},
     routing::post,
 };
@@ -34,6 +42,15 @@ use ren_store::Reader;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ts_rs::TS;
+
+/// Which project an order is for, as `?project=`.
+#[derive(Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export, optional_fields)]
+pub struct QueueRequest {
+    #[serde(default)]
+    pub project: Option<String>,
+}
 
 pub(super) struct WorkApi {
     pub control: Arc<ControlApi>,
@@ -65,13 +82,25 @@ impl WorkApi {
     async fn queue(
         State(api): State<Arc<Self>>,
         headers: HeaderMap,
+        query: Result<Query<QueueRequest>, QueryRejection>,
         body: Result<Json<WorkOrderBody>, JsonRejection>,
     ) -> Response {
         if let Err(refusal) = api.control.authorize(&headers) {
             return refusal.into_response();
         }
-        let Ok(Json(body)) = body else {
+        let (Ok(Query(query)), Ok(Json(body))) = (query, body) else {
             return ControlRefusal::InvalidRequest.into_response();
+        };
+        let roster = match ProjectRoster::read(&api.reader).await {
+            Ok(roster) => roster,
+            Err(refusal) => return refusal.into_response(),
+        };
+        let project = match query.project {
+            Some(name) => match roster.named(&name) {
+                Ok(project) => Some(project.id),
+                Err(refusal) => return refusal.into_response(),
+            },
+            None => roster.ren(),
         };
         let order = match WorkOrder::from(body).checked() {
             Ok(order) => order,
@@ -80,7 +109,7 @@ impl WorkApi {
         let Some(slot) = api.control.recorder.work_slot() else {
             return ControlRefusal::Unrecorded.into_response();
         };
-        let id = slot.queue(order);
+        let id = slot.queue(order, project);
         (
             StatusCode::CREATED,
             ControlApi::answer(WorkAnswer {
@@ -100,12 +129,31 @@ impl WorkApi {
         let Ok(Json(SendWorkRequest { session })) = body else {
             return ControlRefusal::InvalidRequest.into_response();
         };
-        match api.reader.session(session).await {
-            Ok(Some(_)) => {}
+        let works_for = match api.reader.session(session).await {
+            Ok(Some(view)) => view.project,
             Ok(None) => return ControlRefusal::NotFound.into_response(),
             Err(error) => {
                 tracing::warn!(%error, "session unreadable");
                 return ControlRefusal::Unreadable.into_response();
+            }
+        };
+        // An item for one project is not sent to a session working for
+        // another; either one unassigned says nothing. An item that cannot
+        // be read is refused, never sent unchecked.
+        if let Some(works_for) = works_for {
+            let Ok(id) = item.parse::<WorkItemId>() else {
+                return ControlRefusal::NotFound.into_response();
+            };
+            match api.reader.work_item(id).await {
+                Ok(Some(stored)) if stored.project.is_some_and(|project| project != works_for) => {
+                    return ControlRefusal::ProjectMismatch.into_response();
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => return ControlRefusal::NotFound.into_response(),
+                Err(error) => {
+                    tracing::warn!(%error, "work item unreadable");
+                    return ControlRefusal::Unreadable.into_response();
+                }
             }
         }
         api.change(

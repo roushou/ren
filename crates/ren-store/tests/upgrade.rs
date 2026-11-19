@@ -38,7 +38,7 @@ use ren_recorder::{
         AttemptPhase, AttemptTerminal, CallRejection, ChannelEnd, ProcessExit, RunEnd,
         TerminalCause, TerminalRecord,
     },
-    id::{AttachmentId, ChannelId, RunId, SequentialIds, SessionId},
+    id::{AttachmentId, ChannelId, ProjectId, RunId, SequentialIds, SessionId},
     retention::RetentionPolicy,
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     secrets::SecretScanner,
@@ -324,6 +324,7 @@ impl Reads {
             let ReadResponse::Recordings { recordings: listed } = serve(ReadRequest::Recordings {
                 limit: PageLimit::DEFAULT,
                 shelf,
+                project: None,
             })
             .await
             else {
@@ -352,10 +353,15 @@ impl Reads {
                 serve(ReadRequest::Turn(turn.turn)).await;
             }
         }
-        serve(ReadRequest::Usage(TimeRange::default())).await;
+        serve(ReadRequest::Usage {
+            range: TimeRange::default(),
+            project: None,
+        })
+        .await;
         let ReadResponse::Search(hits) = serve(ReadRequest::Search(SearchQuery {
             terms: "migration".parse().unwrap(),
             recording: None,
+            project: None,
             client: None,
             field: None,
             time: TimeRange::default(),
@@ -368,6 +374,7 @@ impl Reads {
         assert!(!hits.hits.is_empty(), "search");
         let ReadResponse::Exposures { exposures } = serve(ReadRequest::Exposures(ExposureQuery {
             recording: None,
+            project: None,
             time: TimeRange::default(),
             limit: PageLimit::DEFAULT,
         }))
@@ -381,6 +388,7 @@ impl Reads {
             let ReadResponse::Runs { runs: listed } = serve(ReadRequest::Runs {
                 limit: PageLimit::DEFAULT,
                 shelf,
+                project: None,
             })
             .await
             else {
@@ -395,7 +403,12 @@ impl Reads {
         }
         let mut sessions = Vec::new();
         for shelf in [Shelf::Current, Shelf::Archived] {
-            sessions.extend(reader.sessions(PageLimit::DEFAULT, shelf).await.unwrap());
+            sessions.extend(
+                reader
+                    .sessions(PageLimit::DEFAULT, shelf, None)
+                    .await
+                    .unwrap(),
+            );
         }
         assert!(!sessions.is_empty(), "sessions");
         let mut attachments = 0;
@@ -409,6 +422,7 @@ impl Reads {
             let ReadResponse::WorkItems { work } = serve(ReadRequest::WorkItems {
                 limit: PageLimit::DEFAULT,
                 shelf,
+                project: None,
             })
             .await
             else {
@@ -418,6 +432,43 @@ impl Reads {
                 serve(ReadRequest::WorkItem(item.id)).await;
                 assert!(item.state().is_some(), "work item state");
             }
+        }
+        // Stores before projects hold none. A project whose session ran
+        // sees that run's calls and recording.
+        let owned: Vec<_> = sessions
+            .iter()
+            .filter_map(|session| session.project)
+            .collect();
+        for project in reader.projects().await.unwrap() {
+            let named = reader.project_named(&project.name).await.unwrap();
+            assert_eq!(named.map(|named| named.id), Some(project.id));
+            assert!(project.factory.known().is_some(), "project factory");
+            let ReadResponse::Calls(page) = serve(ReadRequest::Calls(CallQuery {
+                filter: ren_store::query::CallFilter {
+                    project: Some(project.name.clone()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }))
+            .await
+            else {
+                panic!("a project's calls");
+            };
+            let ReadResponse::Recordings { recordings } = serve(ReadRequest::Recordings {
+                limit: PageLimit::DEFAULT,
+                shelf: Shelf::Current,
+                project: Some(project.name.clone()),
+            })
+            .await
+            else {
+                panic!("a project's recordings");
+            };
+            assert_eq!(
+                owned.contains(&project.id),
+                !page.calls.is_empty() && !recordings.is_empty(),
+                "{}'s calls and recordings",
+                project.name
+            );
         }
         reader
             .observations_after(0, PageLimit::DEFAULT)
@@ -430,7 +481,8 @@ impl Reads {
 /// What the fixture holds: a session whose run is driven through a turn,
 /// with the turn's model calls (one carrying a secret), a WebSocket call, a
 /// rate-limited call, an interrupted one, a refused one, an image attached,
-/// an operator action, and a second run archived.
+/// an operator action, a second run archived, work items, and two
+/// projects, one archived.
 struct Scenario {
     clock: Arc<ManualClock>,
     ids: Arc<SequentialIds>,
@@ -564,12 +616,42 @@ impl Scenario {
         tap.end(RunEnd::Stopped, Some(ProcessExit::Code(0)));
         self.archived_run(session);
         self.later(1_000);
-        self.work(session);
+        let ren = self.projects();
+        self.later(1_000);
+        self.work(session, ren);
+    }
+
+    /// Two projects registered, one of them archived; returns the one
+    /// that is not.
+    fn projects(&self) -> ProjectId {
+        use ren_recorder::{
+            batch::ProjectFact,
+            project::{Factory, ProjectRegistration},
+        };
+        let register = |name: &str, repository: &str, factory: Factory| {
+            self.recorder
+                .project_slot()
+                .unwrap()
+                .register(ProjectRegistration {
+                    name: name.parse().unwrap(),
+                    repository: repository.parse().unwrap(),
+                    factory,
+                })
+        };
+        let ren = register("ren", "/home/op/ren", Factory::Ren);
+        self.later(1_000);
+        let api = register("acme-api", "/home/op/dev/acme-api", Factory::Contract);
+        self.later(1_000);
+        self.recorder
+            .project_slot()
+            .unwrap()
+            .record(api, ProjectFact::Archived);
+        ren
     }
 
     /// Two work items: one carried from queued to shipped by the session,
     /// one dismissed.
-    fn work(&self, session: SessionId) {
+    fn work(&self, session: SessionId, ren: ProjectId) {
         use ren_recorder::batch::WorkFact;
         use ren_recorder::id::WorkItemId;
         use ren_recorder::work::{Evidence, MarkedPage, PageTheme, WorkMark, WorkOrder};
@@ -599,11 +681,17 @@ impl Scenario {
         let record = |item: WorkItemId, fact: WorkFact| {
             self.recorder.work_slot().unwrap().record(item, fact);
         };
+        // The session works for ren; the dismissed item names no project.
+        self.recorder
+            .session_slot()
+            .unwrap()
+            .record(session, SessionFact::Assigned { project: Some(ren) });
         let shipped = WorkItemId::generate(self.ids.as_ref());
         record(
             shipped,
             WorkFact::Queued {
                 order: Box::new(order("Show each recording's turn count")),
+                project: Some(ren),
             },
         );
         self.later(1_000);
@@ -640,6 +728,7 @@ impl Scenario {
             dismissed,
             WorkFact::Queued {
                 order: Box::new(order("Move the archive button")),
+                project: None,
             },
         );
         self.later(1_000);

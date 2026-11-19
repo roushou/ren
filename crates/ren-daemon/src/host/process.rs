@@ -9,8 +9,8 @@ use ren_git::{Git, GitError, Head, Repository};
 use ren_harness::{launch::LaunchPlan, pi::PiCache, sign_in::LocalRedirect};
 use ren_recorder::id::RunId;
 use ren_supervisor::{
-    AgentHost, AgentProcess, ClientStamp, FoundPath, HeldRun, KillSwitch, Look, PathKind,
-    ProcessExit, ProjectGit, RunTools, Scratch, Tenure, Untracked, WalkLimits, Workdir, Workspace,
+    AgentHost, AgentProcess, ClientStamp, FoundPath, HeldRun, KillSwitch, Look, PathKind, PlaceGit,
+    ProcessExit, RunTools, Scratch, Tenure, Untracked, WalkLimits, Workdir, Workspace,
 };
 use std::io;
 use std::path::{Path, PathBuf};
@@ -211,14 +211,14 @@ impl ProcessHost {
     }
 
     /// A folder's repository, as the supervisor serves it.
-    fn project_git(repository: Repository) -> ProjectGit {
+    fn place_git(repository: Repository) -> PlaceGit {
         match repository {
-            Repository::None => ProjectGit::None,
-            Repository::At(Head::Branch(name)) => ProjectGit::Branch { name },
-            Repository::At(Head::Detached(commit)) => ProjectGit::Detached {
+            Repository::None => PlaceGit::None,
+            Repository::At(Head::Branch(name)) => PlaceGit::Branch { name },
+            Repository::At(Head::Detached(commit)) => PlaceGit::Detached {
                 commit: commit.abbreviated(7).to_owned(),
             },
-            Repository::Unreadable => ProjectGit::Unreadable,
+            Repository::Unreadable => PlaceGit::Unreadable,
         }
     }
 
@@ -275,7 +275,7 @@ impl AgentHost for ProcessHost {
         }
         Ok(Look {
             folders,
-            git: Self::project_git(Git::repository(dir)),
+            git: Self::place_git(Git::repository(dir)),
         })
     }
 

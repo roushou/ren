@@ -145,7 +145,11 @@ impl Shown {
                 | ObservationKind::WorkLanded
                 | ObservationKind::WorkShipped
                 | ObservationKind::WorkDismissed
-                | ObservationKind::WorkPreviewed,
+                | ObservationKind::WorkPreviewed
+                | ObservationKind::ProjectRegistered
+                | ObservationKind::ProjectArchived
+                | ObservationKind::ProjectUnarchived
+                | ObservationKind::SessionAssigned,
                 _,
             ) => Self::Hidden,
         })

@@ -3,4 +3,8 @@
 /**
  * `GET /api/calls` parameters.
  */
-export type RawCallQuery = { limit?: number, after?: string, recording?: string, client?: string, user?: string, kind?: string, provider?: string, model?: string, tool?: string, q?: string, status?: string, has_tools?: string, from_ms?: number, until_ms?: number, };
+export type RawCallQuery = { limit?: number, after?: string, recording?: string, 
+/**
+ * A project's name: its sessions' runs' calls.
+ */
+project?: string, client?: string, user?: string, kind?: string, provider?: string, model?: string, tool?: string, q?: string, status?: string, has_tools?: string, from_ms?: number, until_ms?: number, };

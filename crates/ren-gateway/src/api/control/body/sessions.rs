@@ -8,14 +8,16 @@ use ren_harness::settings::ApprovalPolicy;
 use ren_harness::settings::Effort;
 use ren_protocol::label::Stored;
 use ren_recorder::id::AttachmentId;
+use ren_recorder::id::ProjectId;
 use ren_recorder::id::RunId;
 use ren_recorder::id::SessionId;
 use ren_recorder::time::UnixMillis;
 use ren_supervisor::ImageTaking;
 use ren_supervisor::PathKind;
 use ren_supervisor::SessionPhase;
+use ren_supervisor::Workspace;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
 /// A session as the supervisor serves it: what it is, where it stands,
@@ -92,6 +94,10 @@ pub struct SessionView {
     #[ts(as = "String")]
     pub harness: Stored<Harness>,
     pub workdir: String,
+    /// The project it works for; `None` outside every project, or from
+    /// before projects.
+    #[ts(as = "Option<String>")]
+    pub project: Option<ProjectId>,
     #[ts(as = "u64")]
     pub created_at: UnixMillis,
     /// The settings its next turn runs on; `None` is the client's own.
@@ -119,6 +125,7 @@ impl From<ren_store::view::SessionView> for SessionView {
             id,
             harness,
             workdir,
+            project,
             created_at,
             model,
             effort,
@@ -132,6 +139,7 @@ impl From<ren_store::view::SessionView> for SessionView {
             id,
             harness,
             workdir,
+            project,
             created_at,
             model,
             effort,
@@ -181,6 +189,59 @@ pub struct SessionBody {
     pub session: SessionId,
     pub stored: Option<SessionView>,
     pub served: Option<SessionSnapshot>,
+    /// The worktree it works in, when its folder is one Ren made; `None`
+    /// in any other folder.
+    pub worktree: Option<WorktreeBody>,
+}
+
+impl SessionBody {
+    /// The session as stored and as served, with the worktree its folder
+    /// is, read against `worktrees`, the folder Ren makes them in.
+    pub fn new(
+        session: SessionId,
+        stored: Option<SessionView>,
+        served: Option<SessionSnapshot>,
+        worktrees: Option<&Path>,
+    ) -> Self {
+        let workdir = served
+            .as_ref()
+            .map(|served| served.workdir.clone())
+            .or_else(|| stored.as_ref().map(|stored| PathBuf::from(&stored.workdir)));
+        let worktree = worktrees
+            .zip(workdir)
+            .and_then(|(root, workdir)| Workspace::of(root, &workdir))
+            .map(|workspace| WorktreeBody::from(&workspace));
+        Self {
+            session,
+            stored,
+            served,
+            worktree,
+        }
+    }
+}
+
+/// A worktree of a project's repository that Ren made for one session, on
+/// a branch of its own, with the ports and data folder its runs are given.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct WorktreeBody {
+    /// `<repo>-<slot>`, its folder's name.
+    pub name: String,
+    /// Its data folder, as its runs are told.
+    #[ts(as = "String")]
+    pub data: PathBuf,
+    /// Its ports, first and last, as its runs are told.
+    pub ports: (u16, u16),
+}
+
+impl From<&Workspace> for WorktreeBody {
+    fn from(workspace: &Workspace) -> Self {
+        Self {
+            name: workspace.name().to_owned(),
+            data: workspace.data(),
+            ports: workspace.ports(),
+        }
+    }
 }
 
 /// The sessions on one shelf.

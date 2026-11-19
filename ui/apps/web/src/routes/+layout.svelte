@@ -18,12 +18,11 @@
   import { ReleaseLine } from '#lib/release.ts';
   import { PageEvidence } from '#lib/work.ts';
   import CopyButton from '#lib/CopyButton.svelte';
-  import DevToolbar from '#lib/DevToolbar.svelte';
   import RedlineLayer from 'redline/RedlineLayer.svelte';
   import BriefingPanel from '#lib/BriefingPanel.svelte';
   import { RedlineDesk } from 'redline/desk';
   import { Recipients } from '#lib/briefing.svelte.ts';
-  import { Views } from '#lib/view.ts';
+  import { Views, type Destination } from '#lib/view.ts';
   import { Arrival } from '#lib/arrival.ts';
   import type { RecordingsData } from '#lib/loaders.ts';
   import '#lib/style.css';
@@ -73,9 +72,8 @@
   });
   const gateway = createSnapshot(() => data.gateway);
   const health = $derived(gateway.current.value?.health);
-  // The gateway says what kind of instance it is; the UI only shows it.
-  const development = $derived(health?.instance.environment === 'development');
-  /** The tag on the wordmark of an instance that is not production. */
+  /** The tag on the wordmark of an instance that is not production: the
+   * gateway says what kind of instance it is; the UI only shows it. */
   const marked = $derived.by(() => {
     switch (health?.instance.environment) {
       case 'development':
@@ -115,6 +113,28 @@
       : null,
   );
   const tab = $derived(Views.tab(target ?? view));
+  /** The header's place the page is in, and so the row of pages under it. */
+  const destination = $derived(Views.destination(tab));
+  /** The project whose pages the row shows, inside one. */
+  const inProject = $derived.by(() => {
+    const to = navigating.to ?? page;
+    return to.route.id?.startsWith('/projects/[name]') ? (to.params?.name ?? null) : null;
+  });
+  /** The project an Inspect page is narrowed to, when it can be. */
+  const scope = $derived(Views.scoped(tab) ? page.url.searchParams.get('project') : null);
+  /** The same page, for every project. */
+  const unscoped = $derived.by(() => {
+    const params = new URLSearchParams(page.url.search);
+    params.delete('project');
+    params.delete('after');
+    const search = params.toString();
+    return search ? `${page.url.pathname}?${search}` : page.url.pathname;
+  });
+  const destinationIcons = {
+    projects: 'branch',
+    inspect: 'logs',
+    host: 'storage',
+  } as const satisfies Record<Destination, IconName>;
   /** The page's reads, as each comes in, for the status line and the error banner. */
   const reads = createSettled(() => [
     page.data.overview,
@@ -196,6 +216,7 @@
   onMount(() => {
     for (const route of [
       '/',
+      '/overview',
       '/live',
       '/traffic',
       '/recordings',
@@ -205,7 +226,7 @@
       '/recordings/[id]/report',
       '/turns/[id]',
       '/search',
-      '/sessions',
+      '/scratch',
     ] as const)
       void preloadCode(route);
   });
@@ -233,86 +254,29 @@
       class="brand"
       class:marked
       href="/"
-      aria-label={marked ? `Ren overview, ${marked.tag} gateway` : 'Ren overview'}
+      aria-label={marked ? `Ren projects, ${marked.tag} gateway` : 'Ren projects'}
       title={marked?.what}
       ><span class="flaps" aria-hidden="true"
         ><span class="flap">R</span><span class="flap">E</span><span class="flap">N</span
         >{#if marked}<span class="instance-badge">{marked.tag}</span>{/if}</span
       ></a
     >
-    <nav class="workbench-tabs" aria-label="Workbench views" bind:this={tabs}>
-      <a
-        href="/"
-        data-sveltekit-preload-data="hover"
-        class:active={tab === 'overview'}
-        aria-current={tab === 'overview' ? 'page' : undefined}
-        ><Icon name="monitor" size={14} />Overview</a
-      >
-      <a
-        href="/live"
-        data-sveltekit-preload-data="hover"
-        class:active={tab === 'live'}
-        aria-current={tab === 'live' ? 'page' : undefined}><Icon name="pulse" size={14} />Live</a
-      >
-      <a
-        href="/sessions"
-        class:active={tab === 'sessions'}
-        aria-current={tab === 'sessions' ? 'page' : undefined}
-        ><Icon name="spark" size={14} />Sessions</a
-      >
-      <a
-        href="/traffic"
-        data-sveltekit-preload-data="hover"
-        class:active={tab === 'traffic'}
-        aria-current={tab === 'traffic' ? 'page' : undefined}
-        ><Icon name="logs" size={14} />Traffic</a
-      >
-      <a
-        href="/recordings"
-        data-sveltekit-preload-data="hover"
-        class:active={tab === 'recordings'}
-        aria-current={tab === 'recordings' ? 'page' : undefined}
-        ><Icon name="sessions" size={14} />Recordings</a
-      >
-      <a
-        href="/search"
-        data-sveltekit-preload-data="hover"
-        class:active={tab === 'search'}
-        aria-current={tab === 'search' ? 'page' : undefined}
-        ><Icon name="search" size={14} />Search</a
-      >
-      <a
-        href="/usage"
-        data-sveltekit-preload-data="hover"
-        class:active={tab === 'usage'}
-        aria-current={tab === 'usage' ? 'page' : undefined}><Icon name="chart" size={14} />Usage</a
-      >
-      <a
-        href="/tools"
-        class:active={tab === 'tools'}
-        aria-current={tab === 'tools' ? 'page' : undefined}><Icon name="tool" size={14} />Tools</a
-      >
-      <a
-        href="/work"
-        class:active={tab === 'work'}
-        aria-current={tab === 'work' ? 'page' : undefined}><Icon name="pencil" size={14} />Work</a
-      >
-      <a
-        href="/release"
-        class:active={tab === 'release'}
-        aria-current={tab === 'release' ? 'page' : undefined}
-        ><Icon name="branch" size={14} />Release</a
-      >
-      <a
-        href="/recorder"
-        data-sveltekit-preload-data="hover"
-        class:active={tab === 'recorder'}
-        aria-current={tab === 'recorder' ? 'page' : undefined}
-        ><Icon name="storage" size={14} />Recorder{#if loss || degraded}<span
-            class="warning"
-            aria-label="Recording needs attention">!</span
-          >{/if}</a
-      >
+    <nav class="workbench-tabs" aria-label="Ren" bind:this={tabs}>
+      {#each Views.destinations as place (place.destination)}
+        <a
+          href={place.href}
+          data-sveltekit-preload-data="hover"
+          class:active={destination === place.destination}
+          aria-current={destination === place.destination ? 'page' : undefined}
+          ><Icon
+            name={destinationIcons[place.destination]}
+            size={14}
+          />{place.label}{#if place.destination === 'host' && (loss || degraded)}<span
+              class="warning"
+              aria-label="Recording needs attention">!</span
+            >{/if}</a
+        >
+      {/each}
     </nav>
     <button
       class="gateway-place mono"
@@ -344,6 +308,35 @@
     </div>
     <ThemeControl />
   </header>
+  <nav
+    class="page-row"
+    aria-label={Views.destinations.find((place) => place.destination === destination)?.label}
+  >
+    {#if inProject}
+      <span class="crumb"
+        ><a href="/">Projects</a><span class="muted">/</span><strong>{inProject}</strong></span
+      >
+    {/if}
+    {#each Views.pages(destination, inProject) as link (link.tab)}
+      <a
+        href={Views.scopedHref(link, scope)}
+        data-sveltekit-preload-data="hover"
+        class:active={tab === link.tab}
+        aria-current={tab === link.tab ? 'page' : undefined}
+        >{link.label}{#if link.tab === 'recorder' && (loss || degraded)}<span
+            class="warning"
+            aria-label="Recording needs attention">!</span
+          >{/if}</a
+      >
+    {/each}
+  </nav>
+  {#if scope}
+    <div class="scope-row" role="status">
+      <span>Project <a href={`/projects/${encodeURIComponent(scope)}`}>{scope}</a></span>
+      <span class="muted">its sessions' runs only</span>
+      <a class="clear" href={unscoped}>All projects</a>
+    </div>
+  {/if}
   {#if navigating.to}<div
       class="nav-progress"
       role="progressbar"
@@ -421,7 +414,6 @@
           >{/if}</button
       >{/if}
   </footer>
-  {#if development && page.data.devTraffic}<DevToolbar />{/if}
   {#if page.data.runsControl}<RedlineLayer desk={redline} />{#if redline.open}<BriefingPanel
         desk={redline}
         {recipients}

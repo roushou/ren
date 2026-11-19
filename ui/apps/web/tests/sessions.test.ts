@@ -45,6 +45,7 @@ const listing = {
         id: sessionA,
         harness: 'codex',
         workdir: '/work/acme',
+        project: null,
         created_at: 100,
         model: 'gpt-deep',
         effort: 'high',
@@ -55,6 +56,7 @@ const listing = {
         runs: [recorded(runA2, 300, false), recorded(runA1, 100, true)],
       },
       served: null,
+      worktree: null,
     },
     {
       session: sessionB,
@@ -62,6 +64,7 @@ const listing = {
         id: sessionB,
         harness: 'claude_code',
         workdir: '/work/acme',
+        project: null,
         created_at: 50,
         model: null,
         effort: null,
@@ -72,6 +75,7 @@ const listing = {
         runs: [recorded(runB, 50, true)],
       },
       served: null,
+      worktree: null,
     },
     {
       // Just made: served, not stored yet.
@@ -85,6 +89,7 @@ const listing = {
         state: { shelf: 'open', phase: 'draft' },
         process: null,
       },
+      worktree: null,
     },
   ],
 };
@@ -99,6 +104,7 @@ test('sessions read as stored and served, and group by folder with the busiest f
   const live: RunSnapshot[] = [
     {
       run: runA2,
+      session: 'session' as never,
       harness: 'codex',
       workdir: '/work/acme',
       state: {
@@ -219,4 +225,57 @@ test('session commands go to their routes', async () => {
     `POST /control/sessions/${sessionA}/archive {}`,
     `POST /control/sessions/${sessionA}/delete {}`,
   ]);
+});
+
+test('a session in a worktree Ren made carries it, with its ports', async () => {
+  const worktree = { name: 'acme-1', data: '/worktrees/.data/acme-1', ports: [20000, 20099] };
+  const inWorktree = {
+    ...listing,
+    sessions: [{ ...listing.sessions[0]!, worktree }, ...listing.sessions.slice(1)],
+  };
+  const client = new RunsClient((async () => Response.json(inWorktree)) as unknown as typeof fetch);
+  const [first, second] = await client.sessions('current', undefined, 'acme');
+  assert.deepEqual(first?.worktree, worktree);
+  assert.deepEqual(Sessions.desk(first!, [])?.worktree, worktree);
+  assert.equal(second?.worktree, null);
+  const malformed = {
+    ...listing,
+    sessions: [{ ...listing.sessions[0]!, worktree: { ...worktree, ports: [20000] } }],
+  };
+  await assert.rejects(
+    new RunsClient((async () => Response.json(malformed)) as unknown as typeof fetch).sessions(),
+  );
+});
+
+test("a desk holds its project's sessions, and Scratch those of none", async () => {
+  const acme = { id: 'p-acme', name: 'acme', repository: '/work/acme' };
+  const web = { id: 'p-web', name: 'acme-web', repository: '/work/acme-web' };
+  const bodies = await sessions();
+  const owned = bodies.map((body) =>
+    body.session === sessionA && body.stored
+      ? { ...body, stored: { ...body.stored, project: acme.id } }
+      : body,
+  );
+  const ids = (list: SessionBody[]) => list.map((body) => body.session);
+  assert.deepEqual(ids(Sessions.within(owned, { kind: 'project', project: acme })), [sessionA]);
+  // Stored for no project, and served in a scratch folder: Scratch's.
+  assert.deepEqual(ids(Sessions.within(owned, { kind: 'scratch', projects: [acme, web] })), [
+    sessionB,
+    sessionC,
+  ]);
+  // Not stored yet: told by its folder, the repository or a worktree of it.
+  const fresh = (workdir: string, worktree: string | null): SessionBody => ({
+    session: sessionC,
+    stored: null,
+    served: { ...owned[2]!.served!, workdir },
+    worktree: worktree ? { name: worktree, data: '/d', ports: [20000, 20099] } : null,
+  });
+  assert.equal(Sessions.projectOf(fresh('/work/acme', null), [acme, web]), acme);
+  assert.equal(Sessions.projectOf(fresh('/w/acme-web-3', 'acme-web-3'), [acme, web]), web);
+  assert.equal(Sessions.projectOf(fresh('/scratch/s-1', null), [acme, web]), null);
+  assert.equal(
+    Sessions.deskHref('acme web', { session: sessionA }),
+    `/projects/acme%20web/sessions?session=${sessionA}`,
+  );
+  assert.equal(Sessions.deskHref(null), '/scratch');
 });

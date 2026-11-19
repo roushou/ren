@@ -13,6 +13,7 @@
 
 pub mod body;
 mod history;
+pub mod projects;
 mod refusal;
 mod release;
 pub mod request;
@@ -160,7 +161,7 @@ impl ControlApi {
         .router();
         let runs = RunsApi {
             control: control.clone(),
-            supervisor,
+            supervisor: supervisor.clone(),
             shutdown,
         };
         let run_routes = runs.router();
@@ -171,7 +172,13 @@ impl ControlApi {
         .router();
         let work_routes = work::WorkApi {
             control: control.clone(),
+            reader: reader.clone(),
+        }
+        .router();
+        let project_routes = projects::ProjectsApi {
+            control: control.clone(),
             reader,
+            supervisor: supervisor.clone(),
         }
         .router();
         let release_routes = release::ReleaseApi {
@@ -206,6 +213,7 @@ impl ControlApi {
             .merge(session_routes)
             .merge(history_routes)
             .merge(work_routes)
+            .merge(project_routes)
             .merge(release_routes)
             .layer(axum::middleware::map_response(Self::private))
     }

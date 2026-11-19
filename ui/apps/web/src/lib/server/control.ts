@@ -99,7 +99,7 @@ const approvalId = "[A-Za-z0-9._~%:!$&'()*+,;=@-]{1,256}";
 const routes: { pattern: RegExp; route: Route }[] = [
   { pattern: /^\/control\/runs$/, route: { method: 'GET', feed: false } },
   { pattern: /^\/control\/runs\/events$/, route: { method: 'GET', feed: true } },
-  { pattern: /^\/control\/runs\/projects$/, route: { method: 'GET', feed: false } },
+  { pattern: /^\/control\/runs\/places$/, route: { method: 'GET', feed: false } },
   { pattern: /^\/control\/runs\/clients$/, route: { method: 'GET', feed: false } },
   {
     pattern: /^\/control\/runs\/clients\/(claude_code|codex|pi|opencode)\/models$/,
@@ -122,7 +122,7 @@ const routes: { pattern: RegExp; route: Route }[] = [
     route: {
       method: 'GET',
       feed: false,
-      query: ['shelf', 'limit'] satisfies (keyof ListRequest)[],
+      query: ['shelf', 'limit', 'project'] satisfies (keyof ListRequest)[],
     },
   },
   { pattern: /^\/control\/sessions\/events$/, route: { method: 'GET', feed: true } },

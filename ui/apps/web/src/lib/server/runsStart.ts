@@ -9,8 +9,14 @@ import { proxy } from './runsProxy.ts';
 export class RunsStartRead {
   /** The reads for `request`, the page's own request. */
   static async read(request: Request): Promise<RunsStart> {
+    return new RunsClient(RunsStartRead.fetcher(request)).opening();
+  }
+
+  /** A `fetch` for reads made here on behalf of `request`: control reads
+   * through the proxy, the rest through the management surface. */
+  static fetcher(request: Request): typeof fetch {
     const login = request.headers.get('tailscale-user-login');
-    const client = new RunsClient((async (input: RequestInfo | URL, init?: RequestInit) => {
+    return (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), request.url);
       // A GET from this server: no Origin, no cookies; the login as sent.
       const inner = new Request(url, {
@@ -21,7 +27,6 @@ export class RunsStartRead {
       return url.pathname.startsWith('/control/')
         ? proxy.respond(inner)
         : managementResponse(REN_GATEWAY_URL, inner);
-    }) as typeof fetch);
-    return client.opening();
+    }) as typeof fetch;
   }
 }

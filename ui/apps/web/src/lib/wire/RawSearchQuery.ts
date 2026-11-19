@@ -3,4 +3,8 @@
 /**
  * `GET /api/search` parameters.
  */
-export type RawSearchQuery = { q?: string, recording?: string, client?: string, field?: string, from_ms?: number, until_ms?: number, limit?: number, };
+export type RawSearchQuery = { q?: string, recording?: string, 
+/**
+ * A project's name: its sessions' runs' calls.
+ */
+project?: string, client?: string, field?: string, from_ms?: number, until_ms?: number, limit?: number, };

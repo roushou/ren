@@ -16,4 +16,10 @@ resume?: string | null,
 /**
  * Where in `dir` it works; left out, in the folder itself.
  */
-workspace?: string | null, };
+workspace?: string | null, 
+/**
+ * A registered project to work for, by name, in place of `dir`: the
+ * session works in its repository, in a workspace of its own unless
+ * `workspace` says `folder`.
+ */
+project?: string | null, };

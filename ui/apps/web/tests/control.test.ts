@@ -75,7 +75,7 @@ test('commands reach the control API with the token from the file, never browser
   assert.equal(daemon.seen, 1);
 });
 
-test('starting, listing, projects, models, answering, history edits, and the feed map to their control routes', async () => {
+test('starting, listing, places, models, answering, history edits, and the feed map to their control routes', async () => {
   const seen: string[] = [];
   const daemon = host((url, init) => {
     seen.push(`${init.method} ${url.pathname}`);
@@ -91,7 +91,7 @@ test('starting, listing, projects, models, answering, history edits, and the fee
     new Request('http://ui.test/control/runs', { headers: { 'sec-fetch-site': 'same-origin' } }),
   );
   await proxy.respond(
-    new Request('http://ui.test/control/runs/projects', {
+    new Request('http://ui.test/control/runs/places', {
       headers: { 'sec-fetch-site': 'same-origin' },
     }),
   );
@@ -130,7 +130,7 @@ test('starting, listing, projects, models, answering, history edits, and the fee
   assert.deepEqual(seen, [
     'POST /control/v1/sessions',
     'GET /control/v1/runs',
-    'GET /control/v1/runs/projects',
+    'GET /control/v1/runs/places',
     'GET /control/v1/runs/clients',
     'GET /control/v1/runs/clients/pi/models',
     'POST /control/v1/runs/clients/claude_code/sign-in',
@@ -165,7 +165,7 @@ test('sessions map to their control routes, and a client session block is not pr
       new Request(`http://ui.test${path}`, { headers: { 'sec-fetch-site': 'same-origin' } }),
     );
   await proxy.respond(post('/control/sessions', { harness: 'codex' }));
-  await get('/control/sessions?shelf=archived&limit=5&x=1');
+  await get('/control/sessions?shelf=archived&limit=5&project=acme-web&x=1');
   await get(`/control/sessions/${run}`);
   await get(`/control/sessions/${run}/commands`);
   await get(`/control/sessions/${run}/files?q=src`);
@@ -179,7 +179,7 @@ test('sessions map to their control routes, and a client session block is not pr
   }
   assert.deepEqual(seen, [
     'POST /control/v1/sessions',
-    'GET /control/v1/sessions?shelf=archived&limit=5',
+    'GET /control/v1/sessions?shelf=archived&limit=5&project=acme-web',
     `GET /control/v1/sessions/${run}`,
     `GET /control/v1/sessions/${run}/commands`,
     `GET /control/v1/sessions/${run}/files?q=src`,

@@ -100,10 +100,12 @@ function stored(id: string, workdir: string, createdAt: number, archived = false
   return {
     session: id as SessionId,
     served: null,
+    worktree: null,
     stored: {
       id: id as SessionId,
       harness: 'codex',
       workdir,
+      project: null,
       created_at: createdAt as never,
       model: null,
       effort: null,
@@ -149,6 +151,7 @@ test('the sessions offered are those running in the checkout, newest first', () 
     ];
     return {
       run,
+      session: 'session' as never,
       harness: 'codex',
       workdir: body.stored!.workdir,
       state: { phase: 'idle', thread: 'thread' as never },

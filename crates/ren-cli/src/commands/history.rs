@@ -31,6 +31,11 @@ pub struct TargetArgs {
 }
 
 impl TargetArgs {
+    /// No `--gateway`: this host's daemon, as the command line would pick it.
+    pub(crate) fn this_host() -> Self {
+        Self { gateway: None }
+    }
+
     pub fn select(&self, ctx: &Context) -> Result<Target> {
         let host = if ctx.config_path.is_some() || ctx.data_dir_override.is_some() {
             HostFlags::Named
@@ -112,6 +117,7 @@ impl RecordingsCmd {
                 ReadRequest::Recordings {
                     limit: self.limit,
                     shelf: self.shelf,
+                    project: None,
                 },
             )
             .await
@@ -187,6 +193,7 @@ impl SearchCmd {
         let request = ReadRequest::Search(SearchQuery {
             terms: self.text.join(" ").parse::<SearchTerms>()?,
             recording: self.recording,
+            project: None,
             client: self.client,
             field: self.field,
             time: TimeRange::default(),
@@ -213,6 +220,7 @@ impl ExposuresCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         let request = ReadRequest::Exposures(ExposureQuery {
             recording: self.recording,
+            project: None,
             time: TimeRange::default(),
             limit: self.limit,
         });

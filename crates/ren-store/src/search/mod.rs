@@ -24,11 +24,11 @@ impl Reader {
     /// Matching texts, newest call first.
     pub async fn search(&self, query: &SearchQuery) -> Result<SearchPage, StoreError> {
         let mut sql = QueryBuilder::<Sqlite>::new(
-            "SELECT s.call, s.field, snippet(search, 0, '«', '»', '…', 24) AS snippet, c.recording, c.turn, json_extract(c.attribution, '$.hint.source') AS source, c.started_at FROM search JOIN search_texts s ON s.id = search.rowid JOIN calls c ON c.id = s.call WHERE search MATCH ",
+            "SELECT t.call, t.field, snippet(search, 0, '«', '»', '…', 24) AS snippet, c.recording, c.turn, json_extract(c.attribution, '$.hint.source') AS source, c.started_at FROM search JOIN search_texts t ON t.id = search.rowid JOIN calls c ON c.id = t.call WHERE search MATCH ",
         );
         sql.push_bind(query.terms.expression());
         if let Some(field) = query.field {
-            sql.push(" AND s.field = ").push_bind(field.label());
+            sql.push(" AND t.field = ").push_bind(field.label());
         }
         if let Some(recording) = query.recording {
             sql.push(" AND c.recording = ")
@@ -37,8 +37,11 @@ impl Reader {
         if let Some(client) = query.client {
             CallQuery::push_client(&mut sql, client);
         }
+        if let Some(project) = &query.project {
+            CallQuery::push_project_calls(&mut sql, project);
+        }
         query.time.push_started(&mut sql);
-        sql.push(" ORDER BY c.started_at DESC, s.id DESC LIMIT ")
+        sql.push(" ORDER BY c.started_at DESC, t.id DESC LIMIT ")
             .push_bind(i64::from(query.limit.get()));
         let rows = sql.build().fetch_all(&self.pool).await?;
         let mut hits = Vec::with_capacity(rows.len());
@@ -68,6 +71,9 @@ impl Reader {
         if let Some(recording) = query.recording {
             sql.push(" AND c.recording = ")
                 .push_bind(recording.to_string());
+        }
+        if let Some(project) = &query.project {
+            CallQuery::push_project_calls(&mut sql, project);
         }
         query.time.push_started(&mut sql);
         sql.push(" ORDER BY c.started_at DESC, e.rowid LIMIT ")

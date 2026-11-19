@@ -817,6 +817,7 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
         .runs(
             ren_store::query::PageLimit::DEFAULT,
             ren_store::query::Shelf::Current,
+            None,
         )
         .await
         .unwrap();
@@ -881,6 +882,7 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
         .sessions(
             ren_store::query::PageLimit::DEFAULT,
             ren_store::query::Shelf::Current,
+            None,
         )
         .await
         .unwrap();

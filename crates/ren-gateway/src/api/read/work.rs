@@ -4,7 +4,7 @@
 
 use ren_protocol::label::Stored;
 use ren_recorder::{
-    id::{SessionId, WorkItemId},
+    id::{ProjectId, SessionId, WorkItemId},
     time::UnixMillis,
     work::{
         Evidence, MarkedPage, PageTheme, PreviewUrl, WorkMark, WorkOrder, WorkPreview,
@@ -38,6 +38,10 @@ pub struct WorkItemView {
     /// `queued`, `sent`, `landed`, `shipped`, or `dismissed`.
     #[ts(as = "String")]
     pub state: Stored<WorkStateKind>,
+    /// The project it is for; `None` when none was named, or from before
+    /// projects.
+    #[ts(as = "Option<String>")]
+    pub project: Option<ProjectId>,
     /// The session that took it up, once sent.
     #[ts(as = "Option<String>")]
     pub session: Option<SessionId>,
@@ -232,6 +236,7 @@ impl From<ren_store::view::WorkItemView> for WorkItemView {
             title,
             order,
             state,
+            project,
             session,
             landed,
             shipped,
@@ -244,6 +249,7 @@ impl From<ren_store::view::WorkItemView> for WorkItemView {
             title,
             order: order.into(),
             state,
+            project,
             session,
             landed,
             shipped,

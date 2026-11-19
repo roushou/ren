@@ -15,7 +15,8 @@ use super::body::sessions::{
     Accepted, Attached, AttachmentEntry, AttachmentsBody, Created, FilesBody, OneSession,
     SessionBody, SessionsBody,
 };
-use super::request::{AnswerRequest, CreateRequest, PromptRequest};
+use super::projects::ProjectRoster;
+use super::request::{AnswerRequest, CreateRequest, PromptRequest, WorkspaceKind};
 use super::runs::RunsApi;
 use super::{ControlApi, ControlRefusal};
 use axum::{
@@ -44,8 +45,9 @@ use ren_harness::{
 use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
 use ren_recorder::{
-    batch::{HistoryChange, HistorySubject, WorkFact},
-    id::{AttachmentId, SessionId},
+    batch::{HistoryChange, HistorySubject, SessionFact, WorkFact},
+    id::{AttachmentId, ProjectId, SessionId},
+    project::ProjectName,
 };
 use ren_store::{
     Reader,
@@ -91,7 +93,8 @@ struct FolderRequest {
     dir: Option<String>,
 }
 
-/// Which sessions to list: the current ones (the default) or the archived.
+/// Which sessions to list: the current ones (the default) or the archived,
+/// of every project or of the one named.
 #[derive(serde::Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export, optional_fields)]
@@ -101,6 +104,8 @@ struct ListRequest {
     shelf: Option<Shelf>,
     #[serde(default)]
     limit: Option<u32>,
+    #[serde(default)]
+    project: Option<String>,
 }
 
 /// An upload's name, as `?name=`.
@@ -408,9 +413,14 @@ impl SessionsApi {
             .transpose()
             .map_err(|_| ControlRefusal::InvalidRequest)?
             .unwrap_or(PageLimit::DEFAULT);
+        let project = request
+            .project
+            .map(|name| name.parse::<ProjectName>())
+            .transpose()
+            .map_err(|_| ControlRefusal::InvalidRequest)?;
         let stored = api
             .reader
-            .sessions(limit, shelf)
+            .sessions(limit, shelf, project.as_ref())
             .await
             .map_err(|_| ControlRefusal::Unavailable)?;
         let mut served = supervisor.sessions().await.map_err(Self::refused)?;
@@ -420,11 +430,12 @@ impl SessionsApi {
                 let at = served
                     .iter()
                     .position(|snapshot| snapshot.session == stored.id);
-                SessionBody {
-                    session: stored.id,
-                    served: at.map(|at| served.remove(at).into()),
-                    stored: Some(stored.into()),
-                }
+                SessionBody::new(
+                    stored.id,
+                    Some(stored.into()),
+                    at.map(|at| served.remove(at).into()),
+                    supervisor.worktrees(),
+                )
             })
             .collect();
         // Served sessions the store has not recorded yet, on their shelf.
@@ -444,11 +455,12 @@ impl SessionsApi {
                 .map_err(|_| ControlRefusal::Unavailable)?
                 .is_none()
             {
-                fresh.push(SessionBody {
-                    session: snapshot.session,
-                    stored: None,
-                    served: Some(snapshot.into()),
-                });
+                fresh.push(SessionBody::new(
+                    snapshot.session,
+                    None,
+                    Some(snapshot.into()),
+                    supervisor.worktrees(),
+                ));
             }
         }
         fresh.append(&mut sessions);
@@ -477,11 +489,12 @@ impl SessionsApi {
             return Err(ControlRefusal::NotFound);
         }
         Ok(ControlApi::answer(OneSession {
-            session: SessionBody {
+            session: SessionBody::new(
                 session,
-                stored: stored.map(Into::into),
-                served: served.map(Into::into),
-            },
+                stored.map(Into::into),
+                served.map(Into::into),
+                supervisor.worktrees(),
+            ),
         }))
     }
 
@@ -492,7 +505,28 @@ impl SessionsApi {
     ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let request = RunsApi::body(body)?;
-        let place = request.place().ok_or(ControlRefusal::InvalidRequest)?;
+        let roster = ProjectRoster::read(&api.reader).await?;
+        // Asked for by project, it works in the project's repository;
+        // asked for by folder, for the project that holds the folder.
+        let (place, project) = match (&request.project, &request.dir) {
+            (Some(_), Some(_)) => return Err(ControlRefusal::InvalidRequest),
+            (Some(name), None) => {
+                let project = roster.named(name)?;
+                let dir = project.repository.to_string();
+                let place = match request.workspace.unwrap_or(WorkspaceKind::Worktree) {
+                    WorkspaceKind::Worktree => StartPlace::Project(dir),
+                    WorkspaceKind::Folder => StartPlace::Folder(dir),
+                };
+                (place, Some(project.id))
+            }
+            (None, dir) => (
+                request.place().ok_or(ControlRefusal::InvalidRequest)?,
+                match dir {
+                    Some(dir) => roster.owning_folder(dir).await,
+                    None => None,
+                },
+            ),
+        };
         let settings = SettingsRequest {
             model: request.model,
             effort: request.effort,
@@ -508,6 +542,9 @@ impl SessionsApi {
             })
             .await
             .map_err(Self::refused)?;
+        if project.is_some() {
+            api.assign(session, project);
+        }
         Ok((StatusCode::CREATED, ControlApi::answer(Created { session })).into_response())
     }
 
@@ -611,7 +648,17 @@ impl SessionsApi {
     ) -> Result<Response, ControlRefusal> {
         let supervisor = api.admit(&headers)?;
         let session = Self::session(&session)?;
-        let place = match RunsApi::body(body)?.dir {
+        let dir = RunsApi::body(body)?.dir;
+        let project = match &dir {
+            Some(dir) => {
+                ProjectRoster::read(&api.reader)
+                    .await?
+                    .owning_folder(dir)
+                    .await
+            }
+            None => None,
+        };
+        let place = match dir {
             Some(dir) => StartPlace::Folder(dir),
             None => StartPlace::Scratch,
         };
@@ -620,7 +667,18 @@ impl SessionsApi {
             .choose_folder(session, place)
             .await
             .map_err(Self::refused)?;
+        api.assign(session, project);
         Ok(Self::done())
+    }
+
+    /// Records that `session` works for `project`, or for none. Recorded
+    /// after its creation or its move, which the supervisor recorded first;
+    /// without room, it stays as it was, and a project can adopt it later.
+    fn assign(&self, session: SessionId, project: Option<ProjectId>) {
+        match self.control.recorder.session_slot() {
+            Some(slot) => slot.record(session, SessionFact::Assigned { project }),
+            None => tracing::warn!(%session, "no room to record the session's project"),
+        }
     }
 
     async fn shelve(
@@ -702,7 +760,7 @@ impl SessionsApi {
     async fn forget_previews(&self, session: SessionId) {
         let items = match self
             .reader
-            .work_items(PageLimit::LARGEST, Shelf::Current)
+            .work_items(PageLimit::LARGEST, Shelf::Current, None)
             .await
         {
             Ok(items) => items,

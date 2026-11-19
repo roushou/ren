@@ -113,7 +113,7 @@ impl RunsApi {
         Router::new()
             .route("/control/v1/runs", get(Self::list))
             .route("/control/v1/runs/events", get(Self::events))
-            .route("/control/v1/runs/projects", get(Self::projects))
+            .route("/control/v1/runs/places", get(Self::places))
             .route("/control/v1/runs/clients", get(Self::clients))
             .route(
                 "/control/v1/runs/clients/{harness}/commands",
@@ -168,13 +168,13 @@ impl RunsApi {
         }))
     }
 
-    async fn projects(State(api): Api, headers: HeaderMap) -> Result<Response, ControlRefusal> {
-        let projects = api
+    async fn places(State(api): Api, headers: HeaderMap) -> Result<Response, ControlRefusal> {
+        let places = api
             .admit(&headers)?
-            .projects()
+            .places()
             .await
             .map_err(|_| ControlRefusal::Unavailable)?;
-        Ok(ControlApi::answer(Places::from(projects)))
+        Ok(ControlApi::answer(Places::from(places)))
     }
 
     async fn clients(State(api): Api, headers: HeaderMap) -> Result<Response, ControlRefusal> {

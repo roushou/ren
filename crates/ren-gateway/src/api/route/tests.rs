@@ -26,6 +26,7 @@ fn every_read() -> Vec<ReadRequest> {
     };
     filtered.filter = CallFilter {
         recording: Some(session),
+        project: Some("acme-web".parse().unwrap()),
         client: Some(Harness::Codex),
         user: Some("alice".parse::<UserId>().unwrap()),
         kind: Some(KindFilter::Model),
@@ -45,10 +46,12 @@ fn every_read() -> Vec<ReadRequest> {
         ReadRequest::Recordings {
             limit,
             shelf: Shelf::Current,
+            project: None,
         },
         ReadRequest::Recordings {
             limit,
             shelf: Shelf::Archived,
+            project: Some("acme-web".parse().unwrap()),
         },
         ReadRequest::RecordingCalls {
             recording: session,
@@ -64,19 +67,38 @@ fn every_read() -> Vec<ReadRequest> {
         ReadRequest::Runs {
             limit,
             shelf: Shelf::Archived,
+            project: None,
+        },
+        ReadRequest::Runs {
+            limit,
+            shelf: Shelf::Current,
+            project: Some("acme-web".parse().unwrap()),
         },
         ReadRequest::Run(RunId::restore(Uuid::from_u128(4))),
         ReadRequest::Conversation(RunId::restore(Uuid::from_u128(4))),
         ReadRequest::WorkItems {
             limit,
             shelf: Shelf::Current,
+            project: None,
+        },
+        ReadRequest::WorkItems {
+            limit,
+            shelf: Shelf::Archived,
+            project: Some("acme-web".parse().unwrap()),
         },
         ReadRequest::WorkItem(ren_recorder::id::WorkItemId::restore(Uuid::from_u128(5))),
-        ReadRequest::Usage(TimeRange::default()),
-        ReadRequest::Usage(time),
+        ReadRequest::Usage {
+            range: TimeRange::default(),
+            project: None,
+        },
+        ReadRequest::Usage {
+            range: time,
+            project: Some("acme-web".parse().unwrap()),
+        },
         ReadRequest::Search(SearchQuery {
             terms: r#"run "install vps" & co"#.parse::<SearchTerms>().unwrap(),
             recording: Some(session),
+            project: Some("acme-web".parse().unwrap()),
             client: Some(Harness::ClaudeCode),
             field: Some(SearchField::ToolInput),
             time,
@@ -84,6 +106,13 @@ fn every_read() -> Vec<ReadRequest> {
         }),
         ReadRequest::Exposures(ExposureQuery {
             recording: Some(session),
+            project: None,
+            time,
+            limit,
+        }),
+        ReadRequest::Exposures(ExposureQuery {
+            recording: None,
+            project: Some("acme-web".parse().unwrap()),
             time,
             limit,
         }),

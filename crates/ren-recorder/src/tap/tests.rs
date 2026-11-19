@@ -101,6 +101,7 @@ impl Queue {
                 other @ (Record::Operator(_)
                 | Record::Session(_)
                 | Record::Work(_)
+                | Record::Project(_)
                 | Record::Run(_)
                 | Record::RunEntry(_)
                 | Record::History(_)) => panic!("unexpected record {other:?}"),

@@ -21,7 +21,7 @@ mod run;
 mod slots;
 
 pub use run::{RunSession, RunTap, RunUnrecorded};
-pub use slots::{HistorySlot, OperatorSlot, SessionSlot, WorkSlot};
+pub use slots::{HistorySlot, OperatorSlot, ProjectSlot, SessionSlot, WorkSlot};
 
 use super::item::{AttemptSlots, Item, Piece, Shared, Track};
 use crate::caller::Caller;
