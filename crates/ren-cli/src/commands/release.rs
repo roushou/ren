@@ -104,6 +104,9 @@ impl ReleaseCmd {
             Stored::Known(Decision::OutsideWindow) => {
                 "passed; production takes it when the window opens"
             }
+            Stored::Known(Decision::PromotionFailed) => {
+                "production failed to take it and was rolled back; promote it by hand to try again"
+            }
             Stored::Unknown(label) => label.as_str(),
         };
         format!("{policy}: {decision}")

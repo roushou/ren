@@ -3471,6 +3471,8 @@ dependencies = [
  "ren-harness",
  "ren-protocol",
  "ren-recorder",
+ "ren-release",
+ "ren-store",
  "ren-supervisor",
  "reqwest",
  "serde",

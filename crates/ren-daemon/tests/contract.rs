@@ -69,7 +69,7 @@ fn normalized(mut value: serde_json::Value) -> serde_json::Value {
 /// waiting for the operator.
 fn release() -> ren_release::Release {
     use ren_release::{
-        Assessment, Canary, Check, CheckKind, Lineage, Outcome, Policy, Release, Verdict,
+        Assessment, Attempt, Canary, Check, CheckKind, Lineage, Outcome, Policy, Release, Verdict,
     };
     let main = "62e9e9e0000000000000000000000000000000ff";
     let checks = vec![
@@ -85,6 +85,7 @@ fn release() -> ren_release::Release {
             canary: Some((
                 Canary::new(main.parse().unwrap(), Verdict::new(checks)),
                 Lineage::Ahead,
+                Attempt::Untried,
             )),
         },
         Policy::Manual,

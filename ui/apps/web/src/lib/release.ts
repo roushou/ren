@@ -75,6 +75,8 @@ export const ReleaseLine = {
         return ['passed; waiting for the operator to promote it', 'warning'];
       case 'outside_window':
         return ['passed; production takes it when the window opens', 'ok'];
+      case 'promotion_failed':
+        return ['production failed to take it and was rolled back', 'bad'];
       default:
         return [unrecognised(release.decision), 'warning'];
     }

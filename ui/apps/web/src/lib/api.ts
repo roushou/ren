@@ -346,6 +346,7 @@ export const decisions = [
   'unconfirmed',
   'awaiting_operator',
   'outside_window',
+  'promotion_failed',
 ] as const;
 export type Decision = (typeof decisions)[number];
 export type HealthStatus = (typeof healthStatuses)[number];

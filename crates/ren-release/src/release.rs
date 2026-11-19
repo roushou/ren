@@ -47,6 +47,16 @@ pub enum Lineage {
     Unknown,
 }
 
+/// Whether production already tried to take the canary's build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Attempt {
+    /// Never tried.
+    Untried,
+    /// Tried, failed its checks, and was rolled back: never tried again
+    /// unless the operator promotes it.
+    Failed,
+}
+
 /// What promotion decided for the canary's build.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]
@@ -69,6 +79,9 @@ pub enum Decision {
     AwaitingOperator,
     /// It passed; production takes it when the policy's window opens.
     OutsideWindow,
+    /// Production tried to take it and was rolled back; it is not tried
+    /// again unless the operator promotes it.
+    PromotionFailed,
 }
 
 /// What the factory found, before the policy decides.
@@ -76,7 +89,7 @@ pub struct Assessment {
     pub main: Commit,
     pub production: Revision,
     pub behind: Option<u64>,
-    pub canary: Option<(Canary, Lineage)>,
+    pub canary: Option<(Canary, Lineage, Attempt)>,
 }
 
 impl Canary {
@@ -95,16 +108,23 @@ impl Canary {
 
 impl Decision {
     /// What `policy` decides at `now` for a canary build in `lineage` to
-    /// production.
-    pub fn of(canary: &Canary, lineage: Lineage, policy: Policy, now: MinuteOfDay) -> Self {
+    /// production, after `attempt`.
+    pub fn of(
+        canary: &Canary,
+        lineage: Lineage,
+        attempt: Attempt,
+        policy: Policy,
+        now: MinuteOfDay,
+    ) -> Self {
         if !canary.verdict.passed() {
             return Self::Failed;
         }
-        match lineage {
-            Lineage::Same => Self::Current,
-            Lineage::Behind => Self::ProductionAhead,
-            Lineage::Unknown => Self::Unconfirmed,
-            Lineage::Ahead => match policy {
+        match (lineage, attempt) {
+            (Lineage::Same, Attempt::Untried | Attempt::Failed) => Self::Current,
+            (Lineage::Behind, Attempt::Untried | Attempt::Failed) => Self::ProductionAhead,
+            (Lineage::Unknown, Attempt::Untried | Attempt::Failed) => Self::Unconfirmed,
+            (Lineage::Ahead, Attempt::Failed) => Self::PromotionFailed,
+            (Lineage::Ahead, Attempt::Untried) => match policy {
                 Policy::Manual => Self::AwaitingOperator,
                 Policy::Automatic => Self::Promote,
                 Policy::Window(window) if window.holds(now) => Self::Promote,
@@ -127,8 +147,8 @@ impl Release {
             canary,
         } = assessment;
         let (canary, decision) = match canary {
-            Some((canary, lineage)) => {
-                let decision = Decision::of(&canary, lineage, policy, now);
+            Some((canary, lineage, attempt)) => {
+                let decision = Decision::of(&canary, lineage, attempt, policy, now);
                 (Some(canary), decision)
             }
             None => (None, Decision::Unchecked),
@@ -170,7 +190,7 @@ impl Release {
 
 #[cfg(test)]
 mod tests {
-    use super::{Assessment, Canary, Decision, Lineage, Release};
+    use super::{Assessment, Attempt, Canary, Decision, Lineage, Release};
     use crate::{Check, CheckKind, Outcome, Policy, Verdict, policy::MinuteOfDay};
     use ren_protocol::label::Stored;
     use strum::VariantArray;
@@ -202,7 +222,7 @@ mod tests {
             (window, "12:00", Decision::OutsideWindow),
         ] {
             assert_eq!(
-                Decision::of(&passed, Lineage::Ahead, policy, at(now)),
+                Decision::of(&passed, Lineage::Ahead, Attempt::Untried, policy, at(now)),
                 decision,
                 "{policy} at {now}"
             );
@@ -223,7 +243,7 @@ mod tests {
             Lineage::Unknown,
         ] {
             assert_eq!(
-                Decision::of(&failed, lineage, Policy::Automatic, now),
+                Decision::of(&failed, lineage, Attempt::Untried, Policy::Automatic, now),
                 Decision::Failed
             );
         }
@@ -233,10 +253,21 @@ mod tests {
             (Lineage::Unknown, Decision::Unconfirmed),
         ] {
             assert_eq!(
-                Decision::of(&passed, lineage, Policy::Automatic, now),
+                Decision::of(&passed, lineage, Attempt::Untried, Policy::Automatic, now),
                 decision
             );
         }
+        // A build production failed to take is not tried again.
+        assert_eq!(
+            Decision::of(
+                &passed,
+                Lineage::Ahead,
+                Attempt::Failed,
+                Policy::Automatic,
+                now
+            ),
+            Decision::PromotionFailed
+        );
     }
 
     #[test]
@@ -246,7 +277,7 @@ mod tests {
                 main: MAIN.parse().unwrap(),
                 production: PRODUCTION.parse().unwrap(),
                 behind: Some(3),
-                canary: Some((canary(Outcome::Passed), Lineage::Ahead)),
+                canary: Some((canary(Outcome::Passed), Lineage::Ahead, Attempt::Untried)),
             },
             Policy::Manual,
             at("03:00"),

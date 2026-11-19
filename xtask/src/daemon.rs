@@ -456,6 +456,10 @@ impl DoctorReport {
         serde_json::from_str(json)
     }
 
+    pub fn checks(&self) -> &[DoctorCheck] {
+        &self.checks
+    }
+
     /// The check comparing the daemon's build with the CLI's.
     pub fn build(&self) -> Option<&DoctorCheck> {
         self.checks.iter().find(|check| check.name == "build")
@@ -463,6 +467,10 @@ impl DoctorReport {
 }
 
 impl DoctorCheck {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn status(&self) -> &CheckStatus {
         &self.status
     }

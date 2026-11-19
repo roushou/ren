@@ -1,4 +1,6 @@
 //! `cargo xtask`: repository tasks, run from a checkout.
+mod builds;
+mod canary;
 mod compat;
 mod daemon;
 mod dev;
@@ -21,6 +23,7 @@ enum Xtask {
     InstallVps(install::InstallVps),
     Dev(dev::Dev),
     Compat(compat::Compat),
+    Canary(canary::Canary),
 }
 
 /// Why a task failed.
@@ -32,6 +35,8 @@ enum TaskError {
     Dev(#[from] dev::DevError),
     #[error(transparent)]
     Compat(#[from] compat::CompatError),
+    #[error(transparent)]
+    Canary(#[from] canary::CanaryError),
 }
 
 impl Xtask {
@@ -40,6 +45,7 @@ impl Xtask {
             Self::InstallVps(task) => Ok(task.run(env)?),
             Self::Dev(task) => Ok(task.run(env)?),
             Self::Compat(task) => Ok(task.run()?),
+            Self::Canary(task) => Ok(task.run(env)?),
         }
     }
 }

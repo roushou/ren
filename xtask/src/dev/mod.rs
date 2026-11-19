@@ -4,8 +4,8 @@
 mod agent;
 mod provider;
 mod seed;
-mod shot;
-mod slot;
+pub(crate) mod shot;
+pub(crate) mod slot;
 mod traffic;
 mod work;
 
