@@ -121,6 +121,33 @@ impl Reply {
     const SSE: &'static str = "text/event-stream";
     const JSON: &'static str = "application/json";
 
+    /// Synthetic limit headers, shaped like the ones a subscription's
+    /// responses are believed to carry (not confirmed against a provider):
+    /// the five-hour window fills with each request and wraps.
+    fn limits(wire: Wire, serial: u64) -> Vec<(&'static str, String)> {
+        let used = serial % 100;
+        match wire {
+            Wire::Messages => vec![
+                ("anthropic-ratelimit-unified-status", "allowed".to_owned()),
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    format!("0.{used:02}"),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.18".to_owned(),
+                ),
+            ],
+            Wire::Responses => vec![
+                ("x-codex-primary-used-percent", used.to_string()),
+                ("x-codex-primary-window-minutes", "300".to_owned()),
+                ("x-codex-secondary-used-percent", "18".to_owned()),
+                ("x-codex-secondary-window-minutes", "10080".to_owned()),
+            ],
+            Wire::ChatCompletions | Wire::CountTokens | Wire::Models => Vec::new(),
+        }
+    }
+
     pub fn to(request: &Request<'_>) -> Self {
         let body: Value = serde_json::from_slice(request.body).unwrap_or(Value::Null);
         let model = body["model"]
@@ -157,7 +184,7 @@ impl Reply {
                     | Behaviour::Cut
                     | Behaviour::Title) => {
                         let output = Output::of(behaviour, &turn);
-                        match (request.wire, stream) {
+                        let mut reply = match (request.wire, stream) {
                             (Wire::Messages, true) => turn.messages_stream(&output, behaviour),
                             (Wire::Messages, false) => Self::json(200, &turn.message(&output)),
                             // Codex always streams Responses.
@@ -169,7 +196,11 @@ impl Reply {
                             (Wire::CountTokens | Wire::Models, _) => {
                                 Self::json(200, &turn.models())
                             }
-                        }
+                        };
+                        reply
+                            .headers
+                            .extend(Self::limits(request.wire, request.serial));
+                        reply
                     }
                 }
             }
@@ -1325,6 +1356,31 @@ mod tests {
         assert!(cut.iter().all(|e| e["type"] != "response.completed"));
         let cut = events(&ask(Behaviour::Cut, Wire::Messages));
         assert!(cut.iter().all(|e| e["type"] != "message_stop"));
+    }
+
+    #[test]
+    fn a_model_reply_carries_synthetic_limit_headers() {
+        let body =
+            json!({ "model": "claude-opus-5-5", "stream": true, "messages": [], "input": "x" });
+        let header = |wire| {
+            let reply = reply_as(wire, &body, Behaviour::Text);
+            reply.headers
+        };
+        // Request seven: seven percent of the five-hour window.
+        assert!(header(Wire::Messages).contains(&(
+            "anthropic-ratelimit-unified-5h-utilization",
+            "0.07".to_owned()
+        )));
+        assert!(
+            header(Wire::Responses).contains(&("x-codex-primary-used-percent", "7".to_owned()))
+        );
+        assert!(header(Wire::ChatCompletions).is_empty());
+        // An error carries none.
+        assert!(
+            reply_as(Wire::Messages, &body, Behaviour::Error)
+                .headers
+                .is_empty()
+        );
     }
 
     #[test]
