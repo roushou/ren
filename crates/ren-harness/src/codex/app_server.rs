@@ -6,9 +6,11 @@
 //!
 //! Ren opens one thread per process: `initialize`, then `initialized`, then
 //! `thread/start` (or `thread/resume`). Approvals arrive as server requests and
-//! are answered with the operator's decision. Codex's requests for ChatGPT
-//! tokens, tool calls, and elicitation are refused: the client keeps its own
-//! sign-in, and Ren provides no tools.
+//! are answered with the operator's decision; the questions its
+//! `request_user_input` tool asks (`item/tool/requestUserInput`) arrive the
+//! same way and are answered with the operator's replies. Codex's requests
+//! for ChatGPT tokens, tool calls, and elicitation are refused: the client
+//! keeps its own sign-in, and Ren provides no tools.
 
 use crate::{
     codec::{ApprovalBook, EchoQueue, Envelope, JsonRpc, RequestLedger, RpcError, TurnSlot},
@@ -20,6 +22,9 @@ use crate::{
     },
     lines::{Framed, Line},
     prompt::Prompt,
+    question::{
+        Echo, Pick, Question, QuestionForm, QuestionKey, QuestionOption, TextLines, WriteIn,
+    },
     settings::{ApprovalPolicy, Effort, RunSettings},
 };
 use ren_protocol::{
@@ -41,7 +46,7 @@ pub struct CodexAppServer {
     requests: RequestLedger<u64, RequestKind>,
     turn: TurnSlot,
     /// Approvals waiting for an answer, with the request id to answer.
-    approvals: ApprovalBook<Value>,
+    approvals: ApprovalBook<Waiting>,
     /// The effort every turn asks for; none is Codex's own.
     effort: Option<Effort>,
     /// Settings changed mid-run: from then on every turn asks for them.
@@ -56,6 +61,22 @@ pub struct CodexAppServer {
     /// What the images of each prompt and steer sent are, in order, until
     /// Codex echoes it as a user message.
     echoing: EchoQueue,
+}
+
+/// A server request waiting on the operator: its id, and what it asks.
+#[derive(Debug)]
+struct Waiting {
+    id: Value,
+    asks: Asks,
+}
+
+/// What a waiting request asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Asks {
+    /// A decision on an action.
+    Decision,
+    /// Replies to questions.
+    Replies,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +127,8 @@ pub enum CodexMethod {
     CommandExecutionRequestApproval,
     #[strum(to_string = "item/fileChange/requestApproval")]
     FileChangeRequestApproval,
+    #[strum(to_string = "item/tool/requestUserInput")]
+    ToolRequestUserInput,
     #[strum(to_string = "serverRequest/resolved")]
     ServerRequestResolved,
     Error,
@@ -171,9 +194,56 @@ impl CodexAppServer {
                 )])
             }
             DriveCommand::Answer { approval, decision } => {
-                let id = self.approvals.answer(approval)?;
+                let asks = self.approvals.get(&approval)?.asks;
+                match (asks, decision) {
+                    (Asks::Replies, Decision::Accept | Decision::AcceptForSession) => {
+                        Err(CommandRefused::Unanswered(approval))
+                    }
+                    (
+                        Asks::Decision,
+                        Decision::Accept
+                        | Decision::AcceptForSession
+                        | Decision::Decline
+                        | Decision::Cancel,
+                    ) => {
+                        let Waiting { id, .. } = self.approvals.answer(approval)?;
+                        Ok(vec![Line::json(
+                            &json!({ "id": id, "result": { "decision": Self::decision(decision) } }),
+                        )])
+                    }
+                    // Declined questions have no answers; cancelled ones
+                    // also interrupt the turn.
+                    (Asks::Replies, Decision::Decline | Decision::Cancel) => {
+                        let Waiting { id, .. } = self.approvals.answer(approval)?;
+                        let mut lines = vec![Line::json(
+                            &json!({ "id": id, "result": { "answers": {} } }),
+                        )];
+                        if decision == Decision::Cancel
+                            && let Ok(turn) = self.turn.running()
+                        {
+                            lines.push(self.request(
+                                RequestKind::TurnInterrupt,
+                                json!({ "threadId": thread.to_string(), "turnId": turn.to_string() }),
+                            ));
+                        }
+                        Ok(lines)
+                    }
+                }
+            }
+            DriveCommand::Reply { approval, replies } => {
+                if self.approvals.get(&approval)?.asks != Asks::Replies {
+                    return Err(CommandRefused::NotQuestions(approval));
+                }
+                let Waiting { id, .. } = self.approvals.answer(approval)?;
+                let answers = replies
+                    .replies()
+                    .iter()
+                    .map(|(key, reply)| (key.as_str().to_owned(), reply.answers()))
+                    .filter(|(_, answers)| !answers.is_empty())
+                    .map(|(key, answers)| (key, json!({ "answers": answers })))
+                    .collect::<serde_json::Map<_, _>>();
                 Ok(vec![Line::json(
-                    &json!({ "id": id, "result": { "decision": Self::decision(decision) } }),
+                    &json!({ "id": id, "result": { "answers": answers } }),
                 )])
             }
             DriveCommand::Steer(prompt) => {
@@ -590,7 +660,8 @@ impl CodexAppServer {
                 | CodexMethod::TurnSteer
                 | CodexMethod::SkillsList
                 | CodexMethod::CommandExecutionRequestApproval
-                | CodexMethod::FileChangeRequestApproval,
+                | CodexMethod::FileChangeRequestApproval
+                | CodexMethod::ToolRequestUserInput,
             )
             | Stored::Unknown(_) => {
                 received.events.push(DriveEvent::Unknown { line });
@@ -660,6 +731,9 @@ impl CodexAppServer {
                 Self::parse::<FileChangeApproval>(params)
                     .map(|ask| ApprovalAsk::FileChange { reason: ask.reason })
             }
+            Stored::Known(CodexMethod::ToolRequestUserInput) => {
+                Self::parse::<UserInputRequest>(params).and_then(UserInputRequest::ask)
+            }
             Stored::Known(
                 CodexMethod::Initialize
                 | CodexMethod::Initialized
@@ -694,7 +768,13 @@ impl CodexAppServer {
         match ask {
             Some(ask) => {
                 let approval = ApprovalId::of_request(&id);
-                self.approvals.ask(approval.clone(), id);
+                let asks = match ask {
+                    ApprovalAsk::Questions { .. } => Asks::Replies,
+                    ApprovalAsk::Command { .. }
+                    | ApprovalAsk::FileChange { .. }
+                    | ApprovalAsk::Tool { .. } => Asks::Decision,
+                };
+                self.approvals.ask(approval.clone(), Waiting { id, asks });
                 received.events.push(DriveEvent::Approval { approval, ask });
             }
             None => {
@@ -943,6 +1023,91 @@ struct CommandApproval {
 #[derive(Deserialize)]
 struct FileChangeApproval {
     reason: Option<String>,
+}
+
+/// `item/tool/requestUserInput`: the questions of Codex's
+/// `request_user_input` tool.
+#[derive(Deserialize)]
+struct UserInputRequest {
+    questions: Vec<UserInputQuestion>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UserInputQuestion {
+    id: String,
+    header: String,
+    question: String,
+    #[serde(default)]
+    is_other: bool,
+    #[serde(default)]
+    is_secret: bool,
+    #[serde(default)]
+    options: Option<Vec<UserInputOption>>,
+}
+
+#[derive(Deserialize)]
+struct UserInputOption {
+    label: String,
+    description: String,
+}
+
+impl UserInputRequest {
+    /// The approval that asks these questions; none when there are none.
+    fn ask(self) -> Option<ApprovalAsk> {
+        let questions: Vec<Question> = self
+            .questions
+            .into_iter()
+            .map(UserInputQuestion::read)
+            .collect();
+        (!questions.is_empty()).then_some(ApprovalAsk::Questions {
+            title: None,
+            questions,
+        })
+    }
+}
+
+impl UserInputQuestion {
+    /// A question with options is a choice, answered in the operator's own
+    /// words too where Codex offers that (`isOther`), except when the
+    /// answer is a secret: Ren keeps no secret but a hidden text's. One
+    /// without options is text, hidden when it is a secret.
+    fn read(self) -> Question {
+        let echo = if self.is_secret {
+            Echo::Hidden
+        } else {
+            Echo::Shown
+        };
+        let form = match self.options.filter(|options| !options.is_empty()) {
+            Some(options) => QuestionForm::Choice {
+                options: options
+                    .into_iter()
+                    .map(|option| QuestionOption {
+                        label: option.label,
+                        description: Some(option.description).filter(|d| !d.is_empty()),
+                    })
+                    .collect(),
+                pick: Pick::One,
+                write_in: match (self.is_other, echo) {
+                    (true, Echo::Shown) => WriteIn::Allowed,
+                    (false, Echo::Shown | Echo::Hidden) | (true, Echo::Hidden) => WriteIn::Refused,
+                },
+            },
+            None => QuestionForm::Text {
+                lines: TextLines::One,
+                echo,
+                placeholder: None,
+                prefill: None,
+            },
+        };
+        Question {
+            key: QuestionKey::new(self.id),
+            header: Some(self.header).filter(|header| !header.is_empty()),
+            text: self.question,
+            detail: None,
+            form,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1300,6 +1465,105 @@ mod tests {
             "a turn's end withdraws its waiting approvals: {:?}",
             ended.events
         );
+    }
+
+    #[test]
+    fn asks_request_user_input_as_questions_and_answers_by_question_id() {
+        use crate::question::{Echo, Pick, QuestionForm, QuestionKey, Replies, Reply, WriteIn};
+        let mut codec = ready();
+        let _ = codec.command(prompt("plan it")).unwrap().remove(0);
+        let _ = feed(
+            &mut codec,
+            json!({ "method": "turn/started", "params": { "threadId": THREAD,
+                "turn": { "id": TURN, "status": "inProgress", "items": [] } } }),
+        );
+        let request = json!({ "id": 12, "method": "item/tool/requestUserInput", "params": {
+            "threadId": THREAD, "turnId": TURN, "itemId": "call_1", "isBlocking": true,
+            "questions": [
+                { "id": "scope", "header": "Scope", "question": "How far should it go?",
+                  "isOther": true, "options": [
+                    { "label": "Route only", "description": "A few lines" },
+                    { "label": "Whole feature", "description": "" }] },
+                { "id": "token", "header": "Token", "question": "Which token?",
+                  "isSecret": true, "options": null }] } });
+        let asked = feed(&mut codec, request.clone());
+        let [
+            DriveEvent::Approval {
+                approval,
+                ask: ApprovalAsk::Questions { questions, .. },
+            },
+        ] = asked.events.as_slice()
+        else {
+            panic!("expected questions, got {:?}", asked.events);
+        };
+        assert!(matches!(
+            &questions[0].form,
+            QuestionForm::Choice { options, pick: Pick::One, write_in: WriteIn::Allowed }
+                if options[1].description.is_none()
+        ));
+        assert!(matches!(
+            questions[1].form,
+            QuestionForm::Text {
+                echo: Echo::Hidden,
+                ..
+            }
+        ));
+        assert_eq!(
+            codec.command(DriveCommand::Answer {
+                approval: approval.clone(),
+                decision: Decision::Accept,
+            }),
+            Err(CommandRefused::Unanswered(approval.clone()))
+        );
+        let secret: Reply =
+            serde_json::from_value(json!({ "as": "secret", "text": "tok-acme" })).unwrap();
+        let replies = Replies::new(
+            [
+                (
+                    QuestionKey::new("scope".into()),
+                    Reply::Chose {
+                        picked: Vec::new(),
+                        written: Some("The route and its tests".into()),
+                    },
+                ),
+                (QuestionKey::new("token".into()), secret),
+            ]
+            .into(),
+        )
+        .fit(questions)
+        .unwrap();
+        let answer = codec
+            .command(DriveCommand::Reply {
+                approval: approval.clone(),
+                replies,
+            })
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            sent(&answer),
+            json!({ "id": 12, "result": { "answers": {
+                "scope": { "answers": ["The route and its tests"] },
+                "token": { "answers": ["tok-acme"] } } } })
+        );
+
+        // Cancelled, the questions go unanswered and the turn is interrupted.
+        let mut again = request;
+        again["id"] = json!(13);
+        let asked = feed(&mut codec, again);
+        let [DriveEvent::Approval { approval, .. }] = asked.events.as_slice() else {
+            panic!("expected questions, got {:?}", asked.events);
+        };
+        let lines = codec
+            .command(DriveCommand::Answer {
+                approval: approval.clone(),
+                decision: Decision::Cancel,
+            })
+            .unwrap();
+        assert_eq!(
+            sent(&lines[0]),
+            json!({ "id": 13, "result": { "answers": {} } })
+        );
+        assert_eq!(sent(&lines[1])["method"], "turn/interrupt");
     }
 
     #[test]

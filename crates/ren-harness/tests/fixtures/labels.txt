@@ -3,7 +3,7 @@ attribution::HintSource: claude_code_headers codex_headers pi_extension_headers 
 attribution::HintIssue: invalid_or_duplicate_header invalid_turn_metadata conflicting_identifiers turn_without_session
 tools::EffectKind: read_file write_file run_command search delegate fetch
 tools::CallPurpose: work quota_probe
-claude_code::ClaudeCodeTool: Read Write Edit MultiEdit NotebookEdit Bash Glob Grep Task Agent WebFetch WebSearch
+claude_code::ClaudeCodeTool: Read Write Edit MultiEdit NotebookEdit Bash Glob Grep Task Agent WebFetch WebSearch AskUserQuestion
 codex::CodexTool: shell container.exec exec_command local_shell_call shell_call apply_patch apply_patch_call view_image read_file web_search_call
 pi::PiTool: read write edit bash grep find ls
 opencode::OpenCodeTool: shell read write edit patch glob grep subagent webfetch websearch
@@ -23,8 +23,15 @@ attachment::ImageFormat: png jpeg gif webp
 attachment::Delivery: inline_base64 local_path
 claude_code::ClaudeMessageType: control_response control_request control_cancel_request user assistant stream_event result system rate_limit_event
 claude_code::ClaudeSystemSubtype: api_retry init status thinking_tokens task_summary post_turn_summary hook_started hook_progress hook_response
-codex::CodexMethod: initialize initialized thread/start thread/resume model/list turn/start turn/interrupt turn/steer skills/list skills/changed thread/started turn/started turn/completed item/started item/completed item/agentMessage/delta item/commandExecution/requestApproval item/fileChange/requestApproval serverRequest/resolved error
+codex::CodexMethod: initialize initialized thread/start thread/resume model/list turn/start turn/interrupt turn/steer skills/list skills/changed thread/started turn/started turn/completed item/started item/completed item/agentMessage/delta item/commandExecution/requestApproval item/fileChange/requestApproval item/tool/requestUserInput serverRequest/resolved error
 pi::PiEvent: response agent_start agent_settled message_start message_update message_end tool_execution_start tool_execution_end auto_retry_start auto_retry_end extension_error extension_ui_request turn_start turn_end agent_end tool_execution_update bash_execution_update queue_update compaction_start compaction_end summarization_retry_scheduled summarization_retry_attempt_start summarization_retry_finished entry_appended session_info_changed thinking_level_changed
 opencode::AcpMethod: initialize session/new session/list session/resume session/delete session/set_config_option session/prompt _session/steering session/cancel session/update session/request_permission
 opencode::AcpUpdate: agent_message_chunk agent_thought_chunk user_message_chunk tool_call tool_call_update plan available_commands_update usage_update current_mode_update config_option_update session_info_update
 opencode::AcpToolKind: read edit delete move search execute think fetch switch_mode other
+question::Pick: one many
+question::WriteIn: allowed refused
+question::TextLines: one many
+question::Echo: shown hidden
+question::Confirmation: yes no
+claude_code::ClaudeQuestionKind: choice text number
+pi::PiUiMethod: select confirm input editor notify setStatus setWidget setTitle set_editor_text

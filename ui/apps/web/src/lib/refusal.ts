@@ -115,6 +115,12 @@ export class Refusals {
         return 'No turn is running.';
       case 'no_such_approval':
         return 'That approval no longer waits.';
+      case 'unanswered':
+        return 'It asks questions: answer them, or skip them.';
+      case 'not_questions':
+        return 'That approval asks no questions.';
+      case 'unfit_reply':
+        return 'Those answers do not fit the questions asked.';
       case 'stopping':
       case 'ended':
         return 'The run is stopping or has ended.';

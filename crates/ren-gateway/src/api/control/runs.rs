@@ -79,6 +79,9 @@ impl From<CommandError> for ControlRefusal {
                 RunRefused::NotWorking => Self::NotWorking,
                 RunRefused::TurnNotStarted => Self::TurnNotStarted,
                 RunRefused::NoSuchApproval(_) => Self::NoSuchApproval,
+                RunRefused::Unanswered(_) => Self::Unanswered,
+                RunRefused::NotQuestions(_) => Self::NotQuestions,
+                RunRefused::Unfit(_) => Self::UnfitReply,
                 RunRefused::Stopping => Self::Stopping,
                 RunRefused::Ended => Self::Ended,
                 RunRefused::NothingQueued => Self::NothingQueued,
@@ -86,6 +89,8 @@ impl From<CommandError> for ControlRefusal {
             // What the client has no way to do mid-run.
             CommandError::Protocol(CommandRefused::NotOffered(_)) => Self::NotOffered,
             CommandError::Protocol(CommandRefused::NoImages) => Self::NoImages,
+            CommandError::Protocol(CommandRefused::Unanswered(_)) => Self::Unanswered,
+            CommandError::Protocol(CommandRefused::NotQuestions(_)) => Self::NotQuestions,
             CommandError::Protocol(
                 CommandRefused::NotReady
                 | CommandRefused::TurnRunning

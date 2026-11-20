@@ -22,6 +22,13 @@ impl<V> ApprovalBook<V> {
         self.waiting.insert(approval, answering);
     }
 
+    /// What answering `approval` needs, while it waits.
+    pub(crate) fn get(&self, approval: &ApprovalId) -> Result<&V, CommandRefused> {
+        self.waiting
+            .get(approval)
+            .ok_or_else(|| CommandRefused::UnknownApproval(approval.clone()))
+    }
+
     /// The operator answers `approval`: what answering it needs, once.
     pub(crate) fn answer(&mut self, approval: ApprovalId) -> Result<V, CommandRefused> {
         match self.waiting.remove(&approval) {

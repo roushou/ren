@@ -55,20 +55,34 @@
         {#if said.detail}<code class="ask">{said.detail}</code>{/if}
         {#if said.reason}<span class="muted">{said.reason}</span>{/if}
         <span class="actions">
-          <button
-            class="button primary small"
-            disabled={answering !== null}
-            onclick={() => void answer(waiting, 'accept')}>Approve</button
-          >
-          <button
-            class="button small"
-            disabled={answering !== null}
-            onclick={() => void answer(waiting, 'decline')}>Decline</button
-          >
-          <a
-            class="button small"
-            href={Sessions.deskHref(waiting.project, { session: waiting.session })}>Open session</a
-          >
+          {#if waiting.ask.kind === 'questions'}
+            <!-- Questions are answered in their session, or skipped here. -->
+            <a
+              class="button primary small"
+              href={Sessions.deskHref(waiting.project, { session: waiting.session })}>Answer</a
+            >
+            <button
+              class="button small"
+              disabled={answering !== null}
+              onclick={() => void answer(waiting, 'decline')}>Skip</button
+            >
+          {:else}
+            <button
+              class="button primary small"
+              disabled={answering !== null}
+              onclick={() => void answer(waiting, 'accept')}>Approve</button
+            >
+            <button
+              class="button small"
+              disabled={answering !== null}
+              onclick={() => void answer(waiting, 'decline')}>Decline</button
+            >
+            <a
+              class="button small"
+              href={Sessions.deskHref(waiting.project, { session: waiting.session })}
+              >Open session</a
+            >
+          {/if}
         </span>
       </li>
     {/each}

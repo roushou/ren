@@ -1,8 +1,9 @@
 //! What the dev slot's fake Claude Code says in stream-json print mode, as a
 //! pure state machine: Ren's lines in, lines out, and the model calls to
 //! make. Like the fake Codex, a prompt about testing, running, or building
-//! asks to run a command, and one about fixing, editing, changing, adding,
-//! or writing asks to write a file; then one model call goes through the
+//! asks to run a command, one about fixing, editing, changing, adding, or
+//! writing asks to write a file, and one that says "ask" asks the operator
+//! questions (`AskUserQuestion`); then one model call goes through the
 //! gateway and its reply streams back. As the real client does, it echoes
 //! each prompt under its own message id, which is not the prompt id its
 //! model call carries.
@@ -24,13 +25,16 @@ pub enum Out {
 enum Ask {
     Command,
     Write,
+    Question,
 }
 
 impl Ask {
     fn of(prompt: &str) -> Option<Self> {
         let prompt = prompt.to_lowercase();
         let has = |words: &[&str]| words.iter().any(|word| prompt.contains(word));
-        if has(&["test", "run", "build"]) {
+        if has(&["ask"]) {
+            Some(Self::Question)
+        } else if has(&["test", "run", "build"]) {
             Some(Self::Command)
         } else if has(&["fix", "edit", "change", "add", "write"]) {
             Some(Self::Write)
@@ -43,6 +47,7 @@ impl Ask {
         match self {
             Self::Command => "Bash",
             Self::Write => "Write",
+            Self::Question => "AskUserQuestion",
         }
     }
 }
@@ -204,6 +209,16 @@ impl ClaudeScript {
                                     "description": "Run the tests to see what fails" }),
             Ask::Write => json!({ "file_path": format!("{}/src/lib.rs", self.cwd),
                                   "content": "pub fn parse() -> Result<(), Error> {\n    Ok(())\n}\n" }),
+            Ask::Question => json!({ "questions": [
+                { "question": "Where should the order list keep its data?", "header": "Store",
+                  "multiSelect": false, "options": [
+                    { "label": "SQLite", "description": "One file beside the daemon" },
+                    { "label": "Postgres", "description": "A server the team already runs" }] },
+                { "question": "Which views should ship first?", "header": "Views",
+                  "multiSelect": true, "options": [
+                    { "label": "Orders", "description": "The list and its filters" },
+                    { "label": "Customers", "description": "Each customer's orders" },
+                    { "label": "Reports", "description": "Monthly totals" }] }] }),
         };
         json!({ "type": "tool_use", "id": format!("toolu_dev{index:04}"), "name": ask.tool(),
                 "input": input })
@@ -227,6 +242,7 @@ impl ClaudeScript {
         let description = match ask {
             Ask::Command => "Run the tests to see what fails",
             Ask::Write => "src/lib.rs",
+            Ask::Question => "Ask the operator",
         };
         vec![
             Out::Send(assistant),
@@ -265,7 +281,13 @@ impl ClaudeScript {
                 false,
                 json!({ "type": "update", "filePath": tool_use["input"]["file_path"] }),
             ),
-            (false, Ask::Command | Ask::Write) => (
+            (true, Ask::Question) => (
+                "The user answered the questions.",
+                false,
+                json!({ "questions": tool_use["input"]["questions"],
+                        "answers": answer["updatedInput"]["answers"] }),
+            ),
+            (false, Ask::Command | Ask::Write | Ask::Question) => (
                 "The user doesn't want to proceed with this tool use.",
                 true,
                 json!("User rejected tool use"),

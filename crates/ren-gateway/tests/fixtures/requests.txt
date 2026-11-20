@@ -24,6 +24,7 @@ RawSearchQuery
 RawShelfQuery
 RawUsageQuery
 RegisterProjectRequest
+ReplyRequest
 RollbackRequest
 SendWorkRequest
 SettingsRequest

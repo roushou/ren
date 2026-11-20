@@ -75,6 +75,12 @@ pub enum ControlRefusal {
     NotWorking,
     TurnNotStarted,
     NoSuchApproval,
+    /// The approval asks questions: reply to them, or decline.
+    Unanswered,
+    /// Replies answer only an approval that asks questions.
+    NotQuestions,
+    /// The replies do not answer the questions asked.
+    UnfitReply,
     Stopping,
     Ended,
     NothingQueued,
@@ -162,6 +168,8 @@ impl ControlRefusal {
             | Self::NotWorking
             | Self::TurnNotStarted
             | Self::NoSuchApproval
+            | Self::Unanswered
+            | Self::NotQuestions
             | Self::Stopping
             | Self::Ended
             | Self::NothingQueued
@@ -189,6 +197,7 @@ impl ControlRefusal {
             | Self::ProjectMismatch => StatusCode::CONFLICT,
             Self::AttachmentTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::BlankPrompt
+            | Self::UnfitReply
             | Self::TooManyAttachments
             | Self::AttachmentName
             | Self::AttachmentEmpty

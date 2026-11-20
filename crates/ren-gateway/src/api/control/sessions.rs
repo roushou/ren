@@ -16,7 +16,7 @@ use super::body::sessions::{
     SessionBody, SessionsBody,
 };
 use super::projects::ProjectRoster;
-use super::request::{AnswerRequest, Checkout, CreateRequest, PromptRequest};
+use super::request::{AnswerRequest, Checkout, CreateRequest, PromptRequest, ReplyRequest};
 use super::runs::RunsApi;
 use super::{ControlApi, ControlRefusal};
 use axum::{
@@ -183,6 +183,10 @@ impl SessionsApi {
             .route(
                 "/control/v1/sessions/{session}/approvals/{approval}",
                 post(Self::answer),
+            )
+            .route(
+                "/control/v1/sessions/{session}/approvals/{approval}/replies",
+                post(Self::reply),
             )
             .route(
                 "/control/v1/sessions/{session}/interrupt",
@@ -604,6 +608,20 @@ impl SessionsApi {
             RunCommand::Answer { approval, decision },
         )
         .await
+    }
+
+    async fn reply(
+        State(api): Api,
+        headers: HeaderMap,
+        Path((session, approval)): Path<(String, String)>,
+        body: Result<Json<ReplyRequest>, JsonRejection>,
+    ) -> Result<Response, ControlRefusal> {
+        let approval = approval
+            .parse::<ApprovalId>()
+            .map_err(|_| ControlRefusal::NotFound)?;
+        let replies = RunsApi::body(body)?.into();
+        api.send(&headers, &session, RunCommand::Reply { approval, replies })
+            .await
     }
 
     async fn interrupt(

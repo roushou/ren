@@ -17,6 +17,7 @@ use ren_harness::Harness;
 use ren_harness::drive::{ApprovalId, Decision, Driver, Opening};
 use ren_harness::lines::{LineLimit, Lines};
 use ren_harness::prompt::{KeptPrompt, KeptPromptError};
+use ren_harness::question::Replies;
 use ren_harness::settings::RunSettings;
 use ren_recorder::id::{RunId, SessionId};
 use serde::{Deserialize, Serialize};
@@ -74,6 +75,11 @@ pub(crate) enum Command {
     Answer {
         approval: ApprovalId,
         decision: Decision,
+    },
+    /// Replies to questions; a secret reply's text is written empty.
+    Reply {
+        approval: ApprovalId,
+        replies: Replies,
     },
     Interrupt,
     Stop,
@@ -147,6 +153,10 @@ impl From<&RunCommand> for Command {
                 approval: approval.clone(),
                 decision: *decision,
             },
+            RunCommand::Reply { approval, replies } => Self::Reply {
+                approval: approval.clone(),
+                replies: replies.clone(),
+            },
             RunCommand::Interrupt => Self::Interrupt,
             RunCommand::Stop => Self::Stop,
         }
@@ -165,6 +175,10 @@ impl Command {
             Self::Answer { approval, decision } => RunCommand::Answer {
                 approval: approval.clone(),
                 decision: *decision,
+            },
+            Self::Reply { approval, replies } => RunCommand::Reply {
+                approval: approval.clone(),
+                replies: replies.clone(),
             },
             Self::Interrupt => RunCommand::Interrupt,
             Self::Stop => RunCommand::Stop,
