@@ -16,7 +16,7 @@
   --markdown-accent: #9d4f34;
 }
 
-/* Elements only: no HTML, no live links or images. */
+/* Elements only: no HTML or live images; only web links are followed. */
 .markdown {
   font-size: 13px;
   line-height: 1.6;
@@ -114,10 +114,14 @@
 }
 .markdown .md-link {
   color: var(--markdown-link);
-  text-decoration: underline dotted;
-  cursor: help;
+  text-decoration: underline;
+}
+.markdown .md-link.inert {
+  text-decoration-style: dotted;
 }
 .markdown .md-href {
+  /* An inline block, so the link's underline stops at its text. */
+  display: inline-block;
   margin-left: 4px;
   color: var(--markdown-muted);
   font-size: 0.85em;

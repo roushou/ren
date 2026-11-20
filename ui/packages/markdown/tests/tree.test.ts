@@ -82,7 +82,12 @@ test('HTML stays text, and links and images are kept as data', () => {
   ]);
   assert.deepEqual(parseInline('see [docs](https://example.com/a_(b)) and ![logo](/x.png)'), [
     text('see '),
-    { kind: 'link', children: [text('docs')], href: 'https://example.com/a_(b)' },
+    {
+      kind: 'link',
+      children: [text('docs')],
+      target: { kind: 'web', url: 'https://example.com/a_(b)' },
+      address: 'beside',
+    },
     text(' and '),
     { kind: 'image', alt: 'logo', href: '/x.png' },
   ]);
@@ -157,7 +162,12 @@ test('CommonMark and GitHub extensions the old reader missed', () => {
       kind: 'paragraph',
       children: [
         text('See '),
-        { kind: 'link', href: 'https://example.com', children: [text('the docs')] },
+        {
+          kind: 'link',
+          children: [text('the docs')],
+          target: { kind: 'web', url: 'https://example.com/' },
+          address: 'beside',
+        },
         text('.'),
       ],
     },
@@ -166,7 +176,12 @@ test('CommonMark and GitHub extensions the old reader missed', () => {
   assert.deepEqual(parseInline('one  \ntwo'), [text('one'), { kind: 'break' }, text('two')]);
   assert.deepEqual(parseInline('at https://example.com now'), [
     text('at '),
-    { kind: 'link', href: 'https://example.com', children: [text('https://example.com')] },
+    {
+      kind: 'link',
+      children: [text('https://example.com')],
+      target: { kind: 'web', url: 'https://example.com/' },
+      address: 'in-text',
+    },
     text(' now'),
   ]);
   // Footnotes: the mark, and the note under its label.
@@ -200,4 +215,39 @@ test('a tag inside a code fence is code, not a fold', () => {
     doc.map((b: Block) => b.kind),
     ['code'],
   );
+});
+
+test('only a web link is followed, and its address shows unless its text is it', () => {
+  const link = (source: string) => {
+    const [inline] = parseInline(source);
+    assert.equal(inline?.kind, 'link');
+    return inline?.kind === 'link' ? { target: inline.target, address: inline.address } : null;
+  };
+  // Script, file, and relative targets are only shown.
+  assert.deepEqual(link('[x](javascript:alert(1))'), {
+    target: { kind: 'inert', href: 'javascript:alert(1)' },
+    address: 'beside',
+  });
+  assert.deepEqual(link('[x](file:///etc/passwd)'), {
+    target: { kind: 'inert', href: 'file:///etc/passwd' },
+    address: 'beside',
+  });
+  assert.deepEqual(link('[x](./notes.md)'), {
+    target: { kind: 'inert', href: './notes.md' },
+    address: 'beside',
+  });
+  // Text that names another address does not hide the real one.
+  assert.deepEqual(link('[https://good.example](https://bad.example)'), {
+    target: { kind: 'web', url: 'https://bad.example/' },
+    address: 'beside',
+  });
+  // Autolinked addresses read as themselves, scheme aside.
+  assert.deepEqual(link('www.example.com'), {
+    target: { kind: 'web', url: 'http://www.example.com/' },
+    address: 'in-text',
+  });
+  assert.deepEqual(link('dev@example.com'), {
+    target: { kind: 'inert', href: 'mailto:dev@example.com' },
+    address: 'in-text',
+  });
 });

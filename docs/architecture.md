@@ -791,7 +791,9 @@ state; it is logged, not recorded in `operator_actions`.
   (prompts, payload previews, Redline's brief) is parsed by
   `mdast-util-from-markdown` with GitHub's extensions into a typed tree
   (`Markdown`, in the UI's `markdown` package) that components render
-  without raw HTML: links are not clickable and images are not loaded.
+  without raw HTML: only `http:`/`https:` links are followed (in a new tab),
+  a link whose text is not its address shows the address beside it, and
+  images are not loaded.
   Redline marks elements on a page and
   sends a Markdown brief to a new or open session in Ren's own checkout
   (`REN_SOURCE_DIR`), as a prompt through the same session routes.

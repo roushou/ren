@@ -5,8 +5,10 @@
  * typed tree that components render as elements, never as HTML.
  *
  * The text is untrusted (captured model output, prompts), so this is where
- * it is made inert: raw HTML becomes text, a link keeps its address but is
- * not clickable, an image is named but never loaded, and nesting deeper than
+ * it is made inert: raw HTML becomes text, only a web (`http:`/`https:`)
+ * link is followed, in a new tab, and any link whose text is not its address
+ * shows the address beside it, so a link cannot pass for another; an image is
+ * named but never loaded, and nesting deeper than
  * `Markdown.DEPTH` is kept as its source text, which bounds rendering recursion.
  * Agents wrap injected context in tags on their own lines
  * (`<system-reminder>`); such a region is read as a `tagged` block, shown
@@ -23,12 +25,21 @@ export type Inline =
   | { kind: 'strong'; children: Inline[] }
   | { kind: 'em'; children: Inline[] }
   | { kind: 'strike'; children: Inline[] }
-  | { kind: 'link'; children: Inline[]; href: string }
+  | { kind: 'link'; children: Inline[]; target: LinkTarget; address: LinkAddress }
   | { kind: 'image'; alt: string; href: string }
   /** A hard line break. */
   | { kind: 'break' }
   /** A footnote's mark in the text. */
   | { kind: 'footnote'; label: string };
+
+/**
+ * Where a link goes: a web address, which may be opened, or anything else
+ * (a relative path, `javascript:`, `file:`), which is only shown.
+ */
+export type LinkTarget = { kind: 'web'; url: string } | { kind: 'inert'; href: string };
+
+/** Whether a link's text already reads as its address, or the address is shown beside it. */
+export type LinkAddress = 'in-text' | 'beside';
 
 /** A table column's alignment. */
 export type Align = 'left' | 'right' | 'center' | null;
@@ -268,6 +279,27 @@ class Source {
     }
   }
 
+  /**
+   * A link to `href`: followed only if it is a web address, and with its
+   * address shown unless its text is that address (a bare or autolinked
+   * one, scheme aside).
+   */
+  #link(href: string, children: Inline[]): Inline {
+    const web = URL.canParse(href) ? new URL(href) : null;
+    const target: LinkTarget =
+      web && (web.protocol === 'http:' || web.protocol === 'https:')
+        ? { kind: 'web', url: web.href }
+        : { kind: 'inert', href };
+    const [only] = children;
+    const address: LinkAddress =
+      children.length === 1 &&
+      only?.kind === 'text' &&
+      href.replace(/^(?:https?:\/\/|mailto:)/i, '') === only.text.replace(/^https?:\/\//i, '')
+        ? 'in-text'
+        : 'beside';
+    return { kind: 'link', children, target, address };
+  }
+
   /** Spans nested one level down, or their text past the depth bound. */
   #nestedInlines(node: Nodes, children: readonly PhrasingContent[], depth: number): Inline[] {
     return depth + 1 >= Markdown.DEPTH
@@ -302,19 +334,13 @@ class Source {
       case 'delete':
         return [{ kind: 'strike', children: this.#nestedInlines(node, node.children, depth) }];
       case 'link':
-        return [
-          {
-            kind: 'link',
-            href: node.url,
-            children: this.#nestedInlines(node, node.children, depth),
-          },
-        ];
+        return [this.#link(node.url, this.#nestedInlines(node, node.children, depth))];
       case 'image':
         return [{ kind: 'image', alt: node.alt ?? '', href: node.url }];
       case 'linkReference': {
         const children = this.#nestedInlines(node, node.children, depth);
         const target = this.#definitions.get(node.identifier);
-        return target ? [{ kind: 'link', href: target.url, children }] : children;
+        return target ? [this.#link(target.url, children)] : children;
       }
       case 'imageReference': {
         const target = this.#definitions.get(node.identifier);
