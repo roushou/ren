@@ -4,4 +4,8 @@ import type { SightingBody } from "./SightingBody.ts";
 /**
  * `/api/projects/{name}/pulls`' answer.
  */
-export type PullsBody = { "watch": "off" } | { "watch": "waiting", repository: string, } | { "watch": "seen", repository: string, seen: SightingBody, } | { "watch": "failed", repository: string, error: string, at: number, last: SightingBody | null, };
+export type PullsBody = { "watch": "off" } | { "watch": "waiting", repository: string, } | { "watch": "seen", repository: string, seen: SightingBody, } | { "watch": "failed", repository: string, error: string, 
+/**
+ * Unix milliseconds.
+ */
+at: number, last: SightingBody | null, };

@@ -5,7 +5,11 @@ import type { PullBody } from "./PullBody.ts";
 /**
  * One answer from GitHub.
  */
-export type SightingBody = { at: number, default_branch: BranchBody | null, pull_requests: Array<PullBody>, 
+export type SightingBody = { 
+/**
+ * Unix milliseconds.
+ */
+at: number, default_branch: BranchBody | null, pull_requests: Array<PullBody>, 
 /**
  * Whether more open pull requests (or checks) exist than were listed.
  */

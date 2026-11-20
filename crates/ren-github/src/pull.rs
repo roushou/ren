@@ -1,22 +1,21 @@
 //! An open pull request, as GitHub reports it.
 
 use crate::check::{Check, ChecksState};
-use ren_protocol::label::Stored;
-use ren_release::Commit;
+use crate::oid::Oid;
+use crate::reported::Reported;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{fmt, num::NonZeroU64, str::FromStr};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
-/// A pull request's number in its repository: GitHub's own identity for
-/// it, never one of Ren's.
+/// A pull request's number in its repository.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, SerializeDisplay, DeserializeFromStr,
 )]
 pub struct PullNumber(NonZeroU64);
 
-/// A GitHub account's login, as GitHub names it: never a Ren user.
+/// A GitHub account's login.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct GithubLogin(String);
+pub struct Login(String);
 
 /// Whether a pull request is a draft.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
@@ -69,21 +68,21 @@ pub enum ReviewDecision {
 pub struct PullRequest {
     pub number: PullNumber,
     pub title: String,
-    /// Its description, where its `Work-Item:` trailers are.
+    /// Its description.
     pub body: String,
     pub url: String,
     /// Its author; none for a deleted account.
-    pub author: Option<GithubLogin>,
+    pub author: Option<Login>,
     pub readiness: Readiness,
     /// The branch it brings in, and its head.
     pub head_branch: String,
-    pub head: Commit,
+    pub head: Oid,
     /// The branch it merges into.
     pub base_branch: String,
-    pub merge: Stored<MergeState>,
-    pub review: Stored<ReviewDecision>,
+    pub merge: Reported<MergeState>,
+    pub review: Reported<ReviewDecision>,
     /// Its head's checks, summed up, and each one.
-    pub checks: Stored<ChecksState>,
+    pub checks: Reported<ChecksState>,
     pub check_list: Vec<Check>,
 }
 
@@ -119,7 +118,7 @@ impl FromStr for PullNumber {
     }
 }
 
-impl GithubLogin {
+impl Login {
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -131,30 +130,30 @@ impl GithubLogin {
 
 impl MergeState {
     /// GitHub's `mergeStateStatus`.
-    pub(crate) fn of_status(status: &str) -> Stored<Self> {
+    pub(crate) fn of_status(status: &str) -> Reported<Self> {
         match status {
-            "CLEAN" => Stored::Known(Self::Clean),
-            "BEHIND" => Stored::Known(Self::Behind),
-            "BLOCKED" => Stored::Known(Self::Blocked),
-            "DIRTY" => Stored::Known(Self::Conflicting),
-            "DRAFT" => Stored::Known(Self::Draft),
-            "UNSTABLE" => Stored::Known(Self::Unstable),
-            "HAS_HOOKS" => Stored::Known(Self::HasHooks),
-            "UNKNOWN" => Stored::Known(Self::Computing),
-            other => Stored::from_label(other),
+            "CLEAN" => Reported::Known(Self::Clean),
+            "BEHIND" => Reported::Known(Self::Behind),
+            "BLOCKED" => Reported::Known(Self::Blocked),
+            "DIRTY" => Reported::Known(Self::Conflicting),
+            "DRAFT" => Reported::Known(Self::Draft),
+            "UNSTABLE" => Reported::Known(Self::Unstable),
+            "HAS_HOOKS" => Reported::Known(Self::HasHooks),
+            "UNKNOWN" => Reported::Known(Self::Computing),
+            other => Reported::Unknown(other.to_owned()),
         }
     }
 }
 
 impl ReviewDecision {
     /// GitHub's `reviewDecision`, null where no review is required.
-    pub(crate) fn of_decision(decision: Option<&str>) -> Stored<Self> {
+    pub(crate) fn of_decision(decision: Option<&str>) -> Reported<Self> {
         match decision {
-            None => Stored::Known(Self::NotRequired),
-            Some("APPROVED") => Stored::Known(Self::Approved),
-            Some("CHANGES_REQUESTED") => Stored::Known(Self::ChangesRequested),
-            Some("REVIEW_REQUIRED") => Stored::Known(Self::ReviewRequired),
-            Some(other) => Stored::from_label(other),
+            None => Reported::Known(Self::NotRequired),
+            Some("APPROVED") => Reported::Known(Self::Approved),
+            Some("CHANGES_REQUESTED") => Reported::Known(Self::ChangesRequested),
+            Some("REVIEW_REQUIRED") => Reported::Known(Self::ReviewRequired),
+            Some(other) => Reported::Unknown(other.to_owned()),
         }
     }
 }
@@ -162,7 +161,7 @@ impl ReviewDecision {
 #[cfg(test)]
 mod tests {
     use super::{MergeState, PullNumber, ReviewDecision};
-    use ren_protocol::label::Stored;
+    use crate::reported::Reported;
 
     #[test]
     fn a_pull_number_is_positive() {
@@ -175,16 +174,16 @@ mod tests {
     fn github_values_map_and_unknown_ones_are_kept() {
         assert_eq!(
             MergeState::of_status("DIRTY"),
-            Stored::Known(MergeState::Conflicting)
+            Reported::Known(MergeState::Conflicting)
         );
         assert_eq!(
             MergeState::of_status("UNKNOWN"),
-            Stored::Known(MergeState::Computing)
+            Reported::Known(MergeState::Computing)
         );
         assert_eq!(MergeState::of_status("SOMETHING").label(), "SOMETHING");
         assert_eq!(
             ReviewDecision::of_decision(None),
-            Stored::Known(ReviewDecision::NotRequired)
+            Reported::Known(ReviewDecision::NotRequired)
         );
         assert_eq!(ReviewDecision::of_decision(Some("NEW")).known(), None);
     }

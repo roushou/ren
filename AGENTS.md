@@ -232,16 +232,25 @@ dependencies under "Crates" below. Read the code for current module ownership.
   sans-IO: which build an instance runs (`Build`, its `Revision`, `Commit`,
   and `Tree`, and how two compare, `Comparison`). Its manifest allows only
   pure dependencies.
-- `crates/ren-github`: GitHub as Ren observes it, sans-IO, with `Watch`
-  as its primary type (docs/plans/self-build.md, phase 8): the one GraphQL
-  query a watch sends for a `RepositorySlug`, and the `Snapshot` an answer
-  shows: the default branch's head and each open `PullRequest` (its
-  `PullNumber`, author's `GithubLogin`, head `Commit`, `Readiness`,
-  `MergeState`, `ReviewDecision`, and each `Check` with its `CheckState`,
-  summed up as `ChecksState`), and whether the listing was cut
-  (`Listing`). Every value GitHub sends that Ren does not know is kept as
-  `Stored::Unknown`, never rounded to a known one. Its manifest allows only
-  pure dependencies, and `src/purity.rs` keeps its sources free of I/O.
+- `crates/ren-github`: a self-contained GitHub client for a repository's
+  pull requests, with `Client` as its primary type
+  (docs/plans/self-build.md, phase 8). It depends on none of Ren's crates
+  and owns everything GitHub: a `Watch` is the one GraphQL query for a
+  `RepositorySlug` and the `Snapshot` its answer shows (the default
+  branch's head `Oid` and each open `PullRequest`: its `PullNumber`,
+  author's `Login`, head, `Readiness`, `MergeState`, `ReviewDecision`, and
+  each `Check` with its `CheckState`, summed up as `ChecksState`), and
+  whether the listing was cut (`Listing`); `Client` sends it to an
+  `Endpoint` (HTTPS, or HTTP to loopback) with a `Token` that is never
+  shown; a `Poller` reads repositories once a `PollPeriod`, keeping each
+  one's `Observation` (waiting, `Seen`, or `Failed` with the last
+  `Sighting` kept apart), with the time its caller gives it. A value
+  GitHub sends that it does not know is `Reported::Unknown`, never rounded
+  to a known one. `src/purity.rs` keeps the query, the answer, and the
+  observation free of I/O, so another HTTP stack can use them. Ren adapts
+  on its side: the daemon's `[github]` section maps projects to
+  repositories and runs the poller; the gateway's `PullBoard` keeps its
+  observations by project and serves them.
 - `crates/ren-preview`: which previews of Ren run, sans-IO, with
   `Previews` as its primary type (docs/plans/self-build.md, phase 9): each
   `Preview` in its `Slot` (its loopback and tailnet ports), of a
@@ -792,7 +801,7 @@ directly.
 | `ren-depot`                                | `Depot`, with its `ToolHost` port                   | none of ours      |
 | `ren-git`                                  | `Git`                                               | none of ours      |
 | `ren-release`                              | `Release`                                           | protocol          |
-| `ren-github`                               | `Watch`                                             | release           |
+| `ren-github`                               | `Client`                                            | none of ours      |
 | `ren-preview`                              | `Previews`                                          | github, release   |
 | `ren-project`                              | `ProjectContract`                                   | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |

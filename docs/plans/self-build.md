@@ -362,8 +362,10 @@ spec (phase 7):
      work items their `Work-Item:` trailers name, and their preview. A
      work item shows its pull request, which closes the loop phase 5
      started.
-   - Built: `ren-github` (the query and what an answer shows), the
-     `[github]` section and the daemon's poller, `GET
+   - Built: `ren-github`, a self-contained GitHub client (the query,
+     what an answer shows, the client, and the poller), the `[github]`
+     section mapping projects to repositories and the daemon running the
+     poller, `GET
      /api/projects/{name}/pulls`, and the project Overview's Pull requests:
      each open one with its checks, whether it can merge, its review, its
      branch, and the work items it names, drawn faded under the error when
@@ -535,7 +537,7 @@ on each other; phase 9 needs both, and phase 10 needs only the canary.
   request for its merge state, reviews, and checks. GraphQL has no
   conditional requests, but one query a minute costs about 60 of the
   5000 points an hour a token has.
-- **What was seen of GitHub is kept in memory, not stored.** The daemon's
+- **What was seen of GitHub is kept in memory, not stored.** The gateway's
   `PullBoard` holds each repository's last answer, or the failure since,
   and a restarted daemon polls again at once. GitHub stays the record of
   its own pull requests; Ren stores nothing it would have to reconcile.

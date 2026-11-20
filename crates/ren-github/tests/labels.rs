@@ -1,66 +1,47 @@
-//! Every closed vocabulary's labels, pinned. Labels are written to storage and
-//! read from the wire, so renaming a variant must never change one silently.
-//! Each label must also round-trip through `Display`, `FromStr`, and serde.
+//! Every vocabulary's labels, pinned: a known value serializes as its label,
+//! so renaming a variant must never change one silently.
 #![allow(
     clippy::unwrap_used,
     reason = "integration tests are a shell: helpers outside #[test] fail loudly"
 )]
 
-use ren_protocol::label::Labeled;
-use serde::{Serialize, de::DeserializeOwned};
-use std::{
-    fmt::{Debug, Display},
-    str::FromStr,
-};
+use ren_github::{CheckState, ChecksState, MergeState, Readiness, Reported, ReviewDecision};
+use strum::VariantArray;
 
-/// The labels of `T`, in declaration order, after checking that every
-/// representation agrees with them.
+/// `T`'s labels, in declaration order, after checking that each serializes
+/// as its label, alone and as a reported value.
 fn labels<T>() -> Vec<&'static str>
 where
-    T: Labeled + Debug + Display + FromStr + Serialize + DeserializeOwned,
-    <T as FromStr>::Err: Debug,
+    T: VariantArray + Copy + Into<&'static str> + serde::Serialize + std::fmt::Display,
 {
-    T::ALL
+    T::VARIANTS
         .iter()
-        .copied()
-        .map(|variant| {
-            let label = variant.label();
-            assert_eq!(variant.to_string(), label, "{variant:?}");
-            assert_eq!(label.parse::<T>().unwrap(), variant, "{variant:?}");
-            let json = serde_json::to_string(&variant).unwrap();
-            assert_eq!(json, format!("\"{label}\""), "{variant:?}");
-            assert_eq!(serde_json::from_str::<T>(&json).unwrap(), variant);
+        .map(|&variant| {
+            let label: &'static str = variant.into();
+            assert_eq!(variant.to_string(), label);
+            assert_eq!(
+                serde_json::to_string(&variant).unwrap(),
+                format!("\"{label}\"")
+            );
+            let reported = serde_json::to_string(&Reported::Known(variant)).unwrap();
+            assert_eq!(reported, format!("\"{label}\""));
             label
         })
         .collect()
 }
 
-macro_rules! table {
-    ($($vocabulary:path),+ $(,)?) => {{
-        let mut table = String::new();
-        $(
-            table.push_str(stringify!($vocabulary));
-            table.push_str(":");
-            for label in labels::<$vocabulary>() {
-                table.push(' ');
-                table.push_str(label);
-            }
-            table.push('\n');
-        )+
-        table
-    }};
-}
-
 #[test]
 fn every_label_is_pinned() {
-    use ren_github as github;
-    let table = table![
-        github::CheckState,
-        github::ChecksState,
-        github::Readiness,
-        github::MergeState,
-        github::ReviewDecision,
-    ];
+    let table: String = [
+        ("github::CheckState", labels::<CheckState>()),
+        ("github::ChecksState", labels::<ChecksState>()),
+        ("github::Readiness", labels::<Readiness>()),
+        ("github::MergeState", labels::<MergeState>()),
+        ("github::ReviewDecision", labels::<ReviewDecision>()),
+    ]
+    .iter()
+    .map(|(name, labels)| format!("{name}: {}\n", labels.join(" ")))
+    .collect();
     let pinned = include_str!("fixtures/labels.txt");
     assert!(
         table == pinned,

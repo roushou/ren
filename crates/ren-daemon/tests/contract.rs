@@ -327,12 +327,11 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
             let snapshot = ren_github::Watch::new("acme/ren".parse().unwrap())
                 .read(answer.to_string().as_bytes())
                 .unwrap();
-            gateway.pulls().record_seen(
-                &"ren".parse().unwrap(),
-                ren_gateway::github::Sighting {
-                    snapshot,
-                    at: ren_recorder::time::UnixMillis::from_millis(1_800_000_000_000),
-                },
+            let at = std::time::SystemTime::UNIX_EPOCH
+                + std::time::Duration::from_millis(1_800_000_000_000);
+            gateway.pulls().record(
+                &"acme/ren".parse().unwrap(),
+                &ren_github::Observation::Waiting.seen(ren_github::Sighting { snapshot, at }),
             );
             read("/api/projects/ren/pulls".to_owned()).await
         }),

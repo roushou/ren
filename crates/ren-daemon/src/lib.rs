@@ -6,13 +6,11 @@
 //! storage.
 
 pub mod config;
-pub mod github;
 pub mod host;
 pub mod tailscale;
 pub mod tools;
 
 use crate::config::RuntimeConfig;
-use crate::github::GithubPoller;
 use crate::host::{HeldRuns, ObservationThread, ProcessHost, RandomIds, SystemClock};
 use crate::tools::HostTools;
 use crate::tools::{HostToolbox, ToolStore, fetch::ReqwestFetch};
@@ -23,6 +21,7 @@ use ren_gateway::{
     operator::{OperatorState, Pause, RestoreError},
 };
 use ren_gateway::{IngressError, UpstreamConfigError};
+use ren_github::Poller;
 use ren_harness::{
     endpoint::{GatewayEndpoint, GatewayEndpointError},
     lines::LineLimit,
@@ -387,28 +386,37 @@ impl Daemon {
         ))
     }
 
-    /// The board of what is watched on GitHub, with its poller started
-    /// when anything is. A poller that cannot be built leaves the board
-    /// waiting, and says why.
+    /// The board of what is watched on GitHub, with `ren_github`'s poller
+    /// recording on it until the gateway drains. Its times are the
+    /// daemon's clock's.
     fn watch_github(
         config: &RuntimeConfig,
         clock: Arc<dyn Clock>,
         shutdown: &Shutdown,
     ) -> PullBoard {
-        let Some(watch) = config.github() else {
+        let Some(setup) = config.github() else {
             return PullBoard::default();
         };
-        let board = watch.board();
-        match GithubPoller::new(watch.clone(), board.clone(), clock) {
-            Ok(poller) => {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "process wiring: the daemon owns the GitHub poller's task"
-                )]
-                tokio::spawn(poller.run(shutdown.clone()));
-            }
-            Err(error) => tracing::error!(%error, "the GitHub poller could not start"),
-        }
+        let board = PullBoard::watching(setup.projects.iter().cloned());
+        let poller = Poller::new(setup.client.clone(), setup.period, board.repositories());
+        let recording = board.clone();
+        let stop = shutdown.clone();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "process wiring: the daemon owns the GitHub poller's task"
+        )]
+        tokio::spawn(async move {
+            poller
+                .run(
+                    |repository, observation| recording.record(repository, observation),
+                    || {
+                        std::time::SystemTime::UNIX_EPOCH
+                            + Duration::from_millis(clock.now().wall.as_millis())
+                    },
+                    stop.draining(),
+                )
+                .await;
+        });
         board
     }
     /// The host's tools for the control API, or none when downloads cannot

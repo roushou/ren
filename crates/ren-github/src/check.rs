@@ -1,7 +1,7 @@
 //! A pull request's checks: each check run or commit status on its head,
 //! and how GitHub sums them up.
 
-use ren_protocol::label::Stored;
+use crate::reported::Reported;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
@@ -56,13 +56,13 @@ pub enum ChecksState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
     pub name: String,
-    pub state: Stored<CheckState>,
+    pub state: Reported<CheckState>,
 }
 
 impl CheckState {
     /// A check run's state: its conclusion once `status` is `COMPLETED`,
     /// otherwise its status. Unknown text is kept, joined as GitHub sent it.
-    pub(crate) fn of_run(status: &str, conclusion: Option<&str>) -> Stored<Self> {
+    pub(crate) fn of_run(status: &str, conclusion: Option<&str>) -> Reported<Self> {
         let known = match (status, conclusion) {
             ("COMPLETED", Some(conclusion)) => match conclusion {
                 "SUCCESS" => Some(Self::Passed),
@@ -81,35 +81,35 @@ impl CheckState {
             _ => None,
         };
         known.map_or_else(
-            || Stored::from_label(&format!("{status}/{}", conclusion.unwrap_or("-"))),
-            Stored::Known,
+            || Reported::Unknown(format!("{status}/{}", conclusion.unwrap_or("-"))),
+            Reported::Known,
         )
     }
 
     /// A commit status's state.
-    pub(crate) fn of_status(state: &str) -> Stored<Self> {
+    pub(crate) fn of_status(state: &str) -> Reported<Self> {
         match state {
-            "SUCCESS" => Stored::Known(Self::Passed),
-            "FAILURE" => Stored::Known(Self::Failed),
-            "ERROR" => Stored::Known(Self::Errored),
-            "PENDING" => Stored::Known(Self::Running),
-            "EXPECTED" => Stored::Known(Self::Expected),
-            other => Stored::from_label(other),
+            "SUCCESS" => Reported::Known(Self::Passed),
+            "FAILURE" => Reported::Known(Self::Failed),
+            "ERROR" => Reported::Known(Self::Errored),
+            "PENDING" => Reported::Known(Self::Running),
+            "EXPECTED" => Reported::Known(Self::Expected),
+            other => Reported::Unknown(other.to_owned()),
         }
     }
 }
 
 impl ChecksState {
     /// GitHub's rollup state; no rollup at all is [`ChecksState::None`].
-    pub(crate) fn of_rollup(state: Option<&str>) -> Stored<Self> {
+    pub(crate) fn of_rollup(state: Option<&str>) -> Reported<Self> {
         match state {
-            None => Stored::Known(Self::None),
-            Some("SUCCESS") => Stored::Known(Self::Passing),
-            Some("FAILURE") => Stored::Known(Self::Failing),
-            Some("ERROR") => Stored::Known(Self::Errored),
-            Some("PENDING") => Stored::Known(Self::Pending),
-            Some("EXPECTED") => Stored::Known(Self::Expected),
-            Some(other) => Stored::from_label(other),
+            None => Reported::Known(Self::None),
+            Some("SUCCESS") => Reported::Known(Self::Passing),
+            Some("FAILURE") => Reported::Known(Self::Failing),
+            Some("ERROR") => Reported::Known(Self::Errored),
+            Some("PENDING") => Reported::Known(Self::Pending),
+            Some("EXPECTED") => Reported::Known(Self::Expected),
+            Some(other) => Reported::Unknown(other.to_owned()),
         }
     }
 }
@@ -117,21 +117,21 @@ impl ChecksState {
 #[cfg(test)]
 mod tests {
     use super::{CheckState, ChecksState};
-    use ren_protocol::label::Stored;
+    use crate::reported::Reported;
 
     #[test]
     fn a_run_reads_its_conclusion_once_completed() {
         assert_eq!(
             CheckState::of_run("COMPLETED", Some("FAILURE")),
-            Stored::Known(CheckState::Failed)
+            Reported::Known(CheckState::Failed)
         );
         assert_eq!(
             CheckState::of_run("IN_PROGRESS", None),
-            Stored::Known(CheckState::Running)
+            Reported::Known(CheckState::Running)
         );
         assert_eq!(
             CheckState::of_run("QUEUED", None),
-            Stored::Known(CheckState::Queued)
+            Reported::Known(CheckState::Queued)
         );
     }
 
@@ -150,7 +150,7 @@ mod tests {
     fn no_rollup_is_no_checks() {
         assert_eq!(
             ChecksState::of_rollup(None),
-            Stored::Known(ChecksState::None)
+            Reported::Known(ChecksState::None)
         );
     }
 }

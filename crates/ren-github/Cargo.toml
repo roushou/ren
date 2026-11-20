@@ -6,18 +6,23 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "GitHub as the Ren LLM gateway observes it: a repository's open pull requests, their checks, and its default branch."
+description = "A GitHub client for a repository's pull requests: their heads, merge states, reviews, and checks, read with one GraphQL query, and a poller that keeps what it last saw."
 
-# Sans-IO: the query Ren sends GitHub and what an answer says. Only pure
-# dependencies; no async runtime, HTTP, database, process, or CLI parser.
+# Self-contained: it depends on none of Ren's crates. The query, what an
+# answer says, and the observation are free of I/O (src/purity.rs); the
+# client sends with reqwest, and the poller waits with tokio's timer.
 [dependencies]
-ren-protocol.workspace = true
-ren-release.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_with.workspace = true
 strum.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "time"] }
+
+[dev-dependencies]
+axum.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
 
 [lints]
 workspace = true

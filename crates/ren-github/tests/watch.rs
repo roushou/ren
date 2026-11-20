@@ -1,14 +1,15 @@
-//! A watch reads GitHub's answer into a snapshot: synthetic answers, in
-//! the shape the query asks for.
+//! A watch reads GitHub's answer into a snapshot, and the client and the
+//! poller read it from a loopback stand-in for GitHub's endpoint:
+//! synthetic answers, in the shape the query asks for.
 #![allow(
     clippy::unwrap_used,
     reason = "integration tests are a shell: helpers outside #[test] fail loudly"
 )]
 
 use ren_github::{
-    CheckState, ChecksState, Listing, MergeState, ReadError, Readiness, ReviewDecision, Watch,
+    CheckState, ChecksState, Listing, MergeState, ReadError, Readiness, Reported, ReviewDecision,
+    Watch,
 };
-use ren_protocol::label::Stored;
 
 fn watch() -> Watch {
     Watch::new("acme/web".parse().unwrap())
@@ -43,9 +44,9 @@ fn an_answer_reads_into_a_snapshot() {
     assert_eq!(landing.author.as_ref().unwrap().as_str(), "acme-bot");
     assert_eq!(landing.readiness, Readiness::Ready);
     assert_eq!(landing.head_branch, "landing");
-    assert_eq!(landing.merge, Stored::Known(MergeState::Behind));
-    assert_eq!(landing.review, Stored::Known(ReviewDecision::NotRequired));
-    assert_eq!(landing.checks, Stored::Known(ChecksState::Failing));
+    assert_eq!(landing.merge, Reported::Known(MergeState::Behind));
+    assert_eq!(landing.review, Reported::Known(ReviewDecision::NotRequired));
+    assert_eq!(landing.checks, Reported::Known(ChecksState::Failing));
     let states: Vec<_> = landing
         .check_list
         .iter()
@@ -64,8 +65,11 @@ fn an_answer_reads_into_a_snapshot() {
     assert_eq!(layout.readiness, Readiness::Draft);
     assert_eq!(layout.author, None);
     assert_eq!(layout.merge.label(), "SOMETHING_NEW");
-    assert_eq!(layout.review, Stored::Known(ReviewDecision::ReviewRequired));
-    assert_eq!(layout.checks, Stored::Known(ChecksState::None));
+    assert_eq!(
+        layout.review,
+        Reported::Known(ReviewDecision::ReviewRequired)
+    );
+    assert_eq!(layout.checks, Reported::Known(ChecksState::None));
     assert!(layout.check_list.is_empty());
 }
 

@@ -1882,13 +1882,14 @@ dependencies = [
 name = "ren-github"
 version = "0.1.0"
 dependencies = [
- "ren-protocol",
- "ren-release",
+ "axum",
+ "reqwest",
  "serde",
  "serde_json",
  "serde_with",
  "strum",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

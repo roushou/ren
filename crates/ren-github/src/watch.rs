@@ -1,13 +1,13 @@
-//! A watch on one repository: the GraphQL query Ren sends, and the
-//! [`Snapshot`] an answer shows. One query reads the default branch's head
+//! A watch on one repository: the GraphQL query that reads its pull
+//! requests, and the [`Snapshot`] an answer shows. One query reads the default branch's head
 //! and every open pull request with its checks, so a poll is one request.
 
 use crate::{
     check::{Check, CheckState, ChecksState},
-    pull::{GithubLogin, MergeState, PullNumber, PullRequest, Readiness, ReviewDecision},
+    oid::Oid,
+    pull::{Login, MergeState, PullNumber, PullRequest, Readiness, ReviewDecision},
     repository::RepositorySlug,
 };
-use ren_release::Commit;
 use serde_json::json;
 
 /// A watch on one GitHub repository.
@@ -20,7 +20,7 @@ pub struct Watch {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
     /// The default branch, and its head; none for an empty repository.
-    pub default_branch: Option<(String, Commit)>,
+    pub default_branch: Option<(String, Oid)>,
     /// Its open pull requests, most recently updated first.
     pub pull_requests: Vec<PullRequest>,
     /// Whether every open pull request is listed, or only the first
@@ -162,7 +162,7 @@ impl Watch {
             title: node.title,
             body: node.body,
             url: node.url,
-            author: node.author.map(|author| GithubLogin::new(author.login)),
+            author: node.author.map(|author| Login::new(author.login)),
             readiness: if node.is_draft {
                 Readiness::Draft
             } else {
@@ -196,7 +196,7 @@ impl Watch {
         }
     }
 
-    fn commit(oid: String) -> Result<Commit, ReadError> {
+    fn commit(oid: String) -> Result<Oid, ReadError> {
         oid.parse().map_err(|_| ReadError::Head(oid))
     }
 

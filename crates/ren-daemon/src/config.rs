@@ -1,6 +1,5 @@
 //! Strict startup configuration. This revision is immutable for the daemon lifetime.
 
-use crate::github::{GithubToken, GithubWatch, GraphqlUrl, PollSecs};
 use ren_depot::{CatalogEntry, CatalogError, Depot};
 use ren_gateway::{
     BufferOptions, ConcurrencyLimit, ConfiguredEntry, ControlOptions, EntryIngress, GatewayConfig,
@@ -9,7 +8,7 @@ use ren_gateway::{
     policy::{EntryUsers, Policy, PolicyConfig},
     user::{UserConfig, Users},
 };
-use ren_github::RepositorySlug;
+use ren_github::{Client, Endpoint, PollPeriod, RepositorySlug, Token};
 use ren_harness::{
     attachment::{AttachmentOptions, Limits},
     host::HostEnv,
@@ -91,7 +90,9 @@ pub enum ConfigError {
     )]
     WorktreeEnv,
     #[error("[github] endpoint: {0}")]
-    GithubEndpoint(ren_harness::endpoint::SecureBaseError),
+    GithubEndpoint(ren_github::EndpointError),
+    #[error("the GitHub client could not be built")]
+    GithubClient(#[source] reqwest::Error),
     #[error("[github] watches project {0} twice")]
     GithubProjectTwice(String),
     #[error("GitHub token variable {0} is not set, or not a token")]
@@ -162,7 +163,7 @@ pub struct GithubOptions {
     /// read access to pull requests, commit statuses, and metadata).
     pub token_env: String,
     /// Seconds between two polls of each repository, 10 to 3600.
-    pub poll_seconds: PollSecs,
+    pub poll_seconds: PollPeriod,
     /// GitHub's GraphQL endpoint.
     pub endpoint: String,
     /// The repositories watched, one per project.
@@ -183,8 +184,8 @@ impl Default for GithubOptions {
     fn default() -> Self {
         Self {
             token_env: "REN_GITHUB_TOKEN".into(),
-            poll_seconds: PollSecs::DEFAULT,
-            endpoint: GraphqlUrl::GITHUB.into(),
+            poll_seconds: PollPeriod::DEFAULT,
+            endpoint: Endpoint::GITHUB.into(),
             repository: Vec::new(),
         }
     }
@@ -196,7 +197,7 @@ impl GithubOptions {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        GraphqlUrl::parse(&self.endpoint).map_err(ConfigError::GithubEndpoint)?;
+        Endpoint::parse(&self.endpoint).map_err(ConfigError::GithubEndpoint)?;
         let mut projects = std::collections::BTreeSet::new();
         for watched in &self.repository {
             if !projects.insert(&watched.project) {
@@ -208,25 +209,34 @@ impl GithubOptions {
 
     /// What the daemon watches, with the token read from `env`; none while
     /// no repository is named.
-    fn watch(&self, env: &HostEnv) -> Result<Option<GithubWatch>, ConfigError> {
+    fn watch(&self, env: &HostEnv) -> Result<Option<GithubSetup>, ConfigError> {
         if self.repository.is_empty() {
             return Ok(None);
         }
         let token = env
             .get(&self.token_env)
-            .and_then(GithubToken::new)
+            .and_then(Token::new)
             .ok_or_else(|| ConfigError::MissingGithubToken(self.token_env.clone()))?;
-        Ok(Some(GithubWatch {
-            token,
-            endpoint: GraphqlUrl::parse(&self.endpoint).map_err(ConfigError::GithubEndpoint)?,
+        let endpoint = Endpoint::parse(&self.endpoint).map_err(ConfigError::GithubEndpoint)?;
+        Ok(Some(GithubSetup {
+            client: Client::new(endpoint, token).map_err(ConfigError::GithubClient)?,
             period: self.poll_seconds,
-            repositories: self
+            projects: self
                 .repository
                 .iter()
                 .map(|watched| (watched.project.clone(), watched.github.clone()))
                 .collect(),
         }))
     }
+}
+
+/// What the daemon watches on GitHub, resolved: the client, how often it
+/// reads, and each project's repository.
+#[derive(Debug, Clone)]
+pub struct GithubSetup {
+    pub client: Client,
+    pub period: PollPeriod,
+    pub projects: Vec<(ProjectName, RepositorySlug)>,
 }
 
 /// The `[tools]` section: catalog entries in the built-in catalog's form,
@@ -673,7 +683,7 @@ pub struct RuntimeConfig {
     /// The packages Ren knows: the built-in catalog with `[tools]`.
     depot: Depot,
     /// What is watched on GitHub; none while nothing is.
-    github: Option<GithubWatch>,
+    github: Option<GithubSetup>,
     revision: String,
 }
 
@@ -695,7 +705,7 @@ impl RuntimeConfig {
         self.attachment_limits
     }
 
-    pub fn github(&self) -> Option<&GithubWatch> {
+    pub fn github(&self) -> Option<&GithubSetup> {
         self.github.as_ref()
     }
 

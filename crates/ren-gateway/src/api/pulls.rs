@@ -5,20 +5,19 @@
 //! `Work-Item:` trailers address.
 
 use super::{ApiError, ApiState};
-use crate::github::{Observation, PullBoard, Sighting};
+use crate::github::PullBoard;
 use axum::{
     extract::{Path, State},
     response::{IntoResponse, Response},
 };
 use ren_github::{
-    Check, CheckState, ChecksState, Listing, MergeState, PullRequest, Readiness, ReviewDecision,
-    Snapshot,
+    Check, CheckState, ChecksState, Listing, MergeState, Observation, Oid, PullRequest, Readiness,
+    Reported, ReviewDecision, Sighting, Snapshot,
 };
-use ren_protocol::label::Stored;
-use ren_recorder::{id::WorkItemId, time::UnixMillis, work::Landing};
-use ren_release::Commit;
+use ren_recorder::{id::WorkItemId, work::Landing};
 use serde::Serialize;
 use std::sync::Arc;
+use std::time::SystemTime;
 use ts_rs::TS;
 
 /// `/api/projects/{name}/pulls`' answer.
@@ -39,8 +38,8 @@ pub enum PullsBody {
     Failed {
         repository: String,
         error: String,
-        #[ts(as = "u64")]
-        at: UnixMillis,
+        /// Unix milliseconds.
+        at: u64,
         last: Option<SightingBody>,
     },
 }
@@ -49,8 +48,8 @@ pub enum PullsBody {
 #[derive(Debug, Serialize, TS)]
 #[ts(export)]
 pub struct SightingBody {
-    #[ts(as = "u64")]
-    pub at: UnixMillis,
+    /// Unix milliseconds.
+    pub at: u64,
     pub default_branch: Option<BranchBody>,
     pub pull_requests: Vec<PullBody>,
     /// Whether more open pull requests (or checks) exist than were listed.
@@ -63,7 +62,7 @@ pub struct SightingBody {
 pub struct BranchBody {
     pub name: String,
     #[ts(as = "String")]
-    pub head: Commit,
+    pub head: Oid,
 }
 
 /// One open pull request.
@@ -80,21 +79,21 @@ pub struct PullBody {
     pub readiness: Readiness,
     pub head_branch: String,
     #[ts(as = "String")]
-    pub head: Commit,
+    pub head: Oid,
     pub base_branch: String,
     /// Whether it can merge now: `clean`, `behind`, `blocked`,
     /// `conflicting`, `draft`, `unstable`, `has_hooks`, `computing`, or
     /// GitHub's own text for a state Ren does not know.
     #[ts(as = "String")]
-    pub merge: Stored<MergeState>,
+    pub merge: Reported<MergeState>,
     /// `approved`, `changes_requested`, `review_required`, or
     /// `not_required`.
     #[ts(as = "String")]
-    pub review: Stored<ReviewDecision>,
+    pub review: Reported<ReviewDecision>,
     /// Its head's checks summed up: `passing`, `failing`, `errored`,
     /// `pending`, `expected`, or `none`.
     #[ts(as = "String")]
-    pub checks: Stored<ChecksState>,
+    pub checks: Reported<ChecksState>,
     pub check_list: Vec<CheckBody>,
     /// The work items its description names.
     #[ts(as = "Vec<String>")]
@@ -107,7 +106,7 @@ pub struct PullBody {
 pub struct CheckBody {
     pub name: String,
     #[ts(as = "String")]
-    pub state: Stored<CheckState>,
+    pub state: Reported<CheckState>,
 }
 
 impl ApiState {
@@ -136,10 +135,20 @@ impl PullsBody {
             Observation::Failed { error, at, last } => Self::Failed {
                 repository,
                 error,
-                at,
+                at: SightingBody::millis(at),
                 last: last.map(SightingBody::from),
             },
         }
+    }
+}
+
+impl SightingBody {
+    /// A time as the API sends it: Unix milliseconds, zero before 1970.
+    fn millis(at: SystemTime) -> u64 {
+        at.duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |since| {
+                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+            })
     }
 }
 
@@ -151,7 +160,7 @@ impl From<Sighting> for SightingBody {
             listing,
         } = sighting.snapshot;
         Self {
-            at: sighting.at,
+            at: Self::millis(sighting.at),
             default_branch: default_branch.map(|(name, head)| BranchBody { name, head }),
             pull_requests: pull_requests.into_iter().map(PullBody::from).collect(),
             truncated: match listing {
