@@ -4,18 +4,10 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import {
-    ManagementApi,
-    clock,
-    short,
-    type CallView,
-    type RecordingId,
-    type Shelf,
-    type TokenTotals,
-  } from '#lib/api.ts';
+  import { ManagementApi, short, type Shelf, type TokenTotals } from '#lib/api.ts';
   import { ago } from '#lib/overview.ts';
   import { harnessLabel } from '#lib/activity.ts';
-  import { callStatus, spentSummary, statusBadge, tokenSummary } from '#lib/display.ts';
+  import { spentSummary } from '#lib/display.ts';
   import {
     Deletions,
     Desk,
@@ -223,11 +215,6 @@
   let clients = $state.raw<RunClient[]>(first(initial?.clients, []));
   /** The client whose sign-in sheet is open. */
   let signingIn = $state<Drivable | null>(null);
-  const tabs = [
-    ['conversation', 'Conversation'],
-    ['files', 'Files'],
-    ['calls', 'Calls'],
-  ] as const;
   /** The turns a conversation's outline draws: each prompt's width and its
    * reply's lines, varied so they read as text. */
   const OUTLINE_TURNS = [
@@ -235,10 +222,6 @@
     { prompt: '31%', reply: ['81%', '63%'] },
     { prompt: '57%', reply: ['85%', '90%', '68%', '40%'] },
   ] as const;
-  /** What the selected run shows. */
-  let tab = $state<(typeof tabs)[number][0]>('conversation');
-  /** The selected run's model calls, read when its Calls tab opens. */
-  let calls = $state.raw<{ recording: RecordingId; calls: CallView[] } | null>(null);
   /** Now, for how long ago runs started; moves every half minute. */
   let now = $state(Date.now());
   let busy = $state(false);
@@ -294,15 +277,6 @@
     }
   }
   const spentLine = $derived(spent && spent.session === chosen ? spentSummary(spent.tokens) : null);
-
-  async function readCalls(recording: RecordingId) {
-    try {
-      const page = await api.recordingCalls(recording, null);
-      calls = { recording, calls: page.calls };
-    } catch (error) {
-      notice = message(error);
-    }
-  }
 
   /** What a session was asked first: as stored, else from its conversation here. */
   function title(entry: { run: RunId | null; asked?: string | null }): string | null {
@@ -1036,7 +1010,6 @@
   $effect(() => {
     const run = selected;
     conversationRead = null;
-    calls = null;
     // A question asked in the header is about the session it showed.
     untrack(() => {
       if (
@@ -1045,7 +1018,6 @@
       )
         deleting({ kind: 'cancel' });
     });
-    tab = 'conversation';
     following = true;
     if (!run) return;
     // Loaded with the page when it was opened on this run; read otherwise.
@@ -1067,12 +1039,6 @@
     const target = chosen;
     const settled = runState?.phase !== 'starting' && runState?.phase !== 'working';
     if (target && settled) untrack(() => void readSpent(target));
-  });
-
-  $effect(() => {
-    // The Calls tab reads the calls of its session's recording when it opens.
-    const recording = current?.recorded?.recording ?? null;
-    if (tab === 'calls' && recording && calls?.recording !== recording) void readCalls(recording);
   });
 
   $effect(() => {
@@ -1460,57 +1426,6 @@
   {/if}
 {/snippet}
 
-{#snippet files()}
-  {@const written = [
-    ...new Set(
-      (transcript?.entries ?? []).flatMap((entry) =>
-        entry.kind === 'file_change' ? entry.paths : [],
-      ),
-    ),
-  ]}
-  <div class="band">Written <span class="count">{written.length}</span></div>
-  {#each written as path (path)}<div class="entry tool mono" title={path}>
-      <Icon name="pencil" size={11} />
-      {Runs.within(path, session?.workdir ?? null)}
-    </div>{:else}<p class="quiet-empty">Nothing written yet.</p>{/each}
-{/snippet}
-
-{#snippet callList()}
-  {#if !current?.recorded?.recording}
-    <p class="quiet-empty">No calls recorded yet.</p>
-  {:else if !calls}
-    <p class="quiet-empty">Reading calls…</p>
-  {:else}
-    <table class="calls">
-      <thead
-        ><tr><th>Started</th><th>Model</th><th>Ended</th><th>Time</th><th>Tokens</th></tr></thead
-      >
-      <tbody>
-        {#each calls.calls as call (call.id)}
-          {@const badge = statusBadge(callStatus(call))}
-          {@const tokens = tokenSummary(call.usage)}
-          <tr>
-            <td class="mono muted">{clock(call.started_at)}</td>
-            <td class="mono">{call.model ?? '—'}</td>
-            <td><span class="chip {badge.tone}">{badge.label}</span></td>
-            <td class="mono muted"
-              >{call.ended_at
-                ? `${Math.round((call.ended_at - call.started_at) / 100) / 10} s`
-                : '…'}</td
-            >
-            <td class="mono muted" title={tokens?.title}
-              >{tokens ? `${tokens.input} in · ${tokens.output} out` : '—'}</td
-            >
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-    <a class="foot-link" href="/recordings/{current.recorded.recording}"
-      >Open its recording <Icon name="arrow" size={11} /></a
-    >
-  {/if}
-{/snippet}
-
 {#snippet turnsOutline()}
   <!-- A conversation on its way: turns ruled off as they will be, with
        bars where each prompt and reply go. -->
@@ -1525,24 +1440,14 @@
 {/snippet}
 
 {#snippet sessionOutline()}
-  <!-- A session on its way, before the lists say what it is: its header,
-       its tabs, and its conversation's outline. -->
+  <!-- A session on its way, before the lists say what it is: its header
+       and its conversation's outline. -->
   <header class="run-head" aria-busy="true">
     <div class="run-heading">
       <h2 class="run-title"><Skeleton width="42%" /></h2>
       <p class="run-facts"><Skeleton width="16em" /></p>
     </div>
   </header>
-  <div class="tabs" role="tablist" aria-label="What the run shows">
-    {#each tabs as [name, label] (name)}
-      <button
-        role="tab"
-        aria-selected={name === 'conversation'}
-        class:chosen={name === 'conversation'}
-        disabled>{label}</button
-      >
-    {/each}
-  </div>
   <div class="conversation" aria-busy="true">{@render turnsOutline()}</div>
 {/snippet}
 
@@ -1675,80 +1580,59 @@
         {/if}
       </header>
 
-      <div class="tabs" role="tablist" aria-label="What the run shows">
-        {#each tabs as [name, label] (name)}
-          <button
-            role="tab"
-            aria-selected={tab === name}
-            class:chosen={tab === name}
-            onclick={() => (tab = name)}>{label}</button
-          >
-        {/each}
-      </div>
-
-      {#if tab === 'conversation'}
-        <!-- Scrolled from its end, so it opens on the newest entry from the
+      <!-- Scrolled from its end, so it opens on the newest entry from the
              first paint, before the page's scripts run. -->
-        <div
-          class="conversation from-end"
-          bind:this={conversation}
-          onscroll={onScroll}
-          aria-busy={conversationPending}
-        >
-          <div class="conversation-body">
-            {#if conversationPending}
-              {@render turnsOutline()}
-            {:else}
-              {#if readError}<p class="entry notice-entry danger">{readError}</p>{/if}
-              {#if transcript?.earlier}<p class="quiet-empty">
-                  Earlier turns are not shown: the conversation is longer than one read.
-                </p>{/if}
-              <!-- The whole conversation, every turn open, as one scroll. -->
-              {#each Runs.turns(transcript?.entries ?? []) as turn, index (index)}
-                <section class="turn">
-                  {#each Steps.blocks(turn, session?.workdir ?? null) as block, at (at)}
-                    {#if block.kind === 'steps'}
-                      <StepGroup
-                        steps={block.steps}
-                        state={block.state}
-                        open={folds.get(block.key) ?? false}
-                        ontoggle={(open) => folds.set(block.key, open)}
-                      />
-                    {:else}
-                      {@render entryView(block.entry)}
-                    {/if}
-                  {/each}
-                </section>
-              {/each}
-            {/if}
-            {#each outgoing as item (item.key)}{@render outgoingView(item)}{/each}
-            {#if runState?.phase === 'working' && !controls.approvals.length}<div
-                class="entry tool muted working"
-              >
-                <span class="phase-dot tone-live"></span> Working…
-              </div>{/if}
-            {#if transcript?.read && !transcript.entries.length && runState?.phase === 'idle'}
-              <p class="quiet-empty">The conversation is open. Say what to do.</p>
-            {:else if !current && outgoing.length === 0}
-              <p class="quiet-empty">
-                Write the first prompt: {harnessLabel(session.harness)} starts with it, in {Runs.place(
-                  session.workdir,
-                  scratch,
-                  offered,
-                )}.
-              </p>
-            {/if}
-          </div>
+      <div
+        class="conversation from-end"
+        bind:this={conversation}
+        onscroll={onScroll}
+        aria-busy={conversationPending}
+      >
+        <div class="conversation-body">
+          {#if conversationPending}
+            {@render turnsOutline()}
+          {:else}
+            {#if readError}<p class="entry notice-entry danger">{readError}</p>{/if}
+            {#if transcript?.earlier}<p class="quiet-empty">
+                Earlier turns are not shown: the conversation is longer than one read.
+              </p>{/if}
+            <!-- The whole conversation, every turn open, as one scroll. -->
+            {#each Runs.turns(transcript?.entries ?? []) as turn, index (index)}
+              <section class="turn">
+                {#each Steps.blocks(turn, session?.workdir ?? null) as block, at (at)}
+                  {#if block.kind === 'steps'}
+                    <StepGroup
+                      steps={block.steps}
+                      state={block.state}
+                      open={folds.get(block.key) ?? false}
+                      ontoggle={(open) => folds.set(block.key, open)}
+                    />
+                  {:else}
+                    {@render entryView(block.entry)}
+                  {/if}
+                {/each}
+              </section>
+            {/each}
+          {/if}
+          {#each outgoing as item (item.key)}{@render outgoingView(item)}{/each}
+          {#if runState?.phase === 'working' && !controls.approvals.length}<div
+              class="entry tool muted working"
+            >
+              <span class="phase-dot tone-live"></span> Working…
+            </div>{/if}
+          {#if transcript?.read && !transcript.entries.length && runState?.phase === 'idle'}
+            <p class="quiet-empty">The conversation is open. Say what to do.</p>
+          {:else if !current && outgoing.length === 0}
+            <p class="quiet-empty">
+              Write the first prompt: {harnessLabel(session.harness)} starts with it, in {Runs.place(
+                session.workdir,
+                scratch,
+                offered,
+              )}.
+            </p>
+          {/if}
         </div>
-      {:else if tab === 'files'}
-        <div class="conversation">
-          {@render files()}
-        </div>
-      {:else}
-        <div class="conversation">
-          {@render callList()}
-        </div>
-      {/if}
+      </div>
 
       {#if controls.approvals.length}
         <div class="approvals" aria-label="Waiting for your answer">
@@ -2124,61 +2008,9 @@
   .tone-danger.phase-dot {
     background: var(--error);
   }
-  .tabs {
-    display: flex;
-    border-bottom: 1px solid var(--line);
-    padding: 0 12px;
-  }
-  .tabs button {
-    padding: 8px 12px;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    background: none;
-    color: var(--muted);
-    font: inherit;
-    font-size: 12px;
-    cursor: pointer;
-  }
-  .tabs button.chosen {
-    color: var(--ink);
-    border-bottom-color: var(--accent, var(--ink));
-  }
   .lost {
     margin: 0;
     padding: 10px 16px;
-    border-bottom: 1px solid var(--line);
-    font-size: 12px;
-  }
-  /* A heading row: what the rows under it belong to. */
-  .band {
-    padding: 7px 16px;
-    border-bottom: 1px solid var(--line);
-    background: var(--sidebar);
-    color: var(--muted);
-    font-size: 11px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .band .count {
-    margin-left: 4px;
-    color: var(--ink);
-  }
-  table.calls {
-    font-size: 12px;
-  }
-  table.calls th:first-child,
-  table.calls td:first-child {
-    padding-left: 16px;
-  }
-  table.calls td {
-    vertical-align: middle;
-  }
-  .foot-link {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 8px 16px;
     border-bottom: 1px solid var(--line);
     font-size: 12px;
   }
@@ -2384,9 +2216,6 @@
   /* A prompt is drawn on the inset surface the bars use: its bar is ruled. */
   .entry.prompt.outline :global(.skeleton) {
     background: var(--line);
-  }
-  .tabs button:disabled {
-    cursor: default;
   }
   .entry.prompt {
     background: var(--surface-inset);
