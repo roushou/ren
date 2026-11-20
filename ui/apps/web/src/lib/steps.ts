@@ -10,7 +10,7 @@ import type { EffectKind } from './api.ts';
 import { Board } from './board.ts';
 import { assertNever } from './decode.ts';
 import type { Stored } from './decode.ts';
-import { Runs, type CommandPart, type Entry } from './runs.ts';
+import { Runs, type CommandPart, type Entry, type ItemId } from './runs.ts';
 
 /** An entry that is a step: something the agent did, not something said. */
 export type StepEntry = Extract<Entry, { kind: 'command' | 'file_change' | 'tool' }>;
@@ -36,6 +36,9 @@ export interface Step {
   /** How it failed, when it failed with an exit code (`exit 1`); its mark
    * says that it failed. */
   failure: string | null;
+  /** How long it took, in milliseconds, when the daemon stored its start
+   * and completion; null while it runs, or when only the live feed said. */
+  took: number | null;
 }
 
 /** What a turn shows: something said as it is, or a group of steps. */
@@ -65,7 +68,11 @@ export class Steps {
    * steps between two things said as one group, keyed by its first step.
    * Thinking that finished shows nothing, so it parts no group.
    */
-  static blocks(entries: readonly Entry[], workdir: string | null): Block[] {
+  static blocks(
+    entries: readonly Entry[],
+    workdir: string | null,
+    took: ReadonlyMap<ItemId, number> = new Map(),
+  ): Block[] {
     const blocks: Block[] = [];
     for (const entry of entries) {
       if (entry.kind === 'reasoning' && entry.done) continue;
@@ -73,7 +80,7 @@ export class Steps {
         blocks.push({ kind: 'entry', entry });
         continue;
       }
-      const step = Steps.read(entry, workdir);
+      const step = Steps.read(entry, workdir, took.get(entry.item) ?? null);
       const last = blocks.at(-1);
       if (last?.kind === 'steps') {
         last.steps.push(step);
@@ -91,8 +98,29 @@ export class Steps {
     return 'done';
   }
 
-  /** What one step did. */
-  static read(entry: StepEntry, workdir: string | null): Step {
+  /** What one step did, and how long it took when that is known. */
+  static read(entry: StepEntry, workdir: string | null, took: number | null = null): Step {
+    return { ...Steps.#read(entry, workdir), took };
+  }
+
+  /** How long `steps` took together, counting those whose time is known;
+   * null when none is. */
+  static took(steps: readonly Step[]): number | null {
+    const known = steps.flatMap((step) => (step.took === null ? [] : [step.took]));
+    return known.length ? known.reduce((sum, ms) => sum + ms, 0) : null;
+  }
+
+  /** A step's time at a glance: tenths under ten seconds (`2.5 s`), whole
+   * seconds under a minute, then minutes and seconds (`1:04`). */
+  static time(ms: number): string {
+    const seconds = Math.max(0, ms) / 1000;
+    if (seconds < 10) return `${seconds.toFixed(1)} s`;
+    if (seconds < 60) return `${Math.round(seconds)} s`;
+    const whole = Math.round(seconds);
+    return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+  }
+
+  static #read(entry: StepEntry, workdir: string | null): Omit<Step, 'took'> {
     switch (entry.kind) {
       case 'command':
         return Steps.#command(entry, workdir);
@@ -209,7 +237,10 @@ export class Steps {
     return `“${text.length > 40 ? `${text.slice(0, 39)}…` : text}”`;
   }
 
-  static #command(entry: Extract<Entry, { kind: 'command' }>, workdir: string | null): Step {
+  static #command(
+    entry: Extract<Entry, { kind: 'command' }>,
+    workdir: string | null,
+  ): Omit<Step, 'took'> {
     const status = Steps.#status(entry.status, entry.exit);
     const command = Board.shorten(entry.command, workdir);
     const intent = entry.intent;

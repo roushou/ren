@@ -172,3 +172,10 @@ test('a group reads in a line, by kind, files read again counted once', () => {
     'Run the tests',
   );
 });
+
+test('a step’s time reads in tenths, then seconds, then minutes', () => {
+  assert.deepEqual(
+    [0, 420, 2_500, 9_949, 12_400, 59_400, 64_000, 3_725_000].map((ms) => Steps.time(ms)),
+    ['0.0 s', '0.4 s', '2.5 s', '9.9 s', '12 s', '59 s', '1:04', '62:05'],
+  );
+});

@@ -19,6 +19,7 @@ import {
   type RecordedRun,
   type RunSnapshot,
 } from '../src/lib/runs.ts';
+import { Steps } from '../src/lib/steps.ts';
 
 const run = '0190f3a0-0000-7000-8000-0000000000aa';
 const other = '0190f3a0-0000-7000-8000-0000000000bb';
@@ -241,9 +242,27 @@ test('items of two processes keep apart though a client names them alike, stored
   // A session's second process names its first items as the first did.
   const stored = new Transcript().load({
     entries: [
-      { run: first, seq: 1, event: prompt('explain the parser') },
-      { run: first, seq: 2, event: reply('It reads tokens.') },
-      { run: second, seq: 1, event: prompt('and the lexer?') },
+      {
+        run: first,
+        seq: 1,
+        at: 0 as never,
+        started_at: 0 as never,
+        event: prompt('explain the parser'),
+      },
+      {
+        run: first,
+        seq: 2,
+        at: 0 as never,
+        started_at: 0 as never,
+        event: reply('It reads tokens.'),
+      },
+      {
+        run: second,
+        seq: 1,
+        at: 0 as never,
+        started_at: 0 as never,
+        event: prompt('and the lexer?'),
+      },
     ],
     earlier: false,
   });
@@ -465,7 +484,13 @@ test('the stored conversation and the live feed merge into one, nothing cut', ()
       reply('m1', long),
       event({ kind: 'turn_ended', turn: 't1', end: { kind: 'completed' } }),
       prompt('u2', 'and the docs'),
-    ].map((event, index) => ({ run: run as never, seq: index + 1, event })),
+    ].map((event, index) => ({
+      run: run as never,
+      seq: index + 1,
+      at: 0 as never,
+      started_at: 0 as never,
+      event,
+    })),
     earlier: false,
   });
   assert.equal(loaded.read, true);
@@ -1045,4 +1070,64 @@ test('every decision has distinct words, and only allowing reads as passed', () 
     words.map((said) => said.mark),
     ['passed', 'passed', 'idle', 'idle'],
   );
+});
+
+test('a stored item keeps how long it took; a step reads it, and a group adds it up', () => {
+  const run = 'run-1' as never;
+  const command = (id: string, phase: 'started' | 'completed') =>
+    ({
+      kind: 'item',
+      phase,
+      item: {
+        id,
+        kind: 'command_execution',
+        read: {
+          as: 'command',
+          command: 'cargo test',
+          intent: { said: 'unsaid' },
+          status: phase === 'completed' ? 'completed' : 'in_progress',
+          output: null,
+          exit_code: phase === 'completed' ? 0 : null,
+        },
+      },
+    }) as never;
+  const transcript = new Transcript().load({
+    entries: [
+      {
+        run,
+        seq: 1,
+        at: 1_000 as never,
+        started_at: 1_000 as never,
+        event: command('c1', 'started'),
+      },
+      {
+        run,
+        seq: 2,
+        at: 3_500 as never,
+        started_at: 1_000 as never,
+        event: command('c1', 'completed'),
+      },
+      {
+        run,
+        seq: 3,
+        at: 4_000 as never,
+        started_at: 4_000 as never,
+        event: command('c2', 'started'),
+      },
+    ],
+    earlier: false,
+  });
+  assert.deepEqual([...transcript.took], [['run-1/c1', 2_500]]);
+  // The time survives the live feed's next event.
+  const later = transcript.apply(command('c3', 'started'), run);
+  assert.equal(later.took.get('run-1/c1' as never), 2_500);
+  const [group] = Steps.blocks(later.entries, null, later.took);
+  assert.equal(group?.kind, 'steps');
+  if (group?.kind !== 'steps') return;
+  assert.deepEqual(
+    group.steps.map((step) => step.took),
+    [2_500, null, null],
+  );
+  assert.equal(Steps.took(group.steps), 2_500);
+  assert.equal(Steps.took([]), null);
 });

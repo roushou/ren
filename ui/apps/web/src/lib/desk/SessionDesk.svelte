@@ -13,6 +13,7 @@
     decisions,
     Deletions,
     Desk,
+    type ItemId,
     RunCommandError,
     Runs,
     RunsClient,
@@ -66,7 +67,9 @@
   import CommandStep from './CommandStep.svelte';
   import QuestionCard from './QuestionCard.svelte';
   import StepGroup from './StepGroup.svelte';
-  import { Steps } from '#lib/steps.ts';
+  import StepDetail from './StepDetail.svelte';
+  import SlideOver from '#lib/layer/SlideOver.svelte';
+  import { Steps, type Block } from '#lib/steps.ts';
   import Icon from '#lib/Icon.svelte';
   import Markdown from 'markdown/Markdown.svelte';
   import ActionMenu, { type ActionItem } from '#lib/ActionMenu.svelte';
@@ -523,6 +526,10 @@
   function shortcut(event: KeyboardEvent) {
     if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
     switch (event.key) {
+      case 'ArrowUp':
+      case 'ArrowDown':
+        if (inspecting !== null) stepKey(event);
+        break;
       case 'j':
       case 'k': {
         if (!order.length) return;
@@ -556,6 +563,37 @@
   /** Groups of steps the operator opened, by their first step: the rest
    * stay folded, running or failed alike. */
   const folds = new SvelteMap<string, boolean>();
+  /** The conversation as it shows: each turn's blocks, with each stored
+   * step's time. */
+  const turnBlocks = $derived(
+    Runs.turns(transcript?.entries ?? []).map((turn): Block[] =>
+      Steps.blocks(turn, session?.workdir ?? null, transcript?.took),
+    ),
+  );
+  /** Every step of the conversation, in order: ↑ and ↓ move along it. */
+  const allSteps = $derived(
+    turnBlocks.flatMap((blocks) =>
+      blocks.flatMap((block) => (block.kind === 'steps' ? block.steps : [])),
+    ),
+  );
+  /** The step open beside the transcript, by its item. */
+  let inspecting = $state<ItemId | null>(null);
+  const inspected = $derived(
+    inspecting === null ? null : (allSteps.find((step) => step.entry.item === inspecting) ?? null),
+  );
+  $effect(() => {
+    // Another session closes the step that was open.
+    void chosen;
+    inspecting = null;
+  });
+  /** ↑ and ↓ move the open step along the conversation. */
+  function stepKey(event: KeyboardEvent) {
+    const at = allSteps.findIndex((step) => step.entry.item === inspecting);
+    const next = allSteps[at + (event.key === 'ArrowDown' ? 1 : -1)];
+    if (at === -1 || !next) return;
+    event.preventDefault();
+    inspecting = next.entry.item;
+  }
 
   /** Each session's draft, kept while the page is open. */
   const drafts = new SvelteMap<SessionId, string>();
@@ -1598,15 +1636,18 @@
                 Earlier turns are not shown: the conversation is longer than one read.
               </p>{/if}
             <!-- The whole conversation, every turn open, as one scroll. -->
-            {#each Runs.turns(transcript?.entries ?? []) as turn, index (index)}
+            {#each turnBlocks as blocks, index (index)}
               <section class="turn">
-                {#each Steps.blocks(turn, session?.workdir ?? null) as block, at (at)}
+                {#each blocks as block, at (at)}
                   {#if block.kind === 'steps'}
                     <StepGroup
                       steps={block.steps}
                       state={block.state}
                       open={folds.get(block.key) ?? false}
                       ontoggle={(open) => folds.set(block.key, open)}
+                      onopen={(step) =>
+                        (inspecting = inspecting === step.entry.item ? null : step.entry.item)}
+                      chosen={inspecting}
                     />
                   {:else}
                     {@render entryView(block.entry)}
@@ -1951,6 +1992,11 @@
           </div>
         </form>
       {/if}
+      {#if inspected}
+        <SlideOver label="Step details" size="wide" onclose={() => (inspecting = null)}>
+          <StepDetail step={inspected} />
+        </SlideOver>
+      {/if}
     {/if}
   </section>
 </div>
@@ -2015,6 +2061,7 @@
     margin: auto;
   }
   .run-main {
+    position: relative;
     display: flex;
     flex-direction: column;
     min-width: 0;

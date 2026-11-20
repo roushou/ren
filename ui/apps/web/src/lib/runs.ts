@@ -1006,6 +1006,8 @@ const storedConversation = versioned(
       object<StoredConversation['entries'][number], WireRunEntryView>({
         run: RunId.decode,
         seq: count,
+        at: brandedCount<'UnixMillis'>(),
+        started_at: brandedCount<'UnixMillis'>(),
         event: (value, path) => driveEvent(value, path),
       }),
     ),
@@ -1428,7 +1430,14 @@ export type Entry =
 
 /** A run's conversation as the daemon stored it (`/api/runs/{id}/conversation`). */
 export interface StoredConversation {
-  entries: { run: RunId; seq: number; event: DriveEvent }[];
+  /** Each event, with when its item was first and last reported. */
+  entries: {
+    run: RunId;
+    seq: number;
+    at: UnixMillis;
+    started_at: UnixMillis;
+    event: DriveEvent;
+  }[];
   /** Older entries were left out of the read. */
   earlier: boolean;
 }
@@ -1448,30 +1457,41 @@ export class Transcript {
   readonly read: boolean;
   /** Older entries were left out of the read. */
   readonly earlier: boolean;
+  /** How long each stored item took, from its start to its completion, in
+   * milliseconds. Only what the daemon stored says: an item that finished
+   * on the live feed has its time once the conversation is read again. */
+  readonly took: ReadonlyMap<ItemId, number>;
 
   constructor(
     entries: Entry[] = [],
     turn: NativeTurnId | null = null,
     read = false,
     earlier = false,
+    took: ReadonlyMap<ItemId, number> = new Map(),
   ) {
     this.entries = entries;
     this.turn = turn;
     this.read = read;
     this.earlier = earlier;
+    this.took = took;
   }
 
   /** What the daemon stored, with what streamed in meanwhile kept. */
   load(stored: StoredConversation): Transcript {
     let loaded = new Transcript();
-    for (const entry of stored.entries) loaded = loaded.apply(entry.event, entry.run);
+    const took = new Map(this.took);
+    for (const entry of stored.entries) {
+      loaded = loaded.apply(entry.event, entry.run);
+      if (entry.event.kind === 'item' && entry.event.phase === 'completed')
+        took.set(Transcript.#own(entry.event.item.id, entry.run), entry.at - entry.started_at);
+    }
     const entries = loaded.entries.slice();
     for (const live of this.entries) {
       const at = entries.findIndex((entry) => Transcript.same(entry, live));
       if (at === -1) entries.push(live);
       else if (Transcript.done(live) && !Transcript.done(entries[at]!)) entries[at] = live;
     }
-    return new Transcript(entries, this.turn ?? loaded.turn, true, stored.earlier);
+    return new Transcript(entries, this.turn ?? loaded.turn, true, stored.earlier, took);
   }
 
   /** Every prompt sent, oldest first, to recall. */
@@ -1483,6 +1503,11 @@ export class Transcript {
   firstPrompt(): string | null {
     const prompt = this.entries.find((entry) => entry.kind === 'prompt');
     return prompt?.kind === 'prompt' ? prompt.text : null;
+  }
+
+  /** An item's id within the process that reported it. */
+  static #own(item: ItemId, run: RunId | null): ItemId {
+    return run === null ? item : (`${run}/${item}` as ItemId);
   }
 
   static #itemOf(entry: Entry): ItemId | null {
@@ -1523,10 +1548,10 @@ export class Transcript {
    * a process, by its name alone.
    */
   apply(event: DriveEvent, run: RunId | null = null): Transcript {
-    const own = (item: ItemId): ItemId => (run === null ? item : (`${run}/${item}` as ItemId));
+    const own = (item: ItemId): ItemId => Transcript.#own(item, run);
     switch (event.kind) {
       case 'turn_started':
-        return new Transcript(this.entries, event.turn, this.read, this.earlier);
+        return new Transcript(this.entries, event.turn, this.read, this.earlier, this.took);
       case 'delta': {
         const item = own(event.item);
         const index = this.#find(item);
@@ -1539,7 +1564,7 @@ export class Transcript {
       case 'item':
         return this.#item({ ...event.item, id: own(event.item.id) }, event.phase === 'completed');
       case 'turn_ended':
-        return new Transcript(this.entries, event.turn, this.read, this.earlier).#push({
+        return new Transcript(this.entries, event.turn, this.read, this.earlier, this.took).#push({
           kind: 'turn_end',
           turn: event.turn,
           end: event.end,
@@ -1629,11 +1654,11 @@ export class Transcript {
   #replace(index: number, entry: Entry): Transcript {
     const entries = this.entries.slice();
     entries[index] = entry;
-    return new Transcript(entries, this.turn, this.read, this.earlier);
+    return new Transcript(entries, this.turn, this.read, this.earlier, this.took);
   }
 
   #append(entry: Entry): Transcript {
-    return new Transcript([...this.entries, entry], this.turn, this.read, this.earlier);
+    return new Transcript([...this.entries, entry], this.turn, this.read, this.earlier, this.took);
   }
 
   /** Add `entry`, or put it in the place of the same entry said before. */
