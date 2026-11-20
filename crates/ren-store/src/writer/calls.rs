@@ -246,10 +246,14 @@ impl MetadataTx<'_> {
         head: &ResponseHead,
     ) -> Result<Observation, StoreError> {
         let stamp = &head.stamp;
-        sqlx::query("UPDATE attempts SET status = ?, response_format = ?, response_encoding = ? WHERE id = ?")
+        let limits = (!head.limits.is_empty())
+            .then(|| serde_json::to_string(&head.limits))
+            .transpose()?;
+        sqlx::query("UPDATE attempts SET status = ?, response_format = ?, response_encoding = ?, limit_headers = ? WHERE id = ?")
             .bind(u32::from(head.status))
             .bind(head.format.label())
             .bind(head.encoding.label())
+            .bind(limits)
             .bind(head.attempt.to_string())
             .execute(&mut *self.tx)
             .await?;

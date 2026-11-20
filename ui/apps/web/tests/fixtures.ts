@@ -113,6 +113,7 @@ export function detailFixture(call: CallView, attempts: Partial<AttemptView>[] =
       response: call.response,
       inspection_version: 1,
       inspection: inspectionFixture(),
+      limit_headers: [],
       ...attempt,
     })),
     observations: [],

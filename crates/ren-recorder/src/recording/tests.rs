@@ -9,6 +9,7 @@ use crate::time::{Moment, UnixMillis};
 use ren_harness::attribution::{Attribution, HintSource, SessionHint};
 use ren_harness::tools::CallPurpose;
 use ren_protocol::encoding::{ResponseEncoding, ResponseFormat};
+use ren_protocol::limits::LimitHeaders;
 use ren_protocol::native::{NativeSessionId, NativeTurnId};
 use ren_protocol::route::{Method, Provider, Transport, Wire};
 use std::time::Duration;
@@ -87,12 +88,17 @@ impl Script {
     }
 
     fn head(&mut self, attempt: AttemptId, status: u16) -> Record {
+        self.head_with(attempt, status, LimitHeaders::NONE)
+    }
+
+    fn head_with(&mut self, attempt: AttemptId, status: u16, limits: LimitHeaders) -> Record {
         Record::Head(ResponseHead {
             stamp: self.stamp(),
             attempt,
             status,
             format: ResponseFormat::EventStream,
             encoding: ResponseEncoding::Identity,
+            limits,
         })
     }
 
@@ -289,6 +295,60 @@ fn a_call_becomes_its_lifecycle_chunks_inspection_and_digest() {
     assert_eq!(digest.reply.as_ref().unwrap().text, "Fixed.");
     // Nothing is left behind for the next batch.
     assert!(core.take_batch().is_empty());
+}
+
+#[test]
+fn a_limit_value_that_reads_as_a_credential_is_withheld() {
+    let mut script = Script::new();
+    let mut core = core();
+    let first = script.attempt(0);
+    let attempt = first.attempt;
+    // Plain to the protocol's allowlist, but a JWT to the scanner.
+    let limits: LimitHeaders = serde_json::from_value(serde_json::json!([
+        { "name": "anthropic-ratelimit-unified-status", "value": "allowed" },
+        {
+            "name": "anthropic-ratelimit-unified-hint",
+            "value": "eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.abcdefghijkl",
+        },
+    ]))
+    .unwrap();
+    core.accept(script.open(first));
+    core.accept(script.head_with(attempt, 200, limits));
+    let batch = core.take_batch();
+    let head = batch
+        .operations()
+        .iter()
+        .find_map(|op| match op {
+            Op::ResponseHead(head) => Some(head),
+            Op::OpenCall(_)
+            | Op::StartAttempt(_)
+            | Op::Segments { .. }
+            | Op::Message { .. }
+            | Op::FinishAttempt(_)
+            | Op::FinishCall(_)
+            | Op::CloseChannel(_)
+            | Op::Operator(_)
+            | Op::Session(_)
+            | Op::Work(_)
+            | Op::Project(_)
+            | Op::Run(_)
+            | Op::History(_)
+            | Op::RunEntry(_)
+            | Op::Digest { .. } => None,
+        })
+        .unwrap();
+    let kept: Vec<_> = head
+        .limits
+        .iter()
+        .map(|header| (header.name(), header.value()))
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            ("anthropic-ratelimit-unified-status", Some("allowed")),
+            ("anthropic-ratelimit-unified-hint", None),
+        ]
+    );
 }
 
 #[test]

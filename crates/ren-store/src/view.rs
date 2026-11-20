@@ -18,6 +18,7 @@ use ren_protocol::{
     encoding::{ResponseEncoding, ResponseFormat},
     inspect::{InputAccounting, ModelOutcome},
     label::{Labeled, Stored},
+    limits::LimitHeaders,
     route::{Endpoint, Method, Provider, Transport, Wire},
     websocket::Payload,
 };
@@ -319,10 +320,13 @@ pub struct AttemptView {
     pub changes: Option<serde_json::Value>,
     /// The changed request body this attempt sent, if a transform changed it.
     pub request: Option<BodyView>,
+    /// The provider's limit headers on its response head; empty when it
+    /// carried none, or was recorded before they were.
+    pub limit_headers: LimitHeaders,
 }
 
 impl AttemptView {
-    pub(super) const SELECT: &'static str = "SELECT a.id, a.ordinal, a.started_at, a.ended_at, a.upstream, a.provider, a.status, a.response_format, a.response_encoding, a.terminal, a.terminal_cause, a.terminal_phase, a.inspection, a.inspection_version, a.changes, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending FROM attempts a LEFT JOIN bodies rs ON rs.owner = a.id AND rs.direction = 'response' LEFT JOIN bodies rq ON rq.owner = a.id AND rq.direction = 'request'";
+    pub(super) const SELECT: &'static str = "SELECT a.id, a.ordinal, a.started_at, a.ended_at, a.upstream, a.provider, a.status, a.response_format, a.response_encoding, a.terminal, a.terminal_cause, a.terminal_phase, a.inspection, a.inspection_version, a.changes, a.limit_headers, rs.observed_bytes AS rs_observed, rs.stored_bytes AS rs_stored, rs.ending AS rs_ending, rq.observed_bytes AS rq_observed, rq.stored_bytes AS rq_stored, rq.ending AS rq_ending FROM attempts a LEFT JOIN bodies rs ON rs.owner = a.id AND rs.direction = 'response' LEFT JOIN bodies rq ON rq.owner = a.id AND rq.direction = 'request'";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -344,6 +348,7 @@ impl AttemptView {
             inspection: row.json("inspection")?,
             changes: row.json("changes")?,
             request: BodyView::from_columns(&row, "rq")?,
+            limit_headers: row.json("limit_headers")?.unwrap_or_default(),
         })
     }
 }

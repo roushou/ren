@@ -302,6 +302,28 @@ pub struct AttemptView {
     pub changes: Option<serde_json::Value>,
     /// The changed request body this attempt sent, if a transform changed it.
     pub request: Option<BodyView>,
+    /// The provider's limit headers on its response head, in the order they
+    /// came; empty when it carried none, or was recorded before they were.
+    #[serde(default)]
+    pub limit_headers: Vec<LimitHeaderView>,
+}
+
+/// A limit header as the response head carried it: its name, and its value
+/// unless it was withheld (not plain, or read as a credential).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LimitHeaderView {
+    pub name: String,
+    pub value: Option<String>,
+}
+
+impl From<&ren_protocol::limits::LimitHeader> for LimitHeaderView {
+    fn from(header: &ren_protocol::limits::LimitHeader) -> Self {
+        Self {
+            name: header.name().to_owned(),
+            value: header.value().map(str::to_owned),
+        }
+    }
 }
 
 impl From<ren_store::view::AttemptView> for AttemptView {
@@ -324,6 +346,7 @@ impl From<ren_store::view::AttemptView> for AttemptView {
             inspection,
             changes,
             request,
+            limit_headers,
         } = value;
         Self {
             id,
@@ -343,6 +366,7 @@ impl From<ren_store::view::AttemptView> for AttemptView {
             inspection: inspection.map(Into::into),
             changes,
             request: request.map(Into::into),
+            limit_headers: limit_headers.iter().map(Into::into).collect(),
         }
     }
 }

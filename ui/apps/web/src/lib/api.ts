@@ -37,6 +37,7 @@ import type { ToolCallRecord as WireToolCallRecord } from './wire/ToolCallRecord
 import type { UnknownKindRecord as WireUnknownKindRecord } from './wire/UnknownKindRecord.ts';
 import type { UsageRecord as WireUsageRecord } from './wire/UsageRecord.ts';
 import type { AttemptView as WireAttemptView } from './wire/AttemptView.ts';
+import type { LimitHeaderView as WireLimitHeaderView } from './wire/LimitHeaderView.ts';
 import type { AttributionView as WireAttributionView } from './wire/AttributionView.ts';
 import type { BodyView as WireBodyView } from './wire/BodyView.ts';
 import type { CallActivity as WireCallActivity } from './wire/CallActivity.ts';
@@ -557,6 +558,14 @@ export interface AttemptView {
   response: BodyView | null;
   inspection_version: number | null;
   inspection: InspectionRecord | null;
+  /** The provider's limit headers on its response head, as it sent them. */
+  limit_headers: LimitHeader[];
+}
+/** A limit header: its name, and its value unless Ren withheld it (not
+ * plain, or read as a credential). Allowance, not token usage. */
+export interface LimitHeader {
+  name: string;
+  value: string | null;
 }
 export interface ObservationView {
   seq: ObservationSeq;
@@ -888,6 +897,9 @@ const callDetail = object<CallDetail, WireCallDetail>({
       response: nullable(bodyView),
       inspection_version: nullable(count),
       inspection: nullable(inspection),
+      limit_headers: array(
+        object<LimitHeader, WireLimitHeaderView>({ name: string, value: nullable(string) }),
+      ),
     }),
   ),
   observations: array(observationView),

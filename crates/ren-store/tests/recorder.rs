@@ -13,6 +13,7 @@ use ren_protocol::{
     encoding::{ResponseEncoding, ResponseFormat},
     inspect::{Limitation, ModelOutcome},
     label::Stored,
+    limits::LimitHeaders,
     route::{Endpoint, Method, Provider, Transport, Wire},
 };
 use ren_recorder::RecordSink;
@@ -122,6 +123,7 @@ const EVENT_STREAM: Head = Head {
     status: 200,
     format: ResponseFormat::EventStream,
     encoding: ResponseEncoding::Identity,
+    limits: LimitHeaders::NONE,
 };
 
 fn complete(mut tap: AttemptTap, request: &[u8], response: &[u8]) {
@@ -168,6 +170,42 @@ async fn a_streamed_call_is_recorded_inspected_and_stored_completely() {
         inspection.limitations.is_empty(),
         "{:?}",
         inspection.limitations
+    );
+}
+
+#[tokio::test]
+async fn a_heads_limit_headers_are_stored_with_its_attempt() {
+    let harness = Harness::new(CaptureOptions::default(), 4).await;
+    let mut tap = harness.start();
+    let call = tap.call();
+    tap.request_data(b"{\"stream\":true}");
+    tap.request_ended();
+    let limits: LimitHeaders = serde_json::from_value(serde_json::json!([
+        { "name": "anthropic-ratelimit-unified-status", "value": "allowed" },
+        { "name": "anthropic-ratelimit-unified-5h-utilization", "value": "0.42" },
+        { "name": "anthropic-ratelimit-unified-fallback", "value": null },
+    ]))
+    .unwrap();
+    let mut tap = tap.head(Head {
+        limits: limits.clone(),
+        ..EVENT_STREAM
+    });
+    tap.data(Direction::Response, MESSAGE_STREAM);
+    tap.ended(Direction::Response);
+    tap.finish(ended(AttemptTerminal::BodyComplete));
+    let other = harness.start();
+    let plain = other.call();
+    complete(other, b"{}", MESSAGE_STREAM);
+    let (_dir, _metrics, reader) = harness.drain().await;
+    assert_eq!(
+        detail(&reader, call).await.attempts[0].limit_headers,
+        limits
+    );
+    // A head that carried none stores none.
+    assert!(
+        detail(&reader, plain).await.attempts[0]
+            .limit_headers
+            .is_empty()
     );
 }
 
@@ -641,6 +679,7 @@ async fn a_websocket_calls_digest_is_derived_from_its_messages_alike() {
         status: 101,
         format: ResponseFormat::WebSocketMessages,
         encoding: ResponseEncoding::Identity,
+        limits: LimitHeaders::NONE,
     });
     let item = serde_json::json!({ "type": "function_call", "call_id": "c1", "name": "shell", "arguments": "{\"command\":[\"cargo\",\"test\"]}" });
     for event in [

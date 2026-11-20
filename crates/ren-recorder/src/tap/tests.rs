@@ -147,6 +147,7 @@ const HEAD: Head = Head {
     status: 200,
     format: ResponseFormat::EventStream,
     encoding: ResponseEncoding::Identity,
+    limits: LimitHeaders::NONE,
 };
 
 fn complete() -> TerminalRecord {
