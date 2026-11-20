@@ -79,3 +79,21 @@ test('a sent image is found by its content, and described by its size', () => {
   assert.equal(Gallery.takes('image/webp'), true);
   assert.equal(Gallery.takes('image/svg+xml'), false);
 });
+
+test('images taken back from an unsent prompt join the tray once each', () => {
+  const other = AttachmentId.parse('00000000-0000-0000-0000-0000000000a2')!;
+  const tray = new Tray().adding('shot.png');
+  const ready = tray.tray.uploaded(tray.key, id, read);
+  const back = ready.restored([
+    { id, read },
+    { id: other, read: { ...read, name: 'other.png' } },
+  ]);
+  assert.deepEqual(back.ids(), [id, other]);
+  assert.deepEqual(
+    back.ready().map((image) => image.read.name),
+    ['shot.png', 'other.png'],
+  );
+  // Keys stay distinct, so the next upload does not take one.
+  const next = back.adding('later.png');
+  assert.equal(new Set([...back.chips.map((chip) => chip.key), next.key]).size, 3);
+});

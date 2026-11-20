@@ -1398,7 +1398,7 @@ export class RunsClient {
 
 /** One entry of a run's conversation, built from its events. */
 export type Entry =
-  | { kind: 'prompt'; item: ItemId | null; text: string; images: AttachmentRead[] }
+  | { kind: 'prompt'; item: ItemId; text: string; images: AttachmentRead[] }
   | { kind: 'message'; item: ItemId; text: string; done: boolean }
   | { kind: 'reasoning'; item: ItemId; done: boolean }
   | {
@@ -1470,11 +1470,6 @@ export class Transcript {
     return new Transcript(entries, this.turn ?? loaded.turn, true, stored.earlier);
   }
 
-  /** The prompt the operator just sent; the client's echo of it is the same prompt. */
-  prompted(text: string, images: AttachmentRead[] = []): Transcript {
-    return this.#push({ kind: 'prompt', item: null, text, images });
-  }
-
   /** Every prompt sent, oldest first, to recall. */
   prompts(): string[] {
     return this.entries.flatMap((entry) => (entry.kind === 'prompt' ? [entry.text] : []));
@@ -1514,7 +1509,6 @@ export class Transcript {
     const [first, second] = [Transcript.#itemOf(one), Transcript.#itemOf(two)];
     if (first !== null && second !== null) return first === second;
     if (one.kind === 'turn_end' && two.kind === 'turn_end') return one.turn === two.turn;
-    if (one.kind === 'prompt' && two.kind === 'prompt') return one.text === two.text;
     return JSON.stringify(one) === JSON.stringify(two);
   }
 
@@ -1638,25 +1632,10 @@ export class Transcript {
     return new Transcript([...this.entries, entry], this.turn, this.read, this.earlier);
   }
 
-  /**
-   * Add `entry`, or put it in the place of the same entry said before. A
-   * prompt sent from here and echoed by the client is one prompt, in the
-   * current turn.
-   */
+  /** Add `entry`, or put it in the place of the same entry said before. */
   #push(entry: Entry): Transcript {
-    const start =
-      entry.kind === 'prompt'
-        ? this.entries.findLastIndex((shown) => shown.kind === 'turn_end') + 1
-        : 0;
-    const at = this.entries.findLastIndex(
-      (shown, index) => index >= start && Transcript.same(shown, entry),
-    );
-    if (at === -1) return this.#append(entry);
-    const shown = this.entries[at]!;
-    // A prompt sent from here is named by the client's echo, not replaced by a resend.
-    if (entry.kind === 'prompt' && entry.item === null) return this;
-    if (shown.kind === 'prompt' && entry.kind === 'prompt' && entry.item === null) return this;
-    return this.#replace(at, entry);
+    const at = this.entries.findLastIndex((shown) => Transcript.same(shown, entry));
+    return at === -1 ? this.#append(entry) : this.#replace(at, entry);
   }
 }
 

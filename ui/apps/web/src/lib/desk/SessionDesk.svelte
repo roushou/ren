@@ -55,12 +55,14 @@
   } from '#lib/runs.ts';
   import { Mentions } from '#lib/mention.ts';
   import { Refusals } from '#lib/refusal.ts';
+  import { Outbox, type Outgoing, type OutgoingDelivery, type Starts } from '#lib/outbox.ts';
   import {
     Gallery,
     Tray,
     type AttachmentRead,
     type Chip,
     type KeptAttachment,
+    type UploadedImage,
   } from '#lib/attachments.ts';
   import ComposerMenu, { type MenuEntry } from './ComposerMenu.svelte';
   import CommandStep from './CommandStep.svelte';
@@ -579,6 +581,17 @@
   function write(text: string) {
     if (chosen) drafts.set(chosen, text);
   }
+  /** Every session's prompts on their way, shown until the conversation shows them. */
+  let outbox = $state.raw(new Outbox());
+  const outgoing = $derived(chosen ? outbox.of(chosen) : []);
+  /** One of the session's prompts has no answer from the daemon yet: the next waits for it. */
+  const sending = $derived(chosen !== null && outbox.waiting(chosen));
+  $effect(() => {
+    // A prompt the conversation shows is the client's echo of one on its way.
+    const target = chosen;
+    const prompts = transcript?.prompts() ?? [];
+    if (target) untrack(() => (outbox = outbox.shown(target, prompts)));
+  });
   /** Each session's images about to go with its next prompt. */
   const trays = new SvelteMap<SessionId, Tray>();
   const tray = $derived(chosen ? (trays.get(chosen) ?? new Tray()) : new Tray());
@@ -802,67 +815,100 @@
   /**
    * Send what is written to the session: it starts a turn (starting or
    * resuming its client when none runs), or, while a turn runs, is queued
-   * for after it or steers it.
+   * for after it or steers it. A prompt that starts or steers a turn shows
+   * in the conversation at once, marked with how far it has got.
    */
   async function send(delivery: 'queue' | 'steer' = 'queue') {
     const text = draft.trim();
     const target = chosen;
-    const run = selected;
-    const attachments = tray.ids();
-    const images: AttachmentRead[] = tray.chips.flatMap((chip) =>
-      chip.state === 'ready' ? [chip.read] : [],
+    const images = tray.ready();
+    if (!target || (!text && images.length === 0) || tray.uploading()) return;
+    if (!compose || signedOut || outbox.waiting(target)) return;
+    switch (compose.kind) {
+      case 'start':
+      case 'continue':
+        return deliver(target, text, images, 'start');
+      case 'during':
+        if (delivery === 'steer' && compose.steer) return deliver(target, text, images, 'steer');
+        return queue(target, text, compose.queued);
+      case 'closed':
+        return;
+      default:
+        return assertNever(compose);
+    }
+  }
+
+  /** Show the prompt as on its way, clear the composer, and send it. */
+  function deliver(
+    target: SessionId,
+    text: string,
+    images: UploadedImage[],
+    how: OutgoingDelivery,
+  ) {
+    const starts: Starts = session && Sessions.running(session) ? 'nothing' : 'client';
+    const made = outbox.sending(
+      { session: target, text, images, delivery: how },
+      transcript?.prompts() ?? [],
+      starts,
     );
-    if (!target || (!text && attachments.length === 0) || tray.uploading()) return;
-    if (!compose || signedOut) return;
-    // Shown at once where its process runs; a new process reads it back.
-    const shown = (sent: string) => {
-      if (run && session && Sessions.running(session)) {
-        transcripts.set(run, (transcripts.get(run) ?? new Transcript()).prompted(sent, images));
-      }
-    };
+    outbox = made.outbox;
+    trays.set(target, (trays.get(target) ?? new Tray()).sent());
+    drafts.delete(target);
+    recalling = null;
+    following = true;
+    void transmit(made.key);
+  }
+
+  /** Ask the daemon to take prompt `key`, and mark what it answered. */
+  async function transmit(key: number) {
+    const item = outbox.items.find((one) => one.key === key);
+    if (!item) return;
+    try {
+      await client.toSession(item.session, {
+        kind: 'prompt',
+        text: item.text,
+        delivery: item.delivery,
+        attachments: item.images.map((image) => image.id),
+      });
+      outbox = outbox.sent(key);
+    } catch (error) {
+      outbox = outbox.failed(key, error);
+    }
+    // The feeds say the same soon; read now so the page catches up at once.
+    void Promise.all([readSessions(), readLive(), readAttachments(item.session)]);
+  }
+
+  /** Queue the prompt for after the running turn, after what was queued before. */
+  async function queue(target: SessionId, text: string, queued: string | null) {
+    const attachments = tray.ids();
     await act(async () => {
-      switch (compose.kind) {
-        case 'start':
-        case 'continue':
-          await client.toSession(target, {
-            kind: 'prompt',
-            text,
-            delivery: 'start',
-            attachments,
-          });
-          shown(text);
-          break;
-        case 'during':
-          if (delivery === 'steer' && compose.steer) {
-            await client.toSession(target, {
-              kind: 'prompt',
-              text,
-              delivery: 'steer',
-              attachments,
-            });
-            shown(text);
-          } else {
-            // Queued after what was queued before: one message, in order.
-            const next = compose.queued ? `${compose.queued}\n\n${text}` : text;
-            await client.toSession(target, {
-              kind: 'prompt',
-              text: next,
-              delivery: 'queue',
-              attachments,
-            });
-          }
-          break;
-        case 'closed':
-          return;
-        default:
-          return assertNever(compose);
-      }
+      await client.toSession(target, {
+        kind: 'prompt',
+        text: queued ? `${queued}\n\n${text}` : text,
+        delivery: 'queue',
+        attachments,
+      });
       trays.set(target, (trays.get(target) ?? new Tray()).sent());
-      await Promise.all([readSessions(), readLive(), readAttachments(target)]);
       drafts.delete(target);
       recalling = null;
       following = true;
     });
+    void Promise.all([readSessions(), readLive(), readAttachments(target)]);
+  }
+
+  /** Send a prompt that was refused, or whose outcome is unknown, again. */
+  function resend(item: Outgoing) {
+    outbox = outbox.without(item.key);
+    deliver(item.session, item.text, item.images, item.delivery);
+  }
+
+  /** Take a prompt that did not go back into the composer, with its images. */
+  function takeBack(item: Outgoing) {
+    outbox = outbox.without(item.key);
+    const written = drafts.get(item.session) ?? '';
+    drafts.set(item.session, written ? `${item.text}\n\n${written}` : item.text);
+    trays.set(item.session, (trays.get(item.session) ?? new Tray()).restored(item.images));
+    if (item.session === chosen) void tick().then(() => composer?.focus());
   }
 
   function answer(waiting: Waiting, decision: Decision) {
@@ -1214,6 +1260,53 @@
         onclick={() => answer(waiting, 'cancel')}
         title="Refuse it and end the turn">Deny and stop</button
       >
+    </div>
+  </div>
+{/snippet}
+
+<!-- A prompt on its way: drawn as a prompt, with how far it has got. -->
+{#snippet outgoingView(item: Outgoing)}
+  {@const progress = item.progress}
+  <div class="entry prompt outgoing {progress.kind}">
+    {#if item.images.length > 0}
+      <div class="sent-images">
+        {#each item.images as image (image.id)}
+          {@const src = Gallery.url(item.session, image.id)}
+          <button
+            type="button"
+            class="sent-image"
+            title="{image.read.name} · {Gallery.describe(image.read)}"
+            aria-label="View {image.read.name}"
+            onclick={() => (viewing = { src, read: image.read })}
+            ><img {src} alt={image.read.name} /></button
+          >
+        {/each}
+      </div>
+    {/if}
+    {#if item.text}<Markdown text={item.text} />{/if}
+    <div class="outgoing-state" role="status">
+      {#if progress.kind === 'sending'}
+        <span class="phase-dot tone-live"></span>
+        {progress.starts === 'client' && session
+          ? `Starting ${harnessLabel(session.harness)}…`
+          : 'Sending…'}
+      {:else if progress.kind === 'sent'}
+        <Icon name="check" size={11} /> Sent
+      {:else}
+        <Icon name="alert" size={12} />
+        <span class="outgoing-reason"
+          >{progress.kind === 'refused'
+            ? `Not sent: ${progress.reason}`
+            : `It may not have been sent: ${progress.reason} Check the conversation before sending it again.`}</span
+        >
+        <button class="text-button" onclick={() => takeBack(item)}>Edit</button>
+        <button
+          class="text-button"
+          disabled={sending}
+          title={progress.kind === 'unknown' ? 'It may arrive twice' : null}
+          onclick={() => resend(item)}>Send again</button
+        >
+      {/if}
     </div>
   </div>
 {/snippet}
@@ -1580,6 +1673,7 @@
                 </section>
               {/each}
             {/if}
+            {#each outgoing as item (item.key)}{@render outgoingView(item)}{/each}
             {#if runState?.phase === 'working' && !controls.approvals.length}<div
                 class="entry tool muted working"
               >
@@ -1587,7 +1681,7 @@
               </div>{/if}
             {#if transcript?.read && !transcript.entries.length && runState?.phase === 'idle'}
               <p class="quiet-empty">The conversation is open. Say what to do.</p>
-            {:else if !current}
+            {:else if !current && outgoing.length === 0}
               <p class="quiet-empty">
                 Write the first prompt: {harnessLabel(session.harness)} starts with it, in {Runs.place(
                   session.workdir,
@@ -1865,6 +1959,7 @@
                   type="button"
                   class="button"
                   disabled={busy ||
+                    sending ||
                     (!draft.trim() && tray.ids().length === 0) ||
                     tray.uploading() ||
                     signedOut}
@@ -1883,11 +1978,16 @@
                 <button
                   class="button primary"
                   disabled={busy ||
+                    sending ||
                     (!draft.trim() && tray.ids().length === 0) ||
                     tray.uploading() ||
                     compose.kind === 'closed' ||
                     signedOut}
-                  title={signedOut ? `Sign ${harnessLabel(session.harness)} in to send` : null}
+                  title={signedOut
+                    ? `Sign ${harnessLabel(session.harness)} in to send`
+                    : sending
+                      ? 'The last prompt is still on its way'
+                      : null}
                   >{compose.kind === 'during'
                     ? 'Queue'
                     : compose.kind === 'continue'
@@ -2219,6 +2319,30 @@
     background: var(--surface-inset);
     box-shadow: inset 2px 0 var(--role-user);
     border-bottom: 1px solid var(--line);
+  }
+  /* A prompt on its way: its words as sent, dimmed until the client has them. */
+  .entry.prompt.outgoing.sending :global(.markdown),
+  .entry.prompt.outgoing.sent :global(.markdown) {
+    color: var(--muted);
+  }
+  .entry.prompt.outgoing.refused,
+  .entry.prompt.outgoing.unknown {
+    box-shadow: inset 2px 0 var(--error);
+  }
+  .outgoing-state {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 8px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .entry.prompt.outgoing.refused .outgoing-state,
+  .entry.prompt.outgoing.unknown .outgoing-state {
+    color: var(--error);
+  }
+  .outgoing-reason {
+    min-width: 0;
   }
   .entry.reply {
     padding-top: 10px;

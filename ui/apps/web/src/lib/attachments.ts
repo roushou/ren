@@ -101,6 +101,12 @@ export const keptList = object<{ attachments: KeptAttachment[] }, WireAttachment
 export const IMAGE_TAKING = ['always', 'if_offered', 'never'] as const;
 export type ImageTaking = (typeof IMAGE_TAKING)[number];
 
+/** An image uploaded to a session, ready to go with a prompt. */
+export interface UploadedImage {
+  id: AttachmentId;
+  read: AttachmentRead;
+}
+
 /** One upload in the composer's tray. */
 export type Chip =
   | { state: 'uploading'; key: number; name: string }
@@ -151,7 +157,27 @@ export class Tray {
 
   /** The attachments ready to send, in order. */
   ids(): AttachmentId[] {
-    return this.chips.flatMap((chip) => (chip.state === 'ready' ? [chip.id] : []));
+    return this.ready().map((image) => image.id);
+  }
+
+  /** The images ready to send, in order. */
+  ready(): UploadedImage[] {
+    return this.chips.flatMap((chip) =>
+      chip.state === 'ready' ? [{ id: chip.id, read: chip.read }] : [],
+    );
+  }
+
+  /** `images` back in the tray, after the ones in it: a prompt not sent, taken back to edit. */
+  restored(images: readonly UploadedImage[]): Tray {
+    const known = new Set(this.ids());
+    const fresh = images.filter((image) => !known.has(image.id));
+    const chips: Chip[] = fresh.map((image, index) => ({
+      state: 'ready',
+      key: this.#next + index,
+      id: image.id,
+      read: image.read,
+    }));
+    return new Tray([...this.chips, ...chips], this.#next + chips.length);
   }
 
   /** Whether an upload is still running: the prompt waits for it. */
