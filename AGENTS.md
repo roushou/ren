@@ -246,8 +246,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   one's `Observation` (waiting, `Seen`, or `Failed` with the last
   `Sighting` kept apart), with the time its caller gives it. A value
   GitHub sends that it does not know is `Reported::Unknown`, never rounded
-  to a known one. `src/purity.rs` keeps the query, the answer, and the
-  observation free of I/O, so another HTTP stack can use them. Ren adapts
+  to a known one. Ren adapts
   on its side: the daemon's `[github]` section maps projects to
   repositories and runs the poller; the gateway's `PullBoard` keeps its
   observations by project and serves them.

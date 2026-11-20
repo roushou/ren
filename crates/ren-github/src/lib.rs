@@ -2,8 +2,7 @@
 //! reads its default branch and every open [`PullRequest`], each with its
 //! head, merge state, review, and [`Check`]s, into a [`Snapshot`].
 //!
-//! - [`Watch`] is the query and the reading of its answer, with no I/O: a
-//!   caller with its own HTTP stack can send the one and read the other.
+//! - [`Watch`] is the query and the reading of its answer.
 //! - [`Client`] sends it to GitHub's GraphQL [`Endpoint`] with a
 //!   [`Token`].
 //! - [`Poller`] reads repositories once a [`PollPeriod`], keeping each
@@ -22,9 +21,6 @@ mod pull;
 mod reported;
 mod repository;
 mod watch;
-
-#[cfg(test)]
-mod purity;
 
 pub use check::{Check, CheckState, ChecksState};
 pub use client::{Client, Endpoint, EndpointError, FetchError, Token};

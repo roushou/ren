@@ -8,9 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 description = "A GitHub client for a repository's pull requests: their heads, merge states, reviews, and checks, read with one GraphQL query, and a poller that keeps what it last saw."
 
-# Self-contained: it depends on none of Ren's crates. The query, what an
-# answer says, and the observation are free of I/O (src/purity.rs); the
-# client sends with reqwest, and the poller waits with tokio's timer.
+# Self-contained: it depends on none of Ren's crates.
 [dependencies]
 reqwest.workspace = true
 serde.workspace = true
