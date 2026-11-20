@@ -4,7 +4,8 @@
   step is a row: what it did and on what, in its client's words when it gave
   some; a command opens again to the command exactly as run and its output.
   Success says nothing: only a step that runs, failed, or was declined is
-  marked, and a failed one never folds away unseen (the page opens its group).
+  marked, and the folded line counts the failed ones. It opens only when the
+  operator opens it.
 -->
 <script lang="ts">
   import Icon, { type IconName } from '#lib/Icon.svelte';
