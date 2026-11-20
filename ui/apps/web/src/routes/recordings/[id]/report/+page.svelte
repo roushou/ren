@@ -209,6 +209,8 @@
                     {#if pending}<SkeletonRows columns={turnColumns} rows={8} />{/if}
                     {#each rows as row, index (row.metrics.turn)}
                       {@const metrics = row.metrics}
+                      {@const start = metrics.context_start_tokens ?? 0}
+                      {@const end = metrics.context_end_tokens ?? start}
                       <tr>
                         <td class="turn-number mono muted">T{rows.length - index}</td>
                         <td
