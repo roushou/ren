@@ -56,12 +56,17 @@
   import { Mentions } from '#lib/mention.ts';
   import { Refusals } from '#lib/refusal.ts';
   import {
+    Frame,
     Gallery,
+    Strip,
     Tray,
     type AttachmentRead,
     type Chip,
     type KeptAttachment,
+    type Size,
+    type Viewable,
   } from '#lib/attachments.ts';
+  import type { Attachment } from 'svelte/attachments';
   import ComposerMenu, { type MenuEntry } from './ComposerMenu.svelte';
   import CommandStep from './CommandStep.svelte';
   import QuestionCard from './QuestionCard.svelte';
@@ -596,8 +601,28 @@
   /** Each session's attachments as the daemon lists them, to show what a prompt sent. */
   const kept = new SvelteMap<SessionId, KeptAttachment[]>();
   const gallery = $derived(new Gallery(chosen ? (kept.get(chosen) ?? []) : []));
-  /** The image open full size over the page, if one is. */
-  let viewing = $state.raw<{ src: string; read: AttachmentRead } | null>(null);
+  /** The images open full size over the page, and the one shown first, if any are. */
+  /** The tray's uploaded images, to step through in the viewer. */
+  const trayViewable = $derived(
+    chosen
+      ? tray.chips.flatMap((chip) =>
+          chip.state === 'ready' && chosen
+            ? [{ src: Gallery.url(chosen, chip.id), read: chip.read }]
+            : [],
+        )
+      : [],
+  );
+  let viewing = $state.raw<{ images: readonly Viewable[]; start: number } | null>(null);
+  /**
+   * Sizes a thumbnail's frame. Set from script, since the page's CSP refuses
+   * inline style attributes.
+   */
+  const framed =
+    (size: Size): Attachment<HTMLElement> =>
+    (element) => {
+      element.style.width = `${size.width}px`;
+      element.style.height = `${size.height}px`;
+    };
   /** Whether the composer offers images: not for a client that takes none. */
   const imagesTaken = $derived(session?.images !== 'never');
   let picker = $state<HTMLInputElement>();
@@ -1233,25 +1258,49 @@
   {#if entry.kind === 'prompt'}
     <div class="entry prompt">
       {#if entry.images.length > 0}
+        {@const sent = Gallery.sent(entry.images, (read) => {
+          const id = gallery.find(read);
+          return id && chosen ? Gallery.url(chosen, id) : null;
+        })}
+        {@const viewable = sent.flatMap((one) => (one.kind === 'kept' ? [one.image] : []))}
+        {@const strip = new Strip(sent)}
         <div class="sent-images">
-          {#each entry.images as image, index (index)}
-            {@const id = gallery.find(image)}
-            {#if id && chosen}
-              {@const src = Gallery.url(chosen, id)}
+          {#each strip.shown as one, index (index)}
+            {#if one.kind === 'kept'}
+              {@const { image, view } = one}
+              {@const { read, src } = image}
+              {@const fit = Frame.SENT.fit(read)}
               <button
                 type="button"
                 class="sent-image"
-                title="{image.name} · {Gallery.describe(image)}"
-                aria-label="View {image.name}"
-                onclick={() => (viewing = { src, read: image })}
-                ><img {src} alt={image.name} loading="lazy" /></button
+                title="{read.name} · {Gallery.describe(read)}"
+                aria-label="View {read.name}"
+                {@attach framed(fit.frame)}
+                onclick={() => (viewing = { images: viewable, start: view })}
+                ><img
+                  {src}
+                  alt={read.name}
+                  width={fit.image.width}
+                  height={fit.image.height}
+                  loading="lazy"
+                /></button
               >
             {:else}
-              <span class="sent-image named" title={Gallery.describe(image)}
-                ><Icon name="image" size={12} />{image.name}</span
+              <span class="sent-image named" title={Gallery.describe(one.read)}
+                ><Icon name="image" size={12} />{one.read.name}</span
               >
             {/if}
           {/each}
+          {#if strip.rest > 0}
+            {@const first = strip.shown.filter((one) => one.kind === 'kept').length}
+            <button
+              type="button"
+              class="sent-image more"
+              aria-label="View {strip.rest} more images"
+              disabled={first >= viewable.length}
+              onclick={() => (viewing = { images: viewable, start: first })}>+{strip.rest}</button
+            >
+          {/if}
         </div>
       {/if}
       {#if entry.text}<Markdown text={entry.text} />{/if}
@@ -1703,14 +1752,28 @@
                   {#if chip.state === 'ready' && chosen}
                     {@const src = Gallery.url(chosen, chip.id)}
                     {@const read = chip.read}
+                    {@const fit = Frame.TRAY.fit(read)}
                     <button
                       type="button"
                       class="tray-view"
+                      title="{read.name} · {Gallery.describe(read)}"
                       aria-label="View {read.name}"
-                      onclick={() => (viewing = { src, read })}><img {src} alt="" /></button
+                      {@attach framed(fit.frame)}
+                      onclick={() => {
+                        const start = tray.chips
+                          .filter((one) => one.state === 'ready')
+                          .findIndex((one) => one.key === chip.key);
+                        viewing = { images: trayViewable, start };
+                      }}
+                      ><img
+                        {src}
+                        alt=""
+                        width={fit.image.width}
+                        height={fit.image.height}
+                      /></button
                     >
-                    <span class="tray-name" title={Gallery.describe(chip.read)}
-                      >{chip.read.name}</span
+                    <span class="tray-name" title="{read.name} · {Gallery.describe(read)}"
+                      >{read.name}</span
                     >
                   {:else if chip.state === 'uploading'}
                     <Icon name="image" size={12} />
@@ -1914,12 +1977,7 @@
   </section>
 </div>
 {#if viewing}
-  <ImageViewer
-    src={viewing.src}
-    name={viewing.read.name}
-    detail={Gallery.describe(viewing.read)}
-    onclose={() => (viewing = null)}
-  />
+  <ImageViewer images={viewing.images} start={viewing.start} onclose={() => (viewing = null)} />
 {/if}
 {#if signingIn}
   {@const harness = signingIn}
@@ -2179,37 +2237,57 @@
   .entry.prompt :global(.markdown p) {
     white-space: pre-wrap;
   }
-  /* A prompt's images, as thumbnails that touch, opened full size on click. */
+  /*
+   * A prompt's images, as a row of frames that touch: each frame as high
+   * as the others and as wide as its image's shape, the image whole inside
+   * it. A narrow window wraps the row; each frame draws its own right and
+   * bottom rules so wrapped rows stay ruled. Opened full size on click.
+   */
   .sent-images {
     display: flex;
     flex-wrap: wrap;
     margin-top: 10px;
-    border: 1px solid var(--line);
+    border-top: 1px solid var(--line);
+    border-left: 1px solid var(--line);
     width: fit-content;
   }
   .sent-image {
     display: flex;
+    flex: none;
     align-items: center;
+    justify-content: center;
     gap: 6px;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
     font-size: 12px;
   }
   button.sent-image,
   .tray-view {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
     padding: 0;
-    border: 0;
-    background: transparent;
+    border-top: 0;
+    border-left: 0;
+    background: var(--surface-inset);
     cursor: zoom-in;
   }
-  .sent-image + .sent-image {
-    border-left: 1px solid var(--line);
-  }
-  .sent-image img {
+  .sent-image img,
+  .tray-view img {
     display: block;
-    max-width: 240px;
-    max-height: 160px;
   }
   .sent-image.named {
     padding: 6px 8px;
+  }
+  .sent-image.more {
+    width: 72px;
+    color: var(--muted);
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+  }
+  .sent-image.more:hover:not(:disabled) {
+    color: var(--ink);
   }
   /* An entry's outline: its bars stacked as its lines will be. */
   .entry.outline {
@@ -2380,13 +2458,9 @@
     font-size: 12px;
   }
   .tray-view {
-    display: block;
-  }
-  .tray-chip img {
-    width: 40px;
     height: 40px;
-    object-fit: cover;
     border-right: 1px solid var(--line);
+    border-bottom: 0;
   }
   .tray-chip.uploading,
   .tray-chip.refused {
