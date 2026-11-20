@@ -10,6 +10,7 @@
   import { harnessLabel } from '#lib/activity.ts';
   import { spentSummary } from '#lib/display.ts';
   import {
+    decisions,
     Deletions,
     Desk,
     RunCommandError,
@@ -1252,28 +1253,16 @@
       {#if line.reason}<span class="muted">{line.reason}</span>{/if}
     </div>
     <div class="approval-actions">
-      <button class="button primary small" disabled={busy} onclick={() => answer(waiting, 'accept')}
-        >Allow</button
-      >
-      <button
-        class="button small"
-        disabled={busy}
-        onclick={() => answer(waiting, 'accept_for_session')}
-        title="Allow this, and the same kind of action for the rest of the session"
-        >Allow for this run</button
-      >
-      <button
-        class="button small"
-        disabled={busy}
-        onclick={() => answer(waiting, 'decline')}
-        title="Refuse it; the turn goes on">Deny</button
-      >
-      <button
-        class="button small"
-        disabled={busy}
-        onclick={() => answer(waiting, 'cancel')}
-        title="Refuse it and end the turn">Deny and stop</button
-      >
+      {#each decisions as decision (decision)}
+        {@const words = Runs.decision(decision)}
+        <button
+          class="button small"
+          class:primary={decision === 'accept'}
+          disabled={busy}
+          onclick={() => answer(waiting, decision)}
+          title={words.hint}>{words.label}</button
+        >
+      {/each}
     </div>
   </div>
 {/snippet}

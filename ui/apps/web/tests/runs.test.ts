@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  decisions,
   Desk,
   Memory,
   Compose,
@@ -1034,4 +1035,14 @@ test('a prompt goes with how to deliver it; the queue and settings have their ow
     `/control/sessions/${run}/unqueue {}`,
     `/control/sessions/${run}/settings {"model":null,"effort":"high","approvals":null}`,
   ]);
+});
+
+test('every decision has distinct words, and only allowing reads as passed', () => {
+  const words = decisions.map((decision) => Runs.decision(decision));
+  assert.equal(new Set(words.map((said) => said.label)).size, decisions.length);
+  assert.equal(new Set(words.map((said) => said.done)).size, decisions.length);
+  assert.deepEqual(
+    words.map((said) => said.mark),
+    ['passed', 'passed', 'idle', 'idle'],
+  );
 });

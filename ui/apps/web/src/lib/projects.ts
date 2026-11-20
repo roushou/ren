@@ -4,6 +4,7 @@
 // still queued. Read from `/api/projects` and `/api/work`.
 import type { Project } from './api.ts';
 import {
+  Runs,
   Sessions,
   type ApprovalAsk,
   type ApprovalId,
@@ -12,6 +13,7 @@ import {
   type SessionId,
 } from './runs.ts';
 import { Work, type WorkItem } from './work.ts';
+import type { Said } from './layer/toasts.svelte.ts';
 
 /** An approval a running session waits on, with the project it works for. */
 export interface Approval {
@@ -139,6 +141,50 @@ export class ProjectBoard {
     return (
       this.approvals.length + this.toPromote.length + this.previews.length + this.queued.length
     );
+  }
+
+  /**
+   * What newly waits on the operator between two boards, said as toasts: an
+   * approval a run started asking, a canary that newly passed. What stopped
+   * waiting, and what waited already, says nothing.
+   */
+  static news(before: ProjectBoard, after: ProjectBoard): Said[] {
+    const asked = new Set(before.approvals.map(ProjectBoard.#approvalKey));
+    const approvals = after.approvals
+      .filter((waiting) => !asked.has(ProjectBoard.#approvalKey(waiting)))
+      .map((waiting): Said => {
+        const said = Runs.ask(waiting.ask);
+        return {
+          mark: 'yours',
+          text: said.action,
+          detail: [waiting.project ?? 'No project', waiting.prompt]
+            .filter((part) => part !== null)
+            .join(' · '),
+          link: {
+            label: 'Open session',
+            href: Sessions.deskHref(waiting.project, { session: waiting.session }),
+          },
+        };
+      });
+    const passed = new Set(before.toPromote.map(ProjectBoard.#canaryKey));
+    const canaries = after.toPromote
+      .filter((project) => !passed.has(ProjectBoard.#canaryKey(project)))
+      .map((project): Said => ({
+        mark: 'passed',
+        text: `${project.name}: canary passed`,
+        detail: project.release?.canary?.commit.slice(0, 12) ?? null,
+        link: { label: 'Release', href: ProjectBoard.releaseHref(project) },
+      }));
+    return [...approvals, ...canaries];
+  }
+
+  static #approvalKey(waiting: Approval): string {
+    return `${waiting.session}:${waiting.approval}`;
+  }
+
+  /** A project's canary by its build: a newer one passing is news again. */
+  static #canaryKey(project: Project): string {
+    return `${project.id}:${project.release?.canary?.commit ?? ''}`;
   }
 
   /** Whether anything waits on the operator. */

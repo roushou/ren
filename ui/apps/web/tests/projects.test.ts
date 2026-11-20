@@ -204,3 +204,72 @@ test('approvals come from working runs, each named by its session and project', 
     ['a'],
   );
 });
+
+test('news is what newly waits: a new approval, a newly passed canary; nothing at first sight', () => {
+  const asking = (approval: string) =>
+    ({
+      run: 'run-1',
+      session: 'session-1',
+      harness: 'codex',
+      workdir: '/work/acme-web',
+      state: {
+        phase: 'working',
+        thread: 'thread',
+        turn: null,
+        approvals: [
+          {
+            approval,
+            ask: { kind: 'command', command: 'git push', cwd: null, reason: null },
+          },
+        ],
+        queued: null,
+      },
+      settings: { model: null, effort: null, approvals: null },
+    }) as never;
+  const sessions = [
+    {
+      session: 'session-1',
+      served: null,
+      stored: { id: 'session-1', project: 'acme-id', first_prompt: 'Ship the fix' },
+    },
+  ] as never;
+  const canary = (commit: string | null) =>
+    ({
+      decision: commit ? 'awaiting_operator' : 'current',
+      policy: 'manual',
+      canary: commit ? { commit } : null,
+    }) as unknown as Project['release'];
+  const board = (approval: string | null, commit: string | null) =>
+    new ProjectBoard(
+      [project('acme-web', { id: 'acme-id', release: canary(commit) })],
+      [],
+      approval ? [asking(approval)] : [],
+      sessions,
+    );
+
+  const quiet = board(null, null);
+  assert.deepEqual(ProjectBoard.news(quiet, quiet), []);
+  assert.deepEqual(ProjectBoard.news(quiet, board('approval-1', 'a3f9c21deadbeef0')), [
+    {
+      mark: 'yours',
+      text: 'Run a command',
+      detail: 'acme-web · Ship the fix',
+      link: { label: 'Open session', href: '/projects/acme-web/sessions?session=session-1' },
+    },
+    {
+      mark: 'passed',
+      text: 'acme-web: canary passed',
+      detail: 'a3f9c21deadb',
+      link: { label: 'Release', href: '/projects/acme-web/release' },
+    },
+  ]);
+  // What waited already is not news again; what stopped waiting says nothing.
+  const waiting = board('approval-1', 'a3f9c21deadbeef0');
+  assert.deepEqual(ProjectBoard.news(waiting, waiting), []);
+  assert.deepEqual(ProjectBoard.news(waiting, quiet), []);
+  // A new ask from the same run, or a newer canary, is news.
+  assert.deepEqual(
+    ProjectBoard.news(waiting, board('approval-2', 'b0b0b0b0b0b0b0b0')).map((said) => said.text),
+    ['Run a command', 'acme-web: canary passed'],
+  );
+});

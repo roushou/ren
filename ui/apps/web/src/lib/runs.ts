@@ -1827,6 +1827,39 @@ export class Runs {
     return home && workdir.startsWith(`${home}/`) ? `~${workdir.slice(home.length)}` : workdir;
   }
 
+  /** How the operator says `decision`: its button, what it does, and how
+   * the answer reads once given. Lowest consequence first is `decisions`'
+   * own order; a form lists them the other way, the primary one last. */
+  static decision(decision: Decision): {
+    label: string;
+    hint: string;
+    mark: Mark;
+    done: string;
+  } {
+    switch (decision) {
+      case 'accept':
+        return { label: 'Allow', hint: 'Allow this once', mark: 'passed', done: 'Allowed' };
+      case 'accept_for_session':
+        return {
+          label: 'Allow for this run',
+          hint: 'Allow this, and the same kind of action for the rest of the session',
+          mark: 'passed',
+          done: 'Allowed for this run',
+        };
+      case 'decline':
+        return { label: 'Deny', hint: 'Refuse it; the turn goes on', mark: 'idle', done: 'Denied' };
+      case 'cancel':
+        return {
+          label: 'Deny and stop',
+          hint: 'Refuse it and end the turn',
+          mark: 'idle',
+          done: 'Denied, and the turn stopped',
+        };
+      default:
+        return assertNever(decision);
+    }
+  }
+
   /** One line saying what an approval asks. */
   static ask(ask: ApprovalAsk): { action: string; detail: string | null; reason: string | null } {
     switch (ask.kind) {

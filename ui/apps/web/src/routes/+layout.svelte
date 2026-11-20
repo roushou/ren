@@ -1,11 +1,12 @@
 <script lang="ts">
   import Glyph from '#lib/Glyph.svelte';
   import Toasts from '#lib/layer/Toasts.svelte';
+  import { toasts } from '#lib/layer/toasts.svelte.ts';
   import Popover from '#lib/layer/Popover.svelte';
   import CommandPalette from '#lib/layer/CommandPalette.svelte';
   import PendingPanel from '#lib/PendingPanel.svelte';
   import { ProjectBoard } from '#lib/projects.ts';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { beforeNavigate, goto, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import { createSettled, createSnapshot } from '#lib/snapshot.svelte.ts';
@@ -125,6 +126,19 @@
   const board = $derived(
     new ProjectBoard(data.board.projects, data.board.work, data.board.live, data.board.sessions),
   );
+  /** What newly waits on the operator, said as a toast as it arrives:
+   * unless the page that says it is the one on screen. The first board says
+   * nothing; it is where the operator starts. */
+  let lastBoard: ProjectBoard | null = null;
+  $effect(() => {
+    const now = board;
+    const before = lastBoard;
+    lastBoard = now;
+    if (!before) return;
+    const here = untrack(() => `${page.url.pathname}${page.url.search}`);
+    for (const said of ProjectBoard.news(before, now))
+      if (said.link?.href !== here) toasts.show(said);
+  });
   /** Whether ⌘K's palette is open. */
   let commanding = $state(false);
   function shortcut(event: KeyboardEvent) {

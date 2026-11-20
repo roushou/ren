@@ -16,6 +16,11 @@
         <span>{toast.text}</span>
         {#if toast.detail}<span class="detail">{toast.detail}</span>{/if}
       </span>
+      {#if toast.link}<a
+          class="button small"
+          href={toast.link.href}
+          onclick={() => toasts.dismiss(toast.id)}>{toast.link.label}</a
+        >{/if}
       <button class="icon-button" aria-label="Dismiss" onclick={() => toasts.dismiss(toast.id)}
         ><Icon name="close" size={12} /></button
       >
@@ -37,7 +42,9 @@
   }
   .toast {
     display: grid;
-    grid-template-columns: 10px minmax(0, 1fr) auto;
+    grid-template-columns: 10px minmax(0, 1fr);
+    grid-auto-columns: auto;
+    grid-auto-flow: column;
     align-items: center;
     column-gap: 10px;
     padding: 10px 8px 10px 12px;
