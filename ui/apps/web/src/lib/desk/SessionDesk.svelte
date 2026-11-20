@@ -548,10 +548,6 @@
   function shortcut(event: KeyboardEvent) {
     if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
     switch (event.key) {
-      case 'n':
-        event.preventDefault();
-        void newDraft();
-        break;
       case 'j':
       case 'k': {
         if (!order.length) return;
@@ -1622,8 +1618,7 @@
             class="button primary"
             type="button"
             disabled={busy}
-            onclick={() => void newDraft()}
-            ><Icon name="spark" size={12} />New session <kbd>n</kbd></button
+            onclick={() => void newDraft()}><Icon name="spark" size={12} />New session</button
           >
         </div>
         {#if notice}<div class="notice danger" role="alert">
