@@ -45,6 +45,7 @@
   import Inspector from './Inspector.svelte';
   import CallOverview from './CallOverview.svelte';
   import ContextChart from './ContextChart.svelte';
+  import HoverCard from './layer/HoverCard.svelte';
   import { CallTimeline } from './timeline.ts';
   import { Steps } from './steps.ts';
   import Select, { type SelectOption } from './Select.svelte';
@@ -694,22 +695,49 @@
                           class="mono recording-line"
                           title={c.attribution.hint?.session ??
                             'No session identifier was reported'}
-                          >{#if c.recording}{@const recording = c.recording}<button
-                              type="button"
-                              class="recording-filter"
-                              title="Show only this recording's calls"
-                              aria-label={`Show only recording ${short(c.attribution.hint?.session ?? recording)}`}
-                              onclick={() => pick((f) => (f.recording = recording))}
-                              >{#if recordingsById.get(recording) && (!previous || previous.recording !== c.recording)}<RecordingName
-                                  recording={recordingsById.get(recording)!}
-                                  detail={details.get(recording)}
-                                  client={false}
-                                />{:else}<span class="recording-dot tone-{recordingTone(recording)}"
-                                ></span>{#if !previous || previous.recording !== c.recording}{c
-                                    .attribution.hint
-                                    ? short(c.attribution.hint.session)
-                                    : 'Recording'}{/if}{/if}</button
-                            >{:else if !previous || previous.recording !== c.recording}No recording{/if}{#if c.caller.user || c.caller.login}{@const caller =
+                          >{#if c.recording}{@const recording = c.recording}{@const known =
+                              recordingsById.get(recording)}<HoverCard
+                              label="Recording {short(recording)}"
+                              >{#snippet trigger()}<button
+                                  type="button"
+                                  class="recording-filter"
+                                  title="Show only this recording's calls"
+                                  aria-label={`Show only recording ${short(c.attribution.hint?.session ?? recording)}`}
+                                  onclick={() => pick((f) => (f.recording = recording))}
+                                  >{#if recordingsById.get(recording) && (!previous || previous.recording !== c.recording)}<RecordingName
+                                      recording={recordingsById.get(recording)!}
+                                      detail={details.get(recording)}
+                                      client={false}
+                                    />{:else}<span
+                                      class="recording-dot tone-{recordingTone(recording)}"
+                                    ></span>{#if !previous || previous.recording !== c.recording}{c
+                                        .attribution.hint
+                                        ? short(c.attribution.hint.session)
+                                        : 'Recording'}{/if}{/if}</button
+                                >{/snippet}
+                              {#if known}
+                                <RecordingName recording={known} detail={details.get(recording)} />
+                                <span class="card-figures mono"
+                                  ><span>{num(known.call_count)} calls</span><span
+                                    >{num(known.turn_count)} turns</span
+                                  >{#if known.error_count}<span class="card-errors"
+                                      ><Glyph mark="failed" label="Failed calls" />{num(
+                                        known.error_count,
+                                      )}</span
+                                    >{/if}<span
+                                    >{compactOrDash(known.tokens.input)} in · {compactOrDash(
+                                      known.tokens.output,
+                                    )} out</span
+                                  ></span
+                                >
+                                <a
+                                  class="text-button"
+                                  href="/recordings/{encodeURIComponent(recording)}"
+                                  >Open the recording <Icon name="arrow" size={11} /></a
+                                >
+                              {:else}<span class="muted">Not in this page's listing.</span>{/if}
+                            </HoverCard>{:else if !previous || previous.recording !== c.recording}No
+                            recording{/if}{#if c.caller.user || c.caller.login}{@const caller =
                               callerShown(c.caller)}<span class="caller-line"
                               >{SEPARATOR}{#if caller.user}{@const user = caller.user}<button
                                   type="button"
@@ -849,6 +877,24 @@
   }
   .numeric {
     text-align: right;
+  }
+  .recording-line :global(.recording-filter) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card-figures {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .card-errors {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
   }
   .turn-row th {
     padding: 6px 10px;
