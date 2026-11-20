@@ -2,7 +2,7 @@
   import Toolbar from '#lib/Toolbar.svelte';
   import Glyph from '#lib/Glyph.svelte';
   import { onMount, tick, untrack } from 'svelte';
-  import { SvelteMap } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { ManagementApi, short, type Shelf, type TokenTotals } from '#lib/api.ts';
@@ -69,6 +69,8 @@
   import StepGroup from './StepGroup.svelte';
   import StepDetail from './StepDetail.svelte';
   import SlideOver from '#lib/layer/SlideOver.svelte';
+  import FloatingBar from '#lib/layer/FloatingBar.svelte';
+  import { toasts } from '#lib/layer/toasts.svelte.ts';
   import { Steps, type Block } from '#lib/steps.ts';
   import Icon from '#lib/Icon.svelte';
   import Markdown from 'markdown/Markdown.svelte';
@@ -581,11 +583,37 @@
   const inspected = $derived(
     inspecting === null ? null : (allSteps.find((step) => step.entry.item === inspecting) ?? null),
   );
+  /** The steps picked to act on together, by item. */
+  const picked = new SvelteSet<ItemId>();
+  const pickedSteps = $derived(allSteps.filter((step) => picked.has(step.entry.item)));
   $effect(() => {
-    // Another session closes the step that was open.
+    // Another session closes the step that was open, and drops the picks.
     void chosen;
     inspecting = null;
+    untrack(() => picked.clear());
   });
+  async function copyPicked() {
+    try {
+      await navigator.clipboard.writeText(Steps.text(pickedSteps));
+      toasts.show({
+        mark: 'passed',
+        text: pickedSteps.length === 1 ? 'Copied 1 step' : `Copied ${pickedSteps.length} steps`,
+        detail: null,
+      });
+    } catch {
+      toasts.show({ mark: 'failed', text: 'The browser refused the copy', detail: null });
+    }
+  }
+  /** Quote the picked steps in the composer, to ask about them. */
+  function askPicked() {
+    const target = chosen;
+    if (!target) return;
+    const quote = Steps.quote(pickedSteps);
+    const written = drafts.get(target) ?? '';
+    drafts.set(target, written ? `${written}\n\n${quote}\n\n` : `${quote}\n\n`);
+    picked.clear();
+    void tick().then(() => composer?.focus());
+  }
   /** ↑ and ↓ move the open step along the conversation. */
   function stepKey(event: KeyboardEvent) {
     const at = allSteps.findIndex((step) => step.entry.item === inspecting);
@@ -1160,15 +1188,21 @@
     return transcripts.get(run.run)?.firstPrompt()?.trim() || null;
   }
 
-  /** The session's facts after its state: client and settings, place, and when. */
+  /** The header's line under the title: the client, its settings and when
+   * it was last active, in words; then where it works and its recording, as
+   * chips. */
   const facts = $derived(
     session
-      ? [
-          [harnessLabel(session.harness), ...Setup.words(session.settings)].join(' · '),
-          Runs.place(session.workdir, scratch, offered),
-          ...(session.activeAt ? [ago(session.activeAt, now)] : []),
-        ]
-      : [],
+      ? {
+          said: [
+            harnessLabel(session.harness),
+            ...Setup.words(session.settings),
+            ...(session.activeAt ? [ago(session.activeAt, now)] : []),
+          ].join(' · '),
+          place: Runs.place(session.workdir, scratch, offered),
+          recording: current?.recorded?.recording ?? null,
+        }
+      : { said: '', place: '', recording: null },
   );
 
   /** What the run's menu says of it: the details the header leaves out. */
@@ -1574,18 +1608,25 @@
     {:else}
       <header class="run-head">
         <div class="run-heading">
-          <h2 class="run-title" title={(current && firstPrompt(current)) ?? undefined}>
-            {title({ run: current?.run ?? null, asked: session.asked }) ??
-              `New ${harnessLabel(session.harness)} session`}
-          </h2>
-          <p class="run-facts">
+          <div class="run-title-line">
             {#if headerMark}<Glyph mark={headerMark.mark} label={headerMark.label} size={10} />{/if}
-            {#each facts as fact, index (fact)}{#if headerMark || index > 0}<span
-                  class="sep"
-                  aria-hidden="true">·</span
-                >{/if}<span>{fact}</span>{/each}
-            {#if spentLine}<span class="sep" aria-hidden="true">·</span><span
-                title={spentLine.title}>{spentLine.text}</span
+            <h2 class="run-title" title={(current && firstPrompt(current)) ?? undefined}>
+              {title({ run: current?.run ?? null, asked: session.asked }) ??
+                `New ${harnessLabel(session.harness)} session`}
+            </h2>
+          </div>
+          <p class="run-facts">
+            <span class="said">{facts.said}</span>
+            <span class="head-chip mono" title={session.workdir}
+              ><Icon name="folder" size={11} />{facts.place}</span
+            >
+            {#if facts.recording}<a
+                class="head-chip mono"
+                href="/recordings/{facts.recording}"
+                title="Its recorded calls"><Icon name="rows" size={11} />{short(facts.recording)}</a
+              >{/if}
+            {#if spentLine}<span class="head-chip mono spent" title={spentLine.title}
+                >{spentLine.text}</span
               >{/if}
           </p>
         </div>
@@ -1621,59 +1662,81 @@
 
       <!-- Scrolled from its end, so it opens on the newest entry from the
              first paint, before the page's scripts run. -->
-      <div
-        class="conversation from-end"
-        bind:this={conversation}
-        onscroll={onScroll}
-        aria-busy={conversationPending}
-      >
-        <div class="conversation-body">
-          {#if conversationPending}
-            {@render turnsOutline()}
-          {:else}
-            {#if readError}<p class="entry notice-entry danger">{readError}</p>{/if}
-            {#if transcript?.earlier}<p class="quiet-empty">
-                Earlier turns are not shown: the conversation is longer than one read.
-              </p>{/if}
-            <!-- The whole conversation, every turn open, as one scroll. -->
-            {#each turnBlocks as blocks, index (index)}
-              <section class="turn">
-                {#each blocks as block, at (at)}
-                  {#if block.kind === 'steps'}
-                    <StepGroup
-                      steps={block.steps}
-                      state={block.state}
-                      open={folds.get(block.key) ?? false}
-                      ontoggle={(open) => folds.set(block.key, open)}
-                      onopen={(step) =>
-                        (inspecting = inspecting === step.entry.item ? null : step.entry.item)}
-                      chosen={inspecting}
-                    />
-                  {:else}
-                    {@render entryView(block.entry)}
-                  {/if}
-                {/each}
-              </section>
-            {/each}
-          {/if}
-          {#each outgoing as item (item.key)}{@render outgoingView(item)}{/each}
-          {#if runState?.phase === 'working' && !controls.approvals.length}<div
-              class="entry tool muted working"
-            >
-              <Glyph mark="responding" /> Working…
-            </div>{/if}
-          {#if transcript?.read && !transcript.entries.length && runState?.phase === 'idle'}
-            <p class="quiet-empty">The conversation is open. Say what to do.</p>
-          {:else if !current && outgoing.length === 0}
-            <p class="quiet-empty">
-              Write the first prompt: {harnessLabel(session.harness)} starts with it, in {Runs.place(
-                session.workdir,
-                scratch,
-                offered,
-              )}.
-            </p>
-          {/if}
+      <div class="conversation-frame">
+        <div
+          class="conversation from-end"
+          bind:this={conversation}
+          onscroll={onScroll}
+          aria-busy={conversationPending}
+        >
+          <div class="conversation-body">
+            {#if conversationPending}
+              {@render turnsOutline()}
+            {:else}
+              {#if readError}<p class="entry notice-entry danger">{readError}</p>{/if}
+              {#if transcript?.earlier}<p class="quiet-empty">
+                  Earlier turns are not shown: the conversation is longer than one read.
+                </p>{/if}
+              <!-- The whole conversation, every turn open, as one scroll. -->
+              {#each turnBlocks as blocks, index (index)}
+                <section class="turn" aria-label="Turn {index + 1}">
+                  <span class="turn-number mono" aria-hidden="true">T{index + 1}</span>
+                  {#each blocks as block, at (at)}
+                    {#if block.kind === 'steps'}
+                      <StepGroup
+                        steps={block.steps}
+                        state={block.state}
+                        open={folds.get(block.key) ?? false}
+                        ontoggle={(open) => folds.set(block.key, open)}
+                        onopen={(step) =>
+                          (inspecting = inspecting === step.entry.item ? null : step.entry.item)}
+                        chosen={inspecting}
+                        {picked}
+                        onpick={(step, on) =>
+                          on ? picked.add(step.entry.item) : picked.delete(step.entry.item)}
+                      />
+                    {:else}
+                      {@render entryView(block.entry)}
+                    {/if}
+                  {/each}
+                </section>
+              {/each}
+            {/if}
+            {#each outgoing as item (item.key)}{@render outgoingView(item)}{/each}
+            {#if runState?.phase === 'working' && !controls.approvals.length}<div
+                class="entry tool muted working"
+              >
+                <Glyph mark="responding" /> Working…
+              </div>{/if}
+            {#if transcript?.read && !transcript.entries.length && runState?.phase === 'idle'}
+              <p class="quiet-empty">The conversation is open. Say what to do.</p>
+            {:else if !current && outgoing.length === 0}
+              <p class="quiet-empty">
+                Write the first prompt: {harnessLabel(session.harness)} starts with it, in {Runs.place(
+                  session.workdir,
+                  scratch,
+                  offered,
+                )}.
+              </p>
+            {/if}
+          </div>
         </div>
+        {#if pickedSteps.length}
+          <FloatingBar label="Picked steps">
+            <span class="picked-count"
+              ><strong>{pickedSteps.length === 1 ? '1 step' : `${pickedSteps.length} steps`}</strong
+              > picked</span
+            >
+            <button class="button small" onclick={() => void copyPicked()}>Copy</button>
+            {#if data.runsControl && compose}<button
+                class="button small primary"
+                onclick={askPicked}>Ask about {pickedSteps.length === 1 ? 'it' : 'them'}</button
+              >{/if}
+            <button class="icon-button" aria-label="Clear the picks" onclick={() => picked.clear()}
+              ><Icon name="close" size={12} /></button
+            >
+          </FloatingBar>
+        {/if}
       </div>
 
       {#if controls.approvals.length}
@@ -2077,32 +2140,60 @@
     font-size: 12px;
   }
   .run-heading {
+    display: flex;
     flex: 1;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .run-title-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     min-width: 0;
   }
   .run-title {
     margin: 0;
     overflow: hidden;
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     white-space: nowrap;
     text-overflow: ellipsis;
   }
   .run-facts {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
-    margin: 3px 0 0;
-    overflow: hidden;
+    margin: 0;
     color: var(--muted);
+  }
+  .run-facts .said {
+    margin-right: 4px;
+  }
+  .head-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 320px;
+    height: 20px;
+    padding: 0 7px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    background: var(--surface-inset);
+    color: var(--ink);
+    font-size: 11px;
+    text-decoration: none;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .run-facts > span {
-    overflow: hidden;
-    text-overflow: ellipsis;
+  a.head-chip:hover {
+    border-color: var(--control-border);
   }
-  .run-facts .sep {
-    flex: none;
+  .head-chip.spent {
+    margin-left: auto;
+    color: var(--muted);
   }
   .confirm-text {
     color: var(--error);
@@ -2113,10 +2204,25 @@
     align-items: center;
     gap: 6px;
   }
+  /* Holds the conversation and what floats over its foot. */
+  .conversation-frame {
+    position: relative;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
   .conversation {
     flex: 1;
     min-height: 0;
     overflow: auto;
+  }
+  .picked-count {
+    color: var(--muted);
+  }
+  .picked-count strong {
+    color: var(--ink);
+    font-weight: 600;
   }
   /* Laid out from its end, so the browser opens it scrolled to the newest
      entry, and keeps it there as entries are added while it is. */
@@ -2129,8 +2235,21 @@
     margin-bottom: auto;
   }
   /* A turn: its prompt, steps, and reply as rows, ruled off from the next. */
+  /* Its number sits in a gutter of its own, so turns can be counted down
+     the page. */
   .turn {
+    position: relative;
+    padding-left: 32px;
     border-bottom: 1px solid var(--line);
+  }
+  .turn-number {
+    position: absolute;
+    top: 10px;
+    left: 0;
+    width: 36px;
+    color: var(--muted);
+    font-size: 10.5px;
+    text-align: center;
   }
   .entry.asked {
     display: flex;

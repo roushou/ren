@@ -110,6 +110,38 @@ export class Steps {
     return known.length ? known.reduce((sum, ms) => sum + ms, 0) : null;
   }
 
+  /** `steps` as a prompt can quote them: one line each, its verb, what it
+   * acted on, and how it ended unless it simply finished. */
+  static quote(steps: readonly Step[]): string {
+    const lines = steps.map((step) => {
+      const ended =
+        step.state === 'failed'
+          ? ` (failed${step.failure ? `, ${step.failure}` : ''})`
+          : step.state === 'declined'
+            ? ' (declined)'
+            : step.state === 'running'
+              ? ' (still running)'
+              : '';
+      return `- ${Steps.VERBS[step.act]} \`${step.targets.join(', ')}\`${ended}`;
+    });
+    return `About ${steps.length === 1 ? 'this step' : 'these steps'}:\n${lines.join('\n')}`;
+  }
+
+  /** `steps` as text to paste elsewhere: a command as run with its
+   * output, anything else as its verb and targets. */
+  static text(steps: readonly Step[]): string {
+    return steps
+      .map((step) => {
+        const entry = step.entry;
+        if (entry.kind === 'command')
+          return entry.output
+            ? `$ ${entry.command}\n${entry.output.trimEnd()}`
+            : `$ ${entry.command}`;
+        return `${Steps.VERBS[step.act]} ${step.targets.join(', ')}`;
+      })
+      .join('\n\n');
+  }
+
   /** A step's time at a glance: tenths under ten seconds (`2.5 s`), whole
    * seconds under a minute, then minutes and seconds (`1:04`). */
   static time(ms: number): string {

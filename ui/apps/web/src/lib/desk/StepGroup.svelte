@@ -4,7 +4,8 @@
   their time added up, folded until opened. Open, each step is a row: its
   verb, what it acted on, its outcome, and a bar of its time against the
   group's longest. A row opens the step whole beside the transcript
-  (`onopen`); the operator opens the group, it never opens itself.
+  (`onopen`); its box picks it to act on with others (`onpick`). The
+  operator opens the group; it never opens itself.
 -->
 <script module lang="ts">
   import type { IconName } from '#lib/Icon.svelte';
@@ -37,6 +38,8 @@
     ontoggle,
     onopen,
     chosen,
+    picked,
+    onpick,
   }: {
     steps: readonly Step[];
     state: GroupState;
@@ -46,6 +49,9 @@
     onopen: (step: Step) => void;
     /** The step open beside the transcript, if it is one of these. */
     chosen: ItemId | null;
+    /** The steps picked to act on together, across the conversation. */
+    picked: ReadonlySet<ItemId>;
+    onpick: (step: Step, on: boolean) => void;
   } = $props();
 
   const summary = $derived(Steps.summary(steps));
@@ -83,7 +89,14 @@
   {#if open}
     <ol class="step-list">
       {#each steps as step (step.entry.item)}
-        <li>
+        <li class:picked={picked.has(step.entry.item)}>
+          <input
+            class="pick"
+            type="checkbox"
+            checked={picked.has(step.entry.item)}
+            onchange={(event) => onpick(step, event.currentTarget.checked)}
+            aria-label="Pick {Steps.VERBS[step.act]} {step.targets.join(', ')}"
+          />
           <button
             class="step-row"
             class:chosen={chosen === step.entry.item}
@@ -193,14 +206,36 @@
     border-top: 1px solid var(--line);
     list-style: none;
   }
+  li {
+    display: flex;
+    align-items: center;
+  }
+  li.picked {
+    background: var(--surface-inset);
+  }
+  .pick {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    margin: 0 0 0 12px;
+    accent-color: var(--accent);
+    opacity: 0.35;
+  }
+  li:hover .pick,
+  li.picked .pick,
+  .pick:focus-visible {
+    opacity: 1;
+  }
   .step-row {
+    flex: 1;
+    min-width: 0;
     display: grid;
     grid-template-columns: 14px minmax(0, 1fr) 14px 80px 40px;
     align-items: center;
     column-gap: 10px;
     width: 100%;
     height: 26px;
-    padding: 0 12px;
+    padding: 0 12px 0 10px;
     border: 0;
     border-radius: 0;
     background: none;
