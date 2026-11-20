@@ -6,6 +6,7 @@
   import { buildLabel, SEPARATOR } from '#lib/display.ts';
   import { RecorderReport } from '#lib/recorder.ts';
   import Icon from '#lib/Icon.svelte';
+  import { Marks } from '#lib/marks.ts';
   import Glyph from '#lib/Glyph.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
@@ -145,6 +146,7 @@
     </section>
   {:else if verdict}
     <section class="rec-verdict state-edge {verdict.tone}" aria-label="How recording stands">
+      <Glyph mark={Marks.ofTone(verdict.tone)} label={true} />
       <strong>{verdict.headline}</strong>
       {#each verdict.facts as fact (fact)}<span class="muted">{SEPARATOR}{fact}</span>{/each}
       {#if usage?.open_calls}<span class="muted"
@@ -231,6 +233,59 @@
       </dl>
       <section class="counter-group" aria-label="Disk usage" aria-busy={pending}>
         <h3>Disk usage</h3>
+        {#if usage}
+          {@const parts = [
+            {
+              key: 'meta-live',
+              label: 'Metadata · live',
+              bytes: RecorderReport.live(usage.disk.metadata),
+            },
+            { key: 'meta-free', label: 'Metadata · free', bytes: free(usage.disk.metadata) },
+            {
+              key: 'blob-live',
+              label: 'Blobs · live',
+              bytes: RecorderReport.live(usage.disk.blobs),
+            },
+            { key: 'blob-free', label: 'Blobs · free', bytes: free(usage.disk.blobs) },
+          ]}
+          {@const whole = Math.max(
+            1,
+            parts.reduce((sum, part) => sum + part.bytes, 0),
+          )}
+          <svg class="disk-bar" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"
+            >{#each parts as part, index (part.key)}<rect
+                class="disk-{part.key}"
+                x={(parts.slice(0, index).reduce((sum, one) => sum + one.bytes, 0) / whole) * 100}
+                width={(part.bytes / whole) * 100}
+                height="8"><title>{part.label}: {bytes(part.bytes)}</title></rect
+              >{/each}</svg
+          >
+          <p class="disk-key muted">
+            {#each parts as part (part.key)}<span
+                ><span class="swatch disk-{part.key}"></span>{part.label}</span
+              >{/each}
+          </p>
+          <div class="funnel" aria-label="What a body becomes on disk">
+            {#each [{ label: 'Referenced', bytes: usage.referenced_bytes }, { label: 'Unique chunks', bytes: usage.unique_bytes }, { label: 'Compressed', bytes: usage.compressed_bytes }] as step, index (step.label)}
+              <span class="funnel-label">{step.label}</span>
+              <svg viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"
+                ><rect
+                  class="funnel-bar"
+                  width={(step.bytes / Math.max(1, usage.referenced_bytes)) * 100}
+                  height="8"
+                /></svg
+              >
+              <span class="mono">{bytes(step.bytes)}</span>
+              <span class="muted mono"
+                >{index === 1
+                  ? `dedup ${ratio(usage.referenced_bytes, usage.unique_bytes)}`
+                  : index === 2
+                    ? `zstd ${ratio(usage.unique_bytes, usage.compressed_bytes)}`
+                    : ''}</span
+              >
+            {/each}
+          </div>
+        {/if}
         <dl class="health-list">
           {#each diskCounters as counter (counter.label)}
             <div>
@@ -392,6 +447,66 @@
   .mono {
     font-family: 'SFMono-Regular', Consolas, monospace;
     font-variant-numeric: tabular-nums;
+  }
+  .disk-bar {
+    display: block;
+    width: calc(100% - 24px);
+    height: 8px;
+    margin: 4px 12px 6px;
+    background: var(--surface-inset);
+  }
+  .disk-meta-live {
+    fill: var(--chart);
+    background: var(--chart);
+  }
+  .disk-meta-free {
+    fill: color-mix(in srgb, var(--chart) 35%, transparent);
+    background: color-mix(in srgb, var(--chart) 35%, transparent);
+  }
+  .disk-blob-live {
+    fill: var(--accent);
+    background: var(--accent);
+  }
+  .disk-blob-free {
+    fill: color-mix(in srgb, var(--accent) 35%, transparent);
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  .disk-key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin: 0 0 10px;
+    padding: 0 12px;
+    font-size: 11px;
+  }
+  .disk-key > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .swatch {
+    width: 8px;
+    height: 8px;
+  }
+  .funnel {
+    display: grid;
+    grid-template-columns: 100px minmax(0, 1fr) 72px 88px;
+    align-items: center;
+    gap: 5px 10px;
+    margin-bottom: 10px;
+    padding: 0 12px;
+    font-size: 11.5px;
+  }
+  .funnel svg {
+    width: 100%;
+    height: 8px;
+    background: var(--surface-inset);
+  }
+  .funnel-bar {
+    fill: var(--success);
+  }
+  .funnel .mono {
+    text-align: right;
   }
   /* The verdict: how recording stands, edged by the worst counter. */
   .rec-verdict {
