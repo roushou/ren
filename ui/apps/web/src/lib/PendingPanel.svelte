@@ -1,8 +1,7 @@
 <!--
   What waits on the operator: approvals a working run asks (answered here),
   a canary to promote, a preview to check, work still queued. The Projects
-  view shows it across every project, a project's Overview for its own
-  (`ProjectBoard.of`).
+  view shows it across every project (`ProjectBoard.of`).
 -->
 <script lang="ts">
   import Icon from '#lib/Icon.svelte';

@@ -22,8 +22,6 @@ use std::{
 pub enum Page {
     /// The factory's home: every project, and what is pending.
     Projects,
-    /// A project's Overview.
-    Project,
     Release,
     Overview,
     Live,
@@ -51,9 +49,8 @@ struct Newest {
 }
 
 impl Page {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 11] = [
         Self::Projects,
-        Self::Project,
         Self::Release,
         Self::Overview,
         Self::Live,
@@ -69,7 +66,6 @@ impl Page {
     pub fn name(self) -> &'static str {
         match self {
             Self::Projects => "projects",
-            Self::Project => "project",
             Self::Release => "release",
             Self::Overview => "overview",
             Self::Live => "live",
@@ -84,7 +80,7 @@ impl Page {
     }
 
     /// The page's path: the newest recording for `Recording`; the project's
-    /// pages for `Project`, `Release`, and `Sessions` (its newest
+    /// pages for `Release` and `Sessions` (its newest
     /// run's session open, if any). None when there is no such recording or
     /// project, except Sessions, which is then Scratch.
     fn path(self, newest: &Newest) -> Option<String> {
@@ -94,7 +90,6 @@ impl Page {
             .map(|name| format!("/projects/{name}"));
         match self {
             Self::Projects => Some("/".into()),
-            Self::Project => project,
             Self::Release => project.map(|base| format!("{base}/release")),
             Self::Overview => Some("/overview".into()),
             Self::Live => Some("/live".into()),
@@ -329,10 +324,6 @@ mod tests {
                 Page::Recording => {
                     assert_eq!(page.path(&none), None);
                     assert_eq!(page.path(&some).as_deref(), Some("/recordings/s1"));
-                }
-                Page::Project => {
-                    assert_eq!(page.path(&none), None);
-                    assert_eq!(page.path(&some).as_deref(), Some("/projects/ren"));
                 }
                 Page::Release => {
                     assert_eq!(page.path(&none), None);

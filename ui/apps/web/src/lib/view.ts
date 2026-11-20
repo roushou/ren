@@ -13,7 +13,7 @@
 /** A view of the workbench, one per page. */
 export type View =
   | 'projects'
-  | 'project'
+  | 'work'
   | 'scratch'
   | 'overview'
   | 'live'
@@ -33,7 +33,6 @@ export type View =
  * turns sit under Recordings. */
 export type Tab =
   | 'projects'
-  | 'project'
   | 'scratch'
   | 'sessions'
   | 'release'
@@ -74,8 +73,8 @@ export class Views {
     switch (route) {
       case '/':
         return 'projects';
-      case '/projects/[name]':
-        return 'project';
+      case '/projects/[name]/work/[id]':
+        return 'work';
       case '/projects/[name]/sessions':
         return 'sessions';
       case '/projects/[name]/release':
@@ -114,8 +113,9 @@ export class Views {
       case 'report':
       case 'turn':
         return 'recordings';
+      case 'work':
+        return 'release';
       case 'projects':
-      case 'project':
       case 'scratch':
       case 'overview':
       case 'live':
@@ -139,7 +139,6 @@ export class Views {
   static destination(tab: Tab): Destination {
     switch (tab) {
       case 'projects':
-      case 'project':
       case 'scratch':
       case 'sessions':
       case 'release':
@@ -169,7 +168,6 @@ export class Views {
         if (project !== null) {
           const base = `/projects/${encodeURIComponent(project)}`;
           return [
-            { tab: 'project', href: base, label: 'Overview' },
             { tab: 'sessions', href: `${base}/sessions`, label: 'Sessions' },
             { tab: 'release', href: `${base}/release`, label: 'Release' },
           ];
@@ -211,7 +209,6 @@ export class Views {
       case 'search':
         return true;
       case 'projects':
-      case 'project':
       case 'scratch':
       case 'sessions':
       case 'release':
@@ -238,8 +235,8 @@ export class Views {
     switch (view) {
       case 'projects':
         return 'Projects';
-      case 'project':
-        return 'Project';
+      case 'work':
+        return 'Work item';
       case 'scratch':
         return 'Scratch';
       case 'overview':

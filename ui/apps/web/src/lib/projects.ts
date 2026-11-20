@@ -179,14 +179,14 @@ export class ProjectBoard {
       .filter((group) => group.items.length > 0);
   }
 
-  /** Where a project's page is. */
+  /** Where a project opens: its sessions. */
   static href(name: string): string {
-    return `/projects/${encodeURIComponent(name)}`;
+    return `/projects/${encodeURIComponent(name)}/sessions`;
   }
 
   /** Where a project's release is shown in full: its Release page. */
   static releaseHref(project: Project): string {
-    return `${ProjectBoard.href(project.name)}/release`;
+    return `/projects/${encodeURIComponent(project.name)}/release`;
   }
 
   /** A project's open work, in words: what is queued, sent, and landed. */

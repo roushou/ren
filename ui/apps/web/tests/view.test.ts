@@ -4,7 +4,7 @@ import { Views } from '../src/lib/view.ts';
 
 test('each route is its view, and an unknown one is Traffic', () => {
   assert.equal(Views.of('/'), 'projects');
-  assert.equal(Views.of('/projects/[name]'), 'project');
+  assert.equal(Views.of('/projects/[name]/work/[id]'), 'work');
   assert.equal(Views.of('/projects/[name]/sessions'), 'sessions');
   assert.equal(Views.of('/projects/[name]/release'), 'release');
   assert.equal(Views.of('/scratch'), 'scratch');
@@ -20,7 +20,8 @@ test('a recording, its report, and its turns sit under the Recordings tab', () =
   for (const view of ['recordings', 'recording', 'report', 'turn'] as const) {
     assert.equal(Views.tab(view), 'recordings');
   }
-  assert.equal(Views.tab('project'), 'project');
+  // A work item sits under its project's Release, where work is listed.
+  assert.equal(Views.tab('work'), 'release');
   assert.equal(Views.tab('traffic'), 'traffic');
   assert.equal(Views.title('recording'), 'Recording activity');
   assert.equal(Views.title('recorder'), 'Recorder & storage');
@@ -41,7 +42,7 @@ test('three destinations hold every page, each page in exactly one', () => {
     assert.equal(Views.pages(place.destination)[0]?.href, place.href);
   }
   assert.equal(Views.destination(Views.tab('turn')), 'inspect');
-  assert.equal(Views.destination(Views.tab('project')), 'projects');
+  assert.equal(Views.destination(Views.tab('work')), 'projects');
 });
 
 test("inside a project, the row holds the project's own pages", () => {
@@ -52,7 +53,6 @@ test("inside a project, the row holds the project's own pages", () => {
   assert.deepEqual(
     Views.pages('projects', 'acme web').map((page) => [page.tab, page.href]),
     [
-      ['project', '/projects/acme%20web'],
       ['sessions', '/projects/acme%20web/sessions'],
       ['release', '/projects/acme%20web/release'],
     ],

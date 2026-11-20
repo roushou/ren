@@ -371,7 +371,7 @@
   }
 
   /** Keep the marks as a queued work item, and open it on its project's
-   * Overview; Projects when its project does not read. */
+   * page; Projects when its project does not read. */
   async function later() {
     error = null;
     if (!noted.length) {

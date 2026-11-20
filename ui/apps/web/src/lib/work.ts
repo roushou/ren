@@ -476,10 +476,9 @@ export class Work {
       : (projects.find((project) => project.id === item.project) ?? null);
   }
 
-  /** `item` open in the drawer of the Overview of the project named
-   * `project`, which lists its current work. */
+  /** `item`'s page, under the project named `project`. */
   static href(project: string, item: WorkItemId): string {
-    return `/projects/${encodeURIComponent(project)}?${new URLSearchParams({ item })}`;
+    return `/projects/${encodeURIComponent(project)}/work/${item}`;
   }
 
   /** An item's order as the daemon takes one. */

@@ -198,5 +198,5 @@ test("a project holds its items, Ren's those from before projects too", () => {
   assert.equal(Work.home(item('b', null), [acme, ren]), ren);
   assert.equal(Work.home(item('a', 'acme-id'), [acme, ren]), acme);
   assert.equal(Work.home(item('x', 'gone-id'), [acme, ren]), null);
-  assert.equal(Work.href('acme-web', 'a' as WorkItemId), '/projects/acme-web?item=a');
+  assert.equal(Work.href('acme-web', 'a' as WorkItemId), '/projects/acme-web/work/a');
 });

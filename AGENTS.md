@@ -680,7 +680,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   work item first), `src/lib/work.ts` work items (`WorkApi` through
   `/api/work` and `/control/work`, the order a pane makes, `PageEvidence`,
   what a page logged and read, kept by the layout, and `Work.batch`, the
-  brief a work item shows on its project's Overview),
+  brief a work item's page shows, `/projects/<name>/work/<id>`),
   `Markdown.svelte` from `ui/packages/markdown` draws Markdown, and
   `src/lib/server/runsStart.ts` makes the session desk's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the

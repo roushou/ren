@@ -454,8 +454,8 @@ first port and its UI on the next, with production's configuration but
 `--publish` publishes both on the tailnet on the same port numbers, with the
 install's saved Tailscale choice. It then records the preview on every sent
 work item the branch's recent commits name (`Work-Item: <id>`), and on each
-`--work <id>`: a work item opened on its project's Overview opens the marked
-page on it beside production's.
+`--work <id>`: a work item's page opens the marked page on it beside
+production's.
 `--of dev` copies the dev slot instead. Deleting the worktree's session
 stops its preview with it, and takes it off the session's work items.
 
