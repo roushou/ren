@@ -548,8 +548,8 @@
   /** The processes whose conversation was read again once they opened. */
   const reread = new Set<RunId>();
 
-  /** Groups of steps the operator opened or folded, by their first step:
-   * the rest open while a step runs or after one failed, and fold once done. */
+  /** Groups of steps the operator opened, by their first step: the rest
+   * stay folded, running or failed alike. */
   const folds = new SvelteMap<string, boolean>();
 
   /** Each session's draft, kept while the page is open. */
@@ -1502,7 +1502,7 @@
                       <StepGroup
                         steps={block.steps}
                         state={block.state}
-                        open={folds.get(block.key) ?? Steps.opens(block.state)}
+                        open={folds.get(block.key) ?? false}
                         ontoggle={(open) => folds.set(block.key, open)}
                       />
                     {:else}
