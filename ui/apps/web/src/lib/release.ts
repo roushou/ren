@@ -4,6 +4,7 @@
 import type { Revision } from './api.ts';
 import type { ReleaseView } from './api.ts';
 import { unrecognised } from './decode.ts';
+import type { Mark } from './marks.ts';
 import { Refusals } from './refusal.ts';
 import type { WorkItem } from './work.ts';
 
@@ -85,31 +86,41 @@ export class Promotion {
   readonly word: string;
   readonly sentence: string;
   readonly tone: ReleaseTone;
+  /** Its glyph: waiting on the operator is theirs to act on. */
+  readonly mark: Mark;
 
-  constructor(word: string, sentence: string, tone: ReleaseTone) {
+  constructor(word: string, sentence: string, tone: ReleaseTone, mark: Mark) {
     this.word = word;
     this.sentence = sentence;
     this.tone = tone;
+    this.mark = mark;
   }
 
   static of(decision: ReleaseView['decision']): Promotion {
     switch (decision) {
       case 'promote':
-        return new Promotion('Promoting', "production takes the canary's build now", 'ok');
+        return new Promotion(
+          'Promoting',
+          "production takes the canary's build now",
+          'ok',
+          'running',
+        );
       case 'current':
-        return new Promotion('Live', "production runs the canary's build", 'ok');
+        return new Promotion('Live', "production runs the canary's build", 'ok', 'passed');
       case 'failed':
         return new Promotion(
           'Blocked',
           "the canary's build failed; production keeps its own",
           'bad',
+          'failed',
         );
       case 'unchecked':
-        return new Promotion('Unchecked', 'no build has been checked', 'warning');
+        return new Promotion('Unchecked', 'no build has been checked', 'warning', 'unknown');
       case 'production_ahead':
         return new Promotion(
           'Diverged',
           "production has commits the canary's build lacks",
+          'warning',
           'warning',
         );
       case 'unconfirmed':
@@ -117,27 +128,31 @@ export class Promotion {
           'Unknown build',
           'production runs a build the factory cannot place',
           'warning',
+          'unknown',
         );
       case 'awaiting_operator':
         return new Promotion(
           'Waiting on you',
           'passed; waiting for the operator to promote it',
           'warning',
+          'yours',
         );
       case 'outside_window':
         return new Promotion(
           'Scheduled',
           'passed; production takes it when the window opens',
           'ok',
+          'queued',
         );
       case 'promotion_failed':
         return new Promotion(
           'Rolled back',
           'production failed to take it and was rolled back',
           'bad',
+          'failed',
         );
       default:
-        return new Promotion(unrecognised(decision), unrecognised(decision), 'warning');
+        return new Promotion(unrecognised(decision), unrecognised(decision), 'warning', 'unknown');
     }
   }
 }

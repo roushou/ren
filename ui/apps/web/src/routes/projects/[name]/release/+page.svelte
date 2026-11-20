@@ -14,7 +14,8 @@
   import { toasts } from '#lib/layer/toasts.svelte.ts';
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
-  import { ReleaseLine, ReleaseApi, ReleasePage } from '#lib/release.ts';
+  import { Promotion, ReleaseLine, ReleaseApi, ReleasePage } from '#lib/release.ts';
+  import Glyph from '#lib/Glyph.svelte';
   import { Work } from '#lib/work.ts';
   import type { ReleaseView } from '#lib/api.ts';
   import type { PageProps } from './$types';
@@ -85,31 +86,48 @@
     </p>
   {:else}
     {@const release = view.release}
-    {@const [decision, tone] = decided(release)}
-    <div class="lanes" aria-label="Builds">
-      <div class="lane">
-        <span class="lane-label">Production</span>
-        <span class="lane-commit mono">{ReleasePage.short(view.production)}</span>
-        <span class="lane-note">{view.behind}</span>
-      </div>
-      <div class="lane">
-        <span class="lane-label">Canary</span>
-        <span class="lane-commit mono">{ReleasePage.short(release.canary?.commit ?? null)}</span>
-        <span
-          class="lane-note"
-          class:ok={release.canary?.passed}
-          class:bad={release.canary && !release.canary.passed}
-          >{release.canary ? (release.canary.passed ? 'passed' : 'failed') : 'none checked'}</span
-        >
-      </div>
+    {@const [decision] = decided(release)}
+    {@const promotion = Promotion.of(release.decision)}
+    <div class="lanes" aria-label="Where a change moves">
       <div class="lane">
         <span class="lane-label">Main</span>
         <span class="lane-commit mono">{ReleasePage.short(release.main)}</span>
         <span class="lane-note">its tip, as the factory last fetched it</span>
       </div>
+      <span class="arrow" aria-hidden="true"><Icon name="arrow" size={14} /></span>
+      <div class="lane">
+        <span class="lane-label">Canary</span>
+        <span class="lane-commit mono">{ReleasePage.short(release.canary?.commit ?? null)}</span>
+        {#if release.canary}
+          {@const checks = release.canary.checks}
+          <span class="check-blocks" aria-hidden="true"
+            >{#each checks as check, index (index)}<span class:failed={!check.passed}
+              ></span>{/each}</span
+          >
+          <span class="lane-figure mono"
+            ><Glyph
+              mark={release.canary.passed ? 'passed' : 'failed'}
+              label={release.canary.passed ? 'Passed' : 'Failed'}
+            />{checks.filter((check) => check.passed).length}/{checks.length}</span
+          >
+        {:else}<span class="lane-note">none checked</span>{/if}
+      </div>
+      <span class="arrow" aria-hidden="true"><Icon name="arrow" size={14} /></span>
+      <div class="lane">
+        <span class="lane-label">Production</span>
+        <span class="lane-commit mono">{ReleasePage.short(view.production)}</span>
+        {#if release.behind}<span
+            class="behind mono"
+            title="Production is {view.behind}"
+            aria-label="Production is {view.behind}">↓{release.behind}</span
+          >{:else}<span class="lane-note">{view.behind}</span>{/if}
+      </div>
+      <span class="arrow" aria-hidden="true"><Icon name="arrow" size={14} /></span>
       <div class="lane decision">
-        <span class="lane-label">Promotion · {release.policy}</span>
-        <span class="lane-decision tone-{tone}">{decision}</span>
+        <span class="lane-label">Decision · {release.policy}</span>
+        <span class="lane-decision" title={decision}
+          ><Glyph mark={promotion.mark} label={promotion.sentence} />{promotion.word}</span
+        >
         {#if view.asked}
           <span class="lane-note">Asked: the factory's next pass installs it.</span>
         {:else if view.promotable && release.canary && data.project.factory !== 'ren'}
@@ -233,8 +251,44 @@
   }
   .lanes {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.6fr);
+    grid-template-columns:
+      minmax(0, 1fr) 24px minmax(0, 1fr) 24px minmax(0, 1fr) 24px
+      minmax(0, 1.4fr);
+    align-items: stretch;
     border-bottom: 1px solid var(--line);
+  }
+  .arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+  }
+  .check-blocks {
+    display: flex;
+    gap: 2px;
+  }
+  .check-blocks span {
+    flex: 1;
+    max-width: 18px;
+    height: 6px;
+    background: var(--success);
+  }
+  .check-blocks span.failed {
+    background: var(--error);
+  }
+  .lane-figure,
+  .lane-decision {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .behind {
+    align-self: flex-start;
+    padding: 0 6px;
+    border: 1px solid var(--warning);
+    border-radius: 2px;
+    color: var(--warning);
+    font-size: 12px;
   }
   .lane {
     display: flex;
@@ -243,9 +297,7 @@
     padding: 12px 16px;
     min-width: 0;
   }
-  .lane + .lane {
-    border-left: 1px solid var(--line);
-  }
+
   .lane-label {
     font-size: 11px;
     font-weight: 600;
@@ -259,17 +311,6 @@
   .lane-note {
     color: var(--muted);
     font-size: 12px;
-  }
-  .lane-note.ok,
-  .tone-ok {
-    color: var(--success);
-  }
-  .lane-note.bad,
-  .tone-bad {
-    color: var(--error);
-  }
-  .tone-warning {
-    color: var(--warning);
   }
   .decision {
     align-items: flex-start;
@@ -380,10 +421,13 @@
     .work-columns {
       grid-template-columns: minmax(0, 1fr);
     }
-    .lane + .lane,
     .work-columns > div + div {
       border-left: none;
       border-top: 1px solid var(--line);
+    }
+    .arrow {
+      transform: rotate(90deg);
+      padding: 2px 0;
     }
   }
 </style>
