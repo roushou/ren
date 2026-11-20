@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ToolHistory,
   Platforms,
   RowActions,
   Standings,
@@ -362,4 +363,41 @@ test('a change says what it came to in a toast', () => {
     }),
     { mark: 'failed', text: '1 install failed', detail: 'fd · verify' },
   );
+});
+
+test('the history sets the newest generations side by side, marking where a package changed', () => {
+  const generation = (n: number, installs: [string, string][]) => ({
+    generation: n as never,
+    state: 'idle' as never,
+    installs: installs.map(([pkg, version]) => ({
+      package: pkg as never,
+      version: version as never,
+    })),
+  });
+  const history = new ToolHistory(
+    {
+      generations: [
+        generation(12, [['rg', '14.0']]),
+        generation(14, [
+          ['rg', '14.1'],
+          ['fd', '10.2'],
+        ]),
+        generation(13, [['rg', '14.1']]),
+      ],
+    } as never,
+    2,
+  );
+  assert.deepEqual(
+    history.generations.map((g) => g.generation),
+    [14, 13],
+  );
+  assert.deepEqual(
+    [history.version('rg' as never, 0), history.version('rg' as never, 1)],
+    ['14.1', '14.1'],
+  );
+  // 14 added fd; 13 updated rg from 12, the generation past the columns.
+  assert.equal(history.changed('fd' as never, 0), true);
+  assert.equal(history.changed('rg' as never, 0), false);
+  assert.equal(history.changed('rg' as never, 1), true);
+  assert.equal(history.version('fd' as never, 1), null);
 });

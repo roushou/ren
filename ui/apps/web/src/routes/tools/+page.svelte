@@ -25,6 +25,7 @@
     ToolPlan,
     ToolsApi,
     ToolsError,
+    ToolHistory,
     type Generation,
     type GenerationView,
     type PackageId,
@@ -307,18 +308,51 @@
   {:else if loaded.kind === 'pending'}
     {@render outline()}
   {:else if listing}
+    <!-- The newest generations, as columns beside the packages. -->
+    {@const history = new ToolHistory(listing)}
     <section class="tools-main" aria-label="Packages">
       <table class="tools-table">
         <colgroup>
           <col class="c-name" />
           <col class="c-version" />
           <col />
+          {#each history.generations as generation (generation.generation)}<col
+              class="c-gen"
+            />{/each}
           <col class="c-action" />
         </colgroup>
+        <thead>
+          <tr>
+            <th>Package</th>
+            <th>Version</th>
+            <th>Where runs find it</th>
+            {#each history.generations as generation (generation.generation)}
+              <th class="gen-head" class:current={generation.state === 'current'}
+                ><span class="mono">#{generation.generation}</span
+                >{#if generation.state === 'current'}<Glyph
+                    mark="passed"
+                    label={stateLabel(generation.state)}
+                  />{:else if generation.state === 'in_use'}<Glyph
+                    mark="responding"
+                    label="In use by runs"
+                  />{/if}{#if generation.state !== 'current' && listing.platform}<button
+                    class="icon-button restore"
+                    title="Restore generation {generation.generation}…"
+                    aria-label="Restore generation {generation.generation}"
+                    disabled={applying.kind === 'applying'}
+                    onclick={() =>
+                      (confirming = { kind: 'restore', generation: generation.generation })}
+                    ><Icon name="refresh" size={11} /></button
+                  >{/if}</th
+              >
+            {/each}
+            <th></th>
+          </tr>
+        </thead>
         {#each groups as group (group.kind)}
           <tbody>
             <tr class="tools-group">
-              <th colspan="4" scope="rowgroup"
+              <th colspan={4 + history.generations.length} scope="rowgroup"
                 >{group.title} <span class="count">{group.packages.length}</span></th
               >
             </tr>
@@ -371,6 +405,16 @@
                           />{/if}{shown.text}</span
                       >{/if}{/if}</td
                 >
+                {#each history.generations as generation, index (generation.generation)}
+                  {@const held = history.version(pkg.id, index)}
+                  <td
+                    class="mono gen"
+                    class:changed={history.changed(pkg.id, index)}
+                    title={history.changed(pkg.id, index)
+                      ? 'Changed in this generation'
+                      : undefined}>{held ?? '—'}</td
+                  >
+                {/each}
                 <td class="end">
                   {#if label && listing.platform}
                     <button
@@ -388,48 +432,20 @@
           </tbody>
         {:else}
           <tbody>
-            <tr><td colspan="4" class="muted">No tool matches.</td></tr>
+            <tr><td colspan={4 + history.generations.length} class="muted">No tool matches.</td></tr
+            >
           </tbody>
         {/each}
       </table>
       {#if listing.generations.length > 0}
-        <section class="history">
-          <h3>History</h3>
-          <ul class="generations">
-            {#each listing.generations as generation (generation.generation)}
-              <li class={generation.state}>
-                <span class="mono muted">#{generation.generation}</span>
-                <span class="mono installs"
-                  >{generation.installs.map((i) => `${i.package} ${i.version}`).join(', ') ||
-                    '—'}</span
-                >
-                <span class="end">
-                  {#if generation.state === 'idle' || generation.state === 'in_use'}
-                    {#if generation.state === 'in_use'}<Glyph
-                        mark="responding"
-                        label="In use by runs"
-                      />{/if}
-                    {#if listing.platform}
-                      <button
-                        class="button small"
-                        disabled={applying.kind === 'applying'}
-                        onclick={() =>
-                          (confirming = { kind: 'restore', generation: generation.generation })}
-                        >Restore…</button
-                      >
-                    {/if}
-                  {:else}
-                    <Glyph mark="passed" label={stateLabel(generation.state)} />
-                  {/if}
-                </span>
-              </li>
-            {/each}
-          </ul>
-          <div class="collect">
-            <button class="button small" onclick={collect}>Clean up</button>
-            {#if collecting}<span class="muted">{collecting}</span>{/if}
-          </div>
-        </section>
+        <div class="collect">
+          <span class="muted"
+            >{listing.generations.length} generation{listing.generations.length === 1 ? '' : 's'}
+            kept · the newest {history.generations.length} shown above</span
+          >
+          <button class="button small" onclick={collect}>Clean up</button>
+          {#if collecting}<span class="muted">{collecting}</span>{/if}
+        </div>
       {/if}
     </section>
     {#if chosen}
@@ -819,18 +835,27 @@
   .head .chip-row {
     margin: 6px 0 0;
   }
-  .history {
-    padding: 10px 12px 64px;
-    border-top: 1px solid var(--line);
-    font-size: 12px;
+  .gen-head {
+    white-space: nowrap;
+  }
+  .gen-head > * {
+    vertical-align: middle;
+  }
+  .gen-head :global(.glyph) {
+    margin-left: 5px;
+  }
+  .restore {
+    margin-left: 4px;
+  }
+  td.gen {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  td.gen.changed {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--ink);
   }
   .tools-inspector h3,
-  .history h3 {
-    margin: 0 0 6px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--muted);
-  }
   dl {
     display: grid;
     grid-template-columns: 72px minmax(0, 1fr);
@@ -843,31 +868,6 @@
   dd {
     margin: 0;
     overflow-wrap: anywhere;
-  }
-  .generations {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    border-top: 1px solid var(--line);
-  }
-  .generations li {
-    display: grid;
-    grid-template-columns: 28px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 0;
-    min-height: 33px;
-    border-bottom: 1px solid var(--line);
-  }
-  .generations .end {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .generations .installs {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .collect {
     display: flex;

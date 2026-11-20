@@ -724,3 +724,44 @@ export class ToolsApi {
     return decode(parsed, '');
   }
 }
+
+/** The newest generations side by side, as columns beside the packages:
+ * which release of each package each held, and where that changed from
+ * the generation before it. */
+export class ToolHistory {
+  /** Newest first, at most `max`. */
+  readonly generations: GenerationView[];
+  readonly #versions: Map<Generation, Map<PackageId, Version>>;
+  /** The generation just older than the oldest column, to tell a change in it. */
+  readonly #before: Map<PackageId, Version> | null;
+
+  constructor(listing: ToolListing, max = 5) {
+    const newest = listing.generations.toSorted((a, b) => b.generation - a.generation);
+    this.generations = newest.slice(0, max);
+    this.#versions = new Map(
+      newest.map((generation) => [
+        generation.generation,
+        new Map(generation.installs.map((install) => [install.package, install.version])),
+      ]),
+    );
+    const before = newest[max];
+    this.#before = before ? (this.#versions.get(before.generation) ?? null) : null;
+  }
+
+  /** The release of `pkg` that generation `index` (0 the newest) held. */
+  version(pkg: PackageId, index: number): Version | null {
+    const generation = this.generations[index];
+    return generation ? (this.#versions.get(generation.generation)?.get(pkg) ?? null) : null;
+  }
+
+  /** Whether generation `index` changed `pkg` from the one before it. */
+  changed(pkg: PackageId, index: number): boolean {
+    const older =
+      index + 1 < this.generations.length
+        ? this.version(pkg, index + 1)
+        : this.#before === null
+          ? undefined
+          : (this.#before.get(pkg) ?? null);
+    return older !== undefined && older !== this.version(pkg, index);
+  }
+}
