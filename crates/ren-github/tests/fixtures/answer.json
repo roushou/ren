@@ -17,18 +17,29 @@
             "baseRefName": "main",
             "mergeStateStatus": "BEHIND",
             "reviewDecision": null,
-            "commits": { "nodes": [ { "commit": { "statusCheckRollup": {
-              "state": "FAILURE",
-              "contexts": {
-                "pageInfo": { "hasNextPage": false },
-                "nodes": [
-                  { "__typename": "CheckRun", "name": "CI", "status": "COMPLETED", "conclusion": "SUCCESS" },
-                  { "__typename": "CheckRun", "name": "Compatibility", "status": "COMPLETED", "conclusion": "FAILURE" },
-                  { "__typename": "CheckRun", "name": "lint", "status": "IN_PROGRESS", "conclusion": null },
-                  { "__typename": "StatusContext", "context": "deploy/preview", "state": "PENDING" }
-                ]
-              }
-            } } } ] }
+            "commits": {
+              "nodes": [{
+                "commit": {
+                  "statusCheckRollup": {
+                    "state": "FAILURE",
+                    "contexts": {
+                      "pageInfo": { "hasNextPage": false },
+                      "nodes": [
+                        { "__typename": "CheckRun", "name": "CI", "status": "COMPLETED", "conclusion": "SUCCESS" },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "Compatibility",
+                          "status": "COMPLETED",
+                          "conclusion": "FAILURE"
+                        },
+                        { "__typename": "CheckRun", "name": "lint", "status": "IN_PROGRESS", "conclusion": null },
+                        { "__typename": "StatusContext", "context": "deploy/preview", "state": "PENDING" }
+                      ]
+                    }
+                  }
+                }
+              }]
+            }
           },
           {
             "number": 9,
@@ -42,7 +53,7 @@
             "baseRefName": "main",
             "mergeStateStatus": "SOMETHING_NEW",
             "reviewDecision": "REVIEW_REQUIRED",
-            "commits": { "nodes": [ { "commit": { "statusCheckRollup": null } } ] }
+            "commits": { "nodes": [{ "commit": { "statusCheckRollup": null } }] }
           }
         ]
       }

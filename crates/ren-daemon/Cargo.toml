@@ -40,13 +40,13 @@ uuid = { workspace = true, features = ["v4"] }
 zip = { version = "9.5.0", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
-ren-preview.workspace = true
 axum.workspace = true
 brotli.workspace = true
 bytes.workspace = true
 http.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
+ren-preview.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-tungstenite.workspace = true
