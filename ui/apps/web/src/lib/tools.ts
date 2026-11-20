@@ -9,6 +9,7 @@ import {
   ShapeError,
   array,
   assertNever,
+  unrecognised,
   branded,
   brandedCount,
   isRecord,
@@ -127,6 +128,36 @@ export interface ToolChange {
   generation: Generation;
   changes: PackageChange[];
   failures: InstallFailure[];
+}
+
+export class ToolChanges {
+  /** What a change came to, as a toast says it: activated, nothing to do, or
+   * which installs failed and at which stage. */
+  static said(change: ToolChange): { mark: Mark; text: string; detail: string | null } {
+    const outcome = change.outcome;
+    switch (outcome) {
+      case 'activated':
+        return {
+          mark: 'passed',
+          text: `Generation ${change.generation} is current`,
+          detail:
+            change.changes.map((c) => `${c.package} ${c.to ?? 'removed'}`).join(' · ') || null,
+        };
+      case 'unchanged':
+        return { mark: 'idle', text: 'Nothing to change', detail: null };
+      case 'failed':
+        return {
+          mark: 'failed',
+          text:
+            change.failures.length === 1
+              ? '1 install failed'
+              : `${change.failures.length} installs failed`,
+          detail: change.failures.map((f) => `${f.package} · ${f.stage}`).join(' · ') || null,
+        };
+      default:
+        return { mark: 'unknown', text: unrecognised(outcome), detail: null };
+    }
+  }
 }
 
 export interface ToolCollection {

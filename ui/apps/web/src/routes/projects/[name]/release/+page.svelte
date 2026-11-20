@@ -10,6 +10,8 @@
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
   import Icon from '#lib/Icon.svelte';
+  import Modal from '#lib/layer/Modal.svelte';
+  import { toasts } from '#lib/layer/toasts.svelte.ts';
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import { ReleaseLine, ReleaseApi, ReleasePage } from '#lib/release.ts';
@@ -25,16 +27,26 @@
   const shipped = $derived(view ? view.shipped(data.work) : []);
   const waiting = $derived(ReleasePage.waiting(data.work));
   let asking = $state(false);
-  let error = $state<string | null>(null);
+  /** The canary build the operator is asked to confirm promoting. */
+  let confirming = $state<string | null>(null);
 
   async function promote(commit: string) {
-    error = null;
+    confirming = null;
     asking = true;
     try {
       await new ReleaseApi(fetch).promote(commit);
+      toasts.show({
+        mark: 'passed',
+        text: `Promotion of ${ReleasePage.short(commit)} asked`,
+        detail: 'The factory installs it on its next pass.',
+      });
       await invalidateAll();
     } catch (failure) {
-      error = failure instanceof Error ? failure.message : 'The promotion was not asked for.';
+      toasts.show({
+        mark: 'failed',
+        text: 'The promotion was not asked for',
+        detail: failure instanceof Error ? failure.message : null,
+      });
     } finally {
       asking = false;
     }
@@ -110,11 +122,10 @@
             title={page.data.runsControl
               ? 'The factory installs it on its next pass, with the install’s steps'
               : 'This UI only reads: give it the control token to promote'}
-            onclick={() => void promote(commit)}
-            >{asking ? 'Asking…' : `Promote ${ReleasePage.short(commit)}`}</button
+            onclick={() => (confirming = commit)}
+            >{asking ? 'Asking…' : `Promote ${ReleasePage.short(commit)}…`}</button
           >
         {/if}
-        {#if error}<span class="error" role="alert">{error}</span>{/if}
       </div>
     </div>
 
@@ -180,6 +191,38 @@
     </div>
   {/if}
 </section>
+
+{#if confirming && view}
+  {@const commit = confirming}
+  {@const release = view.release}
+  <Modal
+    eyebrow="Release · {data.project.name}"
+    title="Promote {ReleasePage.short(commit)} to production?"
+    onclose={() => (confirming = null)}
+  >
+    <p>
+      {release.behind === null
+        ? 'Production runs a build that is not on main.'
+        : `Production is ${release.behind} ${release.behind === 1 ? 'commit' : 'commits'} behind main; this build brings it to the canary's.`}
+    </p>
+    {#if release.canary}
+      <p class="muted">
+        The canary passed {release.canary.checks.filter((c) => c.passed).length} of {release.canary
+          .checks.length} checks. The policy is {release.policy}.
+      </p>
+    {/if}
+    {#if waiting.length}
+      <ul class="promoting">
+        {#each waiting as item (item.id)}<li>{item.title}</li>{/each}
+      </ul>
+    {/if}
+    <p class="muted">The factory installs it on its next pass, with the install's steps.</p>
+    {#snippet actions()}
+      <button class="button" onclick={() => (confirming = null)}>Cancel</button>
+      <button class="button primary" onclick={() => void promote(commit)}>Promote</button>
+    {/snippet}
+  </Modal>
+{/if}
 
 <style>
   .release {
@@ -320,6 +363,11 @@
   }
   .empty {
     padding: 16px;
+  }
+  .promoting {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 12.5px;
   }
   .error {
     color: var(--error);

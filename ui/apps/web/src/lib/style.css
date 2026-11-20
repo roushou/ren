@@ -25,7 +25,14 @@
   --popover: #ffffff;
   --popover-hover: #f0f1f6;
   --popover-border: #cfd3dc;
-  --popover-shadow: 0 2px 6px rgb(16 18 27 / 0.08), 0 14px 36px rgb(16 18 27 / 0.18);
+  /* Layers (lib/layer/): the base has no shadow; each layer above it casts a
+     deeper one, and a modal dims the page behind it. */
+  --elev-toolbar: 0 2px 8px rgb(16 18 27 / 0.1);
+  --elev-popover: 0 2px 6px rgb(16 18 27 / 0.08), 0 14px 36px rgb(16 18 27 / 0.18);
+  --elev-slide: -8px 0 28px rgb(16 18 27 / 0.14);
+  --elev-modal: 0 24px 64px rgb(16 18 27 / 0.28);
+  --elev-toast: 0 12px 32px rgb(16 18 27 / 0.2);
+  --scrim: rgb(16 18 27 / 0.32);
   /* Redline's ink: the operator's marks, and nothing of Ren's own. */
   --redline: #d33a3f;
   --redline-hover: #b82f34;
@@ -34,7 +41,7 @@
      theme redefines those, so it follows. */
   --redline-surface: var(--popover);
   --redline-border: var(--popover-border);
-  --redline-shadow: var(--popover-shadow);
+  --redline-shadow: var(--elev-popover);
   --redline-ink: var(--ink);
   --redline-muted: var(--muted);
   --redline-control: var(--control-border);
@@ -105,7 +112,12 @@
   --popover: #3b4252;
   --popover-hover: #48526a;
   --popover-border: #5e6a82;
-  --popover-shadow: 0 2px 6px rgb(0 0 0 / 0.35), 0 16px 40px rgb(0 0 0 / 0.55);
+  --elev-toolbar: 0 4px 12px rgb(0 0 0 / 0.4);
+  --elev-popover: 0 2px 6px rgb(0 0 0 / 0.35), 0 16px 40px rgb(0 0 0 / 0.55);
+  --elev-slide: -12px 0 32px rgb(0 0 0 / 0.5);
+  --elev-modal: 0 24px 64px rgb(0 0 0 / 0.6);
+  --elev-toast: 0 12px 32px rgb(0 0 0 / 0.55);
+  --scrim: rgb(6 7 9 / 0.62);
   --redline: #ff6b6e;
   --redline-hover: #ff8a8c;
   --on-redline: #1d1416;
@@ -446,7 +458,7 @@ pre {
   border: 1px solid var(--control-border);
   background: var(--surface);
   color: var(--ink);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  box-shadow: var(--elev-popover);
 }
 .connect-panel header {
   display: flex;
@@ -512,14 +524,12 @@ pre {
   overflow: auto;
 }
 .traffic-workspace {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   flex: 1;
   min-height: 0;
   overflow: hidden;
-}
-.traffic-workspace.with-inspector {
-  grid-template-columns: minmax(0, 1.2fr) minmax(390px, 1fr);
 }
 .panel {
   min-width: 0;
@@ -1090,11 +1100,10 @@ tr.selected .row-link {
 }
 .inspector-pane {
   display: flex;
+  flex: 1;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-left: 1px solid var(--control-border);
-  background: var(--surface);
   overflow: hidden;
 }
 .drawer-heading {
@@ -1102,7 +1111,7 @@ tr.selected .row-link {
   justify-content: space-between;
   align-items: start;
   gap: 10px;
-  padding: 10px 12px 5px;
+  padding: 10px 44px 5px 12px;
   flex-shrink: 0;
 }
 .drawer-eyebrow {
@@ -1616,32 +1625,7 @@ tr.call-row {
   background: var(--accent-count);
   color: var(--ink);
 }
-@media (max-width: 1200px) {
-  .with-inspector .table-update {
-    display: none;
-  }
-  .with-inspector .time-column {
-    display: none;
-  }
-  .with-inspector .requests-table th:nth-child(2) {
-    width: 25%;
-  }
-  .with-inspector .requests-table th:nth-child(3) {
-    width: 35%;
-  }
-  .with-inspector .requests-table th:nth-child(4) {
-    width: 40%;
-  }
-}
 @media (max-width: 900px) {
-  .traffic-workspace.with-inspector {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(130px, 0.8fr) minmax(240px, 1.2fr);
-  }
-  .inspector-pane {
-    border-left: 0;
-    border-top: 1px solid var(--control-border);
-  }
   .drawer-heading {
     padding: 7px 10px 3px;
   }
@@ -2018,18 +2002,6 @@ td.zero {
 .recording-line > .recording-filter {
   min-width: 0;
   overflow: hidden;
-}
-/* Phones: the list and the selected call are separate screens. */
-@media (max-width: 760px) {
-  .traffic-workspace.with-inspector {
-    grid-template-rows: minmax(0, 1fr);
-  }
-  .traffic-workspace.with-inspector > .list-panel {
-    display: none;
-  }
-  .traffic-workspace.with-inspector > .inspector-pane {
-    border-top: 0;
-  }
 }
 .model-line {
   min-width: 0;
@@ -2752,7 +2724,7 @@ td.zero {
   border-radius: 0;
   background: var(--surface);
   color: var(--ink);
-  box-shadow: 0 4px 12px color-mix(in srgb, #000 12%, transparent);
+  box-shadow: var(--elev-popover);
   font-size: 12px;
 }
 .select-list li {

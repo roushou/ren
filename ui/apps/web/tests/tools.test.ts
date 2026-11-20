@@ -5,6 +5,7 @@ import {
   RowActions,
   Standings,
   Supplies,
+  ToolChanges,
   ToolFilters,
   ToolGroups,
   ToolPlan,
@@ -331,4 +332,34 @@ test('the view narrows by name, program, or path, and by how packages stand', as
   assert.deepEqual(ids('/opt/acme', null), ['claude']);
   assert.deepEqual(ids('J', null), ['jq']);
   assert.deepEqual(ids('jq', 'system'), []);
+});
+
+test('a change says what it came to in a toast', () => {
+  const base = { generation: 15 as never, changes: [], failures: [] };
+  assert.deepEqual(
+    ToolChanges.said({
+      ...base,
+      outcome: 'activated',
+      changes: [
+        {
+          change: 'replace',
+          package: 'node' as never,
+          from: '24.0.0' as never,
+          to: '24.1.0' as never,
+        },
+      ],
+    }),
+    { mark: 'passed', text: 'Generation 15 is current', detail: 'node 24.1.0' },
+  );
+  assert.equal(ToolChanges.said({ ...base, outcome: 'unchanged' }).mark, 'idle');
+  assert.deepEqual(
+    ToolChanges.said({
+      ...base,
+      outcome: 'failed',
+      failures: [
+        { package: 'fd' as never, version: '10.2.0' as never, stage: 'verify', reason: 'sha256' },
+      ],
+    }),
+    { mark: 'failed', text: '1 install failed', detail: 'fd · verify' },
+  );
 });

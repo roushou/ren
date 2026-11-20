@@ -1,5 +1,6 @@
 <script lang="ts">
   import Glyph from '#lib/Glyph.svelte';
+  import Toasts from '#lib/layer/Toasts.svelte';
   import { onMount } from 'svelte';
   import { beforeNavigate, goto, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
@@ -347,6 +348,7 @@
   <main class="workspace" class:navigating={!!navigating.to} aria-busy={!!navigating.to}>
     {@render children()}
   </main>
+  <Toasts />
   <footer class="statusline" class:redlining={redline.open} aria-label="Gateway status">
     <span
       class="read-only"

@@ -30,12 +30,10 @@
   import { page } from '$app/state';
   let {
     call,
-    close,
     onrecording,
     onupdate,
   }: {
     call: CallView;
-    close: () => void;
     onrecording: (id: RecordingId) => void;
     onupdate: (record: CallView) => void;
   } = $props();
@@ -134,12 +132,6 @@
         />
       </div>
     </div>
-    <button
-      class="icon-button close-button"
-      onclick={close}
-      aria-label="Close call details"
-      title="Close · Esc"><Icon name="close" size={15} /></button
-    >
   </div>
   {#if current.recording}{@const recording = current.recording}<button
       class="inspector-recording text-button"

@@ -1,5 +1,6 @@
 <script lang="ts">
   import Glyph from '#lib/Glyph.svelte';
+  import SlideOver from '#lib/layer/SlideOver.svelte';
   import Toolbar from './Toolbar.svelte';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
@@ -349,7 +350,6 @@
         return;
       }
     }
-    if (event.key === 'Escape' && selected) void closeInspector();
     if (
       event.key === '/' &&
       !recordingId &&
@@ -464,7 +464,7 @@
     >
   </div>{/if}
 <Toolbar {scope} />
-<div class="traffic-workspace" class:with-inspector={!!selected}>
+<div class="traffic-workspace">
   <section class="panel list-panel traffic-panel" aria-label="Recorded calls">
     {#if !recordingId}
       <div class="request-tabs" aria-label="Quick filters">
@@ -767,10 +767,11 @@
       </div>
     </div>
   </section>
-  {#if selected}{#key selected.id}<Inspector
-        call={selected}
-        close={closeInspector}
-        onrecording={showCallRecording}
-        onupdate={updateCall}
-      />{/key}{/if}
+  {#if selected}<SlideOver label="Call details" onclose={() => void closeInspector()} width={560}
+      >{#key selected.id}<Inspector
+          call={selected}
+          onrecording={showCallRecording}
+          onupdate={updateCall}
+        />{/key}</SlideOver
+    >{/if}
 </div>
