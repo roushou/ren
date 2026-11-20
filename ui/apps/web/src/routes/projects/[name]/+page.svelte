@@ -18,6 +18,7 @@
   import { Sessions } from '#lib/runs.ts';
   import { ProjectBoard } from '#lib/projects.ts';
   import { ReleaseLine } from '#lib/release.ts';
+  import { PullRequests } from '#lib/pulls.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -36,6 +37,9 @@
       .filter((session) => Sessions.running(session)),
   );
   const line = $derived(project.release ? ReleaseLine.of(project.release) : null);
+  const pulls = $derived(data.pulls);
+  /** The newest answer from GitHub, and whether it is current. */
+  const seen = $derived(pulls ? PullRequests.sighting(pulls) : null);
   const base = $derived(ProjectBoard.href(project.name));
   const inspect = $derived(new URLSearchParams({ project: project.name }).toString());
 
@@ -112,6 +116,77 @@
               : `ren project canary --project ${project.name}`}</code
           >
         </p>
+      {/if}
+
+      <h2 class="with-links">
+        Pull requests
+        {#if pulls && pulls.watch !== 'off' && pulls.watch !== 'unknown'}
+          <a href={`https://github.com/${pulls.repository}/pulls`} target="_blank" rel="noreferrer"
+            >{pulls.repository} on GitHub</a
+          >
+        {/if}
+      </h2>
+      {#if pulls === null}
+        <p class="empty">Its pull requests could not be read.</p>
+      {:else if pulls.watch === 'off'}
+        <p class="empty">
+          Not watched on GitHub: name its repository in the daemon's <code>[github]</code> configuration.
+        </p>
+      {:else if pulls.watch === 'waiting'}
+        <p class="empty">Waiting for GitHub's first answer about {pulls.repository}.</p>
+      {:else if pulls.watch === 'unknown'}
+        <p class="empty">The daemon reports its pull requests as “{pulls.text}”.</p>
+      {:else if pulls.watch === 'failed'}
+        <p class="line tone-bad" role="status">
+          GitHub's newest poll failed {ago(pulls.at, now)}: {pulls.error}{#if seen}. Shown as it was {ago(
+              seen.sighting.at,
+              now,
+            )}.{/if}
+        </p>
+      {/if}
+      {#if seen}
+        {#if !seen.sighting.pull_requests.length}
+          <p class="empty">No pull request is open.</p>
+        {/if}
+        <ul class="rows pulls" class:stale={!seen.current}>
+          {#each seen.sighting.pull_requests as pull (pull.number)}
+            {@const [checks, checksTone] = PullRequests.checks(pull.checks)}
+            {@const notes = [PullRequests.merge(pull), PullRequests.review(pull.review)].filter(
+              (note) => note !== null,
+            )}
+            <li>
+              <span
+                class="tone-{checksTone}"
+                title={pull.check_list
+                  .map((check) => `${check.name}: ${PullRequests.checkState(check.state)[0]}`)
+                  .join('\n')}>{checks}</span
+              >
+              <a href={pull.url} target="_blank" rel="noreferrer"
+                ><span class="muted mono">#{pull.number}</span> {pull.title}</a
+              >
+              <span class="notes">
+                {#each notes as [note, tone] (note)}
+                  <span class="note tone-{tone}">{note}</span>
+                {/each}
+                {#each pull.work_items as id (id)}
+                  <a
+                    class="note"
+                    href={`?item=${id}`}
+                    data-sveltekit-reset="false"
+                    onclick={() => (opened = true)}
+                    >{data.work.find((item) => item.id === id)?.title ?? 'A work item'}</a
+                  >
+                {/each}
+              </span>
+              <span class="muted mono when" title={pull.author ? `by ${pull.author}` : undefined}
+                >{pull.head_branch}</span
+              >
+            </li>
+          {/each}
+        </ul>
+        {#if seen.sighting.truncated}
+          <p class="empty">Only the most recently updated are listed.</p>
+        {/if}
       {/if}
 
       <h2>Work under way</h2>
@@ -330,6 +405,24 @@
   }
   .tone-bad {
     color: var(--error);
+  }
+  .tone-quiet {
+    color: var(--muted);
+  }
+  .notes {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+  }
+  .note + .note::before {
+    content: '·';
+    margin: 0 6px;
+    color: var(--muted);
+  }
+  .pulls.stale {
+    opacity: 0.6;
   }
   .rows {
     list-style: none;

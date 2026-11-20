@@ -329,8 +329,8 @@ spec (phase 7):
      `install-vps`'s rollback do not change.
    - The canary and previews keep their rules: no runs, a placeholder for
      every operator key.
-8. **GitHub, observed.** In progress: the crate, the poller, and the
-   read route are built; the UI is not. Ren shows what is happening on GitHub,
+8. **GitHub, observed.** Built, but for posting anything to GitHub, which
+   is phase 9's. Ren shows what is happening on GitHub,
    so the operator watches pull requests in Ren, not on github.com.
    - A sans-IO crate parses GitHub's REST answers into typed observations:
      a pull request (its number, head commit, base, mergeability, whether
@@ -348,6 +348,20 @@ spec (phase 7):
      work items their `Work-Item:` trailers name, and their preview. A
      work item shows its pull request, which closes the loop phase 5
      started.
+   - Built: `ren-github` (the query and what an answer shows), the
+     `[github]` section and the daemon's poller, `GET
+     /api/projects/{name}/pulls`, and the project Overview's Pull requests:
+     each open one with its checks, whether it can merge, its review, its
+     branch, and the work items it names, drawn faded under the error when
+     the newest poll failed. The dev slot's fake provider answers the query
+     for `acme/web` and `acme/api` with invented pull requests.
+   - Not built: a work item showing its pull request (the pull request
+     shows its work items), and each pull request's preview, which is
+     phase 9.
+   - Verified in the dev slot: both fake projects' Overviews listed their
+     pull requests from the fake GitHub (passing and approved, behind with
+     checks running, conflicting, blocked, and a draft), and Ren's, not
+     watched there, said so.
 9. **Previews of every pull request, and of any commit.** Planned. Needs
    phases 7 and 8.
    - A preview's lifecycle is a pure, persisted state machine: requested,
