@@ -22,7 +22,9 @@ use ren_gateway::{
     ControlToken, Environment, InstanceOptions,
     api::control::request::{ControlRequest, WorkChange},
 };
+use ren_github::Readiness;
 use ren_harness::host::HostEnv;
+use ren_preview::{PreviewRequests, Previews, Slot as PreviewSlot};
 use ren_protocol::label::Stored;
 use ren_recorder::{
     id::WorkItemId,
@@ -135,6 +137,36 @@ pub struct ListedPreview {
 #[derive(Deserialize)]
 struct WorkListing {
     work: Vec<ListedWork>,
+}
+
+/// One open pull request, as production's `/api/projects/{name}/pulls`
+/// lists it, as far as the factory needs.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListedPull {
+    pub number: u64,
+    pub head: Commit,
+    pub readiness: Stored<Readiness>,
+}
+
+/// Production's answer about a project's pull requests: a tolerant reader
+/// of `PullsBody`, keeping only the answer, current or not.
+#[derive(Deserialize)]
+struct ObservedPulls {
+    seen: Option<ListedSighting>,
+    last: Option<ListedSighting>,
+}
+
+#[derive(Deserialize)]
+struct ListedSighting {
+    pull_requests: Vec<ListedPull>,
+}
+
+impl ObservedPulls {
+    fn listed(self) -> Option<Vec<ListedPull>> {
+        self.seen
+            .or(self.last)
+            .map(|sighting| sighting.pull_requests)
+    }
 }
 
 /// Where a started replica is reached.
@@ -332,6 +364,54 @@ impl ProductionPlace {
         request
     }
 
+    /// The previews the factory last wrote here; none before the first.
+    pub fn previews(&self) -> Previews {
+        fs::read(self.data_dir.join(Previews::FILE))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    /// Writes the previews where production's gateway serves them from.
+    pub fn write_previews(&self, previews: &Previews) -> Result<(), ReplicaError> {
+        let json = serde_json::to_vec_pretty(previews).map_err(ReplicaError::Json)?;
+        Ok(FileMode::Private.write(&self.data_dir.join(Previews::FILE), &json)?)
+    }
+
+    /// The commits the operator asked to preview; none when none were.
+    pub fn preview_requests(&self) -> PreviewRequests {
+        fs::read(self.data_dir.join(PreviewRequests::FILE))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    /// `project`'s open pull requests, as production last saw them on
+    /// GitHub (a failed poll's last answer included), each with its head
+    /// and whether it is a draft; none when production has not seen them.
+    pub fn pulls(&self, project: &str) -> Result<Option<Vec<ListedPull>>, ReplicaError> {
+        let path = format!("/api/projects/{project}/pulls");
+        let answer = Invocation::new("curl")
+            .args([
+                "--silent",
+                "--max-time",
+                "20",
+                "--write-out",
+                "\n%{http_code}",
+            ])
+            .arg(format!("http://{}{path}", self.listen))
+            .capture()?;
+        let (body, status) = answer.rsplit_once('\n').unwrap_or(("", answer.as_str()));
+        match status.trim() {
+            "200" => serde_json::from_str::<ObservedPulls>(body)
+                .map(ObservedPulls::listed)
+                .map_err(|_| ReplicaError::WorkAnswer(path)),
+            // A daemon that does not serve pull requests has seen none.
+            "404" => Ok(None),
+            other => Err(ReplicaError::WorkAnswer(format!("{path} answered {other}"))),
+        }
+    }
+
     /// The release the factory last wrote here, if it reads.
     pub fn release(&self) -> Option<Release> {
         let text = fs::read(self.data_dir.join(Release::FILE)).ok()?;
@@ -388,6 +468,28 @@ impl Replica {
         }
     }
 
+    /// The preview in `slot` of the factory's previews: its slot's ports,
+    /// in `~/.config/ren-previews/<slot>` and
+    /// `~/.local/state/ren-previews/<slot>`.
+    pub fn preview_slot(env: &HostEnv, slot: PreviewSlot) -> Result<Self, ReplicaError> {
+        let home = env
+            .absolute_path("HOME")
+            .ok_or(ReplicaError::MissingEnv("HOME"))?;
+        let (daemon, ui) = slot.ports();
+        let index = slot.index().to_string();
+        Ok(Self {
+            name: slot.name(),
+            environment: Environment::Preview,
+            daemon: SocketAddr::new(Self::LOOPBACK, daemon),
+            ui: SocketAddr::new(Self::LOOPBACK, ui),
+            config: home
+                .join(".config/ren-previews")
+                .join(&index)
+                .join("ren.toml"),
+            data_dir: home.join(".local/state/ren-previews").join(index),
+        })
+    }
+
     pub fn daemon(&self) -> SocketAddr {
         self.daemon
     }
@@ -423,7 +525,11 @@ impl Replica {
     /// `preview/data`) is ever removed.
     pub fn replace_data(&self, backup: &Path) -> Result<(), ReplicaError> {
         let ours = self.data_dir.ends_with(".local/state/ren-canary")
-            || self.data_dir.ends_with("preview/data");
+            || self.data_dir.ends_with("preview/data")
+            || self
+                .data_dir
+                .parent()
+                .is_some_and(|parent| parent.ends_with(".local/state/ren-previews"));
         if !ours {
             return Err(ReplicaError::NotOurs(self.data_dir.clone()));
         }

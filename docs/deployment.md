@@ -459,6 +459,35 @@ page on it beside production's.
 `--of dev` copies the dev slot instead. Deleting the worktree's session
 stops its preview with it, and takes it off the session's work items.
 
+#### Previews of pull requests and commits
+
+Every canary pass also brings the factory's own previews up to date
+(`cargo xtask canary previews` runs just that): one for each commit the
+operator asked to preview, newest ask first, then one for each of Ren's
+open pull requests that is not a draft, as production last saw them on
+GitHub (`[github]`), most recently updated first. As many run as
+`release.toml` allows:
+
+```toml
+previews = 2 # 1 to 8; each is a daemon, a UI, and a copy of production's history
+```
+
+Each runs in a slot: slot `n`'s daemon listens on loopback `18100 + 2n` and
+its UI on the next port, published on the tailnet on `9450 + 2n` and the next
+with `--publish`, in the pod `ren-preview-<n>`, with `~/.config/ren-previews/<n>`
+and `~/.local/state/ren-previews/<n>`. A pass fetches each new commit from
+`origin` by its id (a pull request's head included), builds it once into
+`~/.local/share/ren/builds` from its own worktree,
+`~/.local/share/ren/preview-factory`, and starts it on a fresh copy of
+production's history, as the canary is. A pull request whose head moves is
+previewed again in its slot; one that closes, or a commit no longer asked
+for, is stopped. A build or start that fails is recorded with why, its slot
+left empty, and is not tried again for that commit. While production has
+not seen its pull requests (no answer from GitHub yet), the previews of pull
+requests are kept as they are. What runs is written to production's data
+folder (`previews.json`); the commits asked for are read from
+`preview-requests.json` beside it.
+
 ### Projects
 
 A repository declares how Ren builds, serves, checks, and quiesces it in

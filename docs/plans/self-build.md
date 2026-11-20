@@ -376,8 +376,9 @@ spec (phase 7):
      pull requests from the fake GitHub (passing and approved, behind with
      checks running, conflicting, blocked, and a draft), and Ren's, not
      watched there, said so.
-9. **Previews of every pull request, and of any commit.** Planned. Needs
-   phases 7 and 8.
+9. **Previews of every pull request, and of any commit.** In progress:
+   the planner and the factory's pass are built; asking from the CLI or
+   UI, the gateway's view of them, and GitHub deployments are not.
    - A preview's lifecycle is a pure, persisted state machine: requested,
      building, running, superseded, stopped, failed. Its transitions are
      `(State, Event) -> (State, Vec<Action>)`, tested without I/O.
@@ -395,6 +396,17 @@ spec (phase 7):
    - The factory builds previews; the agent no longer runs `cargo xtask
      preview up`. This replaces the deviation "A preview is a replica, run
      by the agent".
+   - Built: `ren-preview` (`Previews`, the slots and `want`, and
+     `PreviewRequests`), `Git::fetch_commit`, and the factory's pass
+     (`xtask/src/canary/previews.rs`), run by every canary pass and by
+     `cargo xtask canary previews`; a pass keeps its previews' builds.
+   - Verified with the dev slot as production and its `acme-web` as the
+     project: a commit asked for was built once and started in
+     `ren-preview-0`, answering as that commit; the fake pull requests'
+     invented heads failed to fetch and were kept as failed, with why,
+     and not tried again; a second pass changed nothing; withdrawing the
+     ask gave its slot to the next pull request, whose failure left the
+     slot empty.
    - With a token allowed to write deployments, each preview is posted to
      its pull request as a GitHub deployment, so its address appears on
      the pull request too. Merging from Ren is not part of this phase: it

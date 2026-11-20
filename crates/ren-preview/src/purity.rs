@@ -6,6 +6,7 @@ fn sources_stay_free_of_runtime_and_io() {
     let sources = [
         ("lib.rs", include_str!("lib.rs")),
         ("previews.rs", include_str!("previews.rs")),
+        ("requests.rs", include_str!("requests.rs")),
         ("slot.rs", include_str!("slot.rs")),
     ];
     let forbidden = [
