@@ -7,7 +7,7 @@
 import type { AttemptView, CallView, RecordingId } from './api.ts';
 import { bookkeeping, callStatus, httpChip, streamChip, type Tone } from './display.ts';
 import { assertNever } from './decode.ts';
-import type { Mark } from './marks.ts';
+import { Marks, type Mark } from './marks.ts';
 
 /** How one call stands in a row or on a lane, as a mark and its words. */
 export interface CallMark {
@@ -240,7 +240,7 @@ export class CallTimeline {
           Math.max(MIN_WIDTH, (((attempt.ended_at ?? end) - attempt.started_at) / span) * 100),
           100 - Math.max(0, left),
         ),
-        mark: CallTimeline.#toneMark(worst),
+        mark: Marks.ofTone(worst),
         label: [status ? `HTTP ${status.label}` : null, stream.label]
           .filter((part) => part !== null)
           .join(' · '),
@@ -276,23 +276,6 @@ export class CallTimeline {
       else bands.push({ turn, from: index, to: index + 1 });
     });
     return { peak, bars, bands };
-  }
-
-  static #toneMark(tone: Tone): Mark {
-    switch (tone) {
-      case 'success':
-        return 'passed';
-      case 'error':
-        return 'failed';
-      case 'warning':
-        return 'warning';
-      case 'live':
-        return 'responding';
-      case 'neutral':
-        return 'idle';
-      default:
-        return assertNever(tone);
-    }
   }
 
   static #figures(calls: readonly CallView[], span: number): Figures {

@@ -4,6 +4,7 @@
 // colour is never the only cue. Pure: no DOM.
 
 import { assertNever } from './decode.ts';
+import type { Tone } from './display.ts';
 
 /** Every mark a view can draw. */
 export const marks = [
@@ -62,6 +63,25 @@ export class Marks {
         return 'Information';
       default:
         return assertNever(mark);
+    }
+  }
+
+  /** The mark for a chip's tone, where a view still reads one: a live
+   * thing responds, success passed, a neutral one rests. */
+  static ofTone(tone: Tone): Mark {
+    switch (tone) {
+      case 'success':
+        return 'passed';
+      case 'error':
+        return 'failed';
+      case 'warning':
+        return 'warning';
+      case 'live':
+        return 'responding';
+      case 'neutral':
+        return 'idle';
+      default:
+        return assertNever(tone);
     }
   }
 }
