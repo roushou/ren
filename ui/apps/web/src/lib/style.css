@@ -313,27 +313,161 @@ pre {
   margin-top: -0.5px;
   background: var(--sidebar);
 }
-.workbench-tabs {
+.workbench-context {
   display: flex;
   align-items: stretch;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-.workbench-tabs a {
+.workbench-context::-webkit-scrollbar {
+  display: none;
+}
+.workbench-context > a {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 7px;
-  padding: 8px 14px;
-  color: var(--muted);
-  border-right: 1px solid var(--line);
+  gap: 6px;
+  padding: 0 12px;
   border-top: 2px solid transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
 }
-.workbench-tabs a:hover {
+.workbench-context > a:hover {
   background: var(--surface-hover);
   color: var(--ink);
 }
-.workbench-tabs a.active {
-  color: var(--ink);
+.workbench-context > a.active {
   border-top-color: var(--accent);
   background: var(--canvas);
+  color: var(--ink);
+}
+/* Inside a project: its name, which switches project, ahead of its pages. */
+.project-pick,
+.mode-name {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  margin-right: 4px;
+  padding: 0 12px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+}
+.project-pick {
+  cursor: pointer;
+}
+.project-pick:hover {
+  background: var(--surface-hover);
+}
+.mode-name {
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.workbench-context > a.back {
+  margin-left: 6px;
+  border-left: 1px solid var(--line);
+  font-weight: 400;
+}
+.project-list {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+}
+.project-list a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  color: var(--ink);
+  font-size: 12.5px;
+}
+.project-list a:hover,
+.project-list a[aria-current='page'] {
+  background: var(--surface-hover);
+}
+.project-list .all {
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+}
+.project-list .all a {
+  color: var(--muted);
+}
+.host-health {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.host-health:hover {
+  background: var(--surface-hover);
+}
+.host-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+}
+.host-card p {
+  margin: 0;
+}
+.host-verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.host-gauges {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 0;
+}
+.host-gauges dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.host-gauges dd {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 0;
+  font-size: 11px;
+}
+.host-gauges svg {
+  width: 100%;
+  height: 4px;
+}
+.gauge-whole {
+  fill: var(--surface-inset);
+}
+.gauge-used {
+  fill: var(--chart);
+}
+.gauge-used.high {
+  fill: var(--warning);
+}
+.host-links {
+  display: flex;
+  gap: 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.host-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 /* The header's right side, by weight: ⌘K and Pending first, then Inspect
    and Host, quieter than Projects on the left. */
@@ -430,53 +564,7 @@ pre {
   border-top-color: var(--accent);
   background: var(--canvas);
 }
-/* The current destination's pages, one rule under the header. */
-.page-row {
-  display: flex;
-  align-items: stretch;
-  flex-shrink: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-}
-.page-row::-webkit-scrollbar {
-  display: none;
-}
-.page-row a {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 500;
-  border-bottom: 2px solid transparent;
-}
-.page-row a:hover {
-  color: var(--ink);
-  background: var(--surface-hover);
-}
-.page-row a.active {
-  color: var(--ink);
-  border-bottom-color: var(--accent);
-}
-/* Inside a project: whose pages the row shows, ahead of them. */
-.page-row .crumb {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  padding: 0 14px;
-  font-size: 12px;
-  border-right: 1px solid var(--line);
-}
-.page-row .crumb a {
-  padding: 0;
-  border: 0;
-}
-/* An Inspect page narrowed to one project, under its row of pages. */
+/* An Inspect page narrowed to one project, under the header. */
 .scope-row {
   display: flex;
   flex-shrink: 0;
@@ -1680,18 +1768,9 @@ tr.call-row {
   }
 }
 @media (max-width: 560px) {
-  /* One row: the tabs scroll sideways between the wordmark and the theme. */
-  .workbench-tabs {
+  /* One row: the context scrolls sideways between the wordmark and the theme. */
+  .workbench-context {
     flex: 1;
-    min-width: 0;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .workbench-tabs::-webkit-scrollbar {
-    display: none;
-  }
-  .workbench-tabs a {
-    flex: none;
   }
   .brand {
     flex: none;
@@ -1703,13 +1782,9 @@ tr.call-row {
     height: 18px;
     font-size: 11px;
   }
-  .workbench-tabs a {
-    padding: 7px 9px;
-    gap: 4px;
+  .workbench-context > a {
+    padding: 0 9px;
     font-size: 11px;
-  }
-  .workbench-tabs svg {
-    display: none;
   }
   .theme-control {
     padding: 4px;
@@ -1781,7 +1856,7 @@ tr.call-row {
   }
 }
 @media (pointer: coarse) {
-  .workbench-tabs a,
+  .workbench-context > a,
   .theme-button,
   .icon-button,
   .button,
