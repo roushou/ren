@@ -84,7 +84,6 @@
 {#snippet scope()}
   <div class="scope-group">
     <span class="muted mono path">{project.repository}</span>
-    {#if project.factory === 'ren'}<span class="tag">Ren itself</span>{/if}
     {#if project.archived_at !== null}<span class="tag archived">archived</span>{/if}
   </div>
 {/snippet}
