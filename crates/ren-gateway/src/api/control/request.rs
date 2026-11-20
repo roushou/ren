@@ -9,6 +9,7 @@ use crate::api::read::work::{WorkOrderBody, WorkPreviewBody};
 use ren_harness::{
     Harness,
     drive::Decision,
+    question::{Confirmation, QuestionKey, Replies, Reply, SecretText},
     settings::{ApprovalPolicy, Effort},
 };
 use ren_protocol::native::NativeSessionId;
@@ -21,6 +22,7 @@ use ren_recorder::{
 use ren_release::{Commit, Revision};
 use ren_supervisor::Delivery;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use ts_rs::TS;
 
 /// `POST work/{item}/send`: `session` takes the item up.
@@ -257,6 +259,91 @@ pub struct AnswerRequest {
     pub decision: Decision,
 }
 
+/// `POST sessions/{session}/approvals/{approval}/replies`: the operator's
+/// replies to the questions an approval asks, by question key. A question
+/// left out is skipped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct ReplyRequest {
+    pub replies: BTreeMap<String, ReplyBody>,
+}
+
+/// The operator's reply to one question.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "as", rename_all = "snake_case")]
+#[ts(export)]
+pub enum ReplyBody {
+    /// Options picked by label, with an answer in the operator's own words
+    /// where the choice takes one.
+    Chose {
+        picked: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        written: Option<String>,
+    },
+    Wrote {
+        text: String,
+    },
+    /// The answer to a question whose text is hidden.
+    Secret {
+        #[ts(as = "String")]
+        text: SecretBody,
+    },
+    Number {
+        #[ts(as = "f64")]
+        value: serde_json::Number,
+    },
+    Confirmed {
+        #[ts(as = "String")]
+        answer: Confirmation,
+    },
+    Skipped,
+}
+
+/// A secret reply's text as a request carries it: never shown by `Debug`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SecretBody(String);
+
+impl SecretBody {
+    pub fn new(text: String) -> Self {
+        Self(text)
+    }
+}
+
+impl std::fmt::Debug for SecretBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SecretBody(hidden)")
+    }
+}
+
+impl From<ReplyRequest> for Replies {
+    fn from(value: ReplyRequest) -> Self {
+        Replies::new(
+            value
+                .replies
+                .into_iter()
+                .map(|(key, reply)| (QuestionKey::new(key), reply.into()))
+                .collect(),
+        )
+    }
+}
+
+impl From<ReplyBody> for Reply {
+    fn from(value: ReplyBody) -> Self {
+        match value {
+            ReplyBody::Chose { picked, written } => Self::Chose { picked, written },
+            ReplyBody::Wrote { text } => Self::Wrote { text },
+            ReplyBody::Secret { text } => Self::Secret {
+                text: SecretText::new(text.0),
+            },
+            ReplyBody::Number { value } => Self::Number { value },
+            ReplyBody::Confirmed { answer } => Self::Confirmed { answer },
+            ReplyBody::Skipped => Self::Skipped,
+        }
+    }
+}
+
 /// One control API request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlRequest {
@@ -299,6 +386,11 @@ pub enum ControlRequest {
         session: SessionId,
         approval: String,
         answer: AnswerRequest,
+    },
+    Reply {
+        session: SessionId,
+        approval: String,
+        reply: ReplyRequest,
     },
     Interrupt(SessionId),
     Stop(SessionId),
@@ -365,6 +457,7 @@ impl ControlRequest {
             | Self::Create(_)
             | Self::Prompt { .. }
             | Self::Answer { .. }
+            | Self::Reply { .. }
             | Self::Interrupt(_)
             | Self::Stop(_)
             | Self::QueueWork { .. }
@@ -408,6 +501,9 @@ impl ControlRequest {
             Self::Answer {
                 session, approval, ..
             } => format!("sessions/{session}/approvals/{approval}"),
+            Self::Reply {
+                session, approval, ..
+            } => format!("sessions/{session}/approvals/{approval}/replies"),
             Self::Interrupt(session) => format!("sessions/{session}/interrupt"),
             Self::Stop(session) => format!("sessions/{session}/stop"),
             Self::QueueWork { project, .. } => match project {
@@ -434,6 +530,7 @@ impl ControlRequest {
             Self::Create(create) => serde_json::to_vec(create).map(Some),
             Self::Prompt { prompt, .. } => serde_json::to_vec(prompt).map(Some),
             Self::Answer { answer, .. } => serde_json::to_vec(answer).map(Some),
+            Self::Reply { reply, .. } => serde_json::to_vec(reply).map(Some),
             Self::QueueWork { order, .. } => serde_json::to_vec(order).map(Some),
             Self::Promote(promote) => serde_json::to_vec(promote).map(Some),
             Self::RegisterProject(project) => serde_json::to_vec(project).map(Some),

@@ -11,20 +11,28 @@
 //!
 //! Pi names no turns and asks for no approvals: it runs its tools without
 //! asking. A driven turn's id is minted from the seed the process was opened
-//! with. Dialogs an extension opens (`extension_ui_request`) are cancelled:
-//! Ren provides no interface for them.
+//! with. A dialog an extension opens (`extension_ui_request`: `select`,
+//! `confirm`, `input`, or `editor`) is one question for the operator,
+//! answered with their reply or cancelled when they decline it; Pi resolves
+//! a dialog with a `timeout` on its own and says nothing of it, so such a
+//! question waits until its turn ends. An extension's other requests need no
+//! answer and show nothing.
 
 use super::tools::PiTool;
 use crate::{
-    codec::{EchoQueue, Envelope, RequestLedger, Stop, TurnMint, TurnSlot},
+    codec::{ApprovalBook, EchoQueue, Envelope, RequestLedger, Stop, TurnMint, TurnSlot},
     commands::{ClientCommand, CommandKind, Sigil},
     drive::{
-        CommandIntent, CommandRefused, DriveCommand, DriveEvent, DriveItem, ItemId, ItemKind,
-        ItemPhase, ItemRead, ItemStatus, Opening, RawLine, Received, RequestKind, Retry, TurnEnd,
-        Unreadable,
+        ApprovalAsk, ApprovalId, CommandIntent, CommandRefused, Decision, DriveCommand, DriveEvent,
+        DriveItem, ItemId, ItemKind, ItemPhase, ItemRead, ItemStatus, Opening, RawLine, Received,
+        RequestKind, Retry, TurnEnd, Unreadable,
     },
     lines::{Framed, Line},
     prompt::Prompt,
+    question::{
+        Confirmation, Echo, Pick, Question, QuestionForm, QuestionKey, QuestionOption, Reply,
+        TextLines, WriteIn,
+    },
     settings::{Midway, RunSettings, Setting, SettingsBook},
 };
 use ren_protocol::{
@@ -61,6 +69,35 @@ pub struct PiRpc {
     /// What the images of each prompt and steer sent are, in order, until
     /// Pi echoes it as a user message.
     echoing: EchoQueue,
+    /// Extensions' dialogs waiting on the operator, each one question.
+    dialogs: ApprovalBook<Dialog>,
+}
+
+/// An extension's dialog waiting on the operator: the one question it asks.
+#[derive(Debug)]
+struct Dialog {
+    question: QuestionKey,
+}
+
+/// What an extension asks of the client (`extension_ui_request`'s
+/// `method`): a dialog that waits for an answer, or a request that needs
+/// none.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum PiUiMethod {
+    Select,
+    Confirm,
+    Input,
+    Editor,
+    Notify,
+    #[strum(to_string = "setStatus")]
+    SetStatus,
+    #[strum(to_string = "setWidget")]
+    SetWidget,
+    #[strum(to_string = "setTitle")]
+    SetTitle,
+    SetEditorText,
 }
 
 /// Whether the session Ren named is open.
@@ -186,6 +223,7 @@ impl PiRpc {
             tools: BTreeMap::new(),
             commands: Vec::new(),
             echoing: EchoQueue::default(),
+            dialogs: ApprovalBook::new(),
         };
         let line = codec.request(kind, json!({ "type": "get_state" }));
         (codec, line)
@@ -250,8 +288,28 @@ impl PiRpc {
                     json!({ "type": "abort" }),
                 )])
             }
-            // Pi asks for no approvals.
-            DriveCommand::Answer { approval, .. } => Err(CommandRefused::UnknownApproval(approval)),
+            // A dialog is only declined (cancelled) with a decision.
+            DriveCommand::Answer { approval, decision } => match decision {
+                Decision::Accept | Decision::AcceptForSession => {
+                    self.dialogs.get(&approval)?;
+                    Err(CommandRefused::Unanswered(approval))
+                }
+                Decision::Decline | Decision::Cancel => {
+                    self.dialogs.answer(approval.clone())?;
+                    let mut lines = vec![Self::dialog_answer(&approval, &Reply::Skipped)];
+                    if decision == Decision::Cancel && self.turn.under_way() {
+                        self.turn.stop()?;
+                        lines.push(
+                            self.request(RequestKind::TurnInterrupt, json!({ "type": "abort" })),
+                        );
+                    }
+                    Ok(lines)
+                }
+            },
+            DriveCommand::Reply { approval, replies } => {
+                let Dialog { question } = self.dialogs.answer(approval.clone())?;
+                Ok(vec![Self::dialog_answer(&approval, replies.to(&question))])
+            }
             // Read after the running assistant message's tool calls, before
             // its next model call.
             DriveCommand::Steer(prompt) => {
@@ -311,7 +369,7 @@ impl PiRpc {
                 ),
                 retry: Retry::Final,
             }),
-            PiEvent::ExtensionUiRequest => Self::dialog(&message, line, &mut received),
+            PiEvent::ExtensionUiRequest => self.dialog(&message, line, &mut received),
             // Known, and nothing Ren shows: Pi's inner model turns, the end
             // of one low-level run (more may follow until it settles),
             // streamed tool output, queues, compaction, and session metadata.
@@ -504,6 +562,8 @@ impl PiRpc {
             (false, Some(Stopped::Error(message))) => TurnEnd::Failed { message },
             (false, None) => TurnEnd::Completed,
         };
+        // A dialog left open past its turn no longer waits on the operator.
+        self.dialogs.withdraw(received);
         received.events.push(DriveEvent::TurnEnded { turn, end });
     }
 
@@ -725,10 +785,12 @@ impl PiRpc {
                 effects,
                 status: Stored::Known(status),
             },
+            // Pi's tools ask no questions.
             other @ (ItemRead::Prompt { .. }
             | ItemRead::Reply { .. }
             | ItemRead::Reasoning
             | ItemRead::Plan { .. }
+            | ItemRead::Questions { .. }
             | ItemRead::Unread) => other,
         };
         received.events.push(DriveEvent::Item {
@@ -756,28 +818,107 @@ impl PiRpc {
         text
     }
 
-    /// An extension's request. Dialogs wait for an answer, so Ren cancels
-    /// them; notifications and status updates need none.
-    fn dialog(message: &Value, line: RawLine, received: &mut Received) {
-        let method = Self::text(message, "method").unwrap_or_default();
-        match method.as_str() {
-            "select" | "confirm" | "input" | "editor" => {
-                let Some(id) = message.get("id").and_then(Value::as_str) else {
-                    received.events.push(DriveEvent::Unreadable {
-                        line,
-                        reason: Unreadable::BadParams,
-                    });
-                    return;
-                };
-                received.replies.push(Line::json(&json!({
-                    "type": "extension_ui_response",
-                    "id": id,
-                    "cancelled": true,
-                })));
-                received.events.push(DriveEvent::Unsupported { method });
+    /// An extension's request. A dialog waits for the operator's answer, as
+    /// one question; notifications and status updates need none.
+    fn dialog(&mut self, message: &Value, line: RawLine, received: &mut Received) {
+        let Some(method) = message.get("method").and_then(Value::as_str) else {
+            received.events.push(DriveEvent::Unreadable {
+                line,
+                reason: Unreadable::BadParams,
+            });
+            return;
+        };
+        let form = match Stored::<PiUiMethod>::from_label(method) {
+            Stored::Known(PiUiMethod::Select) => QuestionForm::Choice {
+                options: message
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(|label| QuestionOption {
+                        label: label.to_owned(),
+                        description: None,
+                    })
+                    .collect(),
+                pick: Pick::One,
+                write_in: WriteIn::Refused,
+            },
+            Stored::Known(PiUiMethod::Confirm) => QuestionForm::Confirm,
+            Stored::Known(PiUiMethod::Input) => QuestionForm::Text {
+                lines: TextLines::One,
+                echo: Echo::Shown,
+                placeholder: Self::text(message, "placeholder"),
+                prefill: None,
+            },
+            Stored::Known(PiUiMethod::Editor) => QuestionForm::Text {
+                lines: TextLines::Many,
+                echo: Echo::Shown,
+                placeholder: None,
+                prefill: Self::text(message, "prefill"),
+            },
+            Stored::Known(
+                PiUiMethod::Notify
+                | PiUiMethod::SetStatus
+                | PiUiMethod::SetWidget
+                | PiUiMethod::SetTitle
+                | PiUiMethod::SetEditorText,
+            ) => return,
+            Stored::Unknown(_) => {
+                received.events.push(DriveEvent::Unknown { line });
+                return;
             }
-            _ => {}
-        }
+        };
+        let Some(id) = message.get("id").and_then(Value::as_str) else {
+            received.events.push(DriveEvent::Unreadable {
+                line,
+                reason: Unreadable::BadParams,
+            });
+            return;
+        };
+        let approval = ApprovalId(id.to_owned());
+        let question = QuestionKey::new(id.to_owned());
+        self.dialogs.ask(
+            approval.clone(),
+            Dialog {
+                question: question.clone(),
+            },
+        );
+        received.events.push(DriveEvent::Approval {
+            approval,
+            ask: ApprovalAsk::Questions {
+                title: None,
+                questions: vec![Question {
+                    key: question,
+                    header: None,
+                    text: Self::text(message, "title").unwrap_or_default(),
+                    detail: Self::text(message, "message"),
+                    form,
+                }],
+            },
+        });
+    }
+
+    /// The line that answers dialog `approval` with `reply`: its value, a
+    /// confirmation, or, for a skip, its cancellation.
+    fn dialog_answer(approval: &ApprovalId, reply: &Reply) -> Line {
+        let id = approval.to_string();
+        Line::json(&match reply {
+            Reply::Confirmed { answer } => json!({
+                "type": "extension_ui_response",
+                "id": id,
+                "confirmed": *answer == Confirmation::Yes,
+            }),
+            Reply::Skipped => {
+                json!({ "type": "extension_ui_response", "id": id, "cancelled": true })
+            }
+            Reply::Chose { .. }
+            | Reply::Wrote { .. }
+            | Reply::Secret { .. }
+            | Reply::Number { .. } => {
+                json!({ "type": "extension_ui_response", "id": id, "value": reply.text() })
+            }
+        })
     }
 }
 
@@ -1248,30 +1389,162 @@ mod tests {
         assert!(codec.command(prompt("next")).is_ok());
     }
 
+    /// The questions a dialog asks, from the approval it raised.
+    fn asked(received: &Received) -> (crate::drive::ApprovalId, Vec<crate::question::Question>) {
+        match received.events.as_slice() {
+            [
+                DriveEvent::Approval {
+                    approval,
+                    ask: crate::drive::ApprovalAsk::Questions { questions, .. },
+                },
+            ] => (approval.clone(), questions.clone()),
+            other => panic!("not one question: {other:?}"),
+        }
+    }
+
+    fn reply(
+        questions: &[crate::question::Question],
+        reply: crate::question::Reply,
+    ) -> crate::question::FittedReplies {
+        crate::question::Replies::new([(questions[0].key.clone(), reply)].into())
+            .fit(questions)
+            .unwrap()
+    }
+
     #[test]
-    fn dialogs_are_cancelled_and_unknown_lines_kept() {
+    fn a_dialog_is_one_question_answered_with_the_operators_reply() {
+        use crate::drive::Decision;
+        use crate::question::{Confirmation, Pick, QuestionForm, Reply, TextLines, WriteIn};
         let mut codec = ready();
-        let dialog = feed(
+        let _ = started(&mut codec, "go");
+        let select = feed(
             &mut codec,
-            json!({ "type": "extension_ui_request", "id": "ui-1", "method": "confirm",
-                    "title": "Allow?" }),
+            json!({ "type": "extension_ui_request", "id": "ui-1", "method": "select",
+                    "title": "Which branch?", "options": ["main", "next"] }),
         );
+        assert!(select.replies.is_empty(), "a dialog waits for the operator");
+        let (approval, questions) = asked(&select);
+        assert_eq!(questions[0].text, "Which branch?");
+        assert!(matches!(
+            &questions[0].form,
+            QuestionForm::Choice { options, pick: Pick::One, write_in: WriteIn::Refused }
+                if options.len() == 2
+        ));
+        // Questions are answered with replies, not allowed.
         assert_eq!(
-            dialog.events,
-            vec![DriveEvent::Unsupported {
-                method: "confirm".into()
-            }]
+            codec.command(DriveCommand::Answer {
+                approval: approval.clone(),
+                decision: Decision::Accept,
+            }),
+            Err(CommandRefused::Unanswered(approval.clone()))
         );
+        let picked = Reply::Chose {
+            picked: vec!["next".into()],
+            written: None,
+        };
+        let lines = codec
+            .command(DriveCommand::Reply {
+                approval: approval.clone(),
+                replies: reply(&questions, picked),
+            })
+            .unwrap();
         assert_eq!(
-            dialog.replies.iter().map(sent).collect::<Vec<_>>(),
-            vec![json!({ "type": "extension_ui_response", "id": "ui-1", "cancelled": true })]
+            lines.iter().map(sent).collect::<Vec<_>>(),
+            vec![json!({ "type": "extension_ui_response", "id": "ui-1", "value": "next" })]
         );
+
+        let confirm = feed(
+            &mut codec,
+            json!({ "type": "extension_ui_request", "id": "ui-2", "method": "confirm",
+                    "title": "Clear session?", "message": "All messages will be lost." }),
+        );
+        let (approval, questions) = asked(&confirm);
+        assert_eq!(
+            questions[0].detail.as_deref(),
+            Some("All messages will be lost.")
+        );
+        let lines = codec
+            .command(DriveCommand::Reply {
+                approval,
+                replies: reply(
+                    &questions,
+                    Reply::Confirmed {
+                        answer: Confirmation::No,
+                    },
+                ),
+            })
+            .unwrap();
+        assert_eq!(
+            lines.iter().map(sent).collect::<Vec<_>>(),
+            vec![json!({ "type": "extension_ui_response", "id": "ui-2", "confirmed": false })]
+        );
+
+        let editor = feed(
+            &mut codec,
+            json!({ "type": "extension_ui_request", "id": "ui-3", "method": "editor",
+                    "title": "Edit the message", "prefill": "fix: order" }),
+        );
+        let (approval, questions) = asked(&editor);
+        assert!(matches!(
+            &questions[0].form,
+            QuestionForm::Text { lines: TextLines::Many, prefill: Some(prefill), .. }
+                if prefill == "fix: order"
+        ));
+        // Declined, it is cancelled; cancelled, the turn is aborted too.
+        let lines = codec
+            .command(DriveCommand::Answer {
+                approval,
+                decision: Decision::Cancel,
+            })
+            .unwrap();
+        assert_eq!(
+            lines.iter().map(sent).collect::<Vec<_>>()[0],
+            json!({ "type": "extension_ui_response", "id": "ui-3", "cancelled": true })
+        );
+        assert_eq!(sent(&lines[1])["type"], "abort");
+    }
+
+    #[test]
+    fn a_dialog_left_open_is_withdrawn_with_its_turn() {
+        let mut codec = ready();
+        let _ = started(&mut codec, "go");
+        let input = feed(
+            &mut codec,
+            json!({ "type": "extension_ui_request", "id": "ui-1", "method": "input",
+                    "title": "Name?", "timeout": 5000 }),
+        );
+        let (approval, _) = asked(&input);
+        let settled = feed(&mut codec, json!({ "type": "agent_settled" }));
+        assert!(settled.events.contains(&DriveEvent::ApprovalResolved {
+            approval: approval.clone()
+        }));
+        assert_eq!(
+            codec.command(DriveCommand::Answer {
+                approval: approval.clone(),
+                decision: crate::drive::Decision::Decline,
+            }),
+            Err(CommandRefused::UnknownApproval(approval))
+        );
+    }
+
+    #[test]
+    fn notices_need_no_answer_and_unknown_lines_are_kept() {
+        let mut codec = ready();
         let notice = feed(
             &mut codec,
             json!({ "type": "extension_ui_request", "id": "ui-2", "method": "notify",
                     "message": "hello" }),
         );
         assert!(notice.events.is_empty() && notice.replies.is_empty());
+        assert!(matches!(
+            feed(
+                &mut codec,
+                json!({ "type": "extension_ui_request", "id": "ui-3", "method": "hologram" })
+            )
+            .events
+            .as_slice(),
+            [DriveEvent::Unknown { .. }]
+        ));
         assert!(matches!(
             feed(&mut codec, json!({ "type": "hologram" }))
                 .events
@@ -1297,7 +1570,7 @@ mod tests {
                 ..
             }]
         ));
-        // Pi asks for no approvals, so none can be answered.
+        // Pi asks for no approvals but its dialogs.
         let approval = "x".parse().unwrap();
         assert_eq!(
             codec.command(DriveCommand::Answer {

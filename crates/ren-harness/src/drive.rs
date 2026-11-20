@@ -16,6 +16,7 @@ use crate::lines::{Framed, Line};
 use crate::opencode::OpenCodeAcp;
 use crate::pi::PiRpc;
 use crate::prompt::Prompt;
+use crate::question::{FittedReplies, Question, QuestionKey};
 use crate::settings::{Midway, RunSettings};
 use crate::tools::ToolEffect;
 use ren_protocol::activity::{ToolInput, ToolUse};
@@ -26,6 +27,7 @@ use ren_protocol::text::WireText;
 
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
+use std::collections::BTreeMap;
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// How a driven process's one conversation is opened. Serialized for a
@@ -164,10 +166,16 @@ impl Driver {
 pub enum DriveCommand {
     /// Start a turn with this prompt.
     Prompt(Prompt),
-    /// Answer an approval the client asked for.
+    /// Answer an approval the client asked for. An approval that asks
+    /// questions is only declined or cancelled this way; `Reply` answers it.
     Answer {
         approval: ApprovalId,
         decision: Decision,
+    },
+    /// Answer the questions an approval asks.
+    Reply {
+        approval: ApprovalId,
+        replies: FittedReplies,
     },
     /// Interrupt the running turn.
     Interrupt,
@@ -479,6 +487,14 @@ pub enum ItemRead {
         paths: Vec<String>,
         status: Stored<ItemStatus>,
     },
+    /// Questions the client asked the operator, with the answer its client
+    /// reported for each, by question; none while they wait.
+    Questions {
+        questions: Vec<Question>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        answers: BTreeMap<QuestionKey, String>,
+        status: Stored<ItemStatus>,
+    },
     /// Any other tool the client used: its name as the client gave it (with
     /// what its input names, when Ren reads no effect from it), and what it
     /// does as Ren reads any tool call (`Harness::effects`); none for items
@@ -649,6 +665,30 @@ pub enum ApprovalAsk {
         tool: String,
         detail: Option<String>,
     },
+    /// Answer these questions (`DriveCommand::Reply`), or decline them.
+    Questions {
+        /// A heading over them all, where the client gave one.
+        title: Option<String>,
+        questions: Vec<Question>,
+    },
+}
+
+impl ApprovalAsk {
+    /// Whether `decision` answers this ask: questions are answered with
+    /// replies, and only declined or cancelled with a decision.
+    pub fn takes(&self, decision: Decision) -> bool {
+        match (self, decision) {
+            (Self::Questions { .. }, Decision::Accept | Decision::AcceptForSession) => false,
+            (Self::Questions { .. }, Decision::Decline | Decision::Cancel)
+            | (
+                Self::Command { .. } | Self::FileChange { .. } | Self::Tool { .. },
+                Decision::Accept
+                | Decision::AcceptForSession
+                | Decision::Decline
+                | Decision::Cancel,
+            ) => true,
+        }
+    }
 }
 
 /// How a turn ended, as the client reported it.
@@ -679,6 +719,12 @@ pub enum CommandRefused {
     TurnNotStarted,
     #[error("no approval {0} is waiting")]
     UnknownApproval(ApprovalId),
+    /// Questions are answered with replies, not allowed.
+    #[error("approval {0} asks questions: reply to them, or decline")]
+    Unanswered(ApprovalId),
+    /// Replies answer only an approval that asks questions.
+    #[error("approval {0} asks no questions")]
+    NotQuestions(ApprovalId),
     /// The client has no way to do this mid-run.
     #[error("this client cannot change {0} in a running conversation")]
     NotOffered(Midway),

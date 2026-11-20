@@ -20,6 +20,10 @@ fn codecs_stay_free_of_io() {
             include_str!("claude_code/stream_json.rs"),
         ),
         (
+            "claude_code/question.rs",
+            include_str!("claude_code/question.rs"),
+        ),
+        (
             "claude_code/listing.rs",
             include_str!("claude_code/listing.rs"),
         ),
@@ -30,6 +34,7 @@ fn codecs_stay_free_of_io() {
         ("opencode/session.rs", include_str!("opencode/session.rs")),
         ("drive.rs", include_str!("drive.rs")),
         ("prompt.rs", include_str!("prompt.rs")),
+        ("question.rs", include_str!("question.rs")),
         ("lines.rs", include_str!("lines.rs")),
         ("settings.rs", include_str!("settings.rs")),
     ];

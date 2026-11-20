@@ -28,6 +28,7 @@ pub mod profile;
 pub mod prompt;
 #[cfg(test)]
 mod purity;
+pub mod question;
 pub mod settings;
 pub mod sign_in;
 pub mod tools;

@@ -17,5 +17,5 @@ mod tools;
 pub use auth::PiAuth;
 pub use cache::{PiCache, PiCacheError};
 pub use listing::{PiCommands, PiModels};
-pub use rpc::{PiEvent, PiRpc};
+pub use rpc::{PiEvent, PiRpc, PiUiMethod};
 pub use tools::PiTool;

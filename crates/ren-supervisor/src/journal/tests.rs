@@ -262,3 +262,32 @@ fn a_journal_cut_short_or_out_of_order_is_read_as_far_as_it_holds() {
         Err(ReplayError::Unreadable { line: 1, .. })
     ));
 }
+
+#[test]
+fn a_secret_reply_is_journaled_without_its_text() {
+    let replies: ren_harness::question::Replies = serde_json::from_value(json!({
+        "token": { "as": "secret", "text": "tok-acme" },
+        "scope": { "as": "chose", "picked": ["Route only"] },
+    }))
+    .unwrap();
+    let command = RunCommand::Reply {
+        approval: "12".parse().unwrap(),
+        replies,
+    };
+    let line = Entry::Command(Command::from(&command)).line().unwrap();
+    let text = String::from_utf8(line.clone()).unwrap();
+    assert!(!text.contains("tok-acme"), "{text}");
+    assert!(text.contains("Route only"), "{text}");
+    // It reads back as the reply it was, its secret empty.
+    let entries = Entry::read(&line).unwrap();
+    let [Entry::Command(kept)] = entries.as_slice() else {
+        panic!("not one command: {entries:?}");
+    };
+    let RunCommand::Reply { replies, .. } = kept.command().unwrap() else {
+        panic!("not a reply");
+    };
+    assert_eq!(
+        serde_json::to_value(&replies).unwrap()["token"],
+        json!({ "as": "secret", "text": "" })
+    );
+}

@@ -6,6 +6,7 @@ use ren_harness::drive::{
     ApprovalAsk, ApprovalId, Decision, DriveCommand, DriveEvent, RequestKind,
 };
 use ren_harness::prompt::Prompt;
+use ren_harness::question::{Replies, ReplyRefused};
 use ren_harness::settings::RunSettings;
 use ren_protocol::native::{NativeThreadId, NativeTurnId};
 pub use ren_recorder::capture::ProcessExit;
@@ -61,6 +62,14 @@ impl Approvals {
             Some(waiting) => waiting.ask = ask,
             None => self.0.push(Waiting { approval, ask }),
         }
+    }
+
+    /// What `approval` asks, while it waits.
+    pub fn get(&self, approval: &ApprovalId) -> Option<&ApprovalAsk> {
+        self.0
+            .iter()
+            .find(|waiting| waiting.approval == *approval)
+            .map(|waiting| &waiting.ask)
     }
 
     /// Whether `approval` was waiting; it no longer is.
@@ -124,9 +133,16 @@ pub enum RunCommand {
     Steer(Prompt),
     /// Run on these settings from the next turn on.
     Configure(RunSettings),
+    /// Allow or refuse what an approval asks; questions are only declined
+    /// or cancelled this way.
     Answer {
         approval: ApprovalId,
         decision: Decision,
+    },
+    /// Answer the questions an approval asks.
+    Reply {
+        approval: ApprovalId,
+        replies: Replies,
     },
     Interrupt,
     Stop,
@@ -253,6 +269,12 @@ pub enum RunRefused {
     TurnNotStarted,
     #[error("no approval {0} is waiting")]
     NoSuchApproval(ApprovalId),
+    #[error("approval {0} asks questions: reply to them, or decline")]
+    Unanswered(ApprovalId),
+    #[error("approval {0} asks no questions")]
+    NotQuestions(ApprovalId),
+    #[error("the replies do not answer the questions: {0}")]
+    Unfit(#[from] ReplyRefused),
     #[error("the run is stopping")]
     Stopping,
     #[error("the run has ended")]
@@ -488,6 +510,7 @@ impl RunState {
                 | RunCommand::Steer(_)
                 | RunCommand::Configure(_)
                 | RunCommand::Answer { .. }
+                | RunCommand::Reply { .. }
                 | RunCommand::Interrupt
                 | RunCommand::Stop,
             ) => Err(RunRefused::Stopping),
@@ -499,6 +522,7 @@ impl RunState {
                 | RunCommand::Steer(_)
                 | RunCommand::Configure(_)
                 | RunCommand::Answer { .. }
+                | RunCommand::Reply { .. }
                 | RunCommand::Interrupt
                 | RunCommand::Stop,
             ) => Err(RunRefused::Ended),
@@ -513,7 +537,8 @@ impl RunState {
                 | RunCommand::Steer(_)
                 | RunCommand::Configure(_)
                 | RunCommand::Interrupt
-                | RunCommand::Answer { .. },
+                | RunCommand::Answer { .. }
+                | RunCommand::Reply { .. },
             ) => Err(RunRefused::Starting),
             // With no turn running, every way to send a prompt starts one.
             (
@@ -577,9 +602,10 @@ impl RunState {
             (Self::Working { turn: Some(_), .. }, RunCommand::Interrupt) => {
                 Ok(Self::send(self.clone(), DriveCommand::Interrupt))
             }
-            (Self::Idle { .. }, RunCommand::Answer { approval, .. }) => {
-                Err(RunRefused::NoSuchApproval(approval))
-            }
+            (
+                Self::Idle { .. },
+                RunCommand::Answer { approval, .. } | RunCommand::Reply { approval, .. },
+            ) => Err(RunRefused::NoSuchApproval(approval)),
             (
                 Self::Working {
                     thread,
@@ -589,20 +615,57 @@ impl RunState {
                 },
                 RunCommand::Answer { approval, decision },
             ) => {
-                let mut waiting = approvals.clone();
-                if !waiting.remove(&approval) {
+                let Some(ask) = approvals.get(&approval) else {
                     return Err(RunRefused::NoSuchApproval(approval));
+                };
+                if !ask.takes(decision) {
+                    return Err(RunRefused::Unanswered(approval));
                 }
                 Ok(Self::send(
-                    Self::Working {
-                        thread: *thread,
-                        turn: *turn,
-                        approvals: waiting,
-                        queued: queued.clone(),
-                    },
+                    Self::answered(*thread, *turn, approvals, queued, &approval),
                     DriveCommand::Answer { approval, decision },
                 ))
             }
+            (
+                Self::Working {
+                    thread,
+                    turn,
+                    approvals,
+                    queued,
+                },
+                RunCommand::Reply { approval, replies },
+            ) => {
+                let Some(ApprovalAsk::Questions { questions, .. }) = approvals.get(&approval)
+                else {
+                    return Err(match approvals.get(&approval) {
+                        Some(_) => RunRefused::NotQuestions(approval),
+                        None => RunRefused::NoSuchApproval(approval),
+                    });
+                };
+                let replies = replies.fit(questions)?;
+                Ok(Self::send(
+                    Self::answered(*thread, *turn, approvals, queued, &approval),
+                    DriveCommand::Reply { approval, replies },
+                ))
+            }
+        }
+    }
+
+    /// A working turn once `approval` no longer waits.
+    fn answered(
+        thread: NativeThreadId,
+        turn: Option<NativeTurnId>,
+        approvals: &Approvals,
+        queued: &Option<Prompt>,
+        approval: &ApprovalId,
+    ) -> Self {
+        let mut waiting = approvals.clone();
+        waiting.remove(approval);
+        Self::Working {
+            thread,
+            turn,
+            approvals: waiting,
+            queued: queued.clone(),
         }
     }
 
@@ -759,6 +822,107 @@ mod tests {
             },
         );
         assert_eq!(ended, idle);
+    }
+
+    #[test]
+    fn questions_are_answered_with_replies_that_fit_them() {
+        use ren_harness::question::{
+            Pick, Question, QuestionForm, QuestionKey, QuestionOption, Replies, Reply,
+            ReplyRefused, WriteIn,
+        };
+        let key = QuestionKey::new("Which store?".into());
+        let questions = vec![Question {
+            key: key.clone(),
+            header: None,
+            text: "Which store?".into(),
+            detail: None,
+            form: QuestionForm::Choice {
+                options: vec![QuestionOption {
+                    label: "SQLite".into(),
+                    description: None,
+                }],
+                pick: Pick::One,
+                write_in: WriteIn::Refused,
+            },
+        }];
+        let working = RunState::Working {
+            thread: thread(),
+            turn: Some(turn()),
+            approvals: Approvals::default(),
+            queued: None,
+        };
+        let mut waiting = agent(&working, ask("file"));
+        waiting = agent(
+            &waiting,
+            DriveEvent::Approval {
+                approval: approval("q1"),
+                ask: ApprovalAsk::Questions {
+                    title: None,
+                    questions: questions.clone(),
+                },
+            },
+        );
+        let chose = |label: &str| {
+            Replies::new(
+                [(
+                    key.clone(),
+                    Reply::Chose {
+                        picked: vec![label.into()],
+                        written: None,
+                    },
+                )]
+                .into(),
+            )
+        };
+        let reply = |id: &str, replies| RunCommand::Reply {
+            approval: approval(id),
+            replies,
+        };
+        // Questions are not allowed, only declined; replies answer only them,
+        // and only when they fit.
+        assert_eq!(
+            operator(
+                &waiting,
+                RunCommand::Answer {
+                    approval: approval("q1"),
+                    decision: Decision::AcceptForSession,
+                }
+            ),
+            Err(RunRefused::Unanswered(approval("q1")))
+        );
+        assert_eq!(
+            operator(&waiting, reply("file", chose("SQLite"))),
+            Err(RunRefused::NotQuestions(approval("file")))
+        );
+        assert_eq!(
+            operator(&waiting, reply("q2", chose("SQLite"))),
+            Err(RunRefused::NoSuchApproval(approval("q2")))
+        );
+        assert_eq!(
+            operator(&waiting, reply("q1", chose("Postgres"))),
+            Err(RunRefused::Unfit(ReplyRefused::NoSuchOption {
+                key: key.clone(),
+                label: "Postgres".into()
+            }))
+        );
+        let replied = operator(&waiting, reply("q1", chose("SQLite"))).unwrap();
+        assert_eq!(replied.state, agent(&working, ask("file")));
+        assert_eq!(
+            replied.actions,
+            vec![RunAction::Send(DriveCommand::Reply {
+                approval: approval("q1"),
+                replies: chose("SQLite").fit(&questions).unwrap(),
+            })]
+        );
+        let declined = operator(
+            &waiting,
+            RunCommand::Answer {
+                approval: approval("q1"),
+                decision: Decision::Decline,
+            },
+        )
+        .unwrap();
+        assert_eq!(declined.state, replied.state);
     }
 
     #[test]
