@@ -10,7 +10,7 @@
   import PendingPanel from '#lib/PendingPanel.svelte';
   import { goto } from '$app/navigation';
   import { ProjectBoard } from '#lib/projects.ts';
-  import { ReleaseLine } from '#lib/release.ts';
+  import { ReleaseStrip } from '#lib/release.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -59,7 +59,7 @@
           </thead>
           <tbody>
             {#each board.active as project (project.id)}
-              {@const line = project.release ? ReleaseLine.of(project.release) : null}
+              {@const strip = project.release ? ReleaseStrip.of(project.release) : null}
               {@const href = ProjectBoard.href(project.name)}
               <!-- The row is a larger target for the project's own link, which
                    is what the keyboard reaches. -->
@@ -68,13 +68,37 @@
                 <td>
                   <a class="name" {href}>{project.name}</a>
                   <span class="muted mono path">{project.repository}</span>
-                  {#if project.factory === 'ren'}<span class="tag">Ren itself</span>{/if}
                 </td>
                 <td>
-                  {#if line}
-                    <a class="release tone-{line.tone}" href={ProjectBoard.releaseHref(project)}
-                      >{line.text}</a
+                  {#if strip}
+                    <a
+                      class="release"
+                      href={ProjectBoard.releaseHref(project)}
+                      title={strip.line.detail}
+                      aria-label={strip.label}
                     >
+                      <span class="strip" aria-hidden="true">
+                        <span class="stage">main</span>
+                        <span class="stage canary-{strip.canary}"
+                          >canary <span class="mark mono"
+                            >{strip.canary === 'passed'
+                              ? '✓'
+                              : strip.canary === 'failed'
+                                ? '✗'
+                                : '–'}</span
+                          ></span
+                        >
+                        <span class="stage production-{strip.production.kind}"
+                          >prod <span class="mark mono"
+                            >{#if strip.production.kind === 'behind'}−{strip.production
+                                .commits}{:else if strip.production.kind === 'on_main'}✓{:else}?{/if}</span
+                          ></span
+                        >
+                      </span>
+                      <span class="word tone-{strip.promotion.tone}" aria-hidden="true"
+                        >{strip.promotion.word}</span
+                      >
+                    </a>
                   {:else}
                     <span class="muted">No canary yet</span>
                   {/if}
@@ -179,17 +203,46 @@
     display: block;
     font-size: 11px;
   }
-  .tag {
-    display: inline-block;
-    margin-top: 4px;
-    padding: 0 5px;
-    border: 1px solid var(--accent-border);
-    background: var(--accent-soft);
-    color: var(--accent-text);
+  .release {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .strip {
+    display: inline-flex;
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
     font-size: 11px;
   }
-  .release {
+  .stage {
+    padding: 1px 6px;
+    background: var(--surface-subtle);
+    color: var(--muted);
+  }
+  .mark {
+    font-weight: 600;
     color: var(--ink);
+  }
+  .canary-passed .mark,
+  .production-on_main .mark {
+    color: var(--success);
+  }
+  .canary-failed .mark {
+    color: var(--error);
+  }
+  .canary-none .mark,
+  .production-uncounted .mark {
+    color: var(--muted);
+  }
+  .word {
+    font-weight: 600;
+  }
+  .release:hover .word {
+    text-decoration: underline;
   }
   .tone-ok {
     color: var(--success);
