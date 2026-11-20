@@ -1,0 +1,23 @@
+[package]
+name = "ren-github"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "GitHub as the Ren LLM gateway observes it: a repository's open pull requests, their checks, and its default branch."
+
+# Sans-IO: the query Ren sends GitHub and what an answer says. Only pure
+# dependencies; no async runtime, HTTP, database, process, or CLI parser.
+[dependencies]
+ren-protocol.workspace = true
+ren-release.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_with.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

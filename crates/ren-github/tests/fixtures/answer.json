@@ -1,0 +1,51 @@
+{
+  "data": {
+    "repository": {
+      "defaultBranchRef": { "name": "main", "target": { "oid": "1111111111111111111111111111111111111111" } },
+      "pullRequests": {
+        "pageInfo": { "hasNextPage": false },
+        "nodes": [
+          {
+            "number": 12,
+            "title": "feat: a landing page",
+            "body": "Adds the page.\n\nWork-Item: 0193a3c0-0000-7000-8000-000000000001",
+            "url": "https://github.com/acme/web/pull/12",
+            "isDraft": false,
+            "author": { "login": "acme-bot" },
+            "headRefName": "landing",
+            "headRefOid": "2222222222222222222222222222222222222222",
+            "baseRefName": "main",
+            "mergeStateStatus": "BEHIND",
+            "reviewDecision": null,
+            "commits": { "nodes": [ { "commit": { "statusCheckRollup": {
+              "state": "FAILURE",
+              "contexts": {
+                "pageInfo": { "hasNextPage": false },
+                "nodes": [
+                  { "__typename": "CheckRun", "name": "CI", "status": "COMPLETED", "conclusion": "SUCCESS" },
+                  { "__typename": "CheckRun", "name": "Compatibility", "status": "COMPLETED", "conclusion": "FAILURE" },
+                  { "__typename": "CheckRun", "name": "lint", "status": "IN_PROGRESS", "conclusion": null },
+                  { "__typename": "StatusContext", "context": "deploy/preview", "state": "PENDING" }
+                ]
+              }
+            } } } ] }
+          },
+          {
+            "number": 9,
+            "title": "wip: try a new layout",
+            "body": "",
+            "url": "https://github.com/acme/web/pull/9",
+            "isDraft": true,
+            "author": null,
+            "headRefName": "layout",
+            "headRefOid": "3333333333333333333333333333333333333333",
+            "baseRefName": "main",
+            "mergeStateStatus": "SOMETHING_NEW",
+            "reviewDecision": "REVIEW_REQUIRED",
+            "commits": { "nodes": [ { "commit": { "statusCheckRollup": null } } ] }
+          }
+        ]
+      }
+    }
+  }
+}

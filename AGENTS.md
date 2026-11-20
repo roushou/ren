@@ -232,6 +232,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   sans-IO: which build an instance runs (`Build`, its `Revision`, `Commit`,
   and `Tree`, and how two compare, `Comparison`). Its manifest allows only
   pure dependencies.
+- `crates/ren-github`: GitHub as Ren observes it, sans-IO, with `Watch`
+  as its primary type (docs/plans/self-build.md, phase 8): the one GraphQL
+  query a watch sends for a `RepositorySlug`, and the `Snapshot` an answer
+  shows: the default branch's head and each open `PullRequest` (its
+  `PullNumber`, author's `GithubLogin`, head `Commit`, `Readiness`,
+  `MergeState`, `ReviewDecision`, and each `Check` with its `CheckState`,
+  summed up as `ChecksState`), and whether the listing was cut
+  (`Listing`). Every value GitHub sends that Ren does not know is kept as
+  `Stored::Unknown`, never rounded to a known one. Its manifest allows only
+  pure dependencies, and `src/purity.rs` keeps its sources free of I/O.
 - `crates/ren-depot`: the tools Ren's agents run with, with `Depot` as its
   primary type: the package catalog (`package`: `Package`, `PackageId`,
   `ProgramName`, `Kind`, client, runtime, or utility, and `Origin`; the
@@ -765,6 +775,7 @@ directly.
 | `ren-depot`                                | `Depot`, with its `ToolHost` port                   | none of ours      |
 | `ren-git`                                  | `Git`                                               | none of ours      |
 | `ren-release`                              | `Release`                                           | protocol          |
+| `ren-github`                               | `Watch`                                             | release           |
 | `ren-project`                              | `ProjectContract`                                   | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |
 | `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |

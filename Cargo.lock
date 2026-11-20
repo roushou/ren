@@ -1875,6 +1875,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-github"
+version = "0.1.0"
+dependencies = [
+ "ren-protocol",
+ "ren-release",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "strum",
+ "thiserror",
+]
+
+[[package]]
 name = "ren-harness"
 version = "0.1.0"
 dependencies = [

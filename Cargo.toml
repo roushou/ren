@@ -5,6 +5,7 @@ members = [
   "crates/ren-depot",
   "crates/ren-gateway",
   "crates/ren-git",
+  "crates/ren-github",
   "crates/ren-harness",
   "crates/ren-project",
   "crates/ren-protocol",
@@ -21,6 +22,7 @@ default-members = [
   "crates/ren-depot",
   "crates/ren-gateway",
   "crates/ren-git",
+  "crates/ren-github",
   "crates/ren-harness",
   "crates/ren-project",
   "crates/ren-protocol",
@@ -60,6 +62,7 @@ ren-daemon = { path = "crates/ren-daemon", version = "0.1.0" }
 ren-depot = { path = "crates/ren-depot", version = "0.1.0" }
 ren-gateway = { path = "crates/ren-gateway", version = "0.1.0" }
 ren-git = { path = "crates/ren-git", version = "0.1.0" }
+ren-github = { path = "crates/ren-github", version = "0.1.0" }
 ren-harness = { path = "crates/ren-harness", version = "0.1.0" }
 ren-project = { path = "crates/ren-project", version = "0.1.0" }
 ren-protocol = { path = "crates/ren-protocol", version = "0.1.0" }
