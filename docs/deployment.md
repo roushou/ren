@@ -368,7 +368,9 @@ starts the build as the canary on a copy of it: the rootless Podman pod
 `ren-canary`, its daemon and UI each a container (`ren-canary-daemon`,
 `ren-canary-ui`; `podman logs` reads them), on loopback `17787` and `17000`,
 with `~/.config/ren-canary` and `~/.local/state/ren-canary`, both replaced on
-every pass. A container sees only the build it runs, read-only, and the
+every pass. Each container is started from a transient systemd scope of its
+own (`ren-pod-canary-daemon`, `ren-pod-canary-ui`), so it outlives the pass
+that started it, the timer's included. A container sees only the build it runs, read-only, and the
 canary's own configuration and data, each at its host path; it runs as the
 operator's user and shares the host's network, so `ren` keeps its loopback
 listener. The image, `localhost/ren-instance` (Node, the C runtime, and CA

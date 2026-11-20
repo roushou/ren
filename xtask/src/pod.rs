@@ -119,12 +119,35 @@ impl Pod {
             .map(drop)
     }
 
-    /// Starts `container` in the pod, detached.
+    /// Starts `container` in the pod, detached, from a transient systemd
+    /// scope of its own (`ren-pod-<pod>-<role>`): the container's monitor
+    /// is a child of the `podman` that starts it, and in the caller's
+    /// cgroup it would end with the caller, as the canary timer's pass
+    /// ends with its oneshot service. The pod's first container starts its
+    /// infra container too, in the same scope.
     pub fn start(&self, container: &Container) -> Result<(), InvocationError> {
-        Invocation::new("podman")
+        Invocation::new("systemd-run")
+            .args(Self::scope_args(&self.scope(container.role)))
+            .arg("podman")
             .args(self.run_args(container))
             .capture()
             .map(drop)
+    }
+
+    /// The scope a container is started from.
+    fn scope(&self, role: &str) -> String {
+        format!("ren-pod-{}-{role}", self.name.trim_start_matches("ren-"))
+    }
+
+    fn scope_args(scope: &str) -> Vec<String> {
+        vec![
+            "--user".to_owned(),
+            "--scope".to_owned(),
+            "--quiet".to_owned(),
+            "--collect".to_owned(),
+            format!("--unit={scope}"),
+            "--".to_owned(),
+        ]
     }
 
     fn create_args(&self) -> Vec<String> {
@@ -218,6 +241,23 @@ mod tests {
                 image.as_str(),
                 "/home/op/.local/share/ren/builds/abc/ren",
                 "serve",
+            ]
+        );
+    }
+
+    #[test]
+    fn each_container_starts_from_a_scope_of_its_own() {
+        let pod = Pod::new("canary");
+        assert_eq!(pod.scope("daemon"), "ren-pod-canary-daemon");
+        assert_eq!(
+            Pod::scope_args(&pod.scope("ui")),
+            [
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "--unit=ren-pod-canary-ui",
+                "--"
             ]
         );
     }
