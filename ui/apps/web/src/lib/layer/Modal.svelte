@@ -2,7 +2,8 @@
   Layer 4: a decision with consequences, over a dimmed page. It asks one
   question, shows what the answer changes, and keeps the page out of reach
   until it is answered or dismissed (Escape, or Cancel). The primary action
-  goes last, on the right.
+  goes last, on the right, and no answer has focus until the operator picks
+  one.
 -->
 <script lang="ts">
   import { untrack, type Snippet } from 'svelte';
@@ -28,13 +29,19 @@
 
   let dialog = $state<HTMLDialogElement>();
   $effect(() => {
-    untrack(() => dialog?.showModal());
+    untrack(() => {
+      dialog?.showModal();
+      // The browser would focus the first answer, and Enter would give it
+      // unread: the dialog takes focus, so every answer is a choice.
+      dialog?.focus();
+    });
   });
 </script>
 
 <dialog
   bind:this={dialog}
   class="modal"
+  tabindex="-1"
   aria-labelledby="modal-title"
   oncancel={(event) => {
     event.preventDefault();
@@ -60,6 +67,9 @@
     color: var(--ink);
     box-shadow: var(--elev-modal);
     font-size: 13px;
+  }
+  .modal:focus {
+    outline: none;
   }
   .modal::backdrop {
     background: var(--scrim);
