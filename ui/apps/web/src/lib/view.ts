@@ -26,7 +26,6 @@ export type View =
   | 'search'
   | 'usage'
   | 'tools'
-  | 'work'
   | 'release'
   | 'recorder';
 
@@ -37,7 +36,6 @@ export type Tab =
   | 'project'
   | 'scratch'
   | 'sessions'
-  | 'work'
   | 'release'
   | 'overview'
   | 'live'
@@ -78,8 +76,6 @@ export class Views {
         return 'projects';
       case '/projects/[name]':
         return 'project';
-      case '/projects/[name]/work':
-        return 'work';
       case '/projects/[name]/sessions':
         return 'sessions';
       case '/projects/[name]/release':
@@ -129,7 +125,6 @@ export class Views {
       case 'search':
       case 'usage':
       case 'tools':
-      case 'work':
       case 'release':
       case 'recorder':
         return view;
@@ -147,7 +142,6 @@ export class Views {
       case 'project':
       case 'scratch':
       case 'sessions':
-      case 'work':
       case 'release':
         return 'projects';
       case 'overview':
@@ -176,7 +170,6 @@ export class Views {
           const base = `/projects/${encodeURIComponent(project)}`;
           return [
             { tab: 'project', href: base, label: 'Overview' },
-            { tab: 'work', href: `${base}/work`, label: 'Work' },
             { tab: 'sessions', href: `${base}/sessions`, label: 'Sessions' },
             { tab: 'release', href: `${base}/release`, label: 'Release' },
           ];
@@ -221,7 +214,6 @@ export class Views {
       case 'project':
       case 'scratch':
       case 'sessions':
-      case 'work':
       case 'release':
       case 'tools':
       case 'usage':
@@ -272,8 +264,6 @@ export class Views {
         return 'Usage';
       case 'tools':
         return 'Tools';
-      case 'work':
-        return 'Work';
       case 'release':
         return 'Release';
       case 'recorder':

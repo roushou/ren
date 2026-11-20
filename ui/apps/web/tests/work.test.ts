@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PageEvidence, Work, WorkApi, type WorkItem } from '../src/lib/work.ts';
+import { PageEvidence, Work, WorkApi, type WorkItem, type WorkItemId } from '../src/lib/work.ts';
 
 const pinned: typeof fetch = async () =>
   Response.json(
@@ -168,7 +168,7 @@ test("an item for another project is briefed as that project's page", async () =
   assert.doesNotMatch(other, /cargo xtask preview/);
 });
 
-test("an item's project decides its brief, and a batch is one project's", () => {
+test("an item's project decides its brief", () => {
   const project = (id: string, name: string, factory: 'ren' | 'contract') =>
     ({ id, name, factory }) as never;
   const projects = [project('ren-id', 'ren', 'ren'), project('acme-id', 'acme-web', 'contract')];
@@ -182,17 +182,9 @@ test("an item's project decides its brief, and a batch is one project's", () => 
   for (const owner of ['ren-id', null, 'gone-id']) {
     assert.deepEqual(Work.projectOf(item('b', owner), projects), { kind: 'ren' });
   }
-  assert.deepEqual(Work.oneProject([item('a', 'acme-id'), item('c', 'acme-id')], projects), {
-    kind: 'other',
-    name: 'acme-web',
-  });
-  assert.deepEqual(Work.oneProject([item('b', null), item('d', 'ren-id')], projects), {
-    kind: 'ren',
-  });
-  assert.equal(Work.oneProject([item('a', 'acme-id'), item('b', null)], projects), null);
 });
 
-test("a project's Work page holds its items, Ren's those from before projects too", () => {
+test("a project holds its items, Ren's those from before projects too", () => {
   const project = (id: string, name: string, factory: 'ren' | 'contract') =>
     ({ id, name, factory, archived_at: null }) as never;
   const ren = project('ren-id', 'ren', 'ren');
@@ -206,5 +198,5 @@ test("a project's Work page holds its items, Ren's those from before projects to
   assert.equal(Work.home(item('b', null), [acme, ren]), ren);
   assert.equal(Work.home(item('a', 'acme-id'), [acme, ren]), acme);
   assert.equal(Work.home(item('x', 'gone-id'), [acme, ren]), null);
-  assert.equal(Work.href('acme-web', { item: 'a' }), '/projects/acme-web/work?item=a');
+  assert.equal(Work.href('acme-web', 'a' as WorkItemId), '/projects/acme-web?item=a');
 });

@@ -94,9 +94,8 @@
       {@const home = board.homeOf(item)}
       <li>
         <span class="muted">{home ?? 'no project'}</span>
-        <a href={home ? Work.href(home, { item: item.id }) : `/work?item=${item.id}`}
-          >{item.title}</a
-        >
+        {#if home}<a href={Work.href(home, item.id)}>{item.title}</a>{:else}<span>{item.title}</span
+          >{/if}
         {#if item.preview}<a class="out" href={item.preview.ui} target="_blank" rel="noopener"
             ><Icon name="arrow" size={11} />Open the preview</a
           >{/if}
@@ -110,7 +109,7 @@
     {#each board.queued as queued (queued.project)}
       <li>
         {#if queued.project}
-          <a href={Work.href(queued.project)}>{queued.project}</a>
+          <a href={ProjectBoard.href(queued.project)}>{queued.project}</a>
         {:else}
           <span>No project</span>
         {/if}

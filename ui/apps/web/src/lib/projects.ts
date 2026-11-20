@@ -144,7 +144,7 @@ export class ProjectBoard {
   }
 
   /** The name of the project with `id`; null for none, or one not listed. */
-  /** The name of the project whose Work page holds `item`: its own, or
+  /** The name of the project `item` belongs to: its own, or
    * Ren's for one from before projects. */
   homeOf(item: WorkItem): string | null {
     return Work.home(item, this.projects)?.name ?? null;

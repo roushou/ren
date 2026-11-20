@@ -103,7 +103,7 @@
                     <span class="muted">No canary yet</span>
                   {/if}
                 </td>
-                <td><a class="cell" href={`${href}/work`}>{ProjectBoard.openWork(project)}</a></td>
+                <td><a class="cell" {href}>{ProjectBoard.openWork(project)}</a></td>
                 <td>
                   <a class="cell" href={`${href}/sessions`}>
                     {#if project.running}

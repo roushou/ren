@@ -159,11 +159,7 @@
         {#if shipped.length}
           <ul class="work-list">
             {#each shipped as item (item.id)}
-              <li>
-                <a href={Work.href(data.project.name, { shelf: 'archived', item: item.id })}
-                  >{item.title}</a
-                >
-              </li>
+              <li>{item.title}</li>
             {/each}
           </ul>
         {:else}<p class="muted">None.</p>{/if}
@@ -174,7 +170,7 @@
           <ul class="work-list">
             {#each waiting as item (item.id)}
               <li>
-                <a href={Work.href(data.project.name, { item: item.id })}>{item.title}</a>
+                <a href={Work.href(data.project.name, item.id)}>{item.title}</a>
                 <span class="muted mono">{ReleasePage.short(item.landed)}</span>
               </li>
             {/each}

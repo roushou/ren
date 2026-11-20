@@ -24,7 +24,6 @@ pub enum Page {
     Projects,
     /// A project's Overview.
     Project,
-    Work,
     Release,
     Overview,
     Live,
@@ -52,10 +51,9 @@ struct Newest {
 }
 
 impl Page {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 12] = [
         Self::Projects,
         Self::Project,
-        Self::Work,
         Self::Release,
         Self::Overview,
         Self::Live,
@@ -72,7 +70,6 @@ impl Page {
         match self {
             Self::Projects => "projects",
             Self::Project => "project",
-            Self::Work => "work",
             Self::Release => "release",
             Self::Overview => "overview",
             Self::Live => "live",
@@ -87,7 +84,7 @@ impl Page {
     }
 
     /// The page's path: the newest recording for `Recording`; the project's
-    /// pages for `Project`, `Work`, `Release`, and `Sessions` (its newest
+    /// pages for `Project`, `Release`, and `Sessions` (its newest
     /// run's session open, if any). None when there is no such recording or
     /// project, except Sessions, which is then Scratch.
     fn path(self, newest: &Newest) -> Option<String> {
@@ -98,7 +95,6 @@ impl Page {
         match self {
             Self::Projects => Some("/".into()),
             Self::Project => project,
-            Self::Work => project.map(|base| format!("{base}/work")),
             Self::Release => project.map(|base| format!("{base}/release")),
             Self::Overview => Some("/overview".into()),
             Self::Live => Some("/live".into()),
@@ -337,10 +333,6 @@ mod tests {
                 Page::Project => {
                     assert_eq!(page.path(&none), None);
                     assert_eq!(page.path(&some).as_deref(), Some("/projects/ren"));
-                }
-                Page::Work => {
-                    assert_eq!(page.path(&none), None);
-                    assert_eq!(page.path(&some).as_deref(), Some("/projects/ren/work"));
                 }
                 Page::Release => {
                     assert_eq!(page.path(&none), None);

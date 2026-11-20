@@ -8,8 +8,8 @@
 //! and its UI the next, as `ren-preview-<worktree>-*` units; its build, data,
 //! and configuration live in `<data>/preview`. Each sent work item the
 //! branch's commits name (`Work-Item: <id>`), and each one given, records the
-//! preview, so the Work view opens the marked page on it. Removing the
-//! worktree stops it.
+//! preview, so the item on its project's Overview opens the marked page on
+//! it. Removing the worktree stops it.
 
 use crate::{
     file::{FileError, FileMode},
@@ -212,7 +212,7 @@ impl Preview {
                 "No work item in a session is named yet: commit with a `Work-Item:` trailer, or pass --work."
             ),
             count => println!(
-                "Recorded on {count} work item(s); the Work view opens it beside production."
+                "Recorded on {count} work item(s); each opens it beside production on its project's Overview."
             ),
         }
         Ok(())

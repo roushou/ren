@@ -467,7 +467,7 @@ export class Work {
     );
   }
 
-  /** The project whose Work page holds `item`: its own, or Ren (from
+  /** The project `item` belongs to: its own, or Ren (from
    * `projects`) for one from before projects; null when neither is known. */
   static home(item: WorkItem, projects: readonly Project[]): Project | null {
     return item.project === null
@@ -476,24 +476,10 @@ export class Work {
       : (projects.find((project) => project.id === item.project) ?? null);
   }
 
-  /** The Work page of the project named `project`, with `query`. */
-  static href(project: string, query: Record<string, string> = {}): string {
-    const search = new URLSearchParams(query).toString();
-    const path = `/projects/${encodeURIComponent(project)}/work`;
-    return search ? `${path}?${search}` : path;
-  }
-
-  /** The one project `items` are all for, or null when they mix. */
-  static oneProject(items: readonly WorkItem[], projects: readonly Project[]): BriefProject | null {
-    const each = items.map((item) => Work.projectOf(item, projects));
-    const first = each[0];
-    if (!first) return { kind: 'ren' };
-    const same = each.every((project) =>
-      project.kind === 'ren'
-        ? first.kind === 'ren'
-        : first.kind === 'other' && first.name === project.name,
-    );
-    return same ? first : null;
+  /** `item` open in the drawer of the Overview of the project named
+   * `project`, which lists its current work. */
+  static href(project: string, item: WorkItemId): string {
+    return `/projects/${encodeURIComponent(project)}?${new URLSearchParams({ item })}`;
   }
 
   /** An item's order as the daemon takes one. */
@@ -547,7 +533,7 @@ export class Work {
     return item.preview ? `${item.preview.ui}${item.order.page.path}` : null;
   }
 
-  /** What the Work view says of a state. */
+  /** What a work item's state reads as. */
   static state(state: Stored<WorkState>): string {
     switch (state) {
       case 'queued':

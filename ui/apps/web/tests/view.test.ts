@@ -5,7 +5,6 @@ import { Views } from '../src/lib/view.ts';
 test('each route is its view, and an unknown one is Traffic', () => {
   assert.equal(Views.of('/'), 'projects');
   assert.equal(Views.of('/projects/[name]'), 'project');
-  assert.equal(Views.of('/projects/[name]/work'), 'work');
   assert.equal(Views.of('/projects/[name]/sessions'), 'sessions');
   assert.equal(Views.of('/projects/[name]/release'), 'release');
   assert.equal(Views.of('/scratch'), 'scratch');
@@ -54,7 +53,6 @@ test("inside a project, the row holds the project's own pages", () => {
     Views.pages('projects', 'acme web').map((page) => [page.tab, page.href]),
     [
       ['project', '/projects/acme%20web'],
-      ['work', '/projects/acme%20web/work'],
       ['sessions', '/projects/acme%20web/sessions'],
       ['release', '/projects/acme%20web/release'],
     ],

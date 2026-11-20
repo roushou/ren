@@ -448,7 +448,8 @@ the canary is: `ren-preview-<worktree>-daemon` on the slot's first port and
 `--publish` publishes both on the tailnet on the same port numbers, with the
 install's saved Tailscale choice. It then records the preview on every sent
 work item the branch's recent commits name (`Work-Item: <id>`), and on each
-`--work <id>`: the Work view opens the marked page on it beside production's.
+`--work <id>`: a work item opened on its project's Overview opens the marked
+page on it beside production's.
 `--of dev` copies the dev slot instead. Deleting the worktree's session
 stops its preview with it, and takes it off the session's work items.
 
