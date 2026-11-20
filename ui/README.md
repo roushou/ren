@@ -138,7 +138,7 @@ Claude Code, Pi, or OpenCode in a folder
 under the daemon's `[runs]` roots; see [sessions](../docs/api.md#sessions)): a sidebar of
 folders and their sessions, the conversation (its recorded turns, then what
 streams in), its approvals with what each asks, and a prompt box whose bar holds
-its settings. New session (`n`), or a folder's `+`, opens a draft with its
+its settings. New session, or a folder's `+`, opens a draft with its
 prompt ready: its client starts with the first prompt, and until then its bar
 also holds its folder and its client. `/runs` links lead here. Sessions, and archiving, unarchiving, and deleting
 recordings and runs, are the only things the UI changes, and only when the UI

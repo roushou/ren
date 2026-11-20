@@ -229,7 +229,7 @@
     </button>
   {:else}
     <button class="new-run" onclick={onnew}>
-      <Icon name="spark" size={13} /> New session <kbd>n</kbd>
+      <Icon name="spark" size={13} /> New session
     </button>
   {/if}
   {#if listing === 'pending'}
@@ -338,11 +338,6 @@
   }
   .new-run:hover {
     background: var(--row-hover);
-  }
-  .new-run kbd {
-    margin-left: auto;
-    font-size: 11px;
-    color: var(--muted);
   }
   .folder {
     border-bottom: 1px solid var(--line);

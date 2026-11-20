@@ -839,7 +839,7 @@ written otherwise. A group stays open while a step in it runs or after one
 failed, and opens to a row per step; a command's row opens to the command
 exactly as run and its output.
 
-In the web UI, New session (or `n`) opens a draft with its prompt ready to
+In the web UI, New session opens a draft with its prompt ready to
 write, in the folder the last session asked something worked in (or a
 scratch folder of its own), on the client last chosen. The draft runs no
 client: its folder and client change from chips beside the prompt, and its
