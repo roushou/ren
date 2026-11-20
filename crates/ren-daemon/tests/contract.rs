@@ -299,6 +299,43 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
             .unwrap();
             read("/api/projects/ren/release".to_owned()).await
         }),
+        ("project_pulls", {
+            // Registered above; its repository is watched on `acme/ren`.
+            let answer = serde_json::json!({ "data": { "repository": {
+                "defaultBranchRef": { "name": "main", "target": { "oid": "1111111111111111111111111111111111111111" } },
+                "pullRequests": { "pageInfo": { "hasNextPage": false }, "nodes": [{
+                    "number": 12,
+                    "title": "feat: a landing page",
+                    "body": "Work-Item: 00000000-0000-7000-8000-000000000001",
+                    "url": "https://github.com/acme/ren/pull/12",
+                    "isDraft": false,
+                    "author": { "login": "acme-bot" },
+                    "headRefName": "landing",
+                    "headRefOid": "2222222222222222222222222222222222222222",
+                    "baseRefName": "main",
+                    "mergeStateStatus": "BEHIND",
+                    "reviewDecision": null,
+                    "commits": { "nodes": [{ "commit": { "statusCheckRollup": {
+                        "state": "PENDING",
+                        "contexts": { "pageInfo": { "hasNextPage": false }, "nodes": [
+                            { "__typename": "CheckRun", "name": "CI", "status": "COMPLETED", "conclusion": "SUCCESS" },
+                            { "__typename": "CheckRun", "name": "Compatibility", "status": "IN_PROGRESS", "conclusion": null }
+                        ] }
+                    } } }] }
+                }] }
+            } } });
+            let snapshot = ren_github::Watch::new("acme/ren".parse().unwrap())
+                .read(answer.to_string().as_bytes())
+                .unwrap();
+            gateway.pulls().record_seen(
+                &"ren".parse().unwrap(),
+                ren_gateway::github::Sighting {
+                    snapshot,
+                    at: ren_recorder::time::UnixMillis::from_millis(1_800_000_000_000),
+                },
+            );
+            read("/api/projects/ren/pulls".to_owned()).await
+        }),
         ("projects", read("/api/projects".to_owned()).await),
     ];
     gateway.stop().await;

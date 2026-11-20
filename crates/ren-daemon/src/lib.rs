@@ -6,17 +6,20 @@
 //! storage.
 
 pub mod config;
+pub mod github;
 pub mod host;
 pub mod tailscale;
 pub mod tools;
 
 use crate::config::RuntimeConfig;
+use crate::github::GithubPoller;
 use crate::host::{HeldRuns, ObservationThread, ProcessHost, RandomIds, SystemClock};
 use crate::tools::HostTools;
 use crate::tools::{HostToolbox, ToolStore, fetch::ReqwestFetch};
 use ren_gateway::{
     ControlToken, Gateway, ManagementSetup, ReleaseFolder, ReqwestUpstream, Shutdown, Stopped,
     control::Controls,
+    github::PullBoard,
     operator::{OperatorState, Pause, RestoreError},
 };
 use ren_gateway::{IngressError, UpstreamConfigError};
@@ -236,10 +239,11 @@ impl Daemon {
             upstream,
             recorder,
             controls,
-            clock,
+            clock.clone(),
             shutdown.clone(),
         );
         let tools = Self::toolbox(config, data_dir, &reader);
+        let pulls = Self::watch_github(config, clock, &shutdown);
         let ingress = gateway.into_ingress(
             listener,
             ManagementSetup {
@@ -253,6 +257,7 @@ impl Daemon {
                 instance: config.instance(),
                 runs: runs.as_ref().map(|(supervisor, _)| supervisor.clone()),
                 release: ReleaseFolder::in_data(data_dir),
+                pulls: pulls.clone(),
             },
         );
         // The gateway holds the only supervisor handles: the runs drain once
@@ -382,6 +387,30 @@ impl Daemon {
         ))
     }
 
+    /// The board of what is watched on GitHub, with its poller started
+    /// when anything is. A poller that cannot be built leaves the board
+    /// waiting, and says why.
+    fn watch_github(
+        config: &RuntimeConfig,
+        clock: Arc<dyn Clock>,
+        shutdown: &Shutdown,
+    ) -> PullBoard {
+        let Some(watch) = config.github() else {
+            return PullBoard::default();
+        };
+        let board = watch.board();
+        match GithubPoller::new(watch.clone(), board.clone(), clock) {
+            Ok(poller) => {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "process wiring: the daemon owns the GitHub poller's task"
+                )]
+                tokio::spawn(poller.run(shutdown.clone()));
+            }
+            Err(error) => tracing::error!(%error, "the GitHub poller could not start"),
+        }
+        board
+    }
     /// The host's tools for the control API, or none when downloads cannot
     /// be set up (the tools routes then say so).
     fn toolbox(

@@ -16,6 +16,7 @@ pub mod live;
 mod params;
 pub mod preview;
 pub mod projects;
+pub mod pulls;
 pub mod read;
 pub mod release;
 mod route;
@@ -26,7 +27,7 @@ pub use control::{ControlOptions, ControlRefusal, ControlToken};
 pub use release::ReleaseFolder;
 pub use route::ApiRead;
 
-use crate::{build::InstanceOptions, control::Controls, user::Users};
+use crate::{build::InstanceOptions, control::Controls, github::PullBoard, user::Users};
 use axum::{
     Json, Router,
     extract::{
@@ -73,6 +74,8 @@ pub struct ManagementSetup {
     pub tools: Option<std::sync::Arc<dyn crate::tools::Toolbox>>,
     /// Where the factory writes the release, which `/api/release` reports.
     pub release: ReleaseFolder,
+    /// What the daemon's poller last saw of each watched GitHub repository.
+    pub pulls: PullBoard,
 }
 
 /// What the read API reads and reports, from the management setup.
@@ -82,6 +85,7 @@ pub(crate) struct ReadSources {
     pub build: Build,
     pub instance: InstanceOptions,
     pub release: ReleaseFolder,
+    pub pulls: PullBoard,
 }
 
 /// What the read API reads from. It never writes.
@@ -94,6 +98,7 @@ pub(crate) struct ApiState {
     build: Build,
     instance: InstanceOptions,
     release: ReleaseFolder,
+    pulls: PullBoard,
     previews: Arc<Semaphore>,
     exports: Arc<Semaphore>,
     shutdown: CancellationToken,
@@ -243,6 +248,7 @@ impl ApiState {
             build,
             instance,
             release,
+            pulls,
         } = sources;
         Self {
             reader,
@@ -253,6 +259,7 @@ impl ApiState {
             build,
             instance,
             release,
+            pulls,
             previews: Arc::new(Semaphore::new(Self::PREVIEW_PERMITS)),
             exports: Arc::new(Semaphore::new(Self::EXPORT_PERMITS)),
             shutdown,
@@ -273,6 +280,7 @@ impl ApiState {
             .route("/api/projects", get(Self::projects))
             .route("/api/projects/{name}", get(Self::project))
             .route("/api/projects/{name}/release", get(Self::project_release))
+            .route("/api/projects/{name}/pulls", get(Self::project_pulls))
             .route(
                 "/api/projects/{name}/release/shots/{shot}",
                 get(Self::project_shot),

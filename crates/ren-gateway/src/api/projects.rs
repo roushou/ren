@@ -171,7 +171,7 @@ impl ApiState {
         Ok(([(header::CONTENT_TYPE, "image/png")], bytes).into_response())
     }
 
-    async fn named(&self, name: &str) -> Result<ProjectView, ApiError> {
+    pub(super) async fn named(&self, name: &str) -> Result<ProjectView, ApiError> {
         let name: ProjectName = name.parse().map_err(|_| ApiError::NotFound)?;
         self.reader
             .project_named(&name)

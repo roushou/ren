@@ -329,7 +329,8 @@ spec (phase 7):
      `install-vps`'s rollback do not change.
    - The canary and previews keep their rules: no runs, a placeholder for
      every operator key.
-8. **GitHub, observed.** Planned. Ren shows what is happening on GitHub,
+8. **GitHub, observed.** In progress: the crate, the poller, and the
+   read route are built; the UI is not. Ren shows what is happening on GitHub,
    so the operator watches pull requests in Ren, not on github.com.
    - A sans-IO crate parses GitHub's REST answers into typed observations:
      a pull request (its number, head commit, base, mergeability, whether
@@ -473,6 +474,16 @@ on each other; phase 9 needs both, and phase 10 needs only the canary.
   they copy production's history and drive two processes, more than a
   contract's serve step says. A project's contract covers one process
   served on its worktree's ports.
+- **GitHub is read with one GraphQL query, not REST.** A repository's
+  open pull requests, their merge state, review, and checks are one
+  GraphQL query (`ren_github::Watch`), where REST needs a request per pull
+  request for its merge state, reviews, and checks. GraphQL has no
+  conditional requests, but one query a minute costs about 60 of the
+  5000 points an hour a token has.
+- **What was seen of GitHub is kept in memory, not stored.** The daemon's
+  `PullBoard` holds each repository's last answer, or the failure since,
+  and a restarted daemon polls again at once. GitHub stays the record of
+  its own pull requests; Ren stores nothing it would have to reconcile.
 - **The gate is its own workflow.** It reads the pull request's title and
   body, so it runs again when they are edited, which would otherwise
   rerun all of CI.

@@ -46,6 +46,7 @@ pub mod api;
 pub mod build;
 pub mod control;
 mod forward;
+pub mod github;
 pub mod lifecycle;
 mod limits;
 pub mod operator;
@@ -171,6 +172,7 @@ impl<U: Upstream> Gateway<U> {
                 build: management.build,
                 instance: management.instance,
                 release: management.release,
+                pulls: management.pulls,
             },
             self.recorder.clone(),
             self.controls.clone(),

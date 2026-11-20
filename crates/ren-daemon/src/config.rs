@@ -1,5 +1,6 @@
 //! Strict startup configuration. This revision is immutable for the daemon lifetime.
 
+use crate::github::{GithubToken, GithubWatch, GraphqlUrl, PollSecs};
 use ren_depot::{CatalogEntry, CatalogError, Depot};
 use ren_gateway::{
     BufferOptions, ConcurrencyLimit, ConfiguredEntry, ControlOptions, EntryIngress, GatewayConfig,
@@ -8,6 +9,7 @@ use ren_gateway::{
     policy::{EntryUsers, Policy, PolicyConfig},
     user::{UserConfig, Users},
 };
+use ren_github::RepositorySlug;
 use ren_harness::{
     attachment::{AttachmentOptions, Limits},
     host::HostEnv,
@@ -18,6 +20,7 @@ use ren_recorder::retention::RetentionPolicy;
 use ren_recorder::{
     CaptureOptions,
     caller::UserId,
+    project::ProjectName,
     routing::{ConfigRevision, UpstreamId},
 };
 use serde::{Deserialize, Serialize};
@@ -87,6 +90,12 @@ pub enum ConfigError {
         "[runs] worktree_env names must be non-empty, without `=`, and not REN_WORKTREE* or REN_WORKSPACE*"
     )]
     WorktreeEnv,
+    #[error("[github] endpoint: {0}")]
+    GithubEndpoint(ren_harness::endpoint::SecureBaseError),
+    #[error("[github] watches project {0} twice")]
+    GithubProjectTwice(String),
+    #[error("GitHub token variable {0} is not set, or not a token")]
+    MissingGithubToken(String),
 }
 
 /// Where operator keys come from while resolving.
@@ -137,6 +146,87 @@ pub struct Config {
     /// The packages the operator adds to the built-in catalog.
     #[serde(skip_serializing_if = "ToolsOptions::is_empty")]
     pub tools: ToolsOptions,
+    /// The GitHub repositories watched for registered projects.
+    #[serde(skip_serializing_if = "GithubOptions::is_off")]
+    pub github: GithubOptions,
+}
+
+/// The `[github]` section: each registered project's repository on GitHub,
+/// whose open pull requests and checks Ren polls, and the token it reads
+/// them with. Off while no repository is named.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GithubOptions {
+    /// The environment variable holding a token that can read the
+    /// repositories' pull requests and checks (a fine-grained token with
+    /// read access to pull requests, commit statuses, and metadata).
+    pub token_env: String,
+    /// Seconds between two polls of each repository, 10 to 3600.
+    pub poll_seconds: PollSecs,
+    /// GitHub's GraphQL endpoint.
+    pub endpoint: String,
+    /// The repositories watched, one per project.
+    pub repository: Vec<WatchedRepository>,
+}
+
+/// One project's repository on GitHub.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WatchedRepository {
+    /// A registered project's name.
+    pub project: ProjectName,
+    /// Its repository on GitHub, `owner/name`.
+    pub github: RepositorySlug,
+}
+
+impl Default for GithubOptions {
+    fn default() -> Self {
+        Self {
+            token_env: "REN_GITHUB_TOKEN".into(),
+            poll_seconds: PollSecs::DEFAULT,
+            endpoint: GraphqlUrl::GITHUB.into(),
+            repository: Vec::new(),
+        }
+    }
+}
+
+impl GithubOptions {
+    fn is_off(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        GraphqlUrl::parse(&self.endpoint).map_err(ConfigError::GithubEndpoint)?;
+        let mut projects = std::collections::BTreeSet::new();
+        for watched in &self.repository {
+            if !projects.insert(&watched.project) {
+                return Err(ConfigError::GithubProjectTwice(watched.project.to_string()));
+            }
+        }
+        Ok(())
+    }
+
+    /// What the daemon watches, with the token read from `env`; none while
+    /// no repository is named.
+    fn watch(&self, env: &HostEnv) -> Result<Option<GithubWatch>, ConfigError> {
+        if self.repository.is_empty() {
+            return Ok(None);
+        }
+        let token = env
+            .get(&self.token_env)
+            .and_then(GithubToken::new)
+            .ok_or_else(|| ConfigError::MissingGithubToken(self.token_env.clone()))?;
+        Ok(Some(GithubWatch {
+            token,
+            endpoint: GraphqlUrl::parse(&self.endpoint).map_err(ConfigError::GithubEndpoint)?,
+            period: self.poll_seconds,
+            repositories: self
+                .repository
+                .iter()
+                .map(|watched| (watched.project.clone(), watched.github.clone()))
+                .collect(),
+        }))
+    }
 }
 
 /// The `[tools]` section: catalog entries in the built-in catalog's form,
@@ -369,6 +459,7 @@ impl Default for Config {
             runs: RunsOptions::default(),
             attachments: AttachmentOptions::default(),
             tools: ToolsOptions::default(),
+            github: GithubOptions::default(),
         }
     }
 }
@@ -479,6 +570,10 @@ impl Config {
                 Keys::Unchecked => None,
             },
             depot,
+            github: match keys {
+                Keys::Env(env) => self.github.watch(env)?,
+                Keys::Unchecked => None,
+            },
             revision: self.revision()?,
         })
     }
@@ -522,6 +617,7 @@ impl Config {
         self.buffer.validate()?;
         self.runs.validate()?;
         self.tools.depot()?;
+        self.github.validate()?;
         Ok(())
     }
 
@@ -576,6 +672,8 @@ pub struct RuntimeConfig {
     run_hold: Option<crate::host::Launcher>,
     /// The packages Ren knows: the built-in catalog with `[tools]`.
     depot: Depot,
+    /// What is watched on GitHub; none while nothing is.
+    github: Option<GithubWatch>,
     revision: String,
 }
 
@@ -595,6 +693,10 @@ impl RuntimeConfig {
     /// How much a session's attachments may hold.
     pub fn attachment_limits(&self) -> Limits {
         self.attachment_limits
+    }
+
+    pub fn github(&self) -> Option<&GithubWatch> {
+        self.github.as_ref()
     }
 
     pub fn runs(&self) -> &RunsOptions {

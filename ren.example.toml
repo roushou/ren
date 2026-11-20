@@ -161,3 +161,17 @@ prompt_bytes = 20971520
 # sha256 = "<64 hex digits>"
 # format = "tar_gz" # zip, bare
 # program_at = "acme-lint-x86_64-unknown-linux-gnu/acme-lint"
+
+# Optional: each registered project's repository on GitHub. Ren polls its
+# open pull requests and their checks (one GraphQL query per repository per
+# period) and shows them on the project's page. The token is read from the
+# daemon's environment, never this file: a fine-grained token with read
+# access to pull requests, commit statuses, and metadata. Nothing on GitHub
+# reaches this host.
+# [github]
+# token_env = "REN_GITHUB_TOKEN"
+# poll_seconds = 60 # 10 to 3600
+#
+# [[github.repository]]
+# project = "acme-web" # a project `ren project add` registered
+# github = "acme/web"

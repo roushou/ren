@@ -18,6 +18,7 @@ ignore = "0.4.25"
 ren-depot.workspace = true
 ren-gateway.workspace = true
 ren-git.workspace = true
+ren-github.workspace = true
 ren-harness.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true

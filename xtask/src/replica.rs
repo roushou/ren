@@ -16,7 +16,7 @@ use crate::{
     ui::{UiBuild, UiBuildError},
     unit::{KillMode, Listener, TransientUnit},
 };
-use ren_daemon::config::{Config, ConfigError, RunsOptions};
+use ren_daemon::config::{Config, ConfigError, GithubOptions, RunsOptions};
 use ren_gateway::{
     ControlToken, Environment, InstanceOptions,
     api::control::request::{ControlRequest, WorkChange},
@@ -421,6 +421,8 @@ impl Replica {
             },
             // Only production runs the factory: a replica drives no runs.
             runs: RunsOptions::default(),
+            // Production watches GitHub; a replica has no token to.
+            github: GithubOptions::default(),
             ..production
         }
     }
@@ -614,6 +616,10 @@ id = "team-key"
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 operator_key_env = "ACME_ANTHROPIC_KEY"
+
+[[github.repository]]
+project = "ren"
+github = "acme/ren"
 "#,
         )
         .unwrap()
@@ -629,6 +635,7 @@ operator_key_env = "ACME_ANTHROPIC_KEY"
         assert_eq!(config.instance.environment, Environment::Canary);
         assert!(config.runs.roots.is_empty());
         assert_eq!(config.upstreams[0].operator_key_env, "ACME_ANTHROPIC_KEY");
+        assert!(config.github.repository.is_empty());
         config.check().unwrap();
 
         let preview = Replica::preview("ren-3", 20_200, Path::new("/data/worktrees/.data/ren-3"));
