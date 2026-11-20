@@ -1,0 +1,26 @@
+[package]
+name = "ren-github"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "A GitHub client for a repository's pull requests: their heads, merge states, reviews, and checks, read with one GraphQL query, and a poller that keeps what it last saw."
+
+# Self-contained: it depends on none of Ren's crates.
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_with.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "time"] }
+
+[dev-dependencies]
+axum.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
+
+[lints]
+workspace = true

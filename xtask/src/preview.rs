@@ -189,7 +189,7 @@ impl Preview {
             let (gateway, ui) = worktree.ports();
             (tailscale, gateway, ui)
         });
-        let reached = replica.start(env, &ren, &worktree.root().join("ui"), &keys, publish)?;
+        let reached = replica.start(repo, &ren, &worktree.root().join("ui"), &keys, publish)?;
         let ui: PreviewUrl = reached
             .ui
             .parse()

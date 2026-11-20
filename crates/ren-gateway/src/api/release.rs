@@ -6,6 +6,7 @@
 //! operator's promotion request for the factory; the CLI reads these same
 //! views back.
 
+use ren_preview::{PreviewRequests, Previews};
 use ren_protocol::label::Stored;
 use ren_recorder::project::Factory;
 use ren_release::{
@@ -27,6 +28,9 @@ use ts_rs::TS;
 #[derive(Debug, Clone)]
 pub struct ReleaseFolder {
     data: PathBuf,
+    /// Held while the preview requests are read and written back, so two
+    /// asks never lose one another.
+    asks: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Why something of the release folder does not read or write.
@@ -51,6 +55,7 @@ impl ReleaseFolder {
     pub fn in_data(data_dir: &Path) -> Self {
         Self {
             data: data_dir.to_path_buf(),
+            asks: std::sync::Arc::default(),
         }
     }
 
@@ -119,6 +124,40 @@ impl ReleaseFolder {
         tokio::fs::write(&path, bytes)
             .await
             .map_err(|source| ReleaseFileError::Io { path, source })
+    }
+
+    /// The previews the factory runs; none before its first previews pass.
+    pub(super) async fn previews(&self) -> Result<Previews, ReleaseFileError> {
+        Ok(Self::json(&self.data.join(Previews::FILE))
+            .await?
+            .unwrap_or_default())
+    }
+
+    /// The commits the operator asked to preview.
+    pub(super) async fn preview_requests(&self) -> Result<PreviewRequests, ReleaseFileError> {
+        Ok(Self::json(&self.data.join(PreviewRequests::FILE))
+            .await?
+            .unwrap_or_default())
+    }
+
+    /// Changes the preview requests with `change` and writes them back,
+    /// one change at a time; answers what `change` answered.
+    pub(super) async fn change_preview_requests<T>(
+        &self,
+        change: impl FnOnce(&mut PreviewRequests) -> T,
+    ) -> Result<(T, PreviewRequests), ReleaseFileError> {
+        let _held = self.asks.lock().await;
+        let mut requests = self.preview_requests().await?;
+        let answer = change(&mut requests);
+        let path = self.data.join(PreviewRequests::FILE);
+        let bytes = serde_json::to_vec(&requests).map_err(|source| ReleaseFileError::Shape {
+            path: path.clone(),
+            source,
+        })?;
+        tokio::fs::write(&path, bytes)
+            .await
+            .map_err(|source| ReleaseFileError::Io { path, source })?;
+        Ok((answer, requests))
     }
 
     async fn json<T: serde::de::DeserializeOwned>(

@@ -1,9 +1,11 @@
 //! The dev slot's fake provider: one loopback server that answers every wire
 //! format Ren forwards (Anthropic Messages, OpenAI Responses and Chat
-//! Completions, Codex over HTTP and WebSocket) with scripted replies. It
-//! accepts any credentials and stores nothing. What it says is decided by
+//! Completions, Codex over HTTP and WebSocket) with scripted replies, and
+//! GitHub's GraphQL endpoint for the slot's fake repositories (`github`).
+//! It accepts any credentials and stores nothing. What it says is decided by
 //! the pure [`script`]; this module only writes it.
 
+mod github;
 mod script;
 mod writing;
 
@@ -19,6 +21,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt as _, StreamExt as _, stream};
+use github::FakeGithub;
 pub use script::Behaviour;
 use script::{Reply, Request as Scripted, SocketTurn, Wire};
 use std::{
@@ -85,10 +88,12 @@ impl FakeProvider {
             serial: AtomicU64::new(1),
             settings,
         });
-        Router::new().fallback(move |request: Request| {
-            let provider = provider.clone();
-            async move { provider.answer(request).await }
-        })
+        Router::new()
+            .route(FakeGithub::PATH, axum::routing::post(FakeGithub::answer))
+            .fallback(move |request: Request| {
+                let provider = provider.clone();
+                async move { provider.answer(request).await }
+            })
     }
 
     /// The pace the settings ask for, read now; the default without them.

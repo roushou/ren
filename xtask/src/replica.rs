@@ -11,17 +11,20 @@ use crate::{
     dev::{DevError, slot::Slot},
     file::{FileError, FileMode},
     invocation::{Echo, Invocation, InvocationError},
+    pod::{Access, Container, Mount, Pod},
     progress::Progress,
     tailscale::{TailscaleCli, TailscaleError},
     ui::{UiBuild, UiBuildError},
     unit::{KillMode, Listener, TransientUnit},
 };
-use ren_daemon::config::{Config, ConfigError, RunsOptions};
+use ren_daemon::config::{Config, ConfigError, GithubOptions, RunsOptions};
 use ren_gateway::{
     ControlToken, Environment, InstanceOptions,
     api::control::request::{ControlRequest, WorkChange},
 };
+use ren_github::Readiness;
 use ren_harness::host::HostEnv;
+use ren_preview::{PreviewRequests, Previews, Slot as PreviewSlot};
 use ren_protocol::label::Stored;
 use ren_recorder::{
     id::WorkItemId,
@@ -86,7 +89,7 @@ pub enum ReplicaError {
     #[error("production's backup failed; see `journalctl --user -u ren`")]
     Backup(PathBuf),
     #[error(
-        "{name} did not answer on {address} in time; see `journalctl --user -u 'ren-{name}-*'`"
+        "{name} did not answer on {address} in time; see `podman logs ren-{name}-daemon` and `podman logs ren-{name}-ui`"
     )]
     NotReady { name: String, address: SocketAddr },
     #[error("Tailscale reports no MagicDNS name for this node")]
@@ -134,6 +137,36 @@ pub struct ListedPreview {
 #[derive(Deserialize)]
 struct WorkListing {
     work: Vec<ListedWork>,
+}
+
+/// One open pull request, as production's `/api/projects/{name}/pulls`
+/// lists it, as far as the factory needs.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListedPull {
+    pub number: u64,
+    pub head: Commit,
+    pub readiness: Stored<Readiness>,
+}
+
+/// Production's answer about a project's pull requests: a tolerant reader
+/// of `PullsBody`, keeping only the answer, current or not.
+#[derive(Deserialize)]
+struct ObservedPulls {
+    seen: Option<ListedSighting>,
+    last: Option<ListedSighting>,
+}
+
+#[derive(Deserialize)]
+struct ListedSighting {
+    pull_requests: Vec<ListedPull>,
+}
+
+impl ObservedPulls {
+    fn listed(self) -> Option<Vec<ListedPull>> {
+        self.seen
+            .or(self.last)
+            .map(|sighting| sighting.pull_requests)
+    }
 }
 
 /// Where a started replica is reached.
@@ -331,6 +364,54 @@ impl ProductionPlace {
         request
     }
 
+    /// The previews the factory last wrote here; none before the first.
+    pub fn previews(&self) -> Previews {
+        fs::read(self.data_dir.join(Previews::FILE))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    /// Writes the previews where production's gateway serves them from.
+    pub fn write_previews(&self, previews: &Previews) -> Result<(), ReplicaError> {
+        let json = serde_json::to_vec_pretty(previews).map_err(ReplicaError::Json)?;
+        Ok(FileMode::Private.write(&self.data_dir.join(Previews::FILE), &json)?)
+    }
+
+    /// The commits the operator asked to preview; none when none were.
+    pub fn preview_requests(&self) -> PreviewRequests {
+        fs::read(self.data_dir.join(PreviewRequests::FILE))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    /// `project`'s open pull requests, as production last saw them on
+    /// GitHub (a failed poll's last answer included), each with its head
+    /// and whether it is a draft; none when production has not seen them.
+    pub fn pulls(&self, project: &str) -> Result<Option<Vec<ListedPull>>, ReplicaError> {
+        let path = format!("/api/projects/{project}/pulls");
+        let answer = Invocation::new("curl")
+            .args([
+                "--silent",
+                "--max-time",
+                "20",
+                "--write-out",
+                "\n%{http_code}",
+            ])
+            .arg(format!("http://{}{path}", self.listen))
+            .capture()?;
+        let (body, status) = answer.rsplit_once('\n').unwrap_or(("", answer.as_str()));
+        match status.trim() {
+            "200" => serde_json::from_str::<ObservedPulls>(body)
+                .map(ObservedPulls::listed)
+                .map_err(|_| ReplicaError::WorkAnswer(path)),
+            // A daemon that does not serve pull requests has seen none.
+            "404" => Ok(None),
+            other => Err(ReplicaError::WorkAnswer(format!("{path} answered {other}"))),
+        }
+    }
+
     /// The release the factory last wrote here, if it reads.
     pub fn release(&self) -> Option<Release> {
         let text = fs::read(self.data_dir.join(Release::FILE)).ok()?;
@@ -387,6 +468,28 @@ impl Replica {
         }
     }
 
+    /// The preview in `slot` of the factory's previews: its slot's ports,
+    /// in `~/.config/ren-previews/<slot>` and
+    /// `~/.local/state/ren-previews/<slot>`.
+    pub fn preview_slot(env: &HostEnv, slot: PreviewSlot) -> Result<Self, ReplicaError> {
+        let home = env
+            .absolute_path("HOME")
+            .ok_or(ReplicaError::MissingEnv("HOME"))?;
+        let (daemon, ui) = slot.ports();
+        let index = slot.index().to_string();
+        Ok(Self {
+            name: slot.name(),
+            environment: Environment::Preview,
+            daemon: SocketAddr::new(Self::LOOPBACK, daemon),
+            ui: SocketAddr::new(Self::LOOPBACK, ui),
+            config: home
+                .join(".config/ren-previews")
+                .join(&index)
+                .join("ren.toml"),
+            data_dir: home.join(".local/state/ren-previews").join(index),
+        })
+    }
+
     pub fn daemon(&self) -> SocketAddr {
         self.daemon
     }
@@ -395,20 +498,10 @@ impl Replica {
         self.ui
     }
 
-    /// Its units, in the order they stop: every one named `ren-<name>-`.
-    pub fn units(&self) -> [TransientUnit; 2] {
-        [
-            TransientUnit {
-                name: format!("ren-{}-ui", self.name),
-                description: format!("Ren {}: the UI", self.name),
-                kill: KillMode::ControlGroup,
-            },
-            TransientUnit {
-                name: format!("ren-{}-daemon", self.name),
-                description: format!("Ren {}: the daemon", self.name),
-                kill: KillMode::Mixed,
-            },
-        ]
+    /// Its pod, `ren-<name>`, with a container for the daemon and one for
+    /// the UI.
+    pub fn pod(&self) -> Pod {
+        Pod::new(&self.name)
     }
 
     /// Its configuration, from production's.
@@ -421,6 +514,8 @@ impl Replica {
             },
             // Only production runs the factory: a replica drives no runs.
             runs: RunsOptions::default(),
+            // Production watches GitHub; a replica has no token to.
+            github: GithubOptions::default(),
             ..production
         }
     }
@@ -430,7 +525,11 @@ impl Replica {
     /// `preview/data`) is ever removed.
     pub fn replace_data(&self, backup: &Path) -> Result<(), ReplicaError> {
         let ours = self.data_dir.ends_with(".local/state/ren-canary")
-            || self.data_dir.ends_with("preview/data");
+            || self.data_dir.ends_with("preview/data")
+            || self
+                .data_dir
+                .parent()
+                .is_some_and(|parent| parent.ends_with(".local/state/ren-previews"));
         if !ours {
             return Err(ReplicaError::NotOurs(self.data_dir.clone()));
         }
@@ -480,38 +579,58 @@ impl Replica {
 
     /// Starts `ren` as its daemon on the copied history, then the UI in
     /// `ui_dir`, read-only, published on the tailnet on `publish`'s ports
-    /// (the gateway's, then the UI's) when given.
+    /// (the gateway's, then the UI's) when given; each in a container of
+    /// its pod that sees only the build it runs and the replica's own
+    /// configuration and data.
     pub fn start(
         &self,
-        env: &HostEnv,
+        repo: &Path,
         ren: &Path,
         ui_dir: &Path,
         keys: &[String],
         publish: Option<(TailscaleCli, u16, u16)>,
     ) -> Result<Reached, ReplicaError> {
-        self.stop()?;
-        let [ui_unit, daemon_unit] = self.units();
+        Pod::ensure_image(repo)?;
+        self.stop_units()?;
+        let pod = self.pod();
+        pod.create()?;
         Progress(&format!(
-            "Starting {}'s daemon on {}",
-            self.name, self.daemon
+            "Starting {}'s daemon on {}, in pod {}",
+            self.name,
+            self.daemon,
+            pod.name()
         ))
         .show();
-        let environment: Vec<(&str, String)> = keys
-            .iter()
-            .map(|key| (key.as_str(), Self::PLACEHOLDER_KEY.to_owned()))
-            .collect();
-        daemon_unit.start(
-            None,
-            &[ren],
-            &[
+        pod.start(&Container {
+            role: "daemon",
+            workdir: None,
+            mounts: vec![
+                Mount {
+                    path: ren.to_path_buf(),
+                    access: Access::ReadOnly,
+                },
+                Mount {
+                    path: self.config.clone(),
+                    access: Access::ReadOnly,
+                },
+                Mount {
+                    path: self.data_dir.clone(),
+                    access: Access::ReadWrite,
+                },
+            ],
+            environment: keys
+                .iter()
+                .map(|key| (key.clone(), Self::PLACEHOLDER_KEY.to_owned()))
+                .collect(),
+            command: vec![
+                ren.display().to_string(),
                 "--config".into(),
                 self.config.display().to_string(),
                 "--data-dir".into(),
                 self.data_dir.display().to_string(),
                 "serve".into(),
             ],
-            &environment,
-        )?;
+        })?;
         self.answering(self.daemon)?;
         let reached = match publish {
             None => Reached {
@@ -530,19 +649,24 @@ impl Replica {
             }
         };
         Progress(&format!("Starting {}'s UI on {}", self.name, self.ui)).show();
-        let node = UiBuild::node_on(env)?;
-        ui_unit.start(
-            Some(ui_dir),
-            &[&node],
-            &[UiBuild::entry().display().to_string()],
-            &[
+        pod.start(&Container {
+            role: "ui",
+            workdir: Some(ui_dir.to_path_buf()),
+            mounts: vec![Mount {
+                path: ui_dir.to_path_buf(),
+                access: Access::ReadOnly,
+            }],
+            environment: [
                 ("HOST", self.ui.ip().to_string()),
                 ("PORT", self.ui.port().to_string()),
                 ("REN_GATEWAY_URL", format!("http://{}", self.daemon)),
                 ("REN_PUBLIC_GATEWAY_URL", reached.gateway.clone()),
                 ("ORIGIN", reached.ui.clone()),
-            ],
-        )?;
+            ]
+            .map(|(name, value)| (name.to_owned(), value))
+            .into(),
+            command: vec!["node".into(), UiBuild::entry().display().to_string()],
+        })?;
         self.answering(self.ui)?;
         if let Some((tailscale, _, ui_port)) = publish {
             tailscale.publish(ui_port, &format!("http://{}", self.ui))?;
@@ -570,9 +694,24 @@ impl Replica {
             .arg(&self.data_dir)
     }
 
+    /// Removes its pod, giving the daemon time to drain.
     pub fn stop(&self) -> Result<(), ReplicaError> {
-        for unit in self.units() {
-            unit.stop()?;
+        self.stop_units()?;
+        Ok(self.pod().remove()?)
+    }
+
+    /// Stops the transient units a replica ran as before it ran in a pod
+    /// (`ren-<name>-ui`, `ren-<name>-daemon`), by their exact names, so a
+    /// canary or preview an older xtask started does not hold the ports
+    /// its pod takes.
+    fn stop_units(&self) -> Result<(), ReplicaError> {
+        for (role, kill) in [("ui", KillMode::ControlGroup), ("daemon", KillMode::Mixed)] {
+            TransientUnit {
+                name: format!("ren-{}-{role}", self.name),
+                description: String::new(),
+                kill,
+            }
+            .stop()?;
         }
         Ok(())
     }
@@ -614,6 +753,10 @@ id = "team-key"
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 operator_key_env = "ACME_ANTHROPIC_KEY"
+
+[[github.repository]]
+project = "ren"
+github = "acme/ren"
 "#,
         )
         .unwrap()
@@ -629,6 +772,7 @@ operator_key_env = "ACME_ANTHROPIC_KEY"
         assert_eq!(config.instance.environment, Environment::Canary);
         assert!(config.runs.roots.is_empty());
         assert_eq!(config.upstreams[0].operator_key_env, "ACME_ANTHROPIC_KEY");
+        assert!(config.github.repository.is_empty());
         config.check().unwrap();
 
         let preview = Replica::preview("ren-3", 20_200, Path::new("/data/worktrees/.data/ren-3"));
@@ -652,24 +796,28 @@ operator_key_env = "ACME_ANTHROPIC_KEY"
     }
 
     #[test]
-    fn a_preview_runs_as_the_units_its_worktree_stops() {
+    fn a_preview_runs_as_the_pod_its_worktree_stops() {
         let worktree = ren_supervisor::Worktree::of(
             Path::new("/data/worktrees"),
             Path::new("/data/worktrees/ren-3"),
         )
         .unwrap();
         let preview = Replica::preview("ren-3", 20_200, &worktree.data());
-        let names = preview.units().map(|unit| unit.name);
-        assert_eq!(names, worktree.preview_units()[..2]);
+        assert_eq!(preview.pod().name(), worktree.preview_pod());
     }
 
     #[test]
-    fn every_unit_is_named_for_its_replica() {
+    fn every_pod_is_named_for_its_replica() {
         let preview = Replica::preview("acme-web-2", 20_100, Path::new("/tmp/acme"));
-        let names: Vec<String> = preview.units().into_iter().map(|unit| unit.name).collect();
+        assert_eq!(preview.pod().name(), "ren-preview-acme-web-2");
         assert_eq!(
-            names,
-            ["ren-preview-acme-web-2-ui", "ren-preview-acme-web-2-daemon"]
+            Replica::canary(&ren_harness::host::HostEnv::from_pairs([(
+                "HOME", "/home/op"
+            )]))
+            .unwrap()
+            .pod()
+            .name(),
+            "ren-canary"
         );
     }
 }

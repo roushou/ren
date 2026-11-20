@@ -232,6 +232,37 @@ dependencies under "Crates" below. Read the code for current module ownership.
   sans-IO: which build an instance runs (`Build`, its `Revision`, `Commit`,
   and `Tree`, and how two compare, `Comparison`). Its manifest allows only
   pure dependencies.
+- `crates/ren-github`: a self-contained GitHub client for a repository's
+  pull requests, with `Client` as its primary type
+  (docs/plans/self-build.md, phase 8). It depends on none of Ren's crates
+  and owns everything GitHub: a `Watch` is the one GraphQL query for a
+  `RepositorySlug` and the `Snapshot` its answer shows (the default
+  branch's head `Oid` and each open `PullRequest`: its `PullNumber`,
+  author's `Login`, head, `Readiness`, `MergeState`, `ReviewDecision`, and
+  each `Check` with its `CheckState`, summed up as `ChecksState`), and
+  whether the listing was cut (`Listing`); `Client` sends it to an
+  `Endpoint` (HTTPS, or HTTP to loopback) with a `Token` that is never
+  shown; a `Poller` reads repositories once a `PollPeriod`, keeping each
+  one's `Observation` (waiting, `Seen`, or `Failed` with the last
+  `Sighting` kept apart), with the time its caller gives it. A value
+  GitHub sends that it does not know is `Reported::Unknown`, never rounded
+  to a known one. Ren adapts
+  on its side: the daemon's `[github]` section maps projects to
+  repositories and runs the poller; the gateway's `PullBoard` keeps its
+  observations by project and serves them.
+- `crates/ren-preview`: which previews of Ren run, sans-IO, with
+  `Previews` as its primary type (docs/plans/self-build.md, phase 9): each
+  `Preview` in its `Slot` (its loopback and tailnet ports), of a
+  `PreviewKey` (an open pull request, or a commit the operator asked for),
+  at a commit, `Building`, `Running`, or `Failed` (`PreviewState`).
+  `Previews::want` takes the `Wanted` previews in priority order and the
+  `ren_release::PreviewCapacity`, and answers the previews that hold slots
+  and the `Action`s to get there (stop a slot, start a commit in one);
+  `started` and `failed` take the factory's reports, refusing a
+  `StaleReport`. A failed build is not tried again for its commit. The
+  factory keeps it in production's data folder (`Previews::FILE`). Its
+  manifest allows only pure dependencies, and `src/purity.rs` keeps its
+  sources free of I/O.
 - `crates/ren-depot`: the tools Ren's agents run with, with `Depot` as its
   primary type: the package catalog (`package`: `Package`, `PackageId`,
   `ProgramName`, `Kind`, client, runtime, or utility, and `Origin`; the
@@ -720,12 +751,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   production and its work item API, and `Replica`, the canary's and each
   preview's instance). `cargo xtask preview` (`preview`) runs a worktree's
   branch as a replica on the worktree's ports and records it on the work
-  items the branch names; `ren_supervisor::Worktree::preview_units` names
-  the units, which removing the worktree stops.
+  items the branch names; `ren_supervisor::Worktree::preview_pod` names
+  its pod, which removing the worktree removes. `pod` is how a replica
+  runs: a rootless Podman pod (`Pod`), one container per process, each
+  seeing only the kept build it runs (read-only) and the replica's own
+  configuration and data at their host paths, on the host's network, from
+  the image `deploy/instance/Containerfile` describes.
   `cargo xtask canary` is the factory's canary and promotion (`canary`;
   `docs/deployment.md#canary-and-promotion`, `docs/plans/self-build.md`,
   phase 4): a pass fetches `main` into Ren's own worktree and goes on with
-  that commit's xtask, builds it once, starts it as `ren-canary-*` units on a
+  that commit's xtask, builds it once, starts it in the pod `ren-canary` on a
   fresh backup of production's history (`canary::instance`: production, or
   with `--of dev` the dev slot, and the canary's derived configuration),
   checks it (`canary::checks`: doctor, a sweep of every read, kept whole by a
@@ -765,6 +800,8 @@ directly.
 | `ren-depot`                                | `Depot`, with its `ToolHost` port                   | none of ours      |
 | `ren-git`                                  | `Git`                                               | none of ours      |
 | `ren-release`                              | `Release`                                           | protocol          |
+| `ren-github`                               | `Client`                                            | none of ours      |
+| `ren-preview`                              | `Previews`                                          | github, release   |
 | `ren-project`                              | `ProjectContract`                                   | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |
 | `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |

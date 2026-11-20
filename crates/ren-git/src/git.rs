@@ -182,6 +182,20 @@ impl Git {
         self.commit_of(repo, &Revision::fetched())
     }
 
+    /// Fetch `commit` itself from `remote` into `repo`, by its id: a pull
+    /// request's head, or a commit no branch names any more. The remote must
+    /// serve it (GitHub serves any commit a ref of the repository reaches,
+    /// pull requests' included).
+    pub fn fetch_commit(
+        &self,
+        repo: &Path,
+        remote: &str,
+        commit: &CommitId,
+    ) -> Result<(), GitError> {
+        self.answer(repo, &["fetch", "--quiet", remote, commit.as_str()])
+            .map(drop)
+    }
+
     /// Check `commit` out at `path`, detached: a new worktree of `repo` when
     /// `path` is none yet, else the worktree there, whatever it held. For
     /// a worktree Ren alone uses, such as the one it builds `main` in.

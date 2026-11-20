@@ -14,7 +14,9 @@ use crate::{
     ui::UiBuild,
     unit::{KillMode, Listener, TransientUnit},
 };
-use ren_daemon::config::{Config, RunHold, RunsOptions, ToolsOptions, UpstreamConfig};
+use ren_daemon::config::{
+    Config, GithubOptions, RunHold, RunsOptions, ToolsOptions, UpstreamConfig, WatchedRepository,
+};
 use ren_daemon::host::HeldRuns;
 use ren_gateway::{
     ControlToken, EntryIngress, Environment, InstanceOptions,
@@ -145,6 +147,10 @@ impl Slot {
     /// The operator key the dev config's operator-key entries read: fake.
     const OPERATOR_KEY_ENV: &'static str = "REN_DEV_OPERATOR_KEY";
     const OPERATOR_KEY: &'static str = "fake-dev-operator-key";
+    /// The GitHub token the dev config's `[github]` reads: fake, and sent
+    /// only to the fake provider.
+    const GITHUB_TOKEN_ENV: &'static str = "REN_DEV_GITHUB_TOKEN";
+    const GITHUB_TOKEN: &'static str = "fake-dev-github-token";
     /// Seconds between checks for runs mid-way.
     const RUN_POLL: Duration = Duration::from_secs(2);
 
@@ -243,6 +249,24 @@ impl Slot {
                 worktree_env: Default::default(),
             },
             tools: toml::from_str::<ToolsOptions>(Self::TOOLS).map_err(|_| DevError::Config)?,
+            // The fake projects' repositories, on the fake provider's GitHub.
+            github: GithubOptions {
+                token_env: Self::GITHUB_TOKEN_ENV.into(),
+                poll_seconds: 30.try_into().map_err(|_| DevError::Config)?,
+                endpoint: fake("github/graphql"),
+                repository: Self::PROJECTS
+                    .iter()
+                    .chain(&["ren"])
+                    .map(|project| {
+                        Ok(WatchedRepository {
+                            project: project.parse().map_err(|_| DevError::Config)?,
+                            github: format!("acme/{}", project.trim_start_matches("acme-"))
+                                .parse()
+                                .map_err(|_| DevError::Config)?,
+                        })
+                    })
+                    .collect::<Result<_, DevError>>()?,
+            },
             ..Config::default()
         })
     }
@@ -528,6 +552,7 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
             ],
             &[
                 (Self::OPERATOR_KEY_ENV, Self::OPERATOR_KEY.into()),
+                (Self::GITHUB_TOKEN_ENV, Self::GITHUB_TOKEN.into()),
                 // Runs start the fake agent as `codex`, never a real client.
                 (
                     "PATH",

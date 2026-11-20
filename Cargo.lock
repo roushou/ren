@@ -1784,7 +1784,9 @@ dependencies = [
  "ren-depot",
  "ren-gateway",
  "ren-git",
+ "ren-github",
  "ren-harness",
+ "ren-preview",
  "ren-protocol",
  "ren-recorder",
  "ren-release",
@@ -1840,7 +1842,9 @@ dependencies = [
  "http-body-util",
  "proptest",
  "ren-depot",
+ "ren-github",
  "ren-harness",
+ "ren-preview",
  "ren-protocol",
  "ren-recorder",
  "ren-release",
@@ -1875,6 +1879,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-github"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "strum",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "ren-harness"
 version = "0.1.0"
 dependencies = [
@@ -1894,6 +1912,20 @@ dependencies = [
  "toml",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "ren-preview"
+version = "0.1.0"
+dependencies = [
+ "ren-github",
+ "ren-protocol",
+ "ren-release",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "strum",
+ "thiserror",
 ]
 
 [[package]]
@@ -1974,6 +2006,7 @@ dependencies = [
  "ren-gateway",
  "ren-git",
  "ren-harness",
+ "ren-preview",
  "ren-project",
  "ren-protocol",
  "ren-recorder",
@@ -3477,12 +3510,15 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "blake3",
  "clap",
  "futures-util",
  "ren-daemon",
  "ren-gateway",
  "ren-git",
+ "ren-github",
  "ren-harness",
+ "ren-preview",
  "ren-project",
  "ren-protocol",
  "ren-recorder",

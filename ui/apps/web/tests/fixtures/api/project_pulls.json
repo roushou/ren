@@ -1,0 +1,39 @@
+{
+  "api_version": 1,
+  "watch": "seen",
+  "repository": "acme/ren",
+  "seen": {
+    "at": 1800000000000,
+    "default_branch": {
+      "name": "main",
+      "head": "1111111111111111111111111111111111111111"
+    },
+    "pull_requests": [
+      {
+        "number": 12,
+        "title": "feat: a landing page",
+        "url": "https://github.com/acme/ren/pull/12",
+        "author": "acme-bot",
+        "readiness": "ready",
+        "head_branch": "landing",
+        "head": "2222222222222222222222222222222222222222",
+        "base_branch": "main",
+        "merge": "behind",
+        "review": "not_required",
+        "checks": "pending",
+        "check_list": [
+          {
+            "name": "CI",
+            "state": "passed"
+          },
+          {
+            "name": "Compatibility",
+            "state": "running"
+          }
+        ],
+        "work_items": ["00000000-0000-7000-8000-000000000001"]
+      }
+    ],
+    "truncated": false
+  }
+}

@@ -406,6 +406,12 @@ fn a_fetched_branch_is_checked_out_detached_and_counted() {
     assert!(!git.contains(&local, &main, &tip).unwrap());
     let absent: crate::CommitId = "0123456789012345678901234567890123456789".parse().unwrap();
     assert!(!git.contains(&local, &tip, &absent).unwrap());
+    // A commit fetched by its id alone, as a pull request's head is.
+    let other = dir.path().join("other");
+    std::fs::create_dir(&other).unwrap();
+    git.init(&other).unwrap();
+    git.fetch_commit(&other, remote, &tip).unwrap();
+    assert!(git.contains(&other, &tip, &main).unwrap());
     // What a build left in the worktree does not hold the next checkout.
     std::fs::write(tree.join("README.md"), "built over").unwrap();
     git.check_out_detached(&local, &tree, &tip).unwrap();

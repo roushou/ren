@@ -12,6 +12,7 @@ LandWorkRequest
 ListRequest
 LoginAnswer
 PauseRequest
+PreviewAskRequest
 PreviewWorkRequest
 PromoteRequest
 PromptRequest

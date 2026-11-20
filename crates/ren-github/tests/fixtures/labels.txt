@@ -1,0 +1,5 @@
+github::CheckState: queued running expected passed failed errored cancelled timed_out skipped neutral action_required stale startup_failed
+github::ChecksState: passing failing errored pending expected none
+github::Readiness: draft ready
+github::MergeState: clean behind blocked conflicting draft unstable has_hooks computing
+github::ReviewDecision: approved changes_requested review_required not_required

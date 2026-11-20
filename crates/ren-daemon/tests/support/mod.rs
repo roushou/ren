@@ -9,7 +9,7 @@ use axum::Router;
 use ren_daemon::config::Config;
 use ren_gateway::{
     ControlToken, Gateway, Ingress, IngressError, ManagementSetup, ReleaseFolder, ReqwestUpstream,
-    Shutdown, Stopped, Upstream, control::Controls,
+    Shutdown, Stopped, Upstream, control::Controls, github::PullBoard,
 };
 use ren_harness::{endpoint::GatewayEndpoint, lines::LineLimit};
 use ren_protocol::{direction::Direction, label::Stored};
@@ -172,6 +172,9 @@ pub struct TestGateway {
     /// The supervisor's task, when runs are enabled.
     runs: Option<JoinHandle<()>>,
     clock: Arc<ManualClock>,
+    /// What the read API reports of GitHub: project `ren` watched on
+    /// `acme/ren`, recorded on by tests rather than polled.
+    pulls: PullBoard,
 }
 
 impl TestGateway {
@@ -314,6 +317,7 @@ impl TestGateway {
             None => (None, None),
         };
         let reader = Reader::open(dir, 2).await.unwrap();
+        let pulls = PullBoard::watching([("ren".parse().unwrap(), "acme/ren".parse().unwrap())]);
         let shutdown = Shutdown::default();
         let controls = Arc::new(Controls::restore(operator));
         let gateway = Arc::new(Gateway::new(
@@ -335,6 +339,7 @@ impl TestGateway {
             runs: supervisor,
             tools,
             release: ReleaseFolder::in_data(dir),
+            pulls: pulls.clone(),
         });
         let ingress = Ingress::new(listener, router.clone());
         let server = tokio::spawn(ingress.serve(shutdown.clone(), Self::DRAIN_DEADLINE));
@@ -346,7 +351,13 @@ impl TestGateway {
             worker,
             runs,
             clock,
+            pulls,
         }
+    }
+
+    /// The GitHub board the read API reports.
+    pub fn pulls(&self) -> &PullBoard {
+        &self.pulls
     }
 
     /// The gateway's clock, which moves only when advanced.

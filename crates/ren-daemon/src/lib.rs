@@ -17,9 +17,11 @@ use crate::tools::{HostToolbox, ToolStore, fetch::ReqwestFetch};
 use ren_gateway::{
     ControlToken, Gateway, ManagementSetup, ReleaseFolder, ReqwestUpstream, Shutdown, Stopped,
     control::Controls,
+    github::PullBoard,
     operator::{OperatorState, Pause, RestoreError},
 };
 use ren_gateway::{IngressError, UpstreamConfigError};
+use ren_github::Poller;
 use ren_harness::{
     endpoint::{GatewayEndpoint, GatewayEndpointError},
     lines::LineLimit,
@@ -236,10 +238,11 @@ impl Daemon {
             upstream,
             recorder,
             controls,
-            clock,
+            clock.clone(),
             shutdown.clone(),
         );
         let tools = Self::toolbox(config, data_dir, &reader);
+        let pulls = Self::watch_github(config, clock, &shutdown);
         let ingress = gateway.into_ingress(
             listener,
             ManagementSetup {
@@ -253,6 +256,7 @@ impl Daemon {
                 instance: config.instance(),
                 runs: runs.as_ref().map(|(supervisor, _)| supervisor.clone()),
                 release: ReleaseFolder::in_data(data_dir),
+                pulls: pulls.clone(),
             },
         );
         // The gateway holds the only supervisor handles: the runs drain once
@@ -382,6 +386,39 @@ impl Daemon {
         ))
     }
 
+    /// The board of what is watched on GitHub, with `ren_github`'s poller
+    /// recording on it until the gateway drains. Its times are the
+    /// daemon's clock's.
+    fn watch_github(
+        config: &RuntimeConfig,
+        clock: Arc<dyn Clock>,
+        shutdown: &Shutdown,
+    ) -> PullBoard {
+        let Some(setup) = config.github() else {
+            return PullBoard::default();
+        };
+        let board = PullBoard::watching(setup.projects.iter().cloned());
+        let poller = Poller::new(setup.client.clone(), setup.period, board.repositories());
+        let recording = board.clone();
+        let stop = shutdown.clone();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "process wiring: the daemon owns the GitHub poller's task"
+        )]
+        tokio::spawn(async move {
+            poller
+                .run(
+                    |repository, observation| recording.record(repository, observation),
+                    || {
+                        std::time::SystemTime::UNIX_EPOCH
+                            + Duration::from_millis(clock.now().wall.as_millis())
+                    },
+                    stop.draining(),
+                )
+                .await;
+        });
+        board
+    }
     /// The host's tools for the control API, or none when downloads cannot
     /// be set up (the tools routes then say so).
     fn toolbox(

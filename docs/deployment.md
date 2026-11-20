@@ -364,10 +364,16 @@ commit's own xtask, so a commit is checked by its own checks. It builds the
 commit once into `~/.local/share/ren/builds/<commit>` (the release `ren`
 and the UI's deployable copy; the newest few are kept). It backs up
 production's history with the running daemon (`ren control backup`) and
-starts the build as the canary on a copy of it: the units `ren-canary-daemon`
-and `ren-canary-ui`, on loopback `17787` and `17000`, with
-`~/.config/ren-canary` and `~/.local/state/ren-canary`, both replaced on every
-pass. Its configuration is production's with its own listener, `[instance]
+starts the build as the canary on a copy of it: the rootless Podman pod
+`ren-canary`, its daemon and UI each a container (`ren-canary-daemon`,
+`ren-canary-ui`; `podman logs` reads them), on loopback `17787` and `17000`,
+with `~/.config/ren-canary` and `~/.local/state/ren-canary`, both replaced on
+every pass. A container sees only the build it runs, read-only, and the
+canary's own configuration and data, each at its host path; it runs as the
+operator's user and shares the host's network, so `ren` keeps its loopback
+listener. The image, `localhost/ren-instance` (Node, the C runtime, and CA
+certificates, from `deploy/instance/Containerfile`), holds no build of Ren:
+it is built once, the first time a pass needs it. Its configuration is production's with its own listener, `[instance]
 environment = "canary"`, no `[runs]`, and a placeholder for every operator
 key, so it drives no runs and forwards no operator-keyed call; its UI only
 reads. `--publish` also publishes it on the tailnet, gateway `9445` and UI
@@ -442,8 +448,8 @@ cargo xtask preview down --publish # stop, unpublish, take it off the work items
 
 `up` builds the branch (debug) into `<data>/preview`, backs up production's
 history with production's own `ren`, and starts the build as a replica, as
-the canary is: `ren-preview-<worktree>-daemon` on the slot's first port and
-`ren-preview-<worktree>-ui` on the next, with production's configuration but
+the canary is: the pod `ren-preview-<worktree>`, its daemon on the slot's
+first port and its UI on the next, with production's configuration but
 `environment = "preview"`, no runs, no operator key, and a UI that only reads.
 `--publish` publishes both on the tailnet on the same port numbers, with the
 install's saved Tailscale choice. It then records the preview on every sent
@@ -452,6 +458,37 @@ work item the branch's recent commits name (`Work-Item: <id>`), and on each
 page on it beside production's.
 `--of dev` copies the dev slot instead. Deleting the worktree's session
 stops its preview with it, and takes it off the session's work items.
+
+#### Previews of pull requests and commits
+
+Every canary pass also brings the factory's own previews up to date
+(`cargo xtask canary previews` runs just that): one for each commit the
+operator asked to preview, newest ask first, then one for each of Ren's
+open pull requests that is not a draft, as production last saw them on
+GitHub (`[github]`), most recently updated first. As many run as
+`release.toml` allows:
+
+```toml
+previews = 2 # 1 to 8; each is a daemon, a UI, and a copy of production's history
+```
+
+Each runs in a slot: slot `n`'s daemon listens on loopback `18100 + 2n` and
+its UI on the next port, published on the tailnet on `9450 + 2n` and the next
+with `--publish`, in the pod `ren-preview-<n>`, with `~/.config/ren-previews/<n>`
+and `~/.local/state/ren-previews/<n>`. The canary timer publishes previews only when it was enabled with
+`--publish` (`cargo xtask canary enable --publish`); a preview started
+without it answers on loopback alone, and says so. A pass fetches each new commit from
+`origin` by its id (a pull request's head included), builds it once into
+`~/.local/share/ren/builds` from its own worktree,
+`~/.local/share/ren/preview-factory`, and starts it on a fresh copy of
+production's history, as the canary is. A pull request whose head moves is
+previewed again in its slot; one that closes, or a commit no longer asked
+for, is stopped. A build or start that fails is recorded with why, its slot
+left empty, and is not tried again for that commit. While production has
+not seen its pull requests (no answer from GitHub yet), the previews of pull
+requests are kept as they are. What runs is written to production's data
+folder (`previews.json`); the commits asked for are read from
+`preview-requests.json` beside it.
 
 ### Projects
 

@@ -323,8 +323,7 @@ impl ProjectCmd {
     /// The unit the worktree's preview runs as: the one removing the
     /// worktree stops.
     pub(super) fn unit(worktree: &Worktree) -> String {
-        let [_, _, serve] = worktree.preview_units();
-        serve
+        worktree.preview_unit()
     }
 
     /// Waits up to a minute for `open` to answer `health`.
@@ -724,7 +723,7 @@ mod tests {
             Path::new("/data/worktrees/.data/acme-web-2")
         );
         assert_eq!(
-            place.worktree().unwrap().preview_units()[2],
+            place.worktree().unwrap().preview_unit(),
             "ren-preview-acme-web-2-serve"
         );
         // A folder given, or no worktree, has no ports.

@@ -15,9 +15,10 @@
 //! `enable` runs a pass on a systemd user timer.
 
 mod checks;
+mod previews;
 mod work;
 
-use self::{checks::Checks, work::WorkLedger};
+use self::{checks::Checks, previews::PreviewPass, work::WorkLedger};
 use crate::{
     builds::{Builds, BuildsError, StoredBuild},
     dev::DevError,
@@ -63,6 +64,10 @@ enum CanaryAction {
     /// Close work items: land those main's commits name, and ship those
     /// production's build holds. Every pass does this too.
     Work(WorkArgs),
+    /// Bring the previews up to date: one for each commit asked for and each
+    /// open pull request that is not a draft, as many as release.toml's
+    /// `previews` allows. Every pass does this too.
+    Previews(PreviewsArgs),
     /// Stop the canary and remove its routes.
     Down(PublishArgs),
     /// Run a pass on a systemd user timer.
@@ -88,6 +93,18 @@ struct TargetArgs {
     /// The instance the canary copies and promotes into.
     #[arg(long, value_enum, default_value_t = Production::Installed)]
     of: Production,
+}
+
+#[derive(Args)]
+struct PreviewsArgs {
+    #[command(flatten)]
+    target: TargetArgs,
+    #[command(flatten)]
+    publish: PublishArgs,
+    /// The project whose pull requests are previewed: Ren itself, as
+    /// production registers it.
+    #[arg(long, default_value = "ren")]
+    project: String,
 }
 
 #[derive(Args)]
@@ -137,6 +154,8 @@ pub enum CanaryError {
     DevPromotion,
     #[error(transparent)]
     Replica(#[from] ReplicaError),
+    #[error("the previews: {0}")]
+    Preview(String),
     #[error(transparent)]
     Git(#[from] GitError),
     #[error(transparent)]
@@ -184,6 +203,8 @@ struct Factory {
 
 impl Factory {
     const REMOTE: &str = "origin";
+    /// The project Ren itself is registered as.
+    const REN: &str = "ren";
     const MAIN: &str = "main";
     const TIMER: &str = "ren-canary";
     /// The canary's tailnet HTTPS ports, with `--publish`, beside the
@@ -300,7 +321,7 @@ impl Factory {
         let publish = self
             .tailscale(args.publish)?
             .map(|tailscale| (tailscale, Self::GATEWAY_PORT, Self::UI_PORT));
-        let reached = canary.start(env, &build.ren(), &build.ui(), &keys, publish)?;
+        let reached = canary.start(&self.repo, &build.ren(), &build.ui(), &keys, publish)?;
         println!("\nCanary: {}\n", reached.ui);
         let verdict = Checks {
             env,
@@ -319,9 +340,27 @@ impl Factory {
         }
         self.requested(env, &production)?;
         WorkLedger::new(&production).close(self, &id)?;
+        // A previews pass that fails leaves the canary's verdict standing.
+        let previewed = PreviewPass {
+            factory: self,
+            production: &production,
+            publish: args.publish,
+            project: Self::REN,
+        }
+        .run(env)
+        .unwrap_or_else(|error| {
+            println!("warning: the previews pass failed: {error}");
+            production
+                .previews()
+                .previews()
+                .iter()
+                .map(|preview| preview.commit.clone())
+                .collect()
+        });
         let keep: Vec<Commit> = [Some(commit), Self::running(&production)]
             .into_iter()
             .flatten()
+            .chain(previewed)
             .collect();
         self.builds.prune(&keep.iter().collect::<Vec<_>>())?;
         Ok(())
@@ -589,6 +628,17 @@ impl Canary {
                 let closed = WorkLedger::new(&production).close(&factory, &main)?;
                 println!("{} landed, {} shipped", closed.landed, closed.shipped);
                 Ok(())
+            }
+            CanaryAction::Previews(args) => {
+                let production = ProductionPlace::new(env, args.target.of)?;
+                PreviewPass {
+                    factory: &factory,
+                    production: &production,
+                    publish: args.publish,
+                    project: &args.project,
+                }
+                .run(env)
+                .map(drop)
             }
             CanaryAction::Down(publish) => {
                 let canary = Replica::canary(env)?;

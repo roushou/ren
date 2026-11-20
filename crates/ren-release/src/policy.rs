@@ -39,6 +39,53 @@ pub struct MinuteOfDay(u16);
 pub struct ReleaseOptions {
     pub promote: Policy,
     pub projects: std::collections::BTreeMap<String, ProjectRelease>,
+    /// How many previews of pull requests and commits run at once.
+    pub previews: PreviewCapacity,
+}
+
+/// How many previews run at once: 1 to 8. Each is a daemon, a UI, and a
+/// copy of production's history. Read from configuration as a number, so
+/// one out of range is refused as it loads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u64", into = "u64")]
+pub struct PreviewCapacity(u8);
+
+/// A preview capacity outside 1 to 8.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("previews runs 1 to 8 previews at once")]
+pub struct PreviewCapacityOutOfRange;
+
+impl PreviewCapacity {
+    pub const DEFAULT: Self = Self(2);
+    pub const MOST: Self = Self(8);
+
+    pub fn get(self) -> usize {
+        usize::from(self.0)
+    }
+}
+
+impl Default for PreviewCapacity {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl TryFrom<u64> for PreviewCapacity {
+    type Error = PreviewCapacityOutOfRange;
+
+    fn try_from(count: u64) -> Result<Self, PreviewCapacityOutOfRange> {
+        u8::try_from(count)
+            .ok()
+            .filter(|count| (1..=Self::MOST.0).contains(count))
+            .map(Self)
+            .ok_or(PreviewCapacityOutOfRange)
+    }
+}
+
+impl From<PreviewCapacity> for u64 {
+    fn from(capacity: PreviewCapacity) -> Self {
+        capacity.0.into()
+    }
 }
 
 /// One project's release settings.
@@ -159,7 +206,7 @@ impl fmt::Display for Policy {
 
 #[cfg(test)]
 mod tests {
-    use super::{MinuteOfDay, Policy, PolicyError, ReleaseOptions};
+    use super::{MinuteOfDay, Policy, PolicyError, PreviewCapacity, ReleaseOptions};
 
     fn minute(text: &str) -> MinuteOfDay {
         text.parse().unwrap()
@@ -222,5 +269,14 @@ mod tests {
         assert_eq!(options.promote.to_string(), "02:00-05:00");
         assert_eq!(options.project("acme-web"), Policy::Automatic);
         assert_eq!(options.project("acme-api"), Policy::Manual);
+    }
+
+    #[test]
+    fn previews_run_one_to_eight_at_once() {
+        let read = |json: &str| serde_json::from_str::<ReleaseOptions>(json);
+        assert_eq!(read("{}").unwrap().previews, PreviewCapacity::DEFAULT);
+        assert_eq!(read(r#"{"previews": 3}"#).unwrap().previews.get(), 3);
+        assert!(read(r#"{"previews": 0}"#).is_err());
+        assert!(read(r#"{"previews": 9}"#).is_err());
     }
 }

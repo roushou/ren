@@ -189,3 +189,54 @@ async fn the_release_view_reads_shots_and_records_a_promotion_request() {
     }
     gateway.stop().await;
 }
+
+#[tokio::test]
+async fn previews_are_asked_for_withdrawn_and_listed() {
+    let upstream = mock(Router::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::start(&config(&upstream), dir.path()).await;
+    let ask = |path: &'static str, commit: &'static str| {
+        let base = gateway.base();
+        async move {
+            let response = client()
+                .post(format!("{base}/control/v1/previews/{path}"))
+                .bearer_auth(TestGateway::CONTROL_TOKEN)
+                .header("content-type", "application/json")
+                .body(json!({ "commit": commit }).to_string())
+                .send()
+                .await
+                .unwrap();
+            let status = response.status();
+            let body: Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+            (status, body)
+        }
+    };
+
+    let (status, body) = ask("ask", PRODUCTION).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(body["commits"], json!([PRODUCTION]));
+    let (_, body) = ask("ask", CANARY).await;
+    assert_eq!(body["commits"], json!([CANARY, PRODUCTION]));
+    let (status, body) = ask("withdraw", PRODUCTION).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(body["commits"], json!([CANARY]));
+    let (status, body) = ask("withdraw", PRODUCTION).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"], "not_found");
+    let read: ren_preview::PreviewRequests = serde_json::from_slice(
+        &std::fs::read(dir.path().join(ren_preview::PreviewRequests::FILE)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(read.commits(), [CANARY.parse().unwrap()]);
+
+    // Without the control token, nothing changes.
+    let refused = client()
+        .post(format!("{}/control/v1/previews/ask", gateway.base()))
+        .header("content-type", "application/json")
+        .body(json!({ "commit": PRODUCTION }).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    gateway.stop().await;
+}

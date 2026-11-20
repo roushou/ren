@@ -61,6 +61,18 @@ everyone using it, the agents included.**
   build and the backup taken before the upgrade. An upgrade that fails its
   checks is rolled back without any agent or UI, as `install-vps` does
   today.
+- **A commit preview is the primitive.** A build is one commit's; an
+  instance runs one build. A branch preview is a commit preview that follows
+  its pull request's head, and the canary is the one that follows `main`'s.
+  On-demand previews of a commit need nothing beyond that.
+- **GitHub is observed, not trusted with Ren's state.** Ren reads pull
+  requests, their checks, and their heads, and records what it saw. Work
+  items, builds, and releases stay Ren's; GitHub only links to them.
+- **Nothing on GitHub reaches the host.** Ren polls GitHub; it takes no
+  webhooks, so no listener is public and a laptop works the same as the VPS.
+- **Previews still run no agents.** Isolating a preview's runs from
+  production (a microVM per run, such as Docker Sandboxes, or containers) is
+  an open question, not part of these phases.
 - **Ren first, projects next.** Each part is built for Ren and described as
   a project's declared contract (build, run, check, quiesce), so a project
   built with Ren can declare its own. The generic form waits until Ren uses
@@ -77,6 +89,17 @@ everyone using it, the agents included.**
 
 The dev slot exists (`cargo xtask dev`). Each instance names itself with
 `[instance] environment`, which `/health` reports.
+
+Phases 7 to 9 reshape this table into one kind of instance, described by a
+spec (phase 7):
+
+| Instance       | Built from                          | Data                 | Lifetime                                |
+| -------------- | ----------------------------------- | -------------------- | --------------------------------------- |
+| Production     | the last promoted build             | the real store       | permanent                               |
+| Canary         | follows `main`'s head               | a copy of production | permanent; replaced on each new head    |
+| Branch preview | follows an open pull request's head | a copy of production | until its pull request merges or closes |
+| Commit preview | one commit, on demand               | a copy of production | until stopped, or evicted by the policy |
+| Dev slot       | the checkout                        | a seeded scenario    | while developing                        |
 
 ## Phases
 
@@ -281,9 +304,149 @@ The dev slot exists (`cargo xtask dev`). Each instance names itself with
      commit behind.
    - Not built: a timer for project passes (run `ren project canary` from
      any scheduler).
+7. **One kind of instance, in containers.** In progress: the canary and
+   previews run in pods; one spec, the scenario data source, and the dev
+   slot are not built.
+   - Today the dev slot, previews, and the canary are three code paths
+     (`xtask/src/dev/slot.rs`, `preview.rs`, `replica.rs`). Each one picks
+     its own ports, unit names, data folders, and tailnet routes. They
+     become one `Instance`, described by a spec that is data: the build it
+     runs (a commit's kept build, or the checkout), its data source, and
+     its name.
+   - The data source is an enum: a copy of production's latest backup, or
+     a seeded scenario (today's `dev seed`, with the fake provider). The
+     dev slot becomes an instance of the checkout with a scenario. That
+     gives it the same daemon, UI, and checks as every other instance,
+     instead of a parallel set.
+   - Each instance runs as one rootless Podman pod (the daemon and the
+     UI), under the operator's systemd user, built from the kept build of
+     its commit. The image packages the binary and UI bundle that
+     `builds/<commit>` already holds; it never rebuilds them, so promoting
+     builds rather than branches still holds. The image grows a UI layer;
+     the published `Dockerfile` stays the daemon's.
+   - The pod publishes one loopback port. Ren's tailnet route points at
+     it, as `--publish` does now. Stopping an instance removes its pod and
+     its volume; nothing is left in the user's units or folders.
+   - Production stays a host install in this phase: the laptop story and
+     `install-vps`'s rollback do not change.
+   - The canary and previews keep their rules: no runs, a placeholder for
+     every operator key.
+   - Built: `Replica` runs as the pod `ren-<name>` (`xtask/src/pod.rs`),
+     its daemon and UI each a container seeing only the kept build it
+     runs, read-only, and the replica's own configuration and data. Its
+     start stops the transient units an older xtask ran it as, by name.
+     Removing a worktree removes its preview's pod.
+   - Verified with the dev slot as production, from a worktree folder of
+     slot 9: `preview up` built the image once, started the pod, and served
+     the copied history read-only on the slot's ports (`/health` said
+     `preview`); inside the daemon's container, production's data and
+     `~/.config` did not exist. A stand-in unit holding the daemon's port
+     under the old unit name was stopped, and `preview down` removed the
+     pod.
+8. **GitHub, observed.** Built, but for posting anything to GitHub, which
+   is phase 9's. Ren shows what is happening on GitHub,
+   so the operator watches pull requests in Ren, not on github.com.
+   - A sans-IO crate parses GitHub's REST answers into typed observations:
+     a pull request (its number, head commit, base, mergeability, whether
+     it is up to date with its base, review state), its check runs, and
+     `main`'s head. Each type keeps an unknown variant with the raw value.
+     A pull request's number is its own type, never a work item's ID.
+   - The daemon polls each registered project's repository on an interval,
+     with conditional requests (an unchanged answer costs no rate limit),
+     and records what changed as observations. The HTTP client lives in
+     the daemon's shell.
+   - Ren holds its own fine-grained token, read-only in this phase, as an
+     operator key: it is never read from `gh` or any other client's store,
+     never recorded, and never in `Debug`, errors, or logs.
+   - The UI lists each project's pull requests with their checks, the
+     work items their `Work-Item:` trailers name, and their preview. A
+     work item shows its pull request, which closes the loop phase 5
+     started.
+   - Built: `ren-github`, a self-contained GitHub client (the query,
+     what an answer shows, the client, and the poller), the `[github]`
+     section mapping projects to repositories and the daemon running the
+     poller, `GET
+     /api/projects/{name}/pulls`, and the project Overview's Pull requests:
+     each open one with its checks, whether it can merge, its review, its
+     branch, and the work items it names, drawn faded under the error when
+     the newest poll failed. The dev slot's fake provider answers the query
+     for `acme/web` and `acme/api` with invented pull requests.
+   - Not built: a work item showing its pull request (the pull request
+     shows its work items), and each pull request's preview, which is
+     phase 9.
+   - Verified in the dev slot: both fake projects' Overviews listed their
+     pull requests from the fake GitHub (passing and approved, behind with
+     checks running, conflicting, blocked, and a draft), and Ren's, not
+     watched there, said so.
+9. **Previews of every pull request, and of any commit.** Built, but for
+   GitHub deployments and the canary as the preview of `main` (see below).
+   - A preview's lifecycle is a pure, persisted state machine: requested,
+     building, running, superseded, stopped, failed. Its transitions are
+     `(State, Event) -> (State, Vec<Action>)`, tested without I/O.
+   - A commit preview is requested by hand (`ren preview <commit>`, or
+     from the UI) and builds that commit once, like the canary does.
+   - A branch preview follows an open pull request: the factory's pass
+     reads the pull requests phase 8 observed, previews each head it has
+     not built, supersedes the head's previous preview, and stops it when
+     the pull request merges or closes.
+   - The canary is the branch preview of `main`, with checks and
+     promotion on top; it builds `main`'s head as soon as a pass sees it.
+   - How many previews run at once and which one is evicted first are
+     policy, in `release.toml`. Each one is a daemon, a UI, and a copy of
+     production, and the host's memory is finite.
+   - The factory builds previews; the agent no longer runs `cargo xtask
+     preview up`. This replaces the deviation "A preview is a replica, run
+     by the agent".
+   - Built: `ren-preview` (`Previews`, the slots and `want`, and
+     `PreviewRequests`), `Git::fetch_commit`, and the factory's pass
+     (`xtask/src/canary/previews.rs`), run by every canary pass and by
+     `cargo xtask canary previews`; a pass keeps its previews' builds.
+   - Verified with the dev slot as production and its `acme-web` as the
+     project: a commit asked for was built once and started in
+     `ren-preview-0`, answering as that commit; the fake pull requests'
+     invented heads failed to fetch and were kept as failed, with why,
+     and not tried again; a second pass changed nothing; withdrawing the
+     ask gave its slot to the next pull request, whose failure left the
+     slot empty.
+   - Built: `GET /api/projects/{name}/previews`, `POST
+     /control/v1/previews/ask` and `/withdraw`, `ren preview
+     list|ask|withdraw`, and on the project Overview each pull request's
+     preview (a link when the tailnet reaches it) and the Commit previews,
+     with a field to ask for one and Withdraw. A running preview records
+     whether the pass published it (`Reach`): the canary timer publishes
+     only when enabled with `--publish`, and a preview on loopback alone
+     says so rather than linking where no browser elsewhere can go.
+   - Verified in the dev slot, whose fake GitHub now has `acme/ren`: the
+     pass previewed an asked-for commit in slot 0 and recorded pull
+     request #7's unfetchable head as failed in slot 1; Ren's Overview
+     showed both; `ren preview ask`, `list`, and `withdraw` changed the
+     asks through the dev daemon, and a second withdrawal was `404`.
+   - Not built: GitHub deployments, which need a token that can write;
+     and the canary as the branch preview of `main`: it keeps its own
+     pass and ports, beside the previews.
+   - With a token allowed to write deployments, each preview is posted to
+     its pull request as a GitHub deployment, so its address appears on
+     the pull request too. Merging from Ren is not part of this phase: it
+     acts on GitHub for the operator and would always ask first.
+10. **Release rules.** Planned. The canary proves behaviour, not only that
+    it starts.
+    - Today the Ren suite is doctor, reads, and pages: the build runs and
+      answers. The suite grows checks that drive the canary as a client
+      would, against the fake provider, each written as a `CheckKind` the
+      `Suite` requires:
+      - a turn through the gateway for each wire format, recorded and read
+        back complete;
+      - the fake provider's `cut`, `slow`, `error`, and `rate_limited`
+        replies, each recorded with the outcome the lifecycle invariants
+        require (interrupted, failed, never rounded up to success);
+      - the way back: production's current build opens the store the
+        canary's build migrated, so a rollback after promotion works.
+    - Each rule is data in `ren-release`; a rule that cannot run fails, as
+      every check does now.
 
 Phases 1 and 2 come first: without them, upgrading automatically only breaks
-things faster. Each phase is useful on its own.
+things faster. Each phase is useful on its own. Phases 7 and 8 do not depend
+on each other; phase 9 needs both, and phase 10 needs only the canary.
 
 ## Open questions
 
@@ -294,6 +457,12 @@ things faster. Each phase is useful on its own.
   them blocks promotion or only warns.
 - Whether previews need real clients at all, or the fake provider is enough
   for the UI changes they are mostly for.
+- Isolated runs. A preview that runs agents must not reach production's
+  files, units, or network. Candidates are a microVM per run (Docker
+  Sandboxes: KVM on Linux, a Docker account, and a credential proxy whose
+  key injection and missing client config must be squared with Ren's rule
+  that clients sign in themselves) or a container per run. Deferred until
+  phases 7 to 10 are built.
 
 ## Deviations
 
@@ -362,6 +531,30 @@ things faster. Each phase is useful on its own.
   they copy production's history and drive two processes, more than a
   contract's serve step says. A project's contract covers one process
   served on its worktree's ports.
+- **GitHub is read with one GraphQL query, not REST.** A repository's
+  open pull requests, their merge state, review, and checks are one
+  GraphQL query (`ren_github::Watch`), where REST needs a request per pull
+  request for its merge state, reviews, and checks. GraphQL has no
+  conditional requests, but one query a minute costs about 60 of the
+  5000 points an hour a token has.
+- **What was seen of GitHub is kept in memory, not stored.** The gateway's
+  `PullBoard` holds each repository's last answer, or the failure since,
+  and a restarted daemon polls again at once. GitHub stays the record of
+  its own pull requests; Ren stores nothing it would have to reconcile.
+- **A replica's pod shares the host's network.** `ren` listens only on
+  loopback, and a rootless pod's published port reaches the container's
+  own address, never its loopback. With the host's network, the pod keeps
+  the loopback ports and tailnet routes a replica had; what it gains is
+  its filesystem: it sees only the build it runs and its own data.
+- **One image for every commit, the build mounted.** The plan had the
+  image package each build. The image (`deploy/instance/Containerfile`)
+  is Node, the C runtime, and CA certificates; a pod mounts the kept
+  build read-only, so nothing is rebuilt per commit and a build stays the
+  one the canary checked.
+- **The dev slot keeps its units, for now.** It drives agent runs, each
+  held by a run host in a systemd user unit of its own, against fake
+  clients on the host; in a container, runs would need the isolated
+  runtime this plan defers.
 - **The gate is its own workflow.** It reads the pull request's title and
   body, so it runs again when they are edited, which would otherwise
   rerun all of CI.
