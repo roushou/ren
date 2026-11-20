@@ -12,6 +12,7 @@ use ren_gateway::api::{
     control::request::{ControlRequest, PreviewAskRequest},
     previews::{PreviewOfBody, PreviewStateBody, PreviewsBody},
 };
+use ren_preview::Reach;
 use ren_recorder::project::ProjectName;
 use ren_release::Commit;
 use std::{fmt::Write as _, process::ExitCode};
@@ -107,7 +108,13 @@ impl PreviewCmd {
             };
             let state = match &preview.state {
                 PreviewStateBody::Building => "building".to_owned(),
-                PreviewStateBody::Running => format!("running, UI on port {}", preview.ui_port),
+                PreviewStateBody::Running { reach } => match reach {
+                    Reach::Loopback => format!("running, UI on loopback port {}", preview.ui_port),
+                    Reach::Tailnet => format!(
+                        "running, UI on loopback port {} and tailnet port {}",
+                        preview.ui_port, preview.published_ui_port
+                    ),
+                },
                 PreviewStateBody::Failed { detail } => format!("failed: {detail}"),
             };
             let _ = writeln!(
@@ -128,6 +135,7 @@ impl PreviewCmd {
 mod tests {
     use super::PreviewCmd;
     use ren_gateway::api::previews::{PreviewBody, PreviewOfBody, PreviewStateBody, PreviewsBody};
+    use ren_preview::Reach;
 
     #[test]
     fn previews_read_as_lines() {
@@ -138,7 +146,9 @@ mod tests {
                     slot: 0,
                     of: PreviewOfBody::Pull { number: 12 },
                     commit: commit(),
-                    state: PreviewStateBody::Running,
+                    state: PreviewStateBody::Running {
+                        reach: Reach::Tailnet,
+                    },
                     ui_port: 18_101,
                     published_ui_port: 9_451,
                 },
@@ -157,7 +167,7 @@ mod tests {
         };
         assert_eq!(
             PreviewCmd::render(&body),
-            "slot 0  222222222222  pull request #12  running, UI on port 18101\n\
+            "slot 0  222222222222  pull request #12  running, UI on loopback port 18101 and tailnet port 9451\n\
              slot 1  222222222222  asked for  failed: the build failed\n\
              asked for 222222222222\n"
         );

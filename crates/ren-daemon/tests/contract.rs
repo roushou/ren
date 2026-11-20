@@ -358,7 +358,9 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
                     unreachable!("only starts from nothing")
                 };
                 match outcome {
-                    None => previews.started(*slot, commit).unwrap(),
+                    None => previews
+                        .started(*slot, commit, ren_preview::Reach::Tailnet)
+                        .unwrap(),
                     Some(detail) => previews.failed(*slot, commit, detail.into()).unwrap(),
                 }
             }

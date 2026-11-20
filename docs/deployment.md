@@ -475,7 +475,9 @@ previews = 2 # 1 to 8; each is a daemon, a UI, and a copy of production's histor
 Each runs in a slot: slot `n`'s daemon listens on loopback `18100 + 2n` and
 its UI on the next port, published on the tailnet on `9450 + 2n` and the next
 with `--publish`, in the pod `ren-preview-<n>`, with `~/.config/ren-previews/<n>`
-and `~/.local/state/ren-previews/<n>`. A pass fetches each new commit from
+and `~/.local/state/ren-previews/<n>`. The canary timer publishes previews only when it was enabled with
+`--publish` (`cargo xtask canary enable --publish`); a preview started
+without it answers on loopback alone, and says so. A pass fetches each new commit from
 `origin` by its id (a pull request's head included), builds it once into
 `~/.local/share/ren/builds` from its own worktree,
 `~/.local/share/ren/preview-factory`, and starts it on a fresh copy of

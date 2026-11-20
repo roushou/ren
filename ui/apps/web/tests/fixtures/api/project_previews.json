@@ -9,7 +9,8 @@
       },
       "commit": "2222222222222222222222222222222222222222",
       "state": {
-        "state": "running"
+        "state": "running",
+        "reach": "tailnet"
       },
       "ui_port": 18101,
       "published_ui_port": 9451

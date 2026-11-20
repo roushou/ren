@@ -15,7 +15,7 @@ use crate::{
 };
 use ren_github::Readiness;
 use ren_harness::host::HostEnv;
-use ren_preview::{Action, PreviewKey, Previews, Slot, Wanted};
+use ren_preview::{Action, PreviewKey, Previews, Reach, Slot, Wanted};
 use ren_protocol::label::Stored;
 use ren_release::Commit;
 use std::path::PathBuf;
@@ -60,7 +60,15 @@ impl PreviewPass<'_> {
                     };
                     let started = self.start(env, slot, &commit, &backup, tailscale);
                     let report = match started {
-                        Ok(()) => previews.started(slot, &commit),
+                        Ok(()) => previews.started(
+                            slot,
+                            &commit,
+                            if tailscale.is_some() {
+                                Reach::Tailnet
+                            } else {
+                                Reach::Loopback
+                            },
+                        ),
                         Err(error) => {
                             println!("warning: the preview of {} failed: {error}", commit.short());
                             // What ran in the slot before is not this

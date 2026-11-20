@@ -1918,9 +1918,12 @@ name = "ren-preview"
 version = "0.1.0"
 dependencies = [
  "ren-github",
+ "ren-protocol",
  "ren-release",
  "serde",
  "serde_json",
+ "serde_with",
+ "strum",
  "thiserror",
 ]
 
@@ -2002,6 +2005,7 @@ dependencies = [
  "ren-gateway",
  "ren-git",
  "ren-harness",
+ "ren-preview",
  "ren-project",
  "ren-protocol",
  "ren-recorder",

@@ -5,7 +5,7 @@
     reason = "integration tests are a shell: helpers outside #[test] fail loudly"
 )]
 
-use ren_preview::{Action, PreviewKey, PreviewState, Previews, Slot, StaleReport, Wanted};
+use ren_preview::{Action, PreviewKey, PreviewState, Previews, Reach, Slot, StaleReport, Wanted};
 use ren_release::{Commit, PreviewCapacity};
 
 fn commit(digit: char) -> Commit {
@@ -47,7 +47,7 @@ fn running(previews: Previews, actions: &[Action]) -> Previews {
     let mut previews = previews;
     for action in actions {
         if let Action::Start { slot, commit, .. } = action {
-            previews.started(*slot, commit).unwrap();
+            previews.started(*slot, commit, Reach::Tailnet).unwrap();
         }
     }
     previews
@@ -144,26 +144,34 @@ fn a_key_wanted_twice_counts_once() {
 fn a_report_about_another_build_is_refused() {
     let (mut previews, _) = Previews::default().want(&[pull(12, 'a')], capacity(1));
     assert_eq!(
-        previews.started(slot(0), &commit('b')),
+        previews.started(slot(0), &commit('b'), Reach::Loopback),
         Err(StaleReport {
             slot: slot(0),
             commit: commit('b')
         })
     );
-    previews.started(slot(0), &commit('a')).unwrap();
-    assert!(previews.started(slot(0), &commit('a')).is_err());
+    previews
+        .started(slot(0), &commit('a'), Reach::Loopback)
+        .unwrap();
+    assert!(
+        previews
+            .started(slot(0), &commit('a'), Reach::Loopback)
+            .is_err()
+    );
 }
 
 #[test]
 fn previews_keep_their_file_shape() {
     let (mut previews, _) = Previews::default().want(&[pull(12, 'a'), asked('b')], capacity(2));
-    previews.started(slot(0), &commit('a')).unwrap();
+    previews
+        .started(slot(0), &commit('a'), Reach::Tailnet)
+        .unwrap();
     previews.failed(slot(1), &commit('b'), "no".into()).unwrap();
     let json = serde_json::to_value(&previews).unwrap();
     assert_eq!(
         json,
         serde_json::json!({ "previews": [
-            { "slot": 0, "key": { "pull": "12" }, "commit": "a".repeat(40), "state": { "state": "running" } },
+            { "slot": 0, "key": { "pull": "12" }, "commit": "a".repeat(40), "state": { "state": "running", "reach": "tailnet" } },
             { "slot": 1, "key": { "commit": "b".repeat(40) }, "commit": "b".repeat(40), "state": { "state": "failed", "detail": "no" } },
         ] })
     );

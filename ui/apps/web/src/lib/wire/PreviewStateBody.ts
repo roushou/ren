@@ -3,4 +3,4 @@
 /**
  * Where a preview stands.
  */
-export type PreviewStateBody = { "state": "building" } | { "state": "running" } | { "state": "failed", detail: string, };
+export type PreviewStateBody = { "state": "building" } | { "state": "running", reach: string, } | { "state": "failed", detail: string, };

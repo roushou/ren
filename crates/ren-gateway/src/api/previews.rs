@@ -10,7 +10,7 @@ use axum::{
     extract::{Path, State},
     response::{IntoResponse, Response},
 };
-use ren_preview::{Preview, PreviewKey, PreviewState};
+use ren_preview::{Preview, PreviewKey, PreviewState, Reach};
 use ren_protocol::label::Stored;
 use ren_recorder::project::Factory;
 use ren_release::Commit;
@@ -60,7 +60,12 @@ pub enum PreviewOfBody {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PreviewStateBody {
     Building,
-    Running,
+    /// Reached on loopback alone (`loopback`), or on the tailnet too
+    /// (`tailnet`), on `published_ui_port`.
+    Running {
+        #[ts(as = "String")]
+        reach: Reach,
+    },
     /// Not tried again for this commit.
     Failed {
         detail: String,
@@ -108,7 +113,7 @@ impl PreviewBody {
             commit: preview.commit.clone(),
             state: match &preview.state {
                 PreviewState::Building => PreviewStateBody::Building,
-                PreviewState::Running => PreviewStateBody::Running,
+                PreviewState::Running { reach } => PreviewStateBody::Running { reach: *reach },
                 PreviewState::Failed { detail } => PreviewStateBody::Failed {
                     detail: detail.clone(),
                 },

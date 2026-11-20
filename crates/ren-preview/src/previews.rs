@@ -4,6 +4,8 @@ use crate::slot::Slot;
 use ren_github::PullNumber;
 use ren_release::{Commit, PreviewCapacity};
 use serde::{Deserialize, Serialize};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
+use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
 /// The previews the factory runs, each in its slot. Kept by the factory as
 /// a file in production's data folder ([`Previews::FILE`]), which the
@@ -41,10 +43,21 @@ pub enum PreviewKey {
 pub enum PreviewState {
     /// Its commit is being built and started.
     Building,
-    /// It answers on its slot's ports.
-    Running,
+    /// It answers on its slot's ports, reached as `reach` says.
+    Running { reach: Reach },
     /// Building or starting it failed; not tried again for this commit.
     Failed { detail: String },
+}
+
+/// Where a running preview is reached from.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum Reach {
+    /// The host's loopback ports alone.
+    Loopback,
+    /// The tailnet as well, on its slot's published ports.
+    Tailnet,
 }
 
 /// A preview that should run: the commit for its key, in priority order.
@@ -119,12 +132,12 @@ impl Previews {
                 Some(want) if slots.contains(&preview.slot) => {
                     let current = want.commit == preview.commit;
                     match (&preview.state, current) {
-                        (PreviewState::Running | PreviewState::Failed { .. }, true) => {
+                        (PreviewState::Running { .. } | PreviewState::Failed { .. }, true) => {
                             kept.push(preview);
                         }
                         (PreviewState::Building, true)
                         | (
-                            PreviewState::Running
+                            PreviewState::Running { .. }
                             | PreviewState::Building
                             | PreviewState::Failed { .. },
                             false,
@@ -175,9 +188,14 @@ impl Previews {
         (Self { previews: kept }, stops)
     }
 
-    /// After the factory started `commit` in `slot`.
-    pub fn started(&mut self, slot: Slot, commit: &Commit) -> Result<(), StaleReport> {
-        *self.building(slot, commit)? = PreviewState::Running;
+    /// After the factory started `commit` in `slot`, reached as `reach`.
+    pub fn started(
+        &mut self,
+        slot: Slot,
+        commit: &Commit,
+        reach: Reach,
+    ) -> Result<(), StaleReport> {
+        *self.building(slot, commit)? = PreviewState::Running { reach };
         Ok(())
     }
 
