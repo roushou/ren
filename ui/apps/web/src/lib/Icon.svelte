@@ -84,6 +84,7 @@
       'M9.9 9.9a3 3 0 0 0 4.2 4.2',
     ],
     shrink: ['M4 14h6v6M20 10h-6V4', 'm4 20 6-6M20 4l-6 6'],
+    stop: ['M7 7h10v10H7z'],
   };
   export type IconName = keyof typeof paths;
 </script>

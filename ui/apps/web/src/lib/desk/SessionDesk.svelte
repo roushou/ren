@@ -967,6 +967,11 @@
         return;
       }
     }
+    if (event.key === 'Escape' && canStop) {
+      event.preventDefault();
+      stopTurn();
+      return;
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       // Cmd or Ctrl+Enter sends into the running turn, where the client can.
@@ -1173,6 +1178,19 @@
     }
     return items;
   });
+
+  /** Whether the composer offers to stop the running turn. */
+  const stopOffered = $derived(data.runsControl && controls?.interrupt !== 'none');
+  /** Whether the running turn can be stopped now. */
+  const canStop = $derived(
+    data.runsControl && controls?.interrupt === 'ready' && !busy && chosen !== null,
+  );
+
+  /** Interrupt the running turn; the client ends it as interrupted. */
+  function stopTurn() {
+    const target = chosen;
+    if (target) void act(() => client.toSession(target, { kind: 'interrupt' }));
+  }
 
   const compose = $derived(
     session ? Compose.session(current ? runState : null, client_?.midway ?? []) : null,
@@ -1568,13 +1586,6 @@
           </span>
         {:else}
           <span class="run-actions">
-            {#if data.runsControl && controls.interrupt}<button
-                class="button small"
-                disabled={busy}
-                onclick={() =>
-                  chosen && void act(() => client.toSession(chosen, { kind: 'interrupt' }))}
-                >Interrupt</button
-              >{/if}
             <ActionMenu label="Session actions" items={menu} {details} disabled={busy} />
           </span>
         {/if}
@@ -1812,8 +1823,8 @@
                 ? `Ask ${harnessLabel(session.harness)} to do something. Enter sends, ↑ recalls an earlier prompt.`
                 : compose.kind === 'during'
                   ? compose.steer
-                    ? `Enter queues for after this turn; ${navigatorKey}+Enter sends it into the turn now.`
-                    : `Enter queues for after this turn; ${harnessLabel(session.harness)} reads it then.`
+                    ? `Enter queues for after this turn; ${navigatorKey}+Enter sends it into the turn now; Esc stops the turn.`
+                    : `Enter queues for after this turn; ${harnessLabel(session.harness)} reads it then. Esc stops the turn.`
                   : compose.kind === 'continue'
                     ? `Write to ${harnessLabel(session.harness)} to go on.`
                     : compose.reason}
@@ -1907,6 +1918,15 @@
                     signedOut}
                   title="Add it to the turn that is running"
                   onclick={() => void send('steer')}>Send now</button
+                >{/if}
+              {#if stopOffered}<button
+                  type="button"
+                  class="button"
+                  disabled={!canStop}
+                  title={controls?.interrupt === 'pending'
+                    ? 'The turn can be stopped once it has started'
+                    : 'Stop the running turn (Esc)'}
+                  onclick={stopTurn}><Icon name="stop" size={12} />Stop</button
                 >{/if}
               {#if signedOut && Runs.drivable(session.harness) && (client_?.sign_in_methods.length ?? 0) > 0}
                 <!-- Signed out: the one action that leads on is signing in. -->
