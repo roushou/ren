@@ -41,3 +41,17 @@ test('the base casts no shadow: every shadow is a layer’s, an inset rule, or a
   );
   assert.deepEqual(offenders, [], 'give a raised element a layer from lib/layer/');
 });
+
+// Skeleton's widths are free-form (`42%`, `16em`) and predate this rule; on a
+// server-rendered page the CSP drops them and the outline shows full width.
+const INLINE_STYLE_EXEMPT = ['lib/Skeleton.svelte'];
+
+test('no element carries inline style: the CSP refuses it, so widths and colours are classes', () => {
+  const offenders = sources(SRC)
+    .filter((path) => path.endsWith('.svelte'))
+    .filter((path) => !INLINE_STYLE_EXEMPT.includes(path.slice(SRC.length)))
+    .flatMap((path) =>
+      /[\s<]style(=|:[a-z-])/.test(readFileSync(path, 'utf8')) ? [path.slice(SRC.length)] : [],
+    );
+  assert.deepEqual(offenders, []);
+});

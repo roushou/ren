@@ -11,13 +11,15 @@
   let {
     label,
     onclose,
-    width = 520,
+    size = 'narrow',
     children,
   }: {
     /** What it shows, for assistive technology and its close button. */
     label: string;
     onclose: () => void;
-    width?: number;
+    /** 440px, or 560px for wide content such as bodies. (The CSP allows no
+     * inline style, so the widths are classes.) */
+    size?: 'narrow' | 'wide';
     children: Snippet;
   } = $props();
 
@@ -31,7 +33,7 @@
 
 <svelte:window onkeydown={key} />
 
-<aside class="slide-over" aria-label={label} style:--slide-width="{width}px">
+<aside class="slide-over {size}" aria-label={label}>
   <button class="icon-button close" onclick={onclose} aria-label="Close {label}" title="Close · Esc"
     ><Icon name="close" size={14} /></button
   >
@@ -47,12 +49,15 @@
     z-index: 20;
     display: flex;
     flex-direction: column;
-    width: min(var(--slide-width), 100%);
+    width: min(440px, 100%);
     min-height: 0;
     overflow: auto;
     border-left: 1px solid var(--popover-border);
     background: var(--surface);
     box-shadow: var(--elev-slide);
+  }
+  .wide {
+    width: min(560px, 100%);
   }
   .close {
     position: absolute;
