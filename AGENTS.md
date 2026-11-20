@@ -196,7 +196,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Wire`, `Endpoint`, `Method`, and `Transport` vocabularies (`route`, where
   `Provider::speak` pairs a provider with a wire format it offers as an
   `Api`), `Direction`, and
-  the native identifiers and message hints the wire carries (`native`). Its
+  the native identifiers and message hints the wire carries (`native`), and
+  the limit headers a response head carries (`limits`: `LimitHeaders`, an
+  allowlist of names, with values kept only when plain). Its
   manifest allows only pure dependencies, and a test keeps its sources free of
   I/O.
 - `crates/ren-git`: git as Ren reads and runs it, with `Git` as its primary

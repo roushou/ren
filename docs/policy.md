@@ -4,7 +4,7 @@ All of this is optional; with no `[policy]` rules and no `[[upstreams]]` entries
 Ren forwards every call to the provider's own upstream with the client's own
 credentials. Every decision is recorded with the call: the operator state revision,
 the plan (candidates, transform rules, fallback rule), each attempt's upstream and
-changes, and why a call was refused. Header values are never recorded.
+changes, and why a call was refused. Request header values are never recorded.
 
 ## Request buffer
 

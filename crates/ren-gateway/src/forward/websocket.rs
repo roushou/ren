@@ -33,6 +33,7 @@ use futures_util::{
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
+    limits::LimitHeaders,
     native::MessageHints,
     route::Transport,
     websocket::{ClientEvent, CloseCode, Payload, ResponseId, UpstreamMessage},
@@ -720,6 +721,9 @@ impl Relay {
             status: http::StatusCode::SWITCHING_PROTOCOLS.as_u16(),
             format: ResponseFormat::WebSocketMessages,
             encoding: ResponseEncoding::Identity,
+            // A call on a socket has no head of its own: the provider's limit
+            // headers came with the handshake, recorded on its call.
+            limits: LimitHeaders::NONE,
         });
         self.calls
             .lock()

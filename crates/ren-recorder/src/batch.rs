@@ -30,6 +30,7 @@ use ren_harness::{
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
+    limits::LimitHeaders,
     native::{NativeThreadId, NativeTurnId},
     route::{Endpoint, Method, Provider, Transport, Wire},
     websocket::Payload,
@@ -680,6 +681,10 @@ pub struct ResponseHead {
     pub status: u16,
     pub format: ResponseFormat,
     pub encoding: ResponseEncoding,
+    /// The provider's limit headers; a value the secret scanner flags is
+    /// withheld before it is stored.
+    #[serde(skip_serializing_if = "LimitHeaders::is_empty")]
+    pub limits: LimitHeaders,
 }
 
 /// How a body ended, as the relay observed it. Stored byte counts come from the

@@ -131,6 +131,9 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
         post(|| async {
             Response::builder()
                 .header("content-type", "text/event-stream")
+                // Synthetic limit headers, as a subscription's head carries them.
+                .header("anthropic-ratelimit-unified-status", "allowed")
+                .header("anthropic-ratelimit-unified-5h-utilization", "0.12")
                 .body(Body::from(stream()))
                 .unwrap()
         }),

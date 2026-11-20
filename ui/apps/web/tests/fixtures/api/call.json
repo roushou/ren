@@ -128,7 +128,17 @@
         }
       },
       "changes": null,
-      "request": null
+      "request": null,
+      "limit_headers": [
+        {
+          "name": "anthropic-ratelimit-unified-status",
+          "value": "allowed"
+        },
+        {
+          "name": "anthropic-ratelimit-unified-5h-utilization",
+          "value": "0.12"
+        }
+      ]
     }
   ],
   "observations": [

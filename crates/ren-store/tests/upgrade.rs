@@ -27,6 +27,7 @@ use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
     label::Stored,
+    limits::LimitHeaders,
     native::{NativeSessionId, NativeThreadId, NativeTurnId},
     route::{Endpoint, Method, Provider, Transport},
     websocket::Payload,
@@ -846,10 +847,18 @@ impl Scenario {
         let mut tap = self.start(Provider::Anthropic, hint);
         tap.request_data(request.to_string().as_bytes());
         tap.request_ended();
+        // Synthetic limit headers, as an Anthropic subscription's head
+        // carries them.
+        let limits: LimitHeaders = serde_json::from_value(serde_json::json!([
+            { "name": "anthropic-ratelimit-unified-status", "value": "allowed" },
+            { "name": "anthropic-ratelimit-unified-5h-utilization", "value": "0.12" },
+        ]))
+        .unwrap();
         let mut tap = tap.head(Head {
             status: 200,
             format: ResponseFormat::EventStream,
             encoding: ResponseEncoding::Identity,
+            limits,
         });
         tap.data(Direction::Response, response.as_bytes());
         tap.ended(Direction::Response);
@@ -899,6 +908,7 @@ impl Scenario {
             status: 101,
             format: ResponseFormat::WebSocketMessages,
             encoding: ResponseEncoding::Identity,
+            limits: LimitHeaders::NONE,
         });
         let item = serde_json::json!({ "type": "function_call", "call_id": "call_01", "name": "shell", "arguments": "{\"command\":[\"cargo\",\"test\"]}" });
         for event in [
@@ -930,6 +940,7 @@ impl Scenario {
             status: 429,
             format: ResponseFormat::Json,
             encoding: ResponseEncoding::Identity,
+            limits: LimitHeaders::NONE,
         });
         tap.data(
             Direction::Response,
@@ -952,6 +963,7 @@ impl Scenario {
             status: 200,
             format: ResponseFormat::EventStream,
             encoding: ResponseEncoding::Identity,
+            limits: LimitHeaders::NONE,
         });
         tap.data(
             Direction::Response,

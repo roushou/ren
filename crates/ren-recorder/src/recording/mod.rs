@@ -325,7 +325,11 @@ impl RecorderCore {
             Record::Attempt(attempt) => {
                 self.attempt(attempt);
             }
-            Record::Head(head) => {
+            Record::Head(mut head) => {
+                // A limit header's value is short and plain, but one that
+                // still reads as a credential is never stored.
+                let limits = std::mem::take(&mut head.limits);
+                head.limits = limits.withholding(|value| self.scanner.find(value).is_empty());
                 if let Some(call) = self.calls.get_mut(&head.stamp.call)
                     && let AttemptPhase::Open(attempt) = &mut call.attempt
                 {

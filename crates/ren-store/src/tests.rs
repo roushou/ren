@@ -166,6 +166,7 @@ impl Fixture {
             status: spec.status,
             format: ResponseFormat::EventStream,
             encoding: ResponseEncoding::Identity,
+            limits: ren_protocol::limits::LimitHeaders::NONE,
         }));
         Self::body(&mut batch, BodyKey::Response(attempt), spec.response);
         let mut inspector = Inspector::new(FormatSource::Declared, ReportLimits::default());

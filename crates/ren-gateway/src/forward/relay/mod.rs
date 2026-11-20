@@ -13,6 +13,7 @@ use http_body::{Body as _, Frame, SizeHint};
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
+    limits::LimitHeaders,
 };
 use ren_recorder::{
     AttemptTap, CallTap, Head, ResponseTap,
@@ -232,6 +233,7 @@ impl AttemptCell {
             status: response.status().as_u16(),
             format: ResponseFormat::from_headers(response.headers()),
             encoding: ResponseEncoding::from_headers(response.headers()),
+            limits: LimitHeaders::from_headers(response.headers()),
         }))
     }
 }

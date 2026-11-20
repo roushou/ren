@@ -53,6 +53,8 @@
   );
   const attempts = $derived(detail?.call.id === call.id ? detail.attempts : []);
   const inspection = $derived(attempts.at(-1)?.inspection ?? null);
+  /** The limit headers the final attempt's response head carried. */
+  const limitHeaders = $derived(attempts.at(-1)?.limit_headers ?? []);
   const usage = $derived(current.usage ?? inspection?.usage ?? null);
   const tokens = $derived(tokenSummary(usage));
   // Reload detail after every page refresh (live or manual), which is when the
@@ -287,6 +289,20 @@
             {detail ? 'No upstream attempt was recorded.' : 'Loading attempts…'}
           </p>{/if}
       </section>
+      {#if limitHeaders.length}<section class="detail-section">
+          <div class="section-heading">
+            <h3>Limit headers <span class="count-pill">{num(limitHeaders.length)}</span></h3>
+            <span class="subtle-label">As the provider sent them</span>
+          </div>
+          <dl class="detail-list">
+            {#each limitHeaders as header, index (index)}<div>
+                <dt class="mono">{header.name}</dt>
+                <dd class="mono" class:muted={header.value === null}>
+                  {header.value ?? 'withheld'}
+                </dd>
+              </div>{/each}
+          </dl>
+        </section>{/if}
       <section class="detail-section">
         <div class="section-heading">
           <h3>Token usage</h3>

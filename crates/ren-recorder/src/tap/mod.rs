@@ -39,6 +39,7 @@ use ren_harness::attribution::Attribution;
 use ren_protocol::{
     direction::Direction,
     encoding::{ResponseEncoding, ResponseFormat},
+    limits::LimitHeaders,
     route::{Api, Endpoint, Method, Provider, Transport},
     websocket::Payload,
 };
@@ -122,11 +123,13 @@ impl fmt::Debug for AttemptRequest {
 }
 
 /// The head of an attempt's response.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Head {
     pub status: u16,
     pub format: ResponseFormat,
     pub encoding: ResponseEncoding,
+    /// The provider's limit headers, as the head carried them.
+    pub limits: LimitHeaders,
 }
 
 /// A call between attempts: its last attempt ended, and the plan may allow
@@ -635,6 +638,7 @@ impl AttemptTap {
                 status: head.status,
                 format: head.format,
                 encoding: head.encoding,
+                limits: head.limits,
             }));
         }
         ResponseTap { attempt, call }

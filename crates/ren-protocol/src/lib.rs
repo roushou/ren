@@ -3,7 +3,8 @@
 //! Everything here is pure computation over bytes the caller already has:
 //! SSE framing, Anthropic Messages, OpenAI Responses, and OpenAI Chat
 //! Completions wire vocabularies, WebSocket message classification,
-//! incremental decompression, and per-call inspection, plus the vocabularies that name providers, endpoints, and
+//! incremental decompression, per-call inspection, and the limit headers a
+//! response head carries (`limits`), plus the vocabularies that name providers, endpoints, and
 //! directions, and the native identifiers the wire carries. Nothing here
 //! performs I/O, reads time, or depends on the async runtime, HTTP framework,
 //! database, or CLI parser; the manifest lists the only dependencies allowed.
@@ -23,6 +24,7 @@ pub mod encoding;
 pub mod inspect;
 pub mod json;
 pub mod label;
+pub mod limits;
 pub mod messages;
 pub mod native;
 pub mod pipeline;
