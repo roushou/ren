@@ -2,9 +2,10 @@
   import Icon from '#lib/Icon.svelte';
   import type { Entry } from '#lib/runs.ts';
 
-  // A command a turn ran, folded to its line and outcome. Its output can run
-  // to hundreds of kilobytes, so it is drawn only while the fold is open:
-  // a long conversation renders and hydrates without every command's log.
+  // A command a turn ran, folded to its line and, unless it succeeded, its
+  // outcome. Its output can run to hundreds of kilobytes, so it is drawn only
+  // while the fold is open: a long conversation renders and hydrates without
+  // every command's log.
   let { entry }: { entry: Extract<Entry, { kind: 'command' }> } = $props();
   let open = $state(false);
 
@@ -30,7 +31,7 @@
   <summary>
     <Icon name="terminal" size={12} />
     <span class="tool-target mono">{entry.command}</span>
-    <span class="chip {tone}">{outcome}</span>
+    {#if tone !== 'success'}<span class="chip {tone}">{outcome}</span>{/if}
   </summary>
   {#if open && entry.output}<pre class="activity-pre">{entry.output}</pre>{/if}
 </details>

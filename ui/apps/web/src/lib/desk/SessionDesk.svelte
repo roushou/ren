@@ -1402,9 +1402,9 @@
         >{entry.paths.map((path) => Runs.within(path, session?.workdir ?? null)).join(', ') ||
           'files'}</span
       >
-      <span class="chip {entry.status === 'completed' ? 'success' : 'neutral'}"
-        >{entry.status === 'in_progress' ? 'editing' : entry.status}</span
-      >
+      {#if entry.status !== 'completed'}<span class="chip neutral"
+          >{entry.status === 'in_progress' ? 'editing' : entry.status}</span
+        >{/if}
     </div>
   {:else if entry.kind === 'tool'}
     <div class="entry tool">
