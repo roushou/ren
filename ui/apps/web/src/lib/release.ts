@@ -74,28 +74,128 @@ export class ReleaseLine {
 
   /** What promotion decided, as a sentence, and the tone it is drawn in. */
   static decision(release: ReleaseView): [string, ReleaseTone] {
-    switch (release.decision) {
+    const promotion = Promotion.of(release.decision);
+    return [promotion.sentence, promotion.tone];
+  }
+}
+
+/** What promotion decided, read two ways: a word that names where the
+ * release stands at a glance, and the sentence that explains it. */
+export class Promotion {
+  readonly word: string;
+  readonly sentence: string;
+  readonly tone: ReleaseTone;
+
+  constructor(word: string, sentence: string, tone: ReleaseTone) {
+    this.word = word;
+    this.sentence = sentence;
+    this.tone = tone;
+  }
+
+  static of(decision: ReleaseView['decision']): Promotion {
+    switch (decision) {
       case 'promote':
-        return ["production takes the canary's build now", 'ok'];
+        return new Promotion('Promoting', "production takes the canary's build now", 'ok');
       case 'current':
-        return ["production runs the canary's build", 'ok'];
+        return new Promotion('Live', "production runs the canary's build", 'ok');
       case 'failed':
-        return ["the canary's build failed; production keeps its own", 'bad'];
+        return new Promotion(
+          'Blocked',
+          "the canary's build failed; production keeps its own",
+          'bad',
+        );
       case 'unchecked':
-        return ['no build has been checked', 'warning'];
+        return new Promotion('Unchecked', 'no build has been checked', 'warning');
       case 'production_ahead':
-        return ["production has commits the canary's build lacks", 'warning'];
+        return new Promotion(
+          'Diverged',
+          "production has commits the canary's build lacks",
+          'warning',
+        );
       case 'unconfirmed':
-        return ['production runs a build the factory cannot place', 'warning'];
+        return new Promotion(
+          'Unknown build',
+          'production runs a build the factory cannot place',
+          'warning',
+        );
       case 'awaiting_operator':
-        return ['passed; waiting for the operator to promote it', 'warning'];
+        return new Promotion(
+          'Waiting on you',
+          'passed; waiting for the operator to promote it',
+          'warning',
+        );
       case 'outside_window':
-        return ['passed; production takes it when the window opens', 'ok'];
+        return new Promotion(
+          'Scheduled',
+          'passed; production takes it when the window opens',
+          'ok',
+        );
       case 'promotion_failed':
-        return ['production failed to take it and was rolled back', 'bad'];
+        return new Promotion(
+          'Rolled back',
+          'production failed to take it and was rolled back',
+          'bad',
+        );
       default:
-        return [unrecognised(release.decision), 'warning'];
+        return new Promotion(unrecognised(decision), unrecognised(decision), 'warning');
     }
+  }
+}
+
+/** The canary's verdict on its build, or that none has been checked. */
+export type CanaryMark = 'passed' | 'failed' | 'none';
+
+/** Where production stands against main. */
+export type ProductionMark =
+  | { kind: 'on_main' }
+  | { kind: 'behind'; commits: number }
+  /** Production's revision is not a commit of main's history. */
+  | { kind: 'uncounted' };
+
+/** A release drawn as its pipeline, main → canary → production, with the
+ * word for what promotion decided; the sentences stay on hover. */
+export class ReleaseStrip {
+  readonly canary: CanaryMark;
+  readonly production: ProductionMark;
+  readonly promotion: Promotion;
+  /** The same release as words, for assistive technology and hover. */
+  readonly line: ReleaseLine;
+
+  constructor(
+    canary: CanaryMark,
+    production: ProductionMark,
+    promotion: Promotion,
+    line: ReleaseLine,
+  ) {
+    this.canary = canary;
+    this.production = production;
+    this.promotion = promotion;
+    this.line = line;
+  }
+
+  static of(release: ReleaseView): ReleaseStrip {
+    const canary: CanaryMark = release.canary
+      ? release.canary.passed
+        ? 'passed'
+        : 'failed'
+      : 'none';
+    const production: ProductionMark =
+      release.behind === null
+        ? { kind: 'uncounted' }
+        : release.behind === 0
+          ? { kind: 'on_main' }
+          : { kind: 'behind', commits: release.behind };
+    return new ReleaseStrip(
+      canary,
+      production,
+      Promotion.of(release.decision),
+      ReleaseLine.of(release),
+    );
+  }
+
+  /** The strip as one phrase: the status line's text and the decision. */
+  get label(): string {
+    return `${this.line.text} · ${this.promotion.word}`;
   }
 }
 
