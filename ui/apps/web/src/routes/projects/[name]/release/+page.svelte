@@ -13,6 +13,7 @@
   import Modal from '#lib/layer/Modal.svelte';
   import { toasts } from '#lib/layer/toasts.svelte.ts';
   import { invalidateAll } from '$app/navigation';
+  import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { Promotion, ReleaseLine, ReleaseApi, ReleasePage } from '#lib/release.ts';
   import Glyph from '#lib/Glyph.svelte';
@@ -54,6 +55,17 @@
   }
 
   const decided = (release: ReleaseView) => ReleaseLine.decision(release);
+  // Arriving from ⌘K's Promote: ask, as the button would, once the canary
+  // it names can be promoted; the modal still decides.
+  let prompted: string | null = null;
+  $effect(() => {
+    const asked = page.url.searchParams.get('promote');
+    const canary = view?.release.canary?.commit ?? null;
+    if (!asked || asked === prompted || asked !== canary || !view?.promotable) return;
+    if (!page.data.runsControl) return;
+    prompted = asked;
+    untrack(() => (confirming = asked));
+  });
 </script>
 
 {#snippet scope()}

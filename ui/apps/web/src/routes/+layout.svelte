@@ -25,7 +25,7 @@
   import { GatewayPlace, type Network } from '#lib/place.ts';
   import { RecorderReport } from '#lib/recorder.ts';
   import { ReleaseLine } from '#lib/release.ts';
-  import { PageEvidence } from '#lib/work.ts';
+  import { PageEvidence, Work } from '#lib/work.ts';
   import CopyButton from '#lib/CopyButton.svelte';
   import RedlineLayer from 'redline/RedlineLayer.svelte';
   import BriefingPanel from '#lib/BriefingPanel.svelte';
@@ -490,7 +490,18 @@
     <ThemeControl />
   </header>
   {#if commanding}<CommandPalette
-      projects={board.projects}
+      projects={board.active}
+      sources={{
+        promotable: board.toPromote.flatMap((project) =>
+          project.factory === 'ren' && project.release?.canary
+            ? [{ project: project.name, commit: project.release.canary.commit }]
+            : [],
+        ),
+        work: board.work.map((item) => {
+          const home = board.homeOf(item);
+          return { title: item.title, project: home, href: home ? Work.href(home, item.id) : null };
+        }),
+      }}
       onclose={() => (commanding = false)}
     />{/if}
   {#if scope}

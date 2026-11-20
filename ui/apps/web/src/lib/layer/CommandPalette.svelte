@@ -8,13 +8,16 @@
   import { tick, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import Icon from '#lib/Icon.svelte';
-  import { Commands, type Command } from '#lib/commands.ts';
+  import { Commands, type Command, type CommandSources } from '#lib/commands.ts';
 
   let {
     projects,
+    sources,
     onclose,
   }: {
     projects: readonly { name: string }[];
+    /** What it offers besides places: canaries to promote, work items. */
+    sources: CommandSources;
     onclose: () => void;
   } = $props();
 
@@ -22,7 +25,7 @@
   let input = $state<HTMLInputElement>();
   let query = $state('');
   let chosen = $state(0);
-  const all = $derived(Commands.all(projects));
+  const all = $derived(Commands.all(projects, sources));
   const shown = $derived(Commands.match(all, query));
 
   $effect(() => {
@@ -90,11 +93,15 @@
         role="option"
         aria-selected={index === chosen}
         class:chosen={index === chosen}
+        class:act={command.kind === 'act'}
         onmousemove={() => (chosen = index)}
         onclick={() => go(command)}
         onkeydown={() => {}}
       >
-        <Icon name={command.kind === 'search' ? 'search' : 'chevron'} size={12} />
+        <Icon
+          name={command.kind === 'search' ? 'search' : command.kind === 'act' ? 'spark' : 'chevron'}
+          size={12}
+        />
         <span class="label">{command.label}</span>
         <span class="detail">{command.detail}</span>
       </li>
@@ -155,6 +162,9 @@
     padding: 0 14px;
     color: var(--muted);
     cursor: pointer;
+  }
+  li.act .label {
+    font-weight: 600;
   }
   li.chosen {
     background: var(--surface-hover);

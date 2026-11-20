@@ -1120,6 +1120,11 @@
   });
 
   onMount(() => {
+    // Arriving from ⌘K's New session: open the new-session form at once.
+    if (data.runsControl && page.url.searchParams.get('new') === '1') {
+      starting = true;
+      void newDraft();
+    }
     const ticking = setInterval(() => (now = Date.now()), 30_000);
     // The server read them for the first render; only what it could not
     // read is asked for again. Live runs are read once the feed opens.
