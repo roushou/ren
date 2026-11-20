@@ -11,7 +11,7 @@ use super::chunk::{ChunkHash, Codec, EncodedChunk};
 use crate::millis::SqlMillis;
 use crate::{
     Store, StoreError,
-    query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange},
+    query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange, UsageScope},
     view::{
         AttachmentView, AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView,
         ChannelView, Columns, DiskUsage, MessageView, OperatorActionView, ProjectActivity,
@@ -219,7 +219,7 @@ impl Reader {
     pub async fn usage(
         &self,
         range: TimeRange,
-        project: Option<&ProjectName>,
+        scope: &UsageScope,
     ) -> Result<UsageView, StoreError> {
         // One scan, grouped by hour, model, and user; the totals and each
         // breakdown are summed from its groups.
@@ -229,8 +229,10 @@ impl Reader {
         CallQuery::push_usage_columns(&mut sql);
         sql.push(" FROM calls c WHERE 1 = 1");
         range.push_started(&mut sql);
-        if let Some(project) = project {
-            CallQuery::push_project_calls(&mut sql, project);
+        match scope {
+            UsageScope::Everything => {}
+            UsageScope::Project(project) => CallQuery::push_project_calls(&mut sql, project),
+            UsageScope::Session(session) => CallQuery::push_session_calls(&mut sql, *session),
         }
         sql.push(" GROUP BY start, c.provider, c.model, c.user");
         let groups = sql

@@ -5,7 +5,7 @@
 
 use crate::activity::report::RecordingReport;
 use crate::activity::{ActivityBudget, CallActivity, TurnActivity, TurnSummary};
-use crate::query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange};
+use crate::query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange, UsageScope};
 use crate::search::{ExposureQuery, ExposureView, SearchPage, SearchQuery};
 use crate::view::{
     CallDetail, CallPage, ConversationView, RecordingView, RunView, UsageView, WorkItemView,
@@ -40,11 +40,10 @@ pub enum ReadRequest {
     Turn(TurnId),
     CallActivity(CallId),
     Report(RecordingId),
-    /// Usage of the calls started in `range`; with a project, its
-    /// sessions' runs' only.
+    /// Usage of the calls started in `range`, within `scope`.
     Usage {
         range: TimeRange,
-        project: Option<ProjectName>,
+        scope: UsageScope,
     },
     Search(SearchQuery),
     Exposures(ExposureQuery),
@@ -131,8 +130,8 @@ impl Reader {
             ReadRequest::Report(recording) => {
                 ReadResponse::Report(Box::new(self.recording_report(*recording).await?))
             }
-            ReadRequest::Usage { range, project } => {
-                ReadResponse::Usage(self.usage(*range, project.as_ref()).await?)
+            ReadRequest::Usage { range, scope } => {
+                ReadResponse::Usage(self.usage(*range, scope).await?)
             }
             ReadRequest::Search(query) => ReadResponse::Search(self.search(query).await?),
             ReadRequest::Exposures(query) => ReadResponse::Exposures {

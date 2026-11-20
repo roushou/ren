@@ -15,6 +15,7 @@ use ren_protocol::{
     route::{Endpoint, Method},
 };
 use ren_recorder::capture::{AttemptTerminal, CallState, TerminalClass};
+use ren_recorder::id::SessionId;
 use ren_recorder::project::ProjectName;
 use sqlx::{QueryBuilder, Sqlite};
 
@@ -74,6 +75,14 @@ impl CallQuery {
         sql.push(" AND c.recording IN (SELECT s.id FROM recordings s WHERE ");
         Self::push_project_recording(sql, project);
         sql.push(")");
+    }
+
+    /// An `AND` clause for calls (aliased `c`) of `session`: those whose
+    /// recording is the conversation of one of its runs.
+    pub(crate) fn push_session_calls(sql: &mut QueryBuilder<Sqlite>, session: SessionId) {
+        sql.push(" AND c.recording IN (SELECT s.id FROM recordings s WHERE s.native_id IN (SELECT r.thread FROM runs r WHERE r.operator_session = ")
+            .push_bind(session.to_string())
+            .push(" AND r.thread IS NOT NULL))");
     }
 
     /// `calls`, `errors`, `input_tokens`, `output_tokens`, and

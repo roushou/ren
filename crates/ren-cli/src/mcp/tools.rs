@@ -384,7 +384,7 @@ impl ToolCall {
                 let args: RangeArgs = Self::arguments(arguments)?;
                 ReadRequest::Usage {
                     range: Field::range(args.from_ms, args.until_ms)?,
-                    project: None,
+                    scope: ren_store::query::UsageScope::Everything,
                 }
             }
             ToolName::ListExposures => {

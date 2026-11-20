@@ -5,7 +5,7 @@ use ren_recorder::caller::UserId;
 use ren_recorder::id::{CallId, RecordingId, RunId, TurnId};
 use ren_recorder::time::UnixMillis;
 use ren_store::query::{
-    CallFilter, KindFilter, PageLimit, SearchText, Shelf, StatusFilter, ToolFilter,
+    CallFilter, KindFilter, PageLimit, SearchText, Shelf, StatusFilter, ToolFilter, UsageScope,
 };
 use ren_store::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
 use uuid::Uuid;
@@ -89,11 +89,15 @@ fn every_read() -> Vec<ReadRequest> {
         ReadRequest::WorkItem(ren_recorder::id::WorkItemId::restore(Uuid::from_u128(5))),
         ReadRequest::Usage {
             range: TimeRange::default(),
-            project: None,
+            scope: UsageScope::Everything,
         },
         ReadRequest::Usage {
             range: time,
-            project: Some("acme-web".parse().unwrap()),
+            scope: UsageScope::Project("acme-web".parse().unwrap()),
+        },
+        ReadRequest::Usage {
+            range: time,
+            scope: UsageScope::Session(ren_recorder::id::SessionId::restore(Uuid::from_u128(6))),
         },
         ReadRequest::Search(SearchQuery {
             terms: r#"run "install vps" & co"#.parse::<SearchTerms>().unwrap(),

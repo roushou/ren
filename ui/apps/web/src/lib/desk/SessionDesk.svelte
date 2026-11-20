@@ -11,10 +11,11 @@
     type CallView,
     type RecordingId,
     type Shelf,
+    type TokenTotals,
   } from '#lib/api.ts';
   import { ago } from '#lib/overview.ts';
   import { harnessLabel } from '#lib/activity.ts';
-  import { callStatus, statusBadge, tokenSummary } from '#lib/display.ts';
+  import { callStatus, spentSummary, statusBadge, tokenSummary } from '#lib/display.ts';
   import {
     Deletions,
     Desk,
@@ -270,6 +271,19 @@
       // Without the list, both drivable clients are offered.
     }
   }
+
+  /** The tokens the chosen session's calls used, as the gateway recorded
+   * them: read when it opens and again as each turn ends. */
+  let spent = $state.raw<{ session: SessionId; tokens: TokenTotals } | null>(null);
+  async function readSpent(target: SessionId) {
+    try {
+      const usage = await api.usage({ session: target });
+      if (chosen === target) spent = { session: target, tokens: usage.totals.tokens };
+    } catch {
+      // Without it, the header leaves the tokens out.
+    }
+  }
+  const spentLine = $derived(spent && spent.session === chosen ? spentSummary(spent.tokens) : null);
 
   async function readCalls(recording: RecordingId) {
     try {
@@ -962,6 +976,14 @@
   });
 
   $effect(() => {
+    // A session's tokens are read as it opens, and again once a turn ends:
+    // not while one runs, when they are still coming in.
+    const target = chosen;
+    const settled = runState?.phase !== 'starting' && runState?.phase !== 'working';
+    if (target && settled) untrack(() => void readSpent(target));
+  });
+
+  $effect(() => {
     // The Calls tab reads the calls of its session's recording when it opens.
     const recording = current?.recorded?.recording ?? null;
     if (tab === 'calls' && recording && calls?.recording !== recording) void readCalls(recording);
@@ -1433,6 +1455,9 @@
                   class="sep"
                   aria-hidden="true">·</span
                 >{/if}<span>{fact}</span>{/each}
+            {#if spentLine}<span class="sep" aria-hidden="true">·</span><span
+                title={spentLine.title}>{spentLine.text}</span
+              >{/if}
           </p>
         </div>
         {#if asking}

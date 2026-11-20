@@ -2,10 +2,14 @@
 
 /**
  * `GET /api/usage` parameters: an inclusive range of call start times,
- * of every project or of the one named.
+ * of every call, of the project named, or of the session named.
  */
 export type RawUsageQuery = { from_ms?: number, until_ms?: number, 
 /**
  * A project's name: its sessions' runs' calls.
  */
-project?: string, };
+project?: string, 
+/**
+ * A session's id: its runs' calls.
+ */
+session?: string, };

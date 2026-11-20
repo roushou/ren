@@ -19,6 +19,7 @@ import {
   compact,
   compactOrDash,
   percentOrDash,
+  spentSummary,
   tokenSummary,
   previewChips,
   span,
@@ -219,6 +220,21 @@ test('token counts are compact and include cached context', () => {
   assert.equal(tokens?.output, '89');
   assert.match(tokens?.title ?? '', /101,658 cache read/);
   assert.equal(tokenSummary(null), null);
+});
+
+test("a session's tokens read as in and out, with the cached part in the title", () => {
+  const spent = spentSummary({ input: 412_300, output: 18_040, cache_read: 380_000 });
+  assert.equal(spent?.text, '412k in · 18k out');
+  assert.match(
+    spent?.title ?? '',
+    /412,300 input · of which 380,000 read from cache · 18,040 output/,
+  );
+  assert.equal(
+    spentSummary({ input: 1200, output: null, cache_read: null })?.text,
+    '1.2k in · — out',
+  );
+  // No call reported usage: nothing to show.
+  assert.equal(spentSummary({ input: null, output: null, cache_read: null }), null);
 });
 
 test('a body preview reads as chips, with gaps spelled out', () => {

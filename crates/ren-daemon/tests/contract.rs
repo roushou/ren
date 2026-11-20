@@ -373,7 +373,7 @@ fn each_pinned_answer_decodes_as_its_read_and_round_trips() {
             "usage",
             ReadRequest::Usage {
                 range: TimeRange::default(),
-                project: None,
+                scope: ren_store::query::UsageScope::Everything,
             },
         ),
         (
