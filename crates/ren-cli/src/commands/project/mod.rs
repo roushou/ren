@@ -272,7 +272,7 @@ impl ProjectCmd {
                 "No work item in a session is named yet: commit with a `Work-Item:` trailer, or pass --work."
             ),
             count => println!(
-                "Recorded on {count} work item(s); the Work view opens it beside production."
+                "Recorded on {count} work item(s); each opens it beside production on its project's Overview."
             ),
         }
         Ok(ExitCode::SUCCESS)

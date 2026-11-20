@@ -18,7 +18,7 @@
   import SignInSheet from './SignInSheet.svelte';
   import Icon from './Icon.svelte';
   import { SignIns } from './signIn.ts';
-  import type { Revision } from './api.ts';
+  import { ManagementApi, type Revision } from './api.ts';
   import { Redline, type PageContext } from 'redline';
   import type { RedlineDesk } from 'redline/desk';
   import RedlinePanel from 'redline/RedlinePanel.svelte';
@@ -370,8 +370,8 @@
     }
   }
 
-  /** Keep the marks as a queued work item, to send later with others from
-   * the Work view. */
+  /** Keep the marks as a queued work item, and open it on its project's
+   * Overview; Projects when its project does not read. */
   async function later() {
     error = null;
     if (!noted.length) {
@@ -383,7 +383,10 @@
       const item: WorkItemId = await work.queue(order());
       desk.clear();
       desk.toggle();
-      await goto(`/work?item=${item}`);
+      const home = await Promise.all([work.item(item), new ManagementApi(fetch).projects()])
+        .then(([kept, projects]) => Work.home(kept, projects))
+        .catch(() => null);
+      await goto(home ? Work.href(home.name, item) : '/');
     } catch (failure) {
       error = failure instanceof WorkError ? failure.message : 'The work item was not kept.';
     } finally {

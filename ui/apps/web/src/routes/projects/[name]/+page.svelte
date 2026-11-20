@@ -1,8 +1,8 @@
 <!--
   A project's Overview (docs/plans/hierarchy.md): where its release stands,
   its work under way, its sessions running, and, beside them, what waits on
-  the operator in it. Each has a page of its own beside this one (Work,
-  Sessions, Release); a work item opens in a drawer here.
+  the operator in it. Sessions and Release have pages of their own beside
+  this one; a work item opens in a drawer here.
 -->
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
@@ -114,9 +114,7 @@
         </p>
       {/if}
 
-      <h2 class="with-links">
-        Work under way <a href={`${base}/work`}>All work</a>
-      </h2>
+      <h2>Work under way</h2>
       {#if !open.length}
         <p class="empty">Nothing open. Redline marks work on any of {project.name}'s pages.</p>
       {/if}
@@ -193,7 +191,6 @@
     >
       <div class="drawer-bar">
         <span class="muted">{project.name}</span>
-        <a class="button small" href={Work.href(project.name, { item: shown.id })}>Open in Work</a>
         <button class="button small" aria-label="Close" onclick={() => void close()}
           ><Icon name="close" size={12} /></button
         >
