@@ -189,7 +189,14 @@ export class ProjectBoard {
         mark: 'passed',
         text: `${project.name}: canary passed`,
         detail: project.release?.canary?.commit.slice(0, 12) ?? null,
-        link: { label: 'Release', href: ProjectBoard.releaseHref(project) },
+        // Where Ren promotes, the toast asks it of Release's modal.
+        link:
+          project.factory === 'ren' && project.release?.canary
+            ? {
+                label: 'Promote…',
+                href: `${ProjectBoard.releaseHref(project)}?promote=${encodeURIComponent(project.release.canary.commit)}`,
+              }
+            : { label: 'Release', href: ProjectBoard.releaseHref(project) },
       }));
     return [...approvals, ...canaries];
   }

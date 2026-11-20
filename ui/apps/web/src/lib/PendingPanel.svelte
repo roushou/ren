@@ -47,7 +47,15 @@
         decision,
       });
       const said = Runs.decision(decision);
-      toasts.show({ mark: said.mark, text: said.done, detail: Runs.ask(waiting.ask).action });
+      toasts.show({
+        mark: said.mark,
+        text: said.done,
+        detail: Runs.ask(waiting.ask).action,
+        link: {
+          label: 'Open session',
+          href: Sessions.deskHref(waiting.project, { session: waiting.session }),
+        },
+      });
       reviewing = null;
       await invalidateAll();
     } catch (failure) {

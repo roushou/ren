@@ -295,3 +295,16 @@ test('a client signed out on the host waits on the operator, and counts in Pendi
   assert.equal(board.waiting, 1);
   assert.ok(board.pending);
 });
+
+test('a canary that passed where Ren promotes offers Promote… from its toast', () => {
+  const project_ = project('ren', {
+    factory: 'ren',
+    release: {
+      decision: 'awaiting_operator',
+      policy: 'manual',
+      canary: { commit: 'abc123' },
+    } as never,
+  });
+  const [said] = ProjectBoard.news(new ProjectBoard([], []), new ProjectBoard([project_], []));
+  assert.deepEqual(said?.link, { label: 'Promote…', href: '/projects/ren/release?promote=abc123' });
+});
