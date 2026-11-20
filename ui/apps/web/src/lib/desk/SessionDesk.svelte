@@ -48,7 +48,7 @@
     type DeskSession,
     type SessionBody,
     type SessionScope,
-    type SessionId,
+    SessionId,
     type StoredConversation,
     type ClientCommand,
     type FileMatch,
@@ -134,8 +134,11 @@
       transcripts.set(given.run, new Transcript().load(given.conversation.snapshot.value));
     }
   });
-  /** The session the page shows, from the URL. */
-  const chosen = $derived(data.session);
+  /** The session the page shows, from the URL: the one it was loaded
+   * with, or the one chosen since without loading it again (`select`). */
+  const chosen = $derived(
+    page.shallow ? SessionId.parse(page.shallow.url.searchParams.get('session')) : data.session,
+  );
   /** On a phone the page shows one pane at a time: the list, a session, or
    * the new-session form that New session opened. */
   let starting = $state(false);
@@ -449,8 +452,16 @@
     }
   }
 
+  /**
+   * Show `next`. Shallow: the address changes (so back, forward, and a
+   * reload show it), but the page's load does not run again. The desk keeps
+   * every conversation it has read and the feed keeps them current, so a
+   * session seen before shows at once, and a new one reads its conversation
+   * itself (`readConversation`).
+   */
   function select(next: SessionId | null, how: 'push' | 'replace' = 'push') {
     void goto(next ? `?session=${next}` : page.url.pathname, {
+      shallow: true,
       replaceState: how === 'replace',
     });
   }
