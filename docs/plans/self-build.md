@@ -304,7 +304,9 @@ spec (phase 7):
      commit behind.
    - Not built: a timer for project passes (run `ren project canary` from
      any scheduler).
-7. **One kind of instance, in containers.** Planned.
+7. **One kind of instance, in containers.** In progress: the canary and
+   previews run in pods; one spec, the scenario data source, and the dev
+   slot are not built.
    - Today the dev slot, previews, and the canary are three code paths
      (`xtask/src/dev/slot.rs`, `preview.rs`, `replica.rs`). Each one picks
      its own ports, unit names, data folders, and tailnet routes. They
@@ -329,6 +331,18 @@ spec (phase 7):
      `install-vps`'s rollback do not change.
    - The canary and previews keep their rules: no runs, a placeholder for
      every operator key.
+   - Built: `Replica` runs as the pod `ren-<name>` (`xtask/src/pod.rs`),
+     its daemon and UI each a container seeing only the kept build it
+     runs, read-only, and the replica's own configuration and data. Its
+     start stops the transient units an older xtask ran it as, by name.
+     Removing a worktree removes its preview's pod.
+   - Verified with the dev slot as production, from a worktree folder of
+     slot 9: `preview up` built the image once, started the pod, and served
+     the copied history read-only on the slot's ports (`/health` said
+     `preview`); inside the daemon's container, production's data and
+     `~/.config` did not exist. A stand-in unit holding the daemon's port
+     under the old unit name was stopped, and `preview down` removed the
+     pod.
 8. **GitHub, observed.** Built, but for posting anything to GitHub, which
    is phase 9's. Ren shows what is happening on GitHub,
    so the operator watches pull requests in Ren, not on github.com.
@@ -498,6 +512,20 @@ on each other; phase 9 needs both, and phase 10 needs only the canary.
   `PullBoard` holds each repository's last answer, or the failure since,
   and a restarted daemon polls again at once. GitHub stays the record of
   its own pull requests; Ren stores nothing it would have to reconcile.
+- **A replica's pod shares the host's network.** `ren` listens only on
+  loopback, and a rootless pod's published port reaches the container's
+  own address, never its loopback. With the host's network, the pod keeps
+  the loopback ports and tailnet routes a replica had; what it gains is
+  its filesystem: it sees only the build it runs and its own data.
+- **One image for every commit, the build mounted.** The plan had the
+  image package each build. The image (`deploy/instance/Containerfile`)
+  is Node, the C runtime, and CA certificates; a pod mounts the kept
+  build read-only, so nothing is rebuilt per commit and a build stays the
+  one the canary checked.
+- **The dev slot keeps its units, for now.** It drives agent runs, each
+  held by a run host in a systemd user unit of its own, against fake
+  clients on the host; in a container, runs would need the isolated
+  runtime this plan defers.
 - **The gate is its own workflow.** It reads the pull request's title and
   body, so it runs again when they are edited, which would otherwise
   rerun all of CI.

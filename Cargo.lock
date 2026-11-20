@@ -3492,6 +3492,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "blake3",
  "clap",
  "futures-util",
  "ren-daemon",

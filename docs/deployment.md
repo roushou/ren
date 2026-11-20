@@ -364,10 +364,16 @@ commit's own xtask, so a commit is checked by its own checks. It builds the
 commit once into `~/.local/share/ren/builds/<commit>` (the release `ren`
 and the UI's deployable copy; the newest few are kept). It backs up
 production's history with the running daemon (`ren control backup`) and
-starts the build as the canary on a copy of it: the units `ren-canary-daemon`
-and `ren-canary-ui`, on loopback `17787` and `17000`, with
-`~/.config/ren-canary` and `~/.local/state/ren-canary`, both replaced on every
-pass. Its configuration is production's with its own listener, `[instance]
+starts the build as the canary on a copy of it: the rootless Podman pod
+`ren-canary`, its daemon and UI each a container (`ren-canary-daemon`,
+`ren-canary-ui`; `podman logs` reads them), on loopback `17787` and `17000`,
+with `~/.config/ren-canary` and `~/.local/state/ren-canary`, both replaced on
+every pass. A container sees only the build it runs, read-only, and the
+canary's own configuration and data, each at its host path; it runs as the
+operator's user and shares the host's network, so `ren` keeps its loopback
+listener. The image, `localhost/ren-instance` (Node, the C runtime, and CA
+certificates, from `deploy/instance/Containerfile`), holds no build of Ren:
+it is built once, the first time a pass needs it. Its configuration is production's with its own listener, `[instance]
 environment = "canary"`, no `[runs]`, and a placeholder for every operator
 key, so it drives no runs and forwards no operator-keyed call; its UI only
 reads. `--publish` also publishes it on the tailnet, gateway `9445` and UI
@@ -442,8 +448,8 @@ cargo xtask preview down --publish # stop, unpublish, take it off the work items
 
 `up` builds the branch (debug) into `<data>/preview`, backs up production's
 history with production's own `ren`, and starts the build as a replica, as
-the canary is: `ren-preview-<worktree>-daemon` on the slot's first port and
-`ren-preview-<worktree>-ui` on the next, with production's configuration but
+the canary is: the pod `ren-preview-<worktree>`, its daemon on the slot's
+first port and its UI on the next, with production's configuration but
 `environment = "preview"`, no runs, no operator key, and a UI that only reads.
 `--publish` publishes both on the tailnet on the same port numbers, with the
 install's saved Tailscale choice. It then records the preview on every sent

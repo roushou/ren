@@ -653,23 +653,45 @@ where
 }
 
 impl ProcessHost {
-    /// Stops a worktree's preview (`cargo xtask preview`), if one runs:
-    /// its units are named for the worktree, and stopping one that does
-    /// not exist (or a host without systemd) changes nothing.
+    /// Stops a worktree's preview, if one runs: Ren's own (`cargo xtask
+    /// preview`), a Podman pod, and a project's (`ren project preview`), a
+    /// transient unit, each named for the worktree. Removing one that does
+    /// not exist (or on a host without Podman or systemd) changes nothing.
     #[expect(
         clippy::disallowed_methods,
-        reason = "stopping a removed worktree's preview units, by their exact names"
+        reason = "stopping a removed worktree's preview, by its exact names"
     )]
     fn stop_preview(worktree: &Worktree) {
-        let stopped = std::process::Command::new("systemctl")
-            .args(["--user", "stop"])
-            .args(worktree.preview_units())
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        if let Err(error) = stopped {
-            tracing::debug!(%error, "no systemctl to stop a worktree's preview");
+        let commands = [
+            (
+                "podman",
+                vec![
+                    "pod".to_owned(),
+                    "rm".to_owned(),
+                    "--force".to_owned(),
+                    "--ignore".to_owned(),
+                    worktree.preview_pod(),
+                ],
+            ),
+            (
+                "systemctl",
+                vec![
+                    "--user".to_owned(),
+                    "stop".to_owned(),
+                    worktree.preview_unit(),
+                ],
+            ),
+        ];
+        for (program, args) in commands {
+            let stopped = std::process::Command::new(program)
+                .args(args)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            if let Err(error) = stopped {
+                tracing::debug!(%error, program, "nothing to stop a worktree's preview with");
+            }
         }
     }
 }

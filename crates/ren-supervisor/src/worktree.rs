@@ -118,15 +118,16 @@ impl Worktree {
         self.slot.ports()
     }
 
-    /// The transient units its preview runs as, stopped when the worktree
-    /// is removed: Ren's own (`cargo xtask preview`: its UI's, then its
-    /// daemon's), and a project's (`ren project preview`: its serve step).
-    pub fn preview_units(&self) -> [String; 3] {
-        [
-            format!("ren-preview-{}-ui", self.name),
-            format!("ren-preview-{}-daemon", self.name),
-            format!("ren-preview-{}-serve", self.name),
-        ]
+    /// The Podman pod Ren's own preview runs in (`cargo xtask preview`),
+    /// removed when the worktree is.
+    pub fn preview_pod(&self) -> String {
+        format!("ren-preview-{}", self.name)
+    }
+
+    /// The transient unit a project's preview runs as (`ren project
+    /// preview`: its serve step), stopped when the worktree is removed.
+    pub fn preview_unit(&self) -> String {
+        format!("ren-preview-{}-serve", self.name)
     }
 
     /// What its runs are told of it: `REN_WORKTREE*`, and the same values
@@ -162,14 +163,8 @@ mod tests {
         assert_eq!(worktree.folder(), Path::new("/data/worktrees/ren-3"));
         assert_eq!(worktree.data(), Path::new("/data/worktrees/.data/ren-3"));
         assert_eq!(worktree.branch("1a2b3c4d"), "ren/ren-3-1a2b3c4d");
-        assert_eq!(
-            worktree.preview_units(),
-            [
-                "ren-preview-ren-3-ui",
-                "ren-preview-ren-3-daemon",
-                "ren-preview-ren-3-serve"
-            ]
-        );
+        assert_eq!(worktree.preview_pod(), "ren-preview-ren-3");
+        assert_eq!(worktree.preview_unit(), "ren-preview-ren-3-serve");
         assert_eq!(
             worktree.env(),
             [

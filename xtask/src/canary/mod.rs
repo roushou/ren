@@ -300,7 +300,7 @@ impl Factory {
         let publish = self
             .tailscale(args.publish)?
             .map(|tailscale| (tailscale, Self::GATEWAY_PORT, Self::UI_PORT));
-        let reached = canary.start(env, &build.ren(), &build.ui(), &keys, publish)?;
+        let reached = canary.start(&self.repo, &build.ren(), &build.ui(), &keys, publish)?;
         println!("\nCanary: {}\n", reached.ui);
         let verdict = Checks {
             env,

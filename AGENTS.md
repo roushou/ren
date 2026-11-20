@@ -730,12 +730,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   production and its work item API, and `Replica`, the canary's and each
   preview's instance). `cargo xtask preview` (`preview`) runs a worktree's
   branch as a replica on the worktree's ports and records it on the work
-  items the branch names; `ren_supervisor::Worktree::preview_units` names
-  the units, which removing the worktree stops.
+  items the branch names; `ren_supervisor::Worktree::preview_pod` names
+  its pod, which removing the worktree removes. `pod` is how a replica
+  runs: a rootless Podman pod (`Pod`), one container per process, each
+  seeing only the kept build it runs (read-only) and the replica's own
+  configuration and data at their host paths, on the host's network, from
+  the image `deploy/instance/Containerfile` describes.
   `cargo xtask canary` is the factory's canary and promotion (`canary`;
   `docs/deployment.md#canary-and-promotion`, `docs/plans/self-build.md`,
   phase 4): a pass fetches `main` into Ren's own worktree and goes on with
-  that commit's xtask, builds it once, starts it as `ren-canary-*` units on a
+  that commit's xtask, builds it once, starts it in the pod `ren-canary` on a
   fresh backup of production's history (`canary::instance`: production, or
   with `--of dev` the dev slot, and the canary's derived configuration),
   checks it (`canary::checks`: doctor, a sweep of every read, kept whole by a

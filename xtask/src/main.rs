@@ -7,6 +7,7 @@ mod dev;
 mod file;
 mod install;
 mod invocation;
+mod pod;
 mod preview;
 mod progress;
 mod replica;

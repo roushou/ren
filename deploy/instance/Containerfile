@@ -1,0 +1,10 @@
+# The image every replica's pod runs (`cargo xtask canary`, `cargo xtask
+# preview`): Node for the UI and the C runtime and CA certificates `ren`
+# needs. It holds no build of Ren: a pod mounts the kept build it runs,
+# read-only, so one image serves every commit. xtask tags it by this file's
+# digest and builds it when that tag is missing.
+FROM docker.io/library/node:26-trixie-slim
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq \
+  && apt-get install -y -qq --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*

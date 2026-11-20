@@ -12,6 +12,7 @@ repository.workspace = true
 # ren-daemon's own parser.
 [dependencies]
 axum.workspace = true
+blake3.workspace = true
 clap.workspace = true
 futures-util.workspace = true
 ren-daemon.workspace = true
