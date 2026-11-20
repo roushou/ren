@@ -107,6 +107,10 @@
     color: var(--ink);
     box-shadow: var(--elev-popover);
     font-size: 12px;
+    font-weight: 400;
+    text-align: left;
+    text-transform: none;
+    letter-spacing: normal;
   }
   .card:popover-open {
     display: flex;

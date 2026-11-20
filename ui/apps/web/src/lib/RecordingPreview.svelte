@@ -7,6 +7,7 @@
 <script lang="ts">
   import Glyph from '#lib/Glyph.svelte';
   import FindingList from '#lib/FindingList.svelte';
+  import HoverCard from '#lib/layer/HoverCard.svelte';
   import { ManagementApi, num, short, type RecordingReport } from '#lib/api.ts';
   import { findingLine } from '#lib/activity.ts';
   import { compactOrDash } from '#lib/display.ts';
@@ -71,7 +72,18 @@
     {@const totals = read.report.totals}
     <dl class="figures">
       <div>
-        <dt>Peak context</dt>
+        <dt>
+          <HoverCard label="What peak context counts"
+            >{#snippet trigger()}<button type="button" class="tip-trigger">Peak context</button
+              >{/snippet}
+            <strong>The largest prompt one call sent</strong>
+            <span
+              >Tokens of prompt in the recording's biggest call, as the provider reported them: new
+              input plus the cache read and written. The model's limit is not reported, so none is
+              compared.</span
+            ></HoverCard
+          >
+        </dt>
         <dd class="mono">{compactOrDash(totals.peak_context_tokens)}</dd>
       </div>
       <div>
@@ -187,6 +199,16 @@
   }
   .figures > div:last-child {
     border-right: 0;
+  }
+  .tip-trigger {
+    padding: 0;
+    border: 0;
+    border-bottom: 1px dotted currentColor;
+    border-radius: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: help;
   }
   dt {
     color: var(--muted);

@@ -346,7 +346,19 @@
     ><tr
       >{#each callColumns as column (column.class)}<th
           class={column.class}
-          class:numeric={column.numeric}>{column.label}</th
+          class:numeric={column.numeric}
+          >{#if column.class === 'col-context'}<HoverCard label="What context counts"
+              >{#snippet trigger()}<button type="button" class="tip-trigger">{column.label}</button
+                >{/snippet}
+              <strong>The prompt the model saw</strong>
+              <span
+                >As the provider reported it: new input, plus what was read from the cache and
+                written to it. The bar is the share read from the cache.</span
+              >
+              <span class="muted"
+                >Provider-reported tokens, not subscription allowance or charges.</span
+              ></HoverCard
+            >{:else}{column.label}{/if}</th
         >{/each}</tr
     ></thead
   >
@@ -887,6 +899,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .tip-trigger {
+    padding: 0;
+    border: 0;
+    border-bottom: 1px dotted currentColor;
+    border-radius: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: help;
   }
   .card-figures {
     display: flex;
