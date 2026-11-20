@@ -68,7 +68,6 @@
                 <td>
                   <a class="name" {href}>{project.name}</a>
                   <span class="muted mono path">{project.repository}</span>
-                  {#if project.factory === 'ren'}<span class="tag">Ren itself</span>{/if}
                 </td>
                 <td>
                   {#if strip}
@@ -202,15 +201,6 @@
   }
   .path {
     display: block;
-    font-size: 11px;
-  }
-  .tag {
-    display: inline-block;
-    margin-top: 4px;
-    padding: 0 5px;
-    border: 1px solid var(--accent-border);
-    background: var(--accent-soft);
-    color: var(--accent-text);
     font-size: 11px;
   }
   .release {
