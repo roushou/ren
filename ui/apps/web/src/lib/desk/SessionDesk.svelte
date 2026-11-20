@@ -225,7 +225,6 @@
   let signingIn = $state<Drivable | null>(null);
   const tabs = [
     ['conversation', 'Conversation'],
-    ['activity', 'Activity'],
     ['files', 'Files'],
     ['calls', 'Calls'],
   ] as const;
@@ -1461,21 +1460,6 @@
   {/if}
 {/snippet}
 
-{#snippet activity()}
-  {@const steps = Runs.turns(transcript?.entries ?? []).map((turn) => ({
-    prompt: turn[0]?.kind === 'prompt' ? turn[0].text : 'Turn',
-    steps: turn.filter(
-      (entry) => entry.kind === 'command' || entry.kind === 'file_change' || entry.kind === 'tool',
-    ),
-  }))}
-  {#each steps.filter((turn) => turn.steps.length) as turn, index (index)}
-    <div class="band">{turn.prompt.split('\n')[0]}</div>
-    {#each turn.steps as entry, step (step)}{@render entryView(entry)}{/each}
-  {:else}
-    <p class="quiet-empty">No steps yet.</p>
-  {/each}
-{/snippet}
-
 {#snippet files()}
   {@const written = [
     ...new Set(
@@ -1755,10 +1739,6 @@
               </p>
             {/if}
           </div>
-        </div>
-      {:else if tab === 'activity'}
-        <div class="conversation">
-          {@render activity()}
         </div>
       {:else if tab === 'files'}
         <div class="conversation">
