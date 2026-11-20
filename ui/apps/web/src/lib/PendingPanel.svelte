@@ -1,6 +1,7 @@
 <!--
   What waits on the operator, across every project: approvals a working run
-  asks, a canary to promote, a preview to check, work still queued. An
+  asks, a client signed out, a canary to promote, a preview to check, work
+  still queued. An
   approval is a decision with consequences, so it is answered in a modal
   that shows it whole (or in its session), never from the list itself.
 -->
@@ -19,6 +20,7 @@
     type Decision,
   } from '#lib/runs.ts';
   import { Work } from '#lib/work.ts';
+  import { harnessLabel } from '#lib/activity.ts';
 
   let { board }: { board: ProjectBoard } = $props();
   const runs = new RunsClient();
@@ -116,6 +118,18 @@
       {/each}
     {/snippet}
   </Modal>
+{/if}
+{#if board.signedOut.length}
+  <h3>Signed out</h3>
+  <ul>
+    {#each board.signedOut as client (client.harness)}
+      <li>
+        <span>{harnessLabel(client.harness)}</span>
+        <span class="muted">Runs cannot start with it until it is signed in on this host.</span>
+        <span class="actions"><a class="button primary small" href="/tools">Sign in…</a></span>
+      </li>
+    {/each}
+  </ul>
 {/if}
 {#if board.toPromote.length}
   <h3>Ready to promote</h3>

@@ -273,3 +273,25 @@ test('news is what newly waits: a new approval, a newly passed canary; nothing a
     ['Run a command', 'acme-web: canary passed'],
   );
 });
+
+test('a client signed out on the host waits on the operator, and counts in Pending', () => {
+  const client = (harness: string, kind: string) =>
+    ({
+      harness,
+      status: 'ready',
+      approvals: [],
+      midway: [],
+      sign_in: { kind },
+      sign_in_methods: [],
+    }) as never;
+  const board = new ProjectBoard([], [], [], [], null, [
+    client('codex', 'signed_out'),
+    client('claude_code', 'signed_in'),
+  ]);
+  assert.deepEqual(
+    board.signedOut.map((one) => one.harness),
+    ['codex'],
+  );
+  assert.equal(board.waiting, 1);
+  assert.ok(board.pending);
+});

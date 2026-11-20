@@ -1,6 +1,7 @@
 <script lang="ts">
   import Glyph from '#lib/Glyph.svelte';
   import { Marks } from '#lib/marks.ts';
+  import { harnessLabel } from '#lib/activity.ts';
   import Toasts from '#lib/layer/Toasts.svelte';
   import { toasts } from '#lib/layer/toasts.svelte.ts';
   import Popover from '#lib/layer/Popover.svelte';
@@ -125,7 +126,14 @@
   const destination = $derived(Views.destination(tab));
   /** What waits on the operator, across every project: the top bar's Pending. */
   const board = $derived(
-    new ProjectBoard(data.board.projects, data.board.work, data.board.live, data.board.sessions),
+    new ProjectBoard(
+      data.board.projects,
+      data.board.work,
+      data.board.live,
+      data.board.sessions,
+      null,
+      data.board.clients,
+    ),
   );
   /** What newly waits on the operator, said as a toast as it arrives:
    * unless the page that says it is the one on screen. The first board says
@@ -396,7 +404,13 @@
         popovertarget="host-popover"
         aria-label="Host health: {hostVerdict?.headline ?? 'not read yet'}"
         title={hostVerdict?.headline ?? 'Host health'}
-        ><Glyph mark={hostVerdict ? Marks.ofTone(hostVerdict.tone) : 'waiting'} /></button
+        ><Glyph
+          mark={board.signedOut.length && hostVerdict?.tone === 'success'
+            ? 'warning'
+            : hostVerdict
+              ? Marks.ofTone(hostVerdict.tone)
+              : 'waiting'}
+        /></button
       >
     </nav>
     <Popover id="host-popover" label="Host health">
@@ -431,6 +445,13 @@
             {/each}
           </dl>
         {:else}<p class="muted">The gateway's health has not been read yet.</p>{/if}
+        {#each board.signedOut as client (client.harness)}
+          <p class="host-verdict">
+            <Glyph mark="warning" label="Signed out" /><span
+              >{harnessLabel(client.harness)} is signed out on this host</span
+            >
+          </p>
+        {/each}
         <p class="host-links">
           <a href="/recorder">Recorder <Icon name="arrow" size={11} /></a>
           <a href="/tools">Tools <Icon name="arrow" size={11} /></a>

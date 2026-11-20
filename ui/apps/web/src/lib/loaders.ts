@@ -21,7 +21,7 @@ import {
   type UsageView,
   type Project,
 } from './api.ts';
-import { RunsClient, type RunSnapshot, type SessionBody } from './runs.ts';
+import { RunsClient, type RunClient, type RunSnapshot, type SessionBody } from './runs.ts';
 import { WorkApi, type WorkItem } from './work.ts';
 import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
 import { listingQuery } from './traffic.ts';
@@ -706,6 +706,9 @@ export interface ProjectsData {
   live: RunSnapshot[];
   /** The current sessions, for the project each run works for. */
   sessions: SessionBody[];
+  /** Each client and its sign-in on the daemon's host; none when this UI
+   * only reads. */
+  clients: RunClient[];
 }
 
 export async function projectsData(
@@ -714,7 +717,7 @@ export async function projectsData(
 ): Promise<ProjectsData> {
   const api = new ManagementApi(fetcher);
   const runs = new RunsClient(fetcher);
-  const [listed, work, live, sessions] = await Promise.all([
+  const [listed, work, live, sessions, clients] = await Promise.all([
     api.projects().then(
       (projects) => ({ projects, failed: null }),
       (failure: unknown) => ({
@@ -725,6 +728,7 @@ export async function projectsData(
     new WorkApi(fetcher).list('current').catch(() => []),
     runsControl ? runs.live().catch(() => []) : Promise.resolve([]),
     runsControl ? runs.sessions('current').catch(() => []) : Promise.resolve([]),
+    runsControl ? runs.clients().catch(() => []) : Promise.resolve([]),
   ]);
-  return { ...listed, work, live, sessions };
+  return { ...listed, work, live, sessions, clients };
 }

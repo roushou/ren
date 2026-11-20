@@ -8,12 +8,14 @@ import {
   Sessions,
   type ApprovalAsk,
   type ApprovalId,
+  type RunClient,
   type RunSnapshot,
   type SessionBody,
   type SessionId,
 } from './runs.ts';
 import { Work, type WorkItem } from './work.ts';
 import type { Said } from './layer/toasts.svelte.ts';
+import { SignIns } from './signIn.ts';
 
 /** An approval a running session waits on, with the project it works for. */
 export interface Approval {
@@ -51,6 +53,8 @@ export class ProjectBoard {
   readonly sessions: readonly SessionBody[];
   /** The one project the board is for, by name; null for every project. */
   readonly only: string | null;
+  /** Each client and its sign-in on the daemon's host. */
+  readonly clients: readonly RunClient[];
 
   constructor(
     projects: readonly Project[],
@@ -58,12 +62,20 @@ export class ProjectBoard {
     live: readonly RunSnapshot[] = [],
     sessions: readonly SessionBody[] = [],
     only: string | null = null,
+    clients: readonly RunClient[] = [],
   ) {
     this.projects = projects;
     this.work = work;
     this.live = live;
     this.sessions = sessions;
     this.only = only;
+    this.clients = clients;
+  }
+
+  /** Clients signed out on the daemon's host: a run cannot use them until
+   * the operator signs them in. */
+  get signedOut(): RunClient[] {
+    return this.clients.filter((client) => SignIns.signedOut(client.sign_in));
   }
 
   /** The board of `project` alone: its work (Ren's holds the items from
@@ -139,7 +151,11 @@ export class ProjectBoard {
    * counts. */
   get waiting(): number {
     return (
-      this.approvals.length + this.toPromote.length + this.previews.length + this.queued.length
+      this.approvals.length +
+      this.toPromote.length +
+      this.previews.length +
+      this.queued.length +
+      this.signedOut.length
     );
   }
 
@@ -193,7 +209,8 @@ export class ProjectBoard {
       this.approvals.length > 0 ||
       this.toPromote.length > 0 ||
       this.previews.length > 0 ||
-      this.queued.length > 0
+      this.queued.length > 0 ||
+      this.signedOut.length > 0
     );
   }
 
