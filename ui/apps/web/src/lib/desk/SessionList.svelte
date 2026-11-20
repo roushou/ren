@@ -133,7 +133,7 @@
       {@render confirm(session, asking)}
     {:else}
       {@render select(session, mark, asked, unused)}
-      {#if deletable && !Sessions.running(session)}<button
+      {#if deletable}<button
           class="remove"
           disabled={deletion.phase === 'deleting'}
           title="Delete session"
@@ -172,7 +172,9 @@
         ? asking.reason
         : sending
           ? 'Removing it and its recorded calls.'
-          : 'Its runs and recorded calls go too.'}</span
+          : Sessions.running(session)
+            ? 'Its client stops, and its runs and recorded calls go too.'
+            : 'Its runs and recorded calls go too.'}</span
     >
     <span class="confirm-actions">
       <button

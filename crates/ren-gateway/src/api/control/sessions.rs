@@ -55,8 +55,9 @@ use ren_store::{
     view::{AttachmentView, SessionView},
 };
 use ren_supervisor::{
-    AttachmentUse, Create, FileQuery, KeptAttachment, RunCommand, SessionError, SessionPhase,
-    SessionRefused, SessionSeed, SessionState, Shelving, StartPlace, Supervisor,
+    AttachmentUse, CommandError, Create, FileQuery, KeptAttachment, RunCommand, RunRefused,
+    SessionError, SessionPhase, SessionRefused, SessionSeed, SessionState, Shelving, StartPlace,
+    Supervisor,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast::error::RecvError;
@@ -731,10 +732,13 @@ impl SessionsApi {
         api.shelve(&headers, &session, Shelving::Unarchive).await
     }
 
-    /// Delete a session for good: its ended runs, what they recorded, and
-    /// the session, even one with no run. Refused while a process serves it
-    /// or one of its calls is open. The supervisor stops serving it at once;
-    /// the store deletes it when the recorder reaches the edit.
+    /// Delete a session for good: its runs, what they recorded, and the
+    /// session, even one with no run. A client still running is stopped
+    /// first, and the delete waits until its run's end and its calls are
+    /// recorded, so nothing it was doing lands after the session is gone;
+    /// refused only when they are not within the wait. The supervisor stops
+    /// serving it at once; the store deletes it when the recorder reaches
+    /// the edit.
     async fn delete(
         State(api): Api,
         headers: HeaderMap,
@@ -750,13 +754,11 @@ impl SessionsApi {
             .history_target(subject)
             .await
             .map_err(|_| ControlRefusal::Unavailable)?;
-        if let Some(target) = target {
-            if target.running_runs > 0 {
-                return Err(ControlRefusal::RunRunning);
-            }
-            if target.open_calls > 0 {
-                return Err(ControlRefusal::CallOpen);
-            }
+        if let Some(target) = target
+            && (target.running_runs > 0 || target.open_calls > 0)
+        {
+            api.stop_to_delete(supervisor, session, subject, target.running_runs > 0)
+                .await?;
         }
         let slot = api
             .control
@@ -770,6 +772,55 @@ impl SessionsApi {
         slot.record(actor, subject, HistoryChange::Delete);
         api.forget_previews(session).await;
         Ok(Self::done())
+    }
+
+    /// How long a delete waits for a stopped client's run to end and its
+    /// calls to close: this many reads of the store, this far apart.
+    const STOP_READS: u32 = 100;
+    const STOP_READ_EVERY: Duration = Duration::from_millis(100);
+
+    /// Stop the client serving `session`, when `running`, and wait until the
+    /// store holds no run of it running and none of its calls open; else why
+    /// it cannot be deleted yet.
+    async fn stop_to_delete(
+        &self,
+        supervisor: &Supervisor,
+        session: SessionId,
+        subject: HistorySubject,
+        running: bool,
+    ) -> Result<(), ControlRefusal> {
+        if running {
+            match supervisor.send(session, RunCommand::Stop).await {
+                // Already on its way out, or gone: there is only the wait.
+                Ok(())
+                | Err(
+                    SessionError::NoProcess
+                    | SessionError::NoSuchSession(_)
+                    | SessionError::Command(CommandError::Refused(
+                        RunRefused::Stopping | RunRefused::Ended,
+                    )),
+                ) => {}
+                Err(error) => return Err(Self::refused(error)),
+            }
+        }
+        let mut left = None;
+        for _ in 0..Self::STOP_READS {
+            left = self
+                .reader
+                .history_target(subject)
+                .await
+                .map_err(|_| ControlRefusal::Unavailable)?;
+            match left {
+                Some(target) if target.running_runs > 0 || target.open_calls > 0 => {
+                    tokio::time::sleep(Self::STOP_READ_EVERY).await;
+                }
+                Some(_) | None => return Ok(()),
+            }
+        }
+        Err(match left {
+            Some(target) if target.running_runs > 0 => ControlRefusal::RunRunning,
+            Some(_) | None => ControlRefusal::CallOpen,
+        })
     }
 
     /// Takes the preview off each work item `session` took up: deleting the
