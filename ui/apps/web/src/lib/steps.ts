@@ -10,7 +10,7 @@ import type { EffectKind } from './api.ts';
 import { Board } from './board.ts';
 import { assertNever } from './decode.ts';
 import type { Stored } from './decode.ts';
-import { Runs, type CommandPart, type Entry, type ItemId } from './runs.ts';
+import { Runs, type CommandPart, type Entry, type ItemId, type ItemSpan } from './runs.ts';
 
 /** An entry that is a step: something the agent did, not something said. */
 export type StepEntry = Extract<Entry, { kind: 'command' | 'file_change' | 'tool' }>;
@@ -36,8 +36,10 @@ export interface Step {
   /** How it failed, when it failed with an exit code (`exit 1`); its mark
    * says that it failed. */
   failure: string | null;
-  /** How long it took, in milliseconds, when the daemon stored its start
-   * and completion; null while it runs, or when only the live feed said. */
+  /** When it started and completed, as the daemon stored them; null while
+   * it runs, or when only the live feed said. */
+  span: ItemSpan | null;
+  /** How long it took, in milliseconds, from its span. */
   took: number | null;
 }
 
@@ -71,7 +73,7 @@ export class Steps {
   static blocks(
     entries: readonly Entry[],
     workdir: string | null,
-    took: ReadonlyMap<ItemId, number> = new Map(),
+    spans: ReadonlyMap<ItemId, ItemSpan> = new Map(),
   ): Block[] {
     const blocks: Block[] = [];
     for (const entry of entries) {
@@ -80,7 +82,7 @@ export class Steps {
         blocks.push({ kind: 'entry', entry });
         continue;
       }
-      const step = Steps.read(entry, workdir, took.get(entry.item) ?? null);
+      const step = Steps.read(entry, workdir, spans.get(entry.item) ?? null);
       const last = blocks.at(-1);
       if (last?.kind === 'steps') {
         last.steps.push(step);
@@ -98,9 +100,20 @@ export class Steps {
     return 'done';
   }
 
-  /** What one step did, and how long it took when that is known. */
-  static read(entry: StepEntry, workdir: string | null, took: number | null = null): Step {
-    return { ...Steps.#read(entry, workdir), took };
+  /** What one step did, and when, when that is known. */
+  static read(entry: StepEntry, workdir: string | null, span: ItemSpan | null = null): Step {
+    return { ...Steps.#read(entry, workdir), span, took: span ? span.to - span.from : null };
+  }
+
+  /** The time `steps` ran over, from the first start to the last end of
+   * those whose span is known; null when none is. */
+  static window(steps: readonly Step[]): ItemSpan | null {
+    const spans = steps.flatMap((step) => (step.span ? [step.span] : []));
+    if (!spans.length) return null;
+    return {
+      from: Math.min(...spans.map((span) => span.from)) as ItemSpan['from'],
+      to: Math.max(...spans.map((span) => span.to)) as ItemSpan['to'],
+    };
   }
 
   /** How long `steps` took together, counting those whose time is known;
@@ -152,7 +165,7 @@ export class Steps {
     return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
   }
 
-  static #read(entry: StepEntry, workdir: string | null): Omit<Step, 'took'> {
+  static #read(entry: StepEntry, workdir: string | null): Omit<Step, 'took' | 'span'> {
     switch (entry.kind) {
       case 'command':
         return Steps.#command(entry, workdir);
@@ -272,7 +285,7 @@ export class Steps {
   static #command(
     entry: Extract<Entry, { kind: 'command' }>,
     workdir: string | null,
-  ): Omit<Step, 'took'> {
+  ): Omit<Step, 'took' | 'span'> {
     const status = Steps.#status(entry.status, entry.exit);
     const command = Board.shorten(entry.command, workdir);
     const intent = entry.intent;

@@ -1072,7 +1072,7 @@ test('every decision has distinct words, and only allowing reads as passed', () 
   );
 });
 
-test('a stored item keeps how long it took; a step reads it, and a group adds it up', () => {
+test('a stored item keeps when it ran; a step reads how long, and a group adds it up', () => {
   const run = 'run-1' as never;
   const command = (id: string, phase: 'started' | 'completed') =>
     ({
@@ -1117,11 +1117,11 @@ test('a stored item keeps how long it took; a step reads it, and a group adds it
     ],
     earlier: false,
   });
-  assert.deepEqual([...transcript.took], [['run-1/c1', 2_500]]);
+  assert.deepEqual([...transcript.spans], [['run-1/c1', { from: 1_000, to: 3_500 }]]);
   // The time survives the live feed's next event.
   const later = transcript.apply(command('c3', 'started'), run);
-  assert.equal(later.took.get('run-1/c1' as never), 2_500);
-  const [group] = Steps.blocks(later.entries, null, later.took);
+  assert.deepEqual(later.spans.get('run-1/c1' as never), { from: 1_000, to: 3_500 });
+  const [group] = Steps.blocks(later.entries, null, later.spans);
   assert.equal(group?.kind, 'steps');
   if (group?.kind !== 'steps') return;
   assert.deepEqual(
@@ -1130,4 +1130,7 @@ test('a stored item keeps how long it took; a step reads it, and a group adds it
   );
   assert.equal(Steps.took(group.steps), 2_500);
   assert.equal(Steps.took([]), null);
+  // The window the picked steps ran over, from what is known of them.
+  assert.deepEqual(Steps.window(group.steps), { from: 1_000, to: 3_500 });
+  assert.equal(Steps.window(group.steps.slice(1)), null);
 });

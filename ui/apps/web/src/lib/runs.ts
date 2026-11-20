@@ -1428,6 +1428,12 @@ export type Entry =
   | { kind: 'turn_end'; turn: NativeTurnId; end: TurnEnd }
   | { kind: 'notice'; tone: 'warn' | 'danger'; text: string };
 
+/** When a conversation item started and when it completed. */
+export interface ItemSpan {
+  from: UnixMillis;
+  to: UnixMillis;
+}
+
 /** A run's conversation as the daemon stored it (`/api/runs/{id}/conversation`). */
 export interface StoredConversation {
   /** Each event, with when its item was first and last reported. */
@@ -1457,33 +1463,36 @@ export class Transcript {
   readonly read: boolean;
   /** Older entries were left out of the read. */
   readonly earlier: boolean;
-  /** How long each stored item took, from its start to its completion, in
-   * milliseconds. Only what the daemon stored says: an item that finished
-   * on the live feed has its time once the conversation is read again. */
-  readonly took: ReadonlyMap<ItemId, number>;
+  /** When each stored item started and completed. Only what the daemon
+   * stored says: an item that finished on the live feed has its span once
+   * the conversation is read again. */
+  readonly spans: ReadonlyMap<ItemId, ItemSpan>;
 
   constructor(
     entries: Entry[] = [],
     turn: NativeTurnId | null = null,
     read = false,
     earlier = false,
-    took: ReadonlyMap<ItemId, number> = new Map(),
+    spans: ReadonlyMap<ItemId, ItemSpan> = new Map(),
   ) {
     this.entries = entries;
     this.turn = turn;
     this.read = read;
     this.earlier = earlier;
-    this.took = took;
+    this.spans = spans;
   }
 
   /** What the daemon stored, with what streamed in meanwhile kept. */
   load(stored: StoredConversation): Transcript {
     let loaded = new Transcript();
-    const took = new Map(this.took);
+    const spans = new Map(this.spans);
     for (const entry of stored.entries) {
       loaded = loaded.apply(entry.event, entry.run);
       if (entry.event.kind === 'item' && entry.event.phase === 'completed')
-        took.set(Transcript.#own(entry.event.item.id, entry.run), entry.at - entry.started_at);
+        spans.set(Transcript.#own(entry.event.item.id, entry.run), {
+          from: entry.started_at,
+          to: entry.at,
+        });
     }
     const entries = loaded.entries.slice();
     for (const live of this.entries) {
@@ -1491,7 +1500,7 @@ export class Transcript {
       if (at === -1) entries.push(live);
       else if (Transcript.done(live) && !Transcript.done(entries[at]!)) entries[at] = live;
     }
-    return new Transcript(entries, this.turn ?? loaded.turn, true, stored.earlier, took);
+    return new Transcript(entries, this.turn ?? loaded.turn, true, stored.earlier, spans);
   }
 
   /** Every prompt sent, oldest first, to recall. */
@@ -1551,7 +1560,7 @@ export class Transcript {
     const own = (item: ItemId): ItemId => Transcript.#own(item, run);
     switch (event.kind) {
       case 'turn_started':
-        return new Transcript(this.entries, event.turn, this.read, this.earlier, this.took);
+        return new Transcript(this.entries, event.turn, this.read, this.earlier, this.spans);
       case 'delta': {
         const item = own(event.item);
         const index = this.#find(item);
@@ -1564,7 +1573,7 @@ export class Transcript {
       case 'item':
         return this.#item({ ...event.item, id: own(event.item.id) }, event.phase === 'completed');
       case 'turn_ended':
-        return new Transcript(this.entries, event.turn, this.read, this.earlier, this.took).#push({
+        return new Transcript(this.entries, event.turn, this.read, this.earlier, this.spans).#push({
           kind: 'turn_end',
           turn: event.turn,
           end: event.end,
@@ -1654,11 +1663,11 @@ export class Transcript {
   #replace(index: number, entry: Entry): Transcript {
     const entries = this.entries.slice();
     entries[index] = entry;
-    return new Transcript(entries, this.turn, this.read, this.earlier, this.took);
+    return new Transcript(entries, this.turn, this.read, this.earlier, this.spans);
   }
 
   #append(entry: Entry): Transcript {
-    return new Transcript([...this.entries, entry], this.turn, this.read, this.earlier, this.took);
+    return new Transcript([...this.entries, entry], this.turn, this.read, this.earlier, this.spans);
   }
 
   /** Add `entry`, or put it in the place of the same entry said before. */

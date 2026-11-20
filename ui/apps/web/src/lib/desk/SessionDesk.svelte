@@ -569,7 +569,7 @@
    * step's time. */
   const turnBlocks = $derived(
     Runs.turns(transcript?.entries ?? []).map((turn): Block[] =>
-      Steps.blocks(turn, session?.workdir ?? null, transcript?.took),
+      Steps.blocks(turn, session?.workdir ?? null, transcript?.spans),
     ),
   );
   /** Every step of the conversation, in order: ↑ and ↓ move along it. */
@@ -604,6 +604,20 @@
       toasts.show({ mark: 'failed', text: 'The browser refused the copy', detail: null });
     }
   }
+  /** Traffic narrowed to the calls around the picked steps: the session's
+   * recording, over the time they ran with a margin for the model calls
+   * that asked for them and read their results. */
+  const pickedCalls = $derived.by(() => {
+    const recording = current?.recorded?.recording;
+    if (!recording || !pickedSteps.length) return null;
+    const window = Steps.window(pickedSteps);
+    const query = new URLSearchParams({ recording });
+    if (window) {
+      query.set('from_ms', String(window.from - 30_000));
+      query.set('until_ms', String(window.to + 30_000));
+    }
+    return `/traffic?${query}`;
+  });
   /** Quote the picked steps in the composer, to ask about them. */
   function askPicked() {
     const target = chosen;
@@ -1733,6 +1747,8 @@
               > picked</span
             >
             <button class="button small" onclick={() => void copyPicked()}>Copy</button>
+            {#if pickedCalls}<a class="button small" href={pickedCalls}>Their calls in Traffic</a
+              >{/if}
             {#if data.runsControl && compose}<button
                 class="button small primary"
                 onclick={askPicked}>Ask about {pickedSteps.length === 1 ? 'it' : 'them'}</button
