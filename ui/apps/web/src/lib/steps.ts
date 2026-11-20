@@ -3,8 +3,8 @@
 // what its client said wherever it said something (Claude Code's and
 // OpenCode's description of a command, Codex's parts of one, a tool's
 // effects) and from the command itself only where it said nothing. The steps
-// between two things said gather into one group, folded to a line once
-// nothing in it runs or failed. Pure: no DOM, no fetches.
+// between two things said gather into one group, folded to a line. Pure: no
+// DOM, no fetches.
 
 import type { EffectKind } from './api.ts';
 import { Board } from './board.ts';
@@ -82,19 +82,6 @@ export class Steps {
       }
     }
     return blocks;
-  }
-
-  /** Whether a group starts open: while a step in it runs, or once one failed. */
-  static opens(state: GroupState): boolean {
-    switch (state) {
-      case 'running':
-      case 'failed':
-        return true;
-      case 'done':
-        return false;
-      default:
-        return assertNever(state);
-    }
   }
 
   static state(steps: readonly Step[]): GroupState {

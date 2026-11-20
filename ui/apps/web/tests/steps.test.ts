@@ -54,7 +54,7 @@ test('steps between two things said gather into one group, keyed by its first st
   assert.equal(thinking.length, 3);
 });
 
-test('a group folds once done, and stays open while a step runs or after one failed', () => {
+test('a group runs while a step runs, and failed once one failed', () => {
   const state = (entries: Entry[]) => {
     const [block] = Steps.blocks(entries, WORK);
     assert.equal(block?.kind, 'steps');
@@ -67,9 +67,6 @@ test('a group folds once done, and stays open while a step runs or after one fai
     'failed',
   );
   assert.equal(state([command('c1', 'rm -rf x', undefined, 'declined', null)]), 'done');
-  assert.equal(Steps.opens('done'), false);
-  assert.equal(Steps.opens('running'), true);
-  assert.equal(Steps.opens('failed'), true);
 });
 
 test('a command reads as its client said it, and as written only when it said nothing', () => {
