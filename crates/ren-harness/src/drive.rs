@@ -150,14 +150,21 @@ impl Driver {
         }
     }
 
-    /// Read one frame from the client's stdout.
+    /// Read one frame from the client's stdout. No item it reports keeps
+    /// the bytes of an image in its body, whichever client sent it.
     pub fn receive(&mut self, frame: Framed) -> Received {
-        match self {
+        let mut received = match self {
             Self::Codex(codec) => codec.receive(frame),
             Self::ClaudeCode(codec) => codec.receive(frame),
             Self::Pi(codec) => codec.receive(frame),
             Self::OpenCode(codec) => codec.receive(frame),
-        }
+        };
+        received.events = received
+            .events
+            .into_iter()
+            .map(DriveEvent::without_image_bytes)
+            .collect();
+        received
     }
 }
 
@@ -421,12 +428,62 @@ pub struct DriveItem {
     pub body: serde_json::Value,
 }
 
+impl DriveEvent {
+    /// The event without the bytes of any image in an item's body: a prompt
+    /// sent with images, or a tool's result that holds one (a screenshot
+    /// the agent read), then never carries them into what Ren records and
+    /// publishes.
+    pub fn without_image_bytes(self) -> Self {
+        match self {
+            Self::Item { phase, mut item } => {
+                item.body = DriveItem::without_image_bytes(item.body);
+                Self::Item { phase, item }
+            }
+            other @ (Self::Ready { .. }
+            | Self::TurnStarted { .. }
+            | Self::Delta { .. }
+            | Self::Approval { .. }
+            | Self::ApprovalResolved { .. }
+            | Self::TurnEnded { .. }
+            | Self::Error { .. }
+            | Self::Refused { .. }
+            | Self::Unsupported { .. }
+            | Self::Unknown { .. }
+            | Self::Unreadable { .. }) => other,
+        }
+    }
+}
+
+impl DriveEvent {
+    /// The event with an item's body left out (`null`): what Ren read of
+    /// it (`read`) stays, the client's own copy does not. A reader that
+    /// shows only Ren's reading needs no more.
+    pub fn without_body(self) -> Self {
+        match self {
+            Self::Item { phase, mut item } => {
+                item.body = serde_json::Value::Null;
+                Self::Item { phase, item }
+            }
+            other @ (Self::Ready { .. }
+            | Self::TurnStarted { .. }
+            | Self::Delta { .. }
+            | Self::Approval { .. }
+            | Self::ApprovalResolved { .. }
+            | Self::TurnEnded { .. }
+            | Self::Error { .. }
+            | Self::Refused { .. }
+            | Self::Unsupported { .. }
+            | Self::Unknown { .. }
+            | Self::Unreadable { .. }) => other,
+        }
+    }
+}
+
 impl DriveItem {
     /// `body` without the bytes of any image inlined in it: the `data` of
     /// each part whose `type` is `image` or `base64` becomes a note of how
-    /// long it was. An echoed prompt then never carries an image's bytes
-    /// into what Ren records and publishes.
-    pub fn without_image_bytes(body: serde_json::Value) -> serde_json::Value {
+    /// long it was.
+    fn without_image_bytes(body: serde_json::Value) -> serde_json::Value {
         use serde_json::Value;
         match body {
             Value::Object(mut fields) => {
@@ -809,6 +866,70 @@ mod tests {
                 DriveEventKind::from(event).label(),
                 "{event:?}"
             );
+        }
+    }
+
+    /// A screenshot a client's tool read is reported, and stored, as what
+    /// it was, never as its bytes; so is an image sent with a prompt.
+    #[test]
+    fn no_item_a_driver_reports_keeps_an_images_bytes() {
+        use super::{Driver, Opening};
+        use crate::{Harness, lines::Framed};
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+        let thread = ren_protocol::native::NativeThreadId::new(uuid::Uuid::from_u128(7)).unwrap();
+        let (mut driver, _) = Driver::open(
+            Harness::ClaudeCode,
+            Opening::New {
+                cwd: "/work/acme".into(),
+                id: thread,
+                settings: crate::settings::RunSettings::default(),
+            },
+            "0.0.0",
+            uuid::Uuid::from_u128(8),
+        );
+        let mut feed = |message: serde_json::Value| {
+            driver.receive(Framed::Line(message.to_string().into_bytes()))
+        };
+        let _ = feed(
+            serde_json::json!({ "type": "control_response", "response": {
+            "subtype": "success", "request_id": "ren-0", "response": {} } }),
+        );
+        let echo = feed(serde_json::json!({ "type": "user", "isReplay": true,
+            "uuid": "0190f3a0-0000-7000-8000-0000000000e1", "parent_tool_use_id": null,
+            "message": { "role": "user", "content": [
+                { "type": "image", "source": { "type": "base64", "media_type": "image/png",
+                  "data": png } },
+                { "type": "text", "text": "what is this" }] } }));
+        let _ = feed(
+            serde_json::json!({ "type": "assistant", "parent_tool_use_id": null,
+            "message": { "id": "msg_1", "role": "assistant", "content": [
+                { "type": "tool_use", "id": "toolu_1", "name": "Read",
+                  "input": { "file_path": "/work/acme/shot.png" } }] } }),
+        );
+        let result = feed(
+            serde_json::json!({ "type": "user", "parent_tool_use_id": null,
+            "message": { "role": "user", "content": [
+                { "type": "tool_result", "tool_use_id": "toolu_1", "content": [
+                    { "type": "image", "source": { "type": "base64",
+                      "media_type": "image/png", "data": png } }] }] } }),
+        );
+        let items: Vec<&DriveItem> = echo
+            .events
+            .iter()
+            .chain(&result.events)
+            .filter_map(|event| {
+                if let DriveEvent::Item { item, .. } = event {
+                    Some(item)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(items.len(), 2, "the echo and the read: {items:?}");
+        for item in items {
+            let body = item.body.to_string();
+            assert!(!body.contains(png), "{body}");
+            assert!(body.contains("characters of base64, not kept"), "{body}");
         }
     }
 

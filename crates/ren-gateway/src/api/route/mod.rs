@@ -5,12 +5,13 @@
 
 use super::ApiError;
 use super::params::{
-    RawCallQuery, RawExposureQuery, RawPageQuery, RawSearchQuery, RawShelfQuery, RawUsageQuery,
+    RawCallQuery, RawConversationQuery, RawExposureQuery, RawPageQuery, RawSearchQuery,
+    RawShelfQuery, RawUsageQuery,
 };
 use axum::extract::Query;
 use http::Uri;
 use ren_protocol::label::Labeled;
-use ren_store::query::{CallQuery, QueryError, Shelf, TimeRange};
+use ren_store::query::{CallQuery, ItemBodies, QueryError, Shelf, TimeRange};
 use ren_store::read::ReadRequest;
 use ren_store::search::{ExposureQuery, SearchQuery};
 use serde::de::DeserializeOwned;
@@ -118,9 +119,9 @@ impl ApiRead {
                     .opt("project", project.as_ref()),
             ),
             ReadRequest::Run(run) => (format!("/api/runs/{run}"), QueryParams::default()),
-            ReadRequest::Conversation(run) => (
+            ReadRequest::Conversation { run, bodies } => (
                 format!("/api/runs/{run}/conversation"),
-                QueryParams::default(),
+                QueryParams::default().bodies(*bodies),
             ),
             ReadRequest::WorkItems {
                 limit,
@@ -204,7 +205,10 @@ impl ApiRead {
                 }
             }
             ["runs", run] => ReadRequest::Run(Self::id(run)?),
-            ["runs", run, "conversation"] => ReadRequest::Conversation(Self::id(run)?),
+            ["runs", run, "conversation"] => ReadRequest::Conversation {
+                run: Self::id(run)?,
+                bodies: Self::query::<RawConversationQuery>(uri)?.parse()?,
+            },
             ["work"] => {
                 let (limit, shelf, project) = Self::query::<RawShelfQuery>(uri)?.parse()?;
                 ReadRequest::WorkItems {
@@ -273,6 +277,14 @@ impl QueryParams {
         match shelf {
             Shelf::Current => self,
             Shelf::Archived => self.with("shelf", shelf),
+        }
+    }
+
+    /// Whether items keep their bodies, left out when they do.
+    fn bodies(self, bodies: ItemBodies) -> Self {
+        match bodies {
+            ItemBodies::Kept => self,
+            ItemBodies::Omitted => self.with("bodies", bodies),
         }
     }
 

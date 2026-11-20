@@ -2,7 +2,8 @@
 
 use ren_recorder::{project::ProjectName, time::UnixMillis};
 use ren_store::query::{
-    CallFilter, CallQuery, Cursor, PageLimit, QueryError, SearchText, Shelf, TimeRange, UsageScope,
+    CallFilter, CallQuery, Cursor, ItemBodies, PageLimit, QueryError, SearchText, Shelf, TimeRange,
+    UsageScope,
 };
 use ren_store::search::{ExposureQuery, SearchQuery, SearchTerms};
 use serde::Deserialize;
@@ -61,6 +62,22 @@ pub(super) struct RawCallQuery {
 pub(super) struct RawPageQuery {
     pub limit: Option<u32>,
     pub after: Option<String>,
+}
+
+/// `GET /api/runs/{run}/conversation` parameters: whether each item keeps
+/// its body (`kept`, the default) or leaves it out (`omitted`).
+#[derive(Debug, Default, Deserialize, TS)]
+#[serde(deny_unknown_fields, default)]
+#[ts(export, optional_fields)]
+pub(super) struct RawConversationQuery {
+    #[ts(as = "Option<String>")]
+    bodies: RawLabel,
+}
+
+impl RawConversationQuery {
+    pub fn parse(self) -> Result<ItemBodies, QueryError> {
+        Ok(self.bodies.parse()?.unwrap_or_default())
+    }
 }
 
 /// `GET /api/recordings`, `/api/runs`, and `/api/work` parameters: a page

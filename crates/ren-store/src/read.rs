@@ -5,7 +5,7 @@
 
 use crate::activity::report::RecordingReport;
 use crate::activity::{ActivityBudget, CallActivity, TurnActivity, TurnSummary};
-use crate::query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange, UsageScope};
+use crate::query::{CallQuery, Cursor, ItemBodies, PageLimit, Shelf, TimeRange, UsageScope};
 use crate::search::{ExposureQuery, ExposureView, SearchPage, SearchQuery};
 use crate::view::{
     CallDetail, CallPage, ConversationView, RecordingView, RunView, UsageView, WorkItemView,
@@ -54,8 +54,12 @@ pub enum ReadRequest {
         project: Option<ProjectName>,
     },
     Run(RunId),
-    /// A run's conversation, whole, with the runs before it on its thread.
-    Conversation(RunId),
+    /// A run's conversation, whole, with the runs before it on its thread,
+    /// its items' bodies kept or left out.
+    Conversation {
+        run: RunId,
+        bodies: ItemBodies,
+    },
     /// Work items, most recently changed first; with a project, its only.
     WorkItems {
         limit: PageLimit,
@@ -147,8 +151,8 @@ impl Reader {
             ReadRequest::Run(run) => {
                 ReadResponse::Run(Box::new(self.run(*run).await?.ok_or(StoreError::NotFound)?))
             }
-            ReadRequest::Conversation(run) => ReadResponse::Conversation(
-                self.conversation(*run, Self::CONVERSATION)
+            ReadRequest::Conversation { run, bodies } => ReadResponse::Conversation(
+                self.conversation(*run, Self::CONVERSATION, *bodies)
                     .await?
                     .ok_or(StoreError::NotFound)?,
             ),

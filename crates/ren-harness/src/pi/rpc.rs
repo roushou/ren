@@ -603,7 +603,7 @@ impl PiRpc {
                         id: self.item(format!("user:{stamp}")),
                         kind: ItemKind::UserMessage.into(),
                         read: ItemRead::Prompt { text, images },
-                        body: DriveItem::without_image_bytes(body.clone()),
+                        body: body.clone(),
                     },
                 });
             }
@@ -1100,7 +1100,8 @@ mod tests {
                 images: vec![image.read().clone()],
             }
         );
-        assert!(!item.body.to_string().contains(&image.base64()));
+        // Its body keeps the image's bytes here; `Driver::receive` drops
+        // them from every item it reports.
     }
 
     #[test]

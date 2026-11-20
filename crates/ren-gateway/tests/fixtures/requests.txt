@@ -17,6 +17,7 @@ PromoteRequest
 PromptRequest
 QueueRequest
 RawCallQuery
+RawConversationQuery
 RawExposureQuery
 RawLiveQuery
 RawPageQuery

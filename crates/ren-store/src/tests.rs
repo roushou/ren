@@ -2333,7 +2333,7 @@ mod conversation {
                 id: serde_json::from_value(serde_json::json!(id)).unwrap(),
                 kind: ItemKind::AgentMessage.into(),
                 read,
-                body: serde_json::Value::Null,
+                body: serde_json::json!({ "client": id }),
             },
         }))
         .unwrap()
@@ -2762,7 +2762,7 @@ mod conversation {
         let fresh = fixture.started_in(session).await;
         let read = fixture
             .reader
-            .conversation(fresh, 100)
+            .conversation(fresh, 100, crate::query::ItemBodies::Kept)
             .await
             .unwrap()
             .unwrap();
@@ -2852,11 +2852,29 @@ mod conversation {
 
         let read = fixture
             .reader
-            .conversation(resumed, 100)
+            .conversation(resumed, 100, crate::query::ItemBodies::Kept)
             .await
             .unwrap()
             .unwrap();
         assert!(!read.earlier);
+        // Read lean, each item keeps what Ren read of it, not its body.
+        let lean = fixture
+            .reader
+            .conversation(resumed, 100, crate::query::ItemBodies::Omitted)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lean.entries.len(), read.entries.len());
+        for (kept, left) in read.entries.iter().zip(&lean.entries) {
+            match (&kept.event, &left.event) {
+                (DriveEvent::Item { item: kept, .. }, DriveEvent::Item { item: left, .. }) => {
+                    assert!(!kept.body.is_null());
+                    assert!(left.body.is_null());
+                    assert_eq!(kept.read, left.read);
+                }
+                (kept, left) => assert_eq!(kept, left),
+            }
+        }
         let shown: Vec<(RunId, String)> = read
             .entries
             .iter()
@@ -2910,7 +2928,7 @@ mod conversation {
         assert_eq!(
             fixture
                 .reader
-                .conversation(first, 100)
+                .conversation(first, 100, crate::query::ItemBodies::Kept)
                 .await
                 .unwrap()
                 .unwrap()
@@ -2920,7 +2938,7 @@ mod conversation {
         );
         let short = fixture
             .reader
-            .conversation(resumed, 2)
+            .conversation(resumed, 2, crate::query::ItemBodies::Kept)
             .await
             .unwrap()
             .unwrap();
@@ -2929,7 +2947,11 @@ mod conversation {
         assert!(
             fixture
                 .reader
-                .conversation(RunId::restore(Uuid::from_u128(99)), 10)
+                .conversation(
+                    RunId::restore(Uuid::from_u128(99)),
+                    10,
+                    crate::query::ItemBodies::Kept
+                )
                 .await
                 .unwrap()
                 .is_none()

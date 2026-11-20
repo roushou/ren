@@ -4,3 +4,4 @@ query::KindFilter: model other
 query::StatusFilter: active finished errors interrupted
 query::ToolFilter: true false
 query::Shelf: current archived
+query::ItemBodies: kept omitted
