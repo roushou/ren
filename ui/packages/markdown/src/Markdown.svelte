@@ -1,7 +1,7 @@
 <!--
   Markdown, rendered as elements only (`tree.ts` says how it is made
-  inert): no HTML is injected, links show their address without being
-  clickable, and images are named, not loaded.
+  inert): no HTML is injected, only web links are followed and each shows
+  its address, and images are named, not loaded.
 -->
 <script lang="ts">
   import { Markdown } from './tree.ts';
