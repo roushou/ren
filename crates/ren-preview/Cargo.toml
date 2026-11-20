@@ -1,0 +1,23 @@
+[package]
+name = "ren-preview"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Which previews of the Ren LLM gateway run: one per open pull request and requested commit, in a fixed number of slots."
+
+# Sans-IO: the previews that run and what to start or stop next. Only pure
+# dependencies; no async runtime, HTTP, database, process, or CLI parser.
+[dependencies]
+ren-github.workspace = true
+ren-release.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

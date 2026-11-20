@@ -242,6 +242,19 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`Listing`). Every value GitHub sends that Ren does not know is kept as
   `Stored::Unknown`, never rounded to a known one. Its manifest allows only
   pure dependencies, and `src/purity.rs` keeps its sources free of I/O.
+- `crates/ren-preview`: which previews of Ren run, sans-IO, with
+  `Previews` as its primary type (docs/plans/self-build.md, phase 9): each
+  `Preview` in its `Slot` (its loopback and tailnet ports), of a
+  `PreviewKey` (an open pull request, or a commit the operator asked for),
+  at a commit, `Building`, `Running`, or `Failed` (`PreviewState`).
+  `Previews::want` takes the `Wanted` previews in priority order and the
+  `ren_release::PreviewCapacity`, and answers the previews that hold slots
+  and the `Action`s to get there (stop a slot, start a commit in one);
+  `started` and `failed` take the factory's reports, refusing a
+  `StaleReport`. A failed build is not tried again for its commit. The
+  factory keeps it in production's data folder (`Previews::FILE`). Its
+  manifest allows only pure dependencies, and `src/purity.rs` keeps its
+  sources free of I/O.
 - `crates/ren-depot`: the tools Ren's agents run with, with `Depot` as its
   primary type: the package catalog (`package`: `Package`, `PackageId`,
   `ProgramName`, `Kind`, client, runtime, or utility, and `Origin`; the
@@ -780,6 +793,7 @@ directly.
 | `ren-git`                                  | `Git`                                               | none of ours      |
 | `ren-release`                              | `Release`                                           | protocol          |
 | `ren-github`                               | `Watch`                                             | release           |
+| `ren-preview`                              | `Previews`                                          | github, release   |
 | `ren-project`                              | `ProjectContract`                                   | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |
 | `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |

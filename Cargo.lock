@@ -1912,6 +1912,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-preview"
+version = "0.1.0"
+dependencies = [
+ "ren-github",
+ "ren-release",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "ren-project"
 version = "0.1.0"
 dependencies = [
