@@ -99,7 +99,9 @@ test('the board puts Ren first, and gathers what waits on the operator', () => {
     { project: 'ren', count: 1 },
   ]);
   assert.ok(board.pending);
+  assert.equal(board.waiting, 4, 'one to promote, one preview, two projects with work to send');
   assert.equal(new ProjectBoard([], []).pending, false);
+  assert.equal(new ProjectBoard([], []).waiting, 0);
 });
 
 test("a project's work groups by state, open first, and its open work reads in words", () => {

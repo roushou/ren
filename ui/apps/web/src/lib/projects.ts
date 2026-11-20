@@ -133,6 +133,14 @@ export class ProjectBoard {
       );
   }
 
+  /** How many things wait on the operator: what the top bar's Pending
+   * counts. */
+  get waiting(): number {
+    return (
+      this.approvals.length + this.toPromote.length + this.previews.length + this.queued.length
+    );
+  }
+
   /** Whether anything waits on the operator. */
   get pending(): boolean {
     return (

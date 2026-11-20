@@ -1,6 +1,10 @@
 <script lang="ts">
   import Glyph from '#lib/Glyph.svelte';
   import Toasts from '#lib/layer/Toasts.svelte';
+  import Popover from '#lib/layer/Popover.svelte';
+  import CommandPalette from '#lib/layer/CommandPalette.svelte';
+  import PendingPanel from '#lib/PendingPanel.svelte';
+  import { ProjectBoard } from '#lib/projects.ts';
   import { onMount } from 'svelte';
   import { beforeNavigate, goto, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
@@ -117,6 +121,18 @@
   const tab = $derived(Views.tab(target ?? view));
   /** The header's place the page is in, and so the row of pages under it. */
   const destination = $derived(Views.destination(tab));
+  /** What waits on the operator, across every project: the top bar's Pending. */
+  const board = $derived(
+    new ProjectBoard(data.board.projects, data.board.work, data.board.live, data.board.sessions),
+  );
+  /** Whether ⌘K's palette is open. */
+  let commanding = $state(false);
+  function shortcut(event: KeyboardEvent) {
+    if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey) && !event.altKey) {
+      event.preventDefault();
+      commanding = true;
+    }
+  }
   /** The project whose pages the row shows, inside one. */
   const inProject = $derived.by(() => {
     const to = navigating.to ?? page;
@@ -249,6 +265,8 @@
   });
 </script>
 
+<svelte:window onkeydown={shortcut} />
+
 <svelte:head><title>Ren - {pageTitle}</title></svelte:head>
 <div class="app-shell">
   <header class="workbench-header">
@@ -264,7 +282,31 @@
       ></a
     >
     <nav class="workbench-tabs" aria-label="Ren" bind:this={tabs}>
-      {#each Views.destinations as place (place.destination)}
+      {#each Views.destinations.filter((place) => place.destination === 'projects') as place (place.destination)}
+        <a
+          href={place.href}
+          data-sveltekit-preload-data="hover"
+          class:active={destination === place.destination}
+          aria-current={destination === place.destination ? 'page' : undefined}
+          ><Icon name={destinationIcons[place.destination]} size={14} />{place.label}</a
+        >
+      {/each}
+    </nav>
+    <button class="command-open" onclick={() => (commanding = true)}
+      ><Icon name="search" size={13} /><span>Go to anything</span><kbd>⌘K</kbd></button
+    >
+    <button
+      class="pending-open"
+      class:waiting={board.waiting > 0}
+      popovertarget="pending-popover"
+      aria-label={board.waiting ? `Pending: ${board.waiting}` : 'Pending: nothing waits on you'}
+      ><Glyph mark={board.waiting ? 'yours' : 'idle'} />Pending{#if board.waiting}<span
+          class="pending-count mono">{board.waiting}</span
+        >{/if}</button
+    >
+    <Popover id="pending-popover" label="Pending" width="wide"><PendingPanel {board} /></Popover>
+    <nav class="mode-links" aria-label="Inspect and host">
+      {#each Views.destinations.filter((place) => place.destination !== 'projects') as place (place.destination)}
         <a
           href={place.href}
           data-sveltekit-preload-data="hover"
@@ -272,11 +314,11 @@
           aria-current={destination === place.destination ? 'page' : undefined}
           ><Icon
             name={destinationIcons[place.destination]}
-            size={14}
-          />{place.label}{#if place.destination === 'host' && (loss || degraded)}<span
-              class="warning"
-              aria-label="Recording needs attention">!</span
-            >{/if}</a
+            size={13}
+          />{place.label}{#if place.destination === 'host' && (loss || degraded)}<Glyph
+              mark="warning"
+              label="Recording needs attention"
+            />{/if}</a
         >
       {/each}
     </nav>
@@ -311,6 +353,10 @@
     </div>
     <ThemeControl />
   </header>
+  {#if commanding}<CommandPalette
+      projects={board.projects}
+      onclose={() => (commanding = false)}
+    />{/if}
   <nav
     class="page-row"
     aria-label={Views.destinations.find((place) => place.destination === destination)?.label}

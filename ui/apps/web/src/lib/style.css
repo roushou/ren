@@ -335,6 +335,101 @@ pre {
   border-top-color: var(--accent);
   background: var(--canvas);
 }
+/* The header's right side, by weight: ⌘K and Pending first, then Inspect
+   and Host, quieter than Projects on the left. */
+.command-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+  width: 260px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0 8px;
+  border: 1px solid var(--control-border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.command-open span {
+  flex: 1;
+  text-align: left;
+}
+.command-open kbd {
+  padding: 0 4px;
+  border: 1px solid var(--control-border);
+  border-bottom-width: 2px;
+  border-radius: 2px;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 10px;
+}
+.command-open:hover {
+  color: var(--ink);
+}
+.pending-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+  height: 28px;
+  margin-left: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--control-border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pending-open.waiting {
+  color: var(--ink);
+  border-color: var(--warning);
+}
+.pending-count {
+  padding: 0 5px;
+  background: var(--warning);
+  color: var(--surface);
+  font-size: 11px;
+}
+.mode-links {
+  display: flex;
+  align-items: stretch;
+  margin-left: 8px;
+  border-left: 1px solid var(--line);
+}
+.mode-links a {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-top: 2px solid transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+.mode-links a:hover {
+  color: var(--ink);
+}
+@media (max-width: 900px) {
+  .command-open {
+    width: auto;
+  }
+  .command-open span,
+  .mode-links a {
+    font-size: 0;
+  }
+  .command-open span {
+    display: none;
+  }
+}
+.mode-links a.active {
+  color: var(--ink);
+  border-top-color: var(--accent);
+  background: var(--canvas);
+}
 /* The current destination's pages, one rule under the header. */
 .page-row {
   display: flex;
@@ -407,7 +502,6 @@ pre {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: auto;
   align-self: stretch;
   max-width: 35%;
   padding: 0 12px;
