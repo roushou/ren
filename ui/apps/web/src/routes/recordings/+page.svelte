@@ -291,7 +291,7 @@
       </div>{/if}
   </div>
   {#if previewing}
-    <SlideOver label="Recording report" onclose={() => (previewing = null)}>
+    <SlideOver label="Recording report" pin="report" onclose={() => (previewing = null)}>
       <RecordingPreview row={previewing} />
     </SlideOver>
   {/if}

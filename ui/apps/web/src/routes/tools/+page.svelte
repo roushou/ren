@@ -452,7 +452,7 @@
       {@const supply = Supplies.of(chosen)}
       {@const entry = clientOf(chosen)}
       {@const harness = entry ? Runs.drivable(entry.harness) : null}
-      <SlideOver label="{chosen.id} details" onclose={() => (selected = null)}
+      <SlideOver label="{chosen.id} details" pin="package" onclose={() => (selected = null)}
         ><div class="tools-inspector">
           <section class="head">
             <h2 class="mono">{@render dot(chosen)}{chosen.id}</h2>

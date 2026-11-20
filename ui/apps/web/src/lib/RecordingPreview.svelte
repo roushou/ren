@@ -147,7 +147,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    padding: 12px 52px 12px 16px;
+    padding: 12px 80px 12px 16px;
     border-bottom: 1px solid var(--line);
   }
   h2 {

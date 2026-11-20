@@ -830,7 +830,11 @@
       </div>
     </div>
   </section>
-  {#if selected}<SlideOver label="Call details" onclose={() => void closeInspector()} size="wide"
+  {#if selected}<SlideOver
+      label="Call details"
+      pin="call"
+      onclose={() => void closeInspector()}
+      size="wide"
       >{#key selected.id}<Inspector
           call={selected}
           onrecording={showCallRecording}
