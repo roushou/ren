@@ -97,7 +97,7 @@ test('run states parse as the control API sends them, keeping newer phases and l
 test('controls follow the state: prompt when idle, answer and interrupt while working', () => {
   assert.deepEqual(Runs.controls({ phase: 'idle', thread: thread as never }), {
     prompt: true,
-    interrupt: false,
+    interrupt: 'none',
     stop: true,
     approvals: [],
   });
@@ -109,9 +109,17 @@ test('controls follow the state: prompt when idle, answer and interrupt while wo
     queued: null,
   });
   assert.equal(working.prompt, false);
-  assert.equal(working.interrupt, false, 'no turn to interrupt until the agent names it');
+  assert.equal(working.interrupt, 'pending', 'no turn to interrupt until the agent names it');
+  const named = Runs.controls({
+    phase: 'working',
+    thread: thread as never,
+    turn: 'turn-1' as never,
+    approvals: [],
+    queued: null,
+  });
+  assert.equal(named.interrupt, 'ready', 'a named turn can be interrupted');
   const ended = Runs.controls({ phase: 'ended', end: 'exited', exit: { kind: 'code', value: 1 } });
-  assert.deepEqual(ended, { prompt: false, interrupt: false, stop: false, approvals: [] });
+  assert.deepEqual(ended, { prompt: false, interrupt: 'none', stop: false, approvals: [] });
   assert.deepEqual(
     Runs.mark({
       phase: 'working',

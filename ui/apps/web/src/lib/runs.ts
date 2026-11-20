@@ -1642,10 +1642,17 @@ export class Transcript {
   }
 }
 
+/**
+ * Whether the running turn can be stopped: `none` when no turn runs,
+ * `pending` while a turn is under way but its client has not yet named it
+ * (the daemon refuses to interrupt until it does), `ready` once it has.
+ */
+export type TurnStop = 'none' | 'pending' | 'ready';
+
 /** What the operator can ask of a run in its current state. */
 export interface RunControls {
   prompt: boolean;
-  interrupt: boolean;
+  interrupt: TurnStop;
   stop: boolean;
   /** The approvals waiting for an answer, oldest first. */
   approvals: Waiting[];
@@ -1654,7 +1661,7 @@ export interface RunControls {
 /** A session with no client running: a prompt starts one; nothing else is asked of it. */
 export const UNSTARTED: RunControls = {
   prompt: true,
-  interrupt: false,
+  interrupt: 'none',
   stop: false,
   approvals: [],
 };
@@ -1679,20 +1686,20 @@ export class Runs {
   static controls(state: RunState): RunControls {
     switch (state.phase) {
       case 'idle':
-        return { prompt: true, interrupt: false, stop: true, approvals: [] };
+        return { prompt: true, interrupt: 'none', stop: true, approvals: [] };
       case 'working':
         return {
           prompt: false,
-          interrupt: state.turn !== null,
+          interrupt: state.turn === null ? 'pending' : 'ready',
           stop: true,
           approvals: state.approvals,
         };
       case 'starting':
-        return { prompt: false, interrupt: false, stop: true, approvals: [] };
+        return { prompt: false, interrupt: 'none', stop: true, approvals: [] };
       case 'stopping':
       case 'ended':
       case 'unrecognized':
-        return { prompt: false, interrupt: false, stop: false, approvals: [] };
+        return { prompt: false, interrupt: 'none', stop: false, approvals: [] };
       default:
         return assertNever(state);
     }
