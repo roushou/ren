@@ -1,6 +1,7 @@
 // The Live page's pure logic: which recordings are on the board, what each is
 // doing now, the recent calls drawn on its lane, and what needs a look.
 // No browser, no fetching; tested in tests/board.test.ts.
+import type { Mark } from './marks.ts';
 import type {
   CallActivity,
   CallView,
@@ -46,22 +47,6 @@ export type RecordingPhase =
     }
   /** No call open, and the last one completed a while ago. */
   | { kind: 'idle'; since: number };
-
-/**
- * A card's state at a glance: the colour of its edge and the glyph before
- * its state's words. Each one has its own shape, so colour is never the
- * only cue.
- */
-export type StateMark =
-  | 'responding'
-  | 'waiting'
-  | 'slow'
-  | 'client'
-  | 'yours'
-  | 'idle'
-  | 'failed'
-  | 'warning'
-  | 'unknown';
 
 /** A tool call the model asked for: what it touched and what came back. */
 export interface ToolLine {
@@ -410,7 +395,7 @@ export class Board {
   static phaseChip(
     phase: RecordingPhase,
     now: number,
-  ): { label: string; tone: Tone; title: string; mark: StateMark } {
+  ): { label: string; tone: Tone; title: string; mark: Mark } {
     switch (phase.kind) {
       case 'awaiting': {
         const slow = now - phase.since >= Board.slowHeadMs;

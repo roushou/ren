@@ -6,6 +6,7 @@
   promote, a preview to check, work still queued.
 -->
 <script lang="ts">
+  import Glyph from '#lib/Glyph.svelte';
   import Toolbar from '#lib/Toolbar.svelte';
   import PendingPanel from '#lib/PendingPanel.svelte';
   import { goto } from '$app/navigation';
@@ -107,7 +108,7 @@
                 <td>
                   <a class="cell" href={`${href}/sessions`}>
                     {#if project.running}
-                      <span class="live"><span class="dot"></span>{project.running} running</span>
+                      <span class="live"><Glyph mark="responding" />{project.running} running</span>
                       <span class="muted">· {project.sessions} open</span>
                     {:else if project.sessions}
                       {project.sessions} open
@@ -257,12 +258,6 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-  }
-  .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--live);
   }
   .archived,
   .scratch {

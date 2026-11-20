@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Glyph from '#lib/Glyph.svelte';
   import Toolbar from './Toolbar.svelte';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
@@ -475,8 +476,7 @@
         <button
           class:active={applied.get('status') === 'active'}
           aria-pressed={applied.get('status') === 'active'}
-          onclick={() => quickFilter('active')}
-          ><span class="status-dot live"></span> In progress</button
+          onclick={() => quickFilter('active')}><Glyph mark="responding" /> In progress</button
         >
         <button
           class:active={applied.get('status') === 'errors'}

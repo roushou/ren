@@ -6,7 +6,7 @@
   import { buildLabel, SEPARATOR } from '#lib/display.ts';
   import { RecorderReport } from '#lib/recorder.ts';
   import Icon from '#lib/Icon.svelte';
-  import StateGlyph from '#lib/StateGlyph.svelte';
+  import Glyph from '#lib/Glyph.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
@@ -336,9 +336,8 @@
           {#if report.quiet.length}
             <details class="rec-quiet">
               <summary
-                ><StateGlyph mark="yours" />{report.notes.some(
-                  (note) => note.severity !== 'neutral',
-                )
+                ><Glyph mark="passed" />
+                {report.notes.some((note) => note.severity !== 'neutral')
                   ? `${report.quiet.length} other counters at 0`
                   : `Nothing lost or failed since startup · ${report.quiet.length} counters at 0`}</summary
               >

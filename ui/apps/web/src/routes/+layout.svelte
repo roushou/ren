@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Glyph from '#lib/Glyph.svelte';
   import { onMount } from 'svelte';
   import { beforeNavigate, goto, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
@@ -286,9 +287,10 @@
         GatewayPlace.networkLabel(place.network)}, reached over {GatewayPlace.networkLabel(
         place.network,
       )}. {error ? 'The management API is not answering. ' : ''}Connect a client"
-      ><span class="status-dot" class:error={!!error} class:neutral={!updated && !error}
-      ></span>{#if place.node && place.network !== 'loopback'}<b>{place.node}</b><span
-          class="gateway-sep">·</span
+      ><Glyph
+        mark={error ? 'failed' : updated ? 'passed' : 'waiting'}
+      />{#if place.node && place.network !== 'loopback'}<b>{place.node}</b><span class="gateway-sep"
+          >·</span
         >{/if}<Icon name={networkIcons[place.network]} size={12} /><span
         >{place.network === 'loopback'
           ? 'this machine'
@@ -357,7 +359,7 @@
       class="connection-state"
       title={error ||
         'Last successful management API snapshot; does not establish upstream availability.'}
-      ><span class="status-dot" class:error={!!error} class:neutral={!updated}></span>{error
+      ><Glyph mark={error ? 'failed' : updated ? 'passed' : 'waiting'} />{error
         ? incompatible
           ? 'API version mismatch'
           : 'Snapshot failed'

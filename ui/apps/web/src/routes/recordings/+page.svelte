@@ -10,7 +10,7 @@
   import { RecordingList, type RecordingRow } from '#lib/recordings.ts';
   import { Board } from '#lib/board.ts';
   import Icon from '#lib/Icon.svelte';
-  import StateGlyph from '#lib/StateGlyph.svelte';
+  import Glyph from '#lib/Glyph.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import SkeletonRows from '#lib/SkeletonRows.svelte';
   import type { Column } from '#lib/columns.ts';
@@ -130,7 +130,7 @@
     </td>
     <td class="recording-now mono">
       {#if row.now.kind === 'open'}<span class="now-open state-{row.now.mark}"
-          ><StateGlyph mark={row.now.mark} />{row.now.label}</span
+          ><Glyph mark={row.now.mark} label={row.now.label} /></span
         >{:else if row.now.kind === 'recent'}<span class="now-recent"
           ><span class="recent-dot"></span>active {ago(row.now.at, now)}</span
         >{:else}<span class="muted" title={clock(row.now.at)}>{clock(row.now.at)}</span>{/if}

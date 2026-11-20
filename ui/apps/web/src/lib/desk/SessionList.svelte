@@ -27,6 +27,7 @@
   import { slide } from 'svelte/transition';
   import { harnessLabel } from '#lib/activity.ts';
   import type { Shelf } from '#lib/api.ts';
+  import Glyph from '#lib/Glyph.svelte';
   import Icon from '#lib/Icon.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import { ago } from '#lib/overview.ts';
@@ -202,22 +203,18 @@
   <button
     class="run-row"
     class:selected={session.session === selected}
-    class:needs={mark.tone === 'warn'}
+    class:needs={mark.mark === 'yours'}
     aria-current={session.session === selected ? 'true' : undefined}
     onclick={() => onselect(session.session)}
   >
-    <span
-      class="phase-dot tone-{mark.tone}"
-      class:draft={session.phase === 'draft'}
-      class:resting={!Sessions.running(session) && mark.tone === 'neutral'}
-    ></span>
+    <Glyph
+      mark={unused ? 'draft' : mark.mark}
+      label={unused || mark.label === harnessLabel(session.harness)
+        ? `${unused ? 'Draft' : 'Resting'} · ${harnessLabel(session.harness)}`
+        : `${mark.label} · ${harnessLabel(session.harness)}`}
+    />
     <span class="run-name" class:unused
       >{asked ?? (unused ? 'New session' : `${harnessLabel(session.harness)} session`)}</span
-    >
-    <span class="run-state tone-{mark.tone}"
-      >{unused || mark.label === 'Draft'
-        ? `Draft · ${harnessLabel(session.harness)}`
-        : mark.label}</span
     >
     <span class="run-when muted">{session.activeAt ? ago(session.activeAt, now) : 'now'}</span>
   </button>
@@ -243,9 +240,8 @@
       {#each OUTLINE_ROWS as width, index (index)}
         <div class="run-item" aria-hidden="true">
           <div class="run-row outline">
-            <span class="phase-dot resting"></span>
+            <Glyph mark="idle" />
             <span class="run-name"><Skeleton {width} /></span>
-            <span class="run-state"><Skeleton width="34%" /></span>
             <span class="run-when"><Skeleton width="2.4em" /></span>
           </div>
         </div>
@@ -265,7 +261,12 @@
         <header title={folder.workdir}>
           <Icon name="file" size={12} />
           <strong>{folder.name}</strong>
-          {#if folder.waiting}<span class="chip warning">{folder.waiting} needs you</span>{/if}
+          {#if folder.waiting}<span class="waiting mono"
+              ><Glyph
+                mark="yours"
+                label={`${folder.waiting} waiting for you`}
+              />{folder.waiting}</span
+            >{/if}
           {#if shown.includes('/')}<span class="muted mono parent"
               ><bdi>{shown.slice(0, shown.lastIndexOf('/') + 1)}</bdi></span
             >{/if}
@@ -356,9 +357,6 @@
   .folder header strong {
     white-space: nowrap;
   }
-  .folder header .chip {
-    white-space: nowrap;
-  }
   .folder header .parent {
     flex: 1;
     min-width: 0;
@@ -400,8 +398,7 @@
   }
   .run-row {
     display: grid;
-    grid-template-columns: 7px minmax(0, 1fr) auto;
-    grid-template-rows: auto auto;
+    grid-template-columns: 8px minmax(0, 1fr) auto;
     column-gap: 8px;
     align-items: center;
     width: 100%;
@@ -563,24 +560,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .run-state {
-    grid-column: 2;
-    grid-row: 2;
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .run-state.tone-warn {
-    color: var(--warning);
-  }
-  .run-state.tone-live {
-    color: var(--live);
-  }
-  .run-state.tone-danger {
-    color: var(--error);
-  }
   .run-when {
-    grid-column: 3;
-    grid-row: 1 / span 2;
     font-size: 11px;
   }
   .new-run .back {
@@ -628,47 +608,12 @@
     font-size: 12px;
     color: var(--muted);
   }
-  .phase-dot {
-    grid-row: 1 / span 2;
-    box-sizing: border-box;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--muted);
-  }
-  .tone-live.phase-dot {
-    background: var(--live);
-  }
-  .tone-warn.phase-dot {
-    background: var(--warning);
-  }
-  .tone-ok.phase-dot {
-    background: var(--success);
-  }
-  .tone-danger.phase-dot {
-    background: var(--error);
-  }
-  /* Nothing running: a ring, so the sessions that are live stand out. */
-  .phase-dot.resting {
-    background: none;
-    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--muted) 65%, transparent);
-  }
-  .phase-dot.resting.draft {
-    box-shadow: none;
-    border: 1.5px dashed color-mix(in srgb, var(--muted) 65%, transparent);
-  }
-  .tone-live.phase-dot {
-    animation: working 1.6s ease-in-out infinite;
-  }
-  @keyframes working {
-    50% {
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 30%, transparent);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .tone-live.phase-dot {
-      animation: none;
-    }
+  .waiting {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--ink);
   }
   .run-name.unused {
     color: var(--muted);

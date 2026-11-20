@@ -3,7 +3,8 @@
 // fetching; tested in tests/recordings.test.ts.
 import type { CallView, Excerpt, Harness, RecordingId, RecordingView } from './api.ts';
 import { providerName } from './api.ts';
-import { Board, type StateMark } from './board.ts';
+import { Board } from './board.ts';
+import type { Mark } from './marks.ts';
 import type { Stored } from './decode.ts';
 import { date } from './display.ts';
 
@@ -16,7 +17,7 @@ export interface RecordingDetail {
 
 /** A recording's state right now: a call in flight, recent activity, or neither. */
 export type RecordingNow =
-  | { kind: 'open'; label: string; mark: StateMark }
+  | { kind: 'open'; label: string; mark: Mark }
   | { kind: 'recent'; at: number }
   | { kind: 'quiet'; at: number };
 

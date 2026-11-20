@@ -10,7 +10,7 @@
   import ConnectClient from '#lib/ConnectClient.svelte';
   import CopyButton from '#lib/CopyButton.svelte';
   import { LaunchCommand } from '#lib/launch.ts';
-  import StateGlyph from '#lib/StateGlyph.svelte';
+  import Glyph from '#lib/Glyph.svelte';
   import Icon from '#lib/Icon.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
@@ -198,8 +198,8 @@
                 </a>
               {:else}
                 <p class="ov-clear">
-                  <StateGlyph mark="yours" />Nothing needs a look: no failed or cut-off work, no
-                  exposed secrets, no capture loss in the last 24 hours.
+                  <Glyph mark="passed" /> Nothing needs a look: no failed or cut-off work, no exposed
+                  secrets, no capture loss in the last 24 hours.
                 </p>
               {/each}{/if}
           </section>
@@ -233,7 +233,7 @@
                     <strong>{Board.clientName(tile.harness)}</strong>
                     <span class="mono muted">{short(tile.recording.native_id)}</span>
                     <span class="mono live-state {chip.tone} state-{chip.mark}" title={chip.title}
-                      ><StateGlyph mark={chip.mark} />{chip.label}</span
+                      ><Glyph mark={chip.mark} label={chip.label} /></span
                     >
                   </span>
                   <span class="ov-recording-prompt"

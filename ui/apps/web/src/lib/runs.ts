@@ -64,6 +64,7 @@ import {
   type ImageTaking,
   type KeptAttachment,
 } from './attachments.ts';
+import type { Mark } from './marks.ts';
 import { Refusals, type Refusal } from './refusal.ts';
 import { processExit, type ProcessExit } from './exit.ts';
 import { Questions, type Question, type QuestionKey } from './questions.ts';
@@ -1666,10 +1667,11 @@ export const UNSTARTED: RunControls = {
   approvals: [],
 };
 
-/** How a run's state reads in the sidebar and header. */
+/** How a run's state reads in the sidebar and header: its mark, and the
+ * words the mark's tooltip says. */
 export interface PhaseMark {
   label: string;
-  tone: 'live' | 'warn' | 'neutral' | 'danger' | 'ok';
+  mark: Mark;
 }
 
 export class Runs {
@@ -1705,26 +1707,27 @@ export class Runs {
     }
   }
 
-  /** A run's state in a few words, with the tone of its dot. */
+  /** A run's state as a mark, with its words. Only an approval it waits on
+   * is the operator's: a run between turns rests. */
   static mark(state: RunState): PhaseMark {
     switch (state.phase) {
       case 'starting':
-        return { label: 'Starting', tone: 'neutral' };
+        return { label: 'Starting', mark: 'waiting' };
       case 'idle':
-        return { label: 'Your turn', tone: 'ok' };
+        return { label: 'Your turn', mark: 'idle' };
       case 'working':
         return state.approvals.length
-          ? { label: 'Needs you', tone: 'warn' }
-          : { label: 'Working', tone: 'live' };
+          ? { label: 'Needs you', mark: 'yours' }
+          : { label: 'Working', mark: 'responding' };
       case 'stopping':
-        return { label: 'Stopping', tone: 'neutral' };
+        return { label: 'Stopping', mark: 'waiting' };
       case 'ended':
         return {
           label: Runs.endLabel(state.end, state.exit),
-          tone: Runs.endTone(state.end, state.exit),
+          mark: Runs.endMark(state.end, state.exit),
         };
       case 'unrecognized':
-        return { label: state.text, tone: 'neutral' };
+        return { label: state.text, mark: 'unknown' };
       default:
         return assertNever(state);
     }
@@ -1763,22 +1766,24 @@ export class Runs {
     }
   }
 
-  static endTone(end: Stored<RunEnd>, exit: ProcessExit | null = null): PhaseMark['tone'] {
+  /** How a run's ending marks it: a clean stop rests, an ending that lost
+   * work needs a look, and a client that never ran failed. */
+  static endMark(end: Stored<RunEnd>, exit: ProcessExit | null = null): Mark {
     switch (end) {
       case 'stopped':
       case 'idled':
-        return 'neutral';
+        return 'idle';
       case 'exited':
-        return exit?.kind === 'code' && exit.value === 0 ? 'neutral' : 'warn';
+        return exit?.kind === 'code' && exit.value === 0 ? 'idle' : 'warning';
       case 'drained':
       case 'recovered':
-        return 'warn';
+        return 'warning';
       case 'spawn_failed':
       case 'open_refused':
-        return 'danger';
+        return 'failed';
       default:
         unrecognised(end);
-        return 'neutral';
+        return 'unknown';
     }
   }
 
@@ -2270,15 +2275,15 @@ export class Sessions {
     const state = session.state;
     if (state && Sessions.running(session)) {
       return state.phase === 'idle' && session.phase === 'draft'
-        ? { label: 'Draft', tone: 'neutral' }
+        ? { label: 'Draft', mark: 'draft' }
         : Runs.mark(state);
     }
-    if (state?.phase === 'ended' && Runs.endTone(state.end, state.exit) === 'danger') {
+    if (state?.phase === 'ended' && Runs.endMark(state.end, state.exit) === 'failed') {
       return Runs.mark(state);
     }
     return session.phase === 'draft'
-      ? { label: 'Draft', tone: 'neutral' }
-      : { label: client, tone: 'neutral' };
+      ? { label: 'Draft', mark: 'draft' }
+      : { label: client, mark: 'idle' };
   }
 
   /**

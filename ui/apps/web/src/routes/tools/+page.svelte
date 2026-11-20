@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Glyph from '#lib/Glyph.svelte';
   import Toolbar from '#lib/Toolbar.svelte';
   import { onMount, untrack } from 'svelte';
   import SignInSheet from '#lib/SignInSheet.svelte';
@@ -15,6 +16,7 @@
     ToolFilters,
     ToolGroups,
     type Only,
+    ONLY_MARKS,
     ToolPlan,
     ToolsApi,
     ToolsError,
@@ -219,8 +221,7 @@
           class="chip filter {tone}"
           class:active={filter.only === only}
           aria-pressed={filter.only === only}
-          onclick={() => narrow(only)}
-          ><span class="dot {only === 'updates' ? 'managed' : only}"></span>{count} {word}</button
+          onclick={() => narrow(only)}><Glyph mark={ONLY_MARKS[only]} />{count} {word}</button
         >
       {/snippet}
       {@render narrowing('managed', tally.managed, 'managed', 'success')}
@@ -270,7 +271,7 @@
           {#each { length: group.rows }, row (row)}
             <tr aria-hidden="true">
               <td class="mono name"
-                ><span class="dot none"></span><Skeleton
+                ><Glyph mark="idle" /><Skeleton
                   width={OUTLINE_WIDTHS[row % OUTLINE_WIDTHS.length]}
                 /></td
               >
@@ -287,7 +288,7 @@
   </section>
   <aside class="tools-inspector" aria-label="Details" aria-busy="true">
     <section class="head">
-      <h2 class="mono"><span class="dot none"></span><Skeleton width="45%" /></h2>
+      <h2 class="mono"><Glyph mark="idle" /><Skeleton width="45%" /></h2>
       <span class="chip-row"><Skeleton width="7em" /></span>
     </section>
     <section>
@@ -318,7 +319,7 @@
 {/snippet}
 
 {#snippet dot(pkg: ToolPackage)}
-  <span class="dot {Supplies.tone(pkg)}" aria-hidden="true"></span>
+  {@const standing = Supplies.mark(pkg)}<Glyph mark={standing.mark} label={standing.word} />
 {/snippet}
 
 <Toolbar {scope} />
@@ -376,14 +377,15 @@
                       >{/if}{:else}<span class="muted">—</span>{/if}</td
                 >
                 <td class="source"
-                  >{#if supply.kind === 'managed'}<span class="chip success">Ren</span
-                    >{#if supply.shadows}<span
+                  >{#if supply.kind === 'managed'}{#if supply.shadows}<span
                         class="mono muted path shadowed"
                         title="Runs find Ren’s first">{supply.shadows.path}</span
-                      >{/if}{:else if supply.kind === 'system'}<span class="chip">system</span><span
-                      class="mono muted path">{supply.system.path}</span
-                    >{:else if pkg.needed_by.length > 0}<span class="chip error"
-                      >missing · {pkg.needed_by.map(harnessLabel).join(', ')}</span
+                      >{/if}{:else if supply.kind === 'system'}<span class="mono muted path"
+                      >{supply.system.path}</span
+                    >{:else if pkg.needed_by.length > 0}<span
+                      class="muted"
+                      title="Needed by {pkg.needed_by.map(harnessLabel).join(', ')}"
+                      >{pkg.needed_by.map(harnessLabel).join(', ')}</span
                     >{/if}{#if clientOf(pkg)}{@const shown = SignIns.chip(
                       clientOf(pkg)?.sign_in ?? { kind: 'not_checked' },
                     )}{#if shown}<span
@@ -456,14 +458,14 @@
           {:else if applying.kind === 'done'}
             {#if applying.change.outcome === 'failed'}
               {#each applying.change.failures as failure (failure.package)}
-                <span class="chip error mono" title={failure.reason}
-                  >{failure.package} · {failure.stage} failed</span
+                <span class="mono failure" title={failure.reason}
+                  ><Glyph mark="failed" label={`${failure.stage} failed`} />{failure.package} · {failure.stage}</span
                 >
               {/each}
             {:else if applying.change.outcome === 'activated'}
-              <span class="chip success">applied</span>
+              <Glyph mark="passed" label="Applied" />
             {:else}
-              <span class="chip">no change</span>
+              <Glyph mark="idle" label="No change" />
             {/if}
           {:else if applying.kind === 'failed'}
             <span class="chip error">{applying.message}</span>
@@ -475,13 +477,12 @@
         <section class="head">
           <h2 class="mono">{@render dot(chosen)}{chosen.id}</h2>
           <span class="chip-row">
-            {#if supply.kind === 'managed'}<span class="chip success">Ren</span
-              >{:else if supply.kind === 'system'}<span class="chip">system</span
-              >{:else if chosen.needed_by.length > 0}<span class="chip error">missing</span
-              >{:else}<span class="chip">not installed</span>{/if}
             {#if chosen.kind}<span class="chip">{chosen.kind}</span>{/if}
             {#if chosen.origin === 'operator'}<span class="chip">custom</span
-              >{:else if chosen.origin === null}<span class="chip warning">removed</span>{/if}
+              >{:else if chosen.origin === null}<Glyph
+                mark="warning"
+                label="Taken out of the catalog"
+              />{/if}
           </span>
         </section>
         <section>
@@ -567,7 +568,10 @@
                 >
                 <span class="end">
                   {#if generation.state === 'idle' || generation.state === 'in_use'}
-                    {#if generation.state === 'in_use'}<span class="chip live">in use</span>{/if}
+                    {#if generation.state === 'in_use'}<Glyph
+                        mark="responding"
+                        label="In use by runs"
+                      />{/if}
                     {#if listing.platform}
                       <button
                         class="button small"
@@ -576,7 +580,7 @@
                       >
                     {/if}
                   {:else}
-                    <span class="chip success">{stateLabel(generation.state)}</span>
+                    <Glyph mark="passed" label={stateLabel(generation.state)} />
                   {/if}
                 </span>
               </li>
@@ -638,7 +642,7 @@
     align-items: center;
     gap: 6px;
   }
-  .tally .chip .dot {
+  .tally .chip :global(.glyph) {
     margin-right: 2px;
   }
   .tools-main {
@@ -754,28 +758,14 @@
   .unknown {
     color: var(--warning);
   }
-  .dot {
-    display: inline-block;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
+  .name :global(.glyph),
+  h2 :global(.glyph) {
     margin-right: 8px;
-    vertical-align: 1px;
-    background: var(--muted);
   }
-  .dot.managed {
-    background: var(--success);
-  }
-  .dot.system {
-    background: var(--muted);
-  }
-  .dot.none {
-    background: transparent;
-    box-shadow: inset 0 0 0 1px var(--muted);
-  }
-  .dot.missing {
-    background: transparent;
-    box-shadow: inset 0 0 0 1.5px var(--error);
+  .failure {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
   .changes h3 {
     display: flex;

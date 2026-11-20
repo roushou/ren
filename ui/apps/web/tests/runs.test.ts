@@ -130,7 +130,7 @@ test('controls follow the state: prompt when idle, answer and interrupt while wo
     }),
     {
       label: 'Needs you',
-      tone: 'warn',
+      mark: 'yours',
     },
   );
 });
@@ -916,6 +916,22 @@ test('the page’s opening reads each stand on their own', async () => {
   assert.deepEqual(opening.places, { state: 'read', value: { places: [], scratch: '/s' } });
   assert.equal(opening.clients.state, 'failed');
   assert.equal(opening.recorded.state, 'read');
+});
+
+test('a run’s state marks it: only an approval waits on the operator', () => {
+  const mark = (state: unknown) => Runs.mark(state as never).mark;
+  assert.equal(mark({ phase: 'starting' }), 'waiting');
+  assert.equal(mark({ phase: 'idle', thread: null, turn: null, queued: null }), 'idle');
+  assert.equal(
+    mark({ phase: 'working', thread: null, turn: null, approvals: [], queued: null }),
+    'responding',
+  );
+  assert.equal(Runs.endMark('stopped'), 'idle');
+  assert.equal(Runs.endMark('exited', { kind: 'code', value: 0 }), 'idle');
+  assert.equal(Runs.endMark('exited', { kind: 'code', value: 2 }), 'warning');
+  assert.equal(Runs.endMark('recovered'), 'warning');
+  assert.equal(Runs.endMark('spawn_failed'), 'failed');
+  assert.equal(mark({ phase: 'unrecognized', text: 'paused' }), 'unknown');
 });
 
 test('how a run ended reads in words; the process’s exit is a detail', () => {

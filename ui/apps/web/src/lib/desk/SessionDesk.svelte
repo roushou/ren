@@ -1,5 +1,6 @@
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
+  import Glyph from '#lib/Glyph.svelte';
   import { onMount, tick, untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
@@ -1309,7 +1310,7 @@
     {#if item.text}<Markdown text={item.text} />{/if}
     {#if progress.kind === 'sending'}
       <div class="outgoing-state" role="status">
-        <span class="phase-dot tone-live"></span>
+        <Glyph mark="responding" />
         {progress.starts === 'client' && session
           ? `Starting ${harnessLabel(session.harness)}…`
           : 'Sending…'}
@@ -1402,9 +1403,10 @@
         >{entry.paths.map((path) => Runs.within(path, session?.workdir ?? null)).join(', ') ||
           'files'}</span
       >
-      {#if entry.status !== 'completed'}<span class="chip neutral"
-          >{entry.status === 'in_progress' ? 'editing' : entry.status}</span
-        >{/if}
+      {#if entry.status !== 'completed'}<Glyph
+          mark={entry.status === 'in_progress' ? 'running' : 'failed'}
+          label={entry.status === 'in_progress' ? 'Editing' : entry.status}
+        />{/if}
     </div>
   {:else if entry.kind === 'tool'}
     <div class="entry tool">
@@ -1412,7 +1414,7 @@
       {#each entry.effects as effect, index (index)}<span class="tool-target mono"
           >{effect.target}</span
         >{/each}
-      {#if !entry.done}<span class="chip live">running</span>{/if}
+      {#if !entry.done}<Glyph mark="running" label={true} />{/if}
     </div>
   {:else if entry.kind === 'questions'}
     <div class="entry asked">
@@ -1550,9 +1552,7 @@
               `New ${harnessLabel(session.harness)} session`}
           </h2>
           <p class="run-facts">
-            {#if headerMark}<span class="state tone-{headerMark.tone}"
-                ><span class="dot"></span>{headerMark.label}</span
-              >{/if}
+            {#if headerMark}<Glyph mark={headerMark.mark} label={headerMark.label} size={10} />{/if}
             {#each facts as fact, index (fact)}{#if headerMark || index > 0}<span
                   class="sep"
                   aria-hidden="true">·</span
@@ -1630,7 +1630,7 @@
           {#if runState?.phase === 'working' && !controls.approvals.length}<div
               class="entry tool muted working"
             >
-              <span class="phase-dot tone-live"></span> Working…
+              <Glyph mark="responding" /> Working…
             </div>{/if}
           {#if transcript?.read && !transcript.entries.length && runState?.phase === 'idle'}
             <p class="quiet-empty">The conversation is open. Say what to do.</p>
@@ -2010,25 +2010,6 @@
     color: var(--error);
     border-bottom: 1px solid var(--line);
   }
-  .phase-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    background: var(--muted);
-  }
-  .tone-live.phase-dot {
-    background: var(--live);
-  }
-  .tone-warn.phase-dot {
-    background: var(--warning);
-  }
-  .tone-ok.phase-dot {
-    background: var(--success);
-  }
-  .tone-danger.phase-dot {
-    background: var(--error);
-  }
   .lost {
     margin: 0;
     padding: 10px 16px;
@@ -2086,31 +2067,6 @@
   }
   .run-facts .sep {
     flex: none;
-  }
-  .state {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex: none;
-    color: var(--ink);
-  }
-  .state .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--muted);
-  }
-  .state.tone-live .dot {
-    background: var(--live);
-  }
-  .state.tone-ok .dot {
-    background: var(--success);
-  }
-  .state.tone-warn .dot {
-    background: var(--warning);
-  }
-  .state.tone-danger .dot {
-    background: var(--error);
   }
   .confirm-text {
     color: var(--error);

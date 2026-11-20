@@ -33,7 +33,8 @@ export interface Step {
   /** The client's own words for it, when it gave some. */
   said: string | null;
   state: StepState;
-  /** How it failed, when it did: its exit code, or that it failed. */
+  /** How it failed, when it failed with an exit code (`exit 1`); its mark
+   * says that it failed. */
   failure: string | null;
 }
 
@@ -298,7 +299,7 @@ export class Steps {
     if (status === 'in_progress') return { state: 'running', failure: null };
     if (status === 'declined') return { state: 'declined', failure: null };
     if (exit !== null && exit !== 0) return { state: 'failed', failure: `exit ${exit}` };
-    if (status === 'failed') return { state: 'failed', failure: 'failed' };
+    if (status === 'failed') return { state: 'failed', failure: null };
     return { state: 'done', failure: null };
   }
 }

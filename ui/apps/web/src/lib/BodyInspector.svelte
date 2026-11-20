@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Glyph from '#lib/Glyph.svelte';
   import { onMount, untrack } from 'svelte';
   import {
     ManagementApi,
@@ -212,7 +213,7 @@
     </div>
   </div>
   <div class="payload-status" role="status">
-    <span class="status-dot" class:live={following} class:neutral={!following}></span><span
+    <Glyph mark={following ? 'responding' : 'idle'} /><span
       >{following ? 'Live · every 2 seconds' : stopped || 'Snapshot'}{updated
         ? ` · ${new Date(updated).toLocaleTimeString()}`
         : ''}</span

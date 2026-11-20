@@ -419,7 +419,7 @@ pre {
 .gateway-place > svg:last-child {
   transform: rotate(90deg);
 }
-.gateway-place .status-dot {
+.gateway-place .glyph {
   margin-right: 3px;
 }
 .gateway-place b {
@@ -667,26 +667,6 @@ pre {
 .toggle-control input:focus-visible + .switch {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
-}
-.status-dot {
-  width: 5px;
-  height: 5px;
-  display: inline-block;
-  background: var(--success);
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.status-dot.live {
-  background: var(--accent);
-}
-.status-dot.error {
-  background: var(--error);
-}
-.status-dot.warning {
-  background: var(--warning);
-}
-.status-dot.neutral {
-  background: var(--muted);
 }
 .request-tabs {
   display: flex;
@@ -2311,9 +2291,6 @@ td.zero {
   justify-content: center;
   padding: 0 8px;
 }
-.usage-panel .panel-heading h2 .status-dot {
-  margin-right: 4px;
-}
 .usage-panel > .quiet-empty {
   margin: 0;
   padding: 10px 14px;
@@ -2819,30 +2796,39 @@ td.zero {
 }
 
 /*
- * Recording states, shared by Live and the overview: one colour each, never a
- * client's, carried as `--state` by a `state-*` class.
+ * Marks (`lib/marks.ts`): one colour each, never a client's, carried as
+ * `--state` by a `state-*` class. `Glyph.svelte` draws the shapes; the state
+ * edge below takes the same colours. Amber is for what waits on the operator.
  */
-.state-responding {
+.state-responding,
+.state-running {
   --state: var(--live);
 }
 .state-waiting {
   --state: var(--ink);
 }
 .state-slow,
-.state-warning {
+.state-warning,
+.state-yours {
   --state: var(--warning);
 }
 .state-client {
   --state: var(--role-thinking);
 }
-.state-yours {
-  --state: var(--success);
-}
 .state-failed {
   --state: var(--error);
 }
+.state-passed {
+  --state: var(--success);
+}
+.state-idle,
+.state-queued,
+.state-draft,
 .state-unknown {
   --state: var(--muted);
+}
+.state-info {
+  --state: var(--role-tool);
 }
 /* The state edge: a 3px bar down the element's left side. Idle has none. */
 .state-edge {

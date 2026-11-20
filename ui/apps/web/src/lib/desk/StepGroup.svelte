@@ -8,6 +8,7 @@
   operator opens it.
 -->
 <script lang="ts">
+  import Glyph from '#lib/Glyph.svelte';
   import Icon, { type IconName } from '#lib/Icon.svelte';
   import { Steps, type Act, type GroupState, type Step } from '#lib/steps.ts';
 
@@ -39,14 +40,20 @@
 </script>
 
 {#snippet mark(step: Step)}
-  {#if step.state === 'running'}<span class="phase-dot tone-live" title="Running"></span>
-  {:else if step.state === 'failed'}<span class="chip danger">{step.failure}</span>
-  {:else if step.state === 'declined'}<span class="chip neutral">declined</span>{/if}
+  <span class="outcome">
+    {#if step.state === 'running'}<Glyph mark="running" label={true} />
+    {:else if step.state === 'failed'}{#if step.failure}<span class="mono muted"
+          >{step.failure}</span
+        >{/if}<Glyph mark="failed" label={step.failure ? `Failed, ${step.failure}` : true} />
+    {:else if step.state === 'declined'}<Glyph mark="idle" label="Declined" />
+    {:else}<Glyph mark="passed" label="Done" />{/if}
+  </span>
 {/snippet}
 
 {#snippet line(step: Step)}
-  <Icon name={ICONS[step.act]} size={12} />
-  <span class="verb">{Steps.VERBS[step.act]}</span>
+  <span class="verb" title={Steps.VERBS[step.act]} aria-label={Steps.VERBS[step.act]} role="img"
+    ><Icon name={ICONS[step.act]} size={12} /></span
+  >
   {#if step.said}
     <span class="said">{step.said}</span>
     <span class="target mono muted" title={step.targets.join('\n')}>{step.targets.join(', ')}</span>
@@ -60,8 +67,10 @@
   <button class="steps-line" aria-expanded={open} onclick={() => ontoggle(!open)}>
     <span class="fold" class:open><Icon name="chevron" size={10} /></span>
     <span class="summary">{summary}</span>
-    {#if state === 'running'}<span class="phase-dot tone-live" title="Running"></span>{/if}
-    {#if failed}<span class="chip danger">{failed} failed</span>{/if}
+    {#if state === 'running'}<Glyph mark="running" label={true} />{/if}
+    {#if failed}<span class="failed-count mono"
+        ><Glyph mark="failed" label={`${failed} failed`} />{failed}</span
+      >{/if}
     <span class="count muted">{steps.length === 1 ? '1 step' : `${steps.length} steps`}</span>
   </button>
   {#if open}
@@ -127,9 +136,12 @@
     flex: none;
     margin-left: auto;
   }
-  .steps-line > .chip,
-  .steps-line > .phase-dot {
+  .failed-count {
+    display: inline-flex;
     flex: none;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
   }
   .step-list {
     margin: 0;
@@ -157,8 +169,8 @@
     margin: 0 16px 4px 34px;
   }
   .verb {
+    display: inline-flex;
     flex: none;
-    width: 52px;
     color: var(--muted);
   }
   .said {
@@ -174,16 +186,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .step-row > .chip,
-  .step-row > .phase-dot {
+  .outcome {
+    display: inline-flex;
     flex: none;
+    align-items: center;
+    gap: 6px;
     margin-left: auto;
-  }
-  /* Scoped here: the page's own dots are drawn by its styles. */
-  .phase-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--live);
+    font-size: 11px;
   }
 </style>

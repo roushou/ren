@@ -264,6 +264,15 @@ test('where runs get each package, and the header tally', async () => {
   );
   assert.equal(Supplies.tone({ ...fd, needed_by: ['pi'] }), 'missing');
   assert.deepEqual(Supplies.tally(read), { managed: 3, system: 1, missing: 0, updates: 1 });
+  assert.deepEqual(Supplies.mark(claude), { mark: 'idle', word: 'On the host’s PATH' });
+  assert.deepEqual(Supplies.mark(fd), { mark: 'idle', word: 'Not installed' });
+  assert.deepEqual(Supplies.mark({ ...fd, needed_by: ['pi'] }), {
+    mark: 'failed',
+    word: 'Missing',
+  });
+  const marks = read.packages.map((p) => Supplies.mark(p).mark);
+  assert.equal(marks.filter((mark) => mark === 'warning').length, 1, 'the one update needs a look');
+  assert.equal(marks.filter((mark) => mark === 'passed').length, 2, 'the other installs pass');
   assert.equal(Platforms.label('linux_x64'), 'Linux x64');
 });
 

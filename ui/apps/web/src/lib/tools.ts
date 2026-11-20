@@ -20,6 +20,7 @@ import {
   type Stored,
   type AnyDecoder,
 } from './decode.ts';
+import type { Mark } from './marks.ts';
 import { Refusals, type Refusal } from './refusal.ts';
 import type { GenerationInstall as WireGenerationInstall } from './wire/GenerationInstall.ts';
 import type { GenerationView as WireGenerationView } from './wire/GenerationView.ts';
@@ -275,6 +276,26 @@ export class Supplies {
     }
   }
 
+  /** How a package stands, as a mark and its words: Ren's install of the
+   * catalog's release passes, another release needs a look, a package a
+   * client needs and runs would not find failed, and any other rests. */
+  static mark(pkg: ToolPackage): { mark: Mark; word: string } {
+    if (Standings.of(pkg).kind === 'outdated') return { mark: 'warning', word: 'Update available' };
+    const tone = Supplies.tone(pkg);
+    switch (tone) {
+      case 'managed':
+        return { mark: 'passed', word: 'Installed by Ren' };
+      case 'system':
+        return { mark: 'idle', word: 'On the host’s PATH' };
+      case 'none':
+        return { mark: 'idle', word: 'Not installed' };
+      case 'missing':
+        return { mark: 'failed', word: 'Missing' };
+      default:
+        return assertNever(tone);
+    }
+  }
+
   /** The version runs use: `?` when the PATH's copy did not say. */
   static version(supply: Supply): Version | '?' | null {
     switch (supply.kind) {
@@ -501,6 +522,14 @@ export interface KindGroup {
 
 /** A header chip's narrowing: one way packages stand. */
 export type Only = 'managed' | 'system' | 'missing' | 'updates';
+
+/** Each narrowing's mark, the same its packages carry. */
+export const ONLY_MARKS: Record<Only, Mark> = {
+  managed: 'passed',
+  system: 'idle',
+  missing: 'failed',
+  updates: 'warning',
+};
 
 /** What the view shows: packages matching `query`, narrowed to `only`. */
 export interface ToolFilter {

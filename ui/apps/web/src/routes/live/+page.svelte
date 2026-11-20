@@ -31,7 +31,7 @@
     type UnreadCall,
   } from '#lib/board.ts';
   import Icon, { type IconName } from '#lib/Icon.svelte';
-  import StateGlyph from '#lib/StateGlyph.svelte';
+  import Glyph from '#lib/Glyph.svelte';
   import Select, { type SelectOption } from '#lib/Select.svelte';
   import Markdown from 'markdown/Markdown.svelte';
   import StreamingReply from '#lib/StreamingReply.svelte';
@@ -285,7 +285,7 @@
         />
       </span>
       <span class="chip" class:live={board.inFlight > 0}
-        ><span class="status-dot" class:live={board.inFlight > 0}></span>{board.inFlight} in flight</span
+        ><Glyph mark={board.inFlight > 0 ? 'responding' : 'idle'} />{board.inFlight} in flight</span
       >
       {#if board.overflow}<a
           class="chip"
@@ -318,7 +318,7 @@
           onchange={chooseWindow}
         />
       </span>
-      <span class="chip"><span class="status-dot"></span><Skeleton width="1.5em" /> in flight</span>
+      <span class="chip"><Glyph mark="idle" /><Skeleton width="1.5em" /> in flight</span>
     </div>
   {/if}
   <div class="scope-group end">
@@ -439,7 +439,7 @@
       </div>
     </section>
     <section class="live-now" aria-label="Now" aria-busy="true">
-      <span class="live-now-label"><span class="status-dot"></span>Now</span>
+      <span class="live-now-label"><Glyph mark="idle" />Now</span>
       <div class="live-now-feed" aria-hidden="true">
         {#each ['9em', '12em', '7em', '10em'] as width (width)}
           <span class="live-now-item"><i></i><Skeleton {width} /></span>
@@ -594,7 +594,7 @@
       </section>
     {/if}
     <section class="live-now" aria-label="Now" aria-live="off">
-      <span class="live-now-label"><span class="status-dot live"></span>Now</span>
+      <span class="live-now-label"><Glyph mark="responding" />Now</span>
       <div class="live-now-feed">
         {#each board.feed as item (item.key)}
           <a
@@ -643,7 +643,7 @@
                 >
                 <td
                   ><span class="mono live-state {rowChip.tone}" title={rowChip.title}
-                    ><StateGlyph mark={rowChip.mark} />{rowChip.label}</span
+                    ><Glyph mark={rowChip.mark} label={rowChip.label} /></span
                   ></td
                 >
                 <td class="lane-column">{@render lane(tile)}</td>
@@ -816,7 +816,7 @@
             <footer class="live-tile-foot mono">
               <div class="live-foot-state">
                 <span class="live-state {chip.tone} state-{chip.mark}" title={chip.title}
-                  ><StateGlyph mark={chip.mark} />{chip.label}</span
+                  ><Glyph mark={chip.mark} label={chip.label} /></span
                 >
               </div>
               <div class="live-foot-facts" title="Provider-reported tokens of the newest call">
@@ -867,7 +867,7 @@
     align-items: center;
     gap: 4px;
   }
-  .live-pulse .status-dot {
+  .live-pulse :global(.glyph) {
     margin-right: 2px;
   }
 

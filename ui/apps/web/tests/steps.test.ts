@@ -107,6 +107,12 @@ test('a command reads as its client said it, and as written only when it said no
   assert.deepEqual([mixed.act, mixed.targets], ['run', ['rg todo && make']]);
   const failed = Steps.read(command('c4', 'cargo test', undefined, 'failed', 101) as never, WORK);
   assert.deepEqual([failed.state, failed.failure], ['failed', 'exit 101']);
+  const bare = Steps.read(command('c5', 'rm -rf build', undefined, 'failed', null) as never, WORK);
+  assert.deepEqual(
+    [bare.state, bare.failure],
+    ['failed', null],
+    'a failure with no exit code says nothing more than its mark',
+  );
 });
 
 test('a tool reads as its effects, and as its name without any', () => {
