@@ -219,6 +219,25 @@ export class Gallery {
     return `/control/sessions/${session}/attachments/${id}`;
   }
 
+  /**
+   * A prompt's images as it shows them: each one the session still has is
+   * `kept`, with where it is read from and its place among those (counted by
+   * position, so an image sent twice is two places); one it no longer has is
+   * `gone`, shown by name.
+   */
+  static sent(
+    images: readonly AttachmentRead[],
+    src: (read: AttachmentRead) => string | null,
+  ): SentImage[] {
+    let next = 0;
+    return images.map((read) => {
+      const at = src(read);
+      return at === null
+        ? { kind: 'gone', read }
+        : { kind: 'kept', image: { src: at, read }, view: next++ };
+    });
+  }
+
   /** An image's size, as `640×480 · 1.2 MB`. */
   static describe(read: AttachmentRead): string {
     const size =
@@ -231,5 +250,79 @@ export class Gallery {
   /** Whether a file's media type is one Ren takes. */
   static takes(type: string): boolean {
     return (IMAGE_TYPES as readonly string[]).includes(type);
+  }
+}
+
+/** A width and a height, in CSS pixels. */
+export interface Size {
+  width: number;
+  height: number;
+}
+
+/** An attachment as a thumbnail and the viewer show it: where it is read from, and what it is. */
+export interface Viewable {
+  src: string;
+  read: AttachmentRead;
+}
+
+/** One of a prompt's images, as `Gallery.sent` reads it. */
+export type SentImage =
+  { kind: 'kept'; image: Viewable; view: number } | { kind: 'gone'; read: AttachmentRead };
+
+/**
+ * How thumbnails are laid out: every frame has one height, and a width that
+ * follows its image's shape between two bounds. The image sits whole in its
+ * frame, never cropped and never enlarged, so a frame's size is known from
+ * the attachment's dimensions before its bytes load.
+ */
+export class Frame {
+  /** A sent prompt's images, in the conversation. */
+  static readonly SENT = new Frame(120, 72, 280);
+  /** The images in the composer's tray. */
+  static readonly TRAY = new Frame(40, 24, 72);
+
+  readonly #height: number;
+  readonly #narrowest: number;
+  readonly #widest: number;
+
+  private constructor(height: number, narrowest: number, widest: number) {
+    this.#height = height;
+    this.#narrowest = narrowest;
+    this.#widest = widest;
+  }
+
+  /** The frame an image of `image`'s size sits in, and its size inside it. */
+  fit(image: Size): { frame: Size; image: Size } {
+    const known = image.width > 0 && image.height > 0;
+    const natural = known ? (this.#height * image.width) / image.height : this.#height;
+    const frame = {
+      width: Math.round(Math.min(this.#widest, Math.max(this.#narrowest, natural))),
+      height: this.#height,
+    };
+    if (!known) return { frame, image: { width: 0, height: 0 } };
+    const scale = Math.min(1, frame.width / image.width, frame.height / image.height);
+    return {
+      frame,
+      image: {
+        width: Math.max(1, Math.round(image.width * scale)),
+        height: Math.max(1, Math.round(image.height * scale)),
+      },
+    };
+  }
+}
+
+/**
+ * A prompt's images as one row: the first few, then one frame counting the
+ * rest. A single image past the limit is shown rather than counted.
+ */
+export class Strip<T> {
+  static readonly LIMIT = 4;
+  readonly shown: readonly T[];
+  readonly rest: number;
+
+  constructor(items: readonly T[]) {
+    const all = items.length <= Strip.LIMIT + 1;
+    this.shown = all ? items : items.slice(0, Strip.LIMIT);
+    this.rest = items.length - this.shown.length;
   }
 }

@@ -140,7 +140,7 @@ impl ReadBody {
             ReadRequest::Exposures(_) => Self::Exposures(serde_json::from_value(body)?),
             ReadRequest::Runs { .. } => Self::Runs(serde_json::from_value(body)?),
             ReadRequest::Run(_) => Self::Run(serde_json::from_value(body)?),
-            ReadRequest::Conversation(_) => Self::Conversation(serde_json::from_value(body)?),
+            ReadRequest::Conversation { .. } => Self::Conversation(serde_json::from_value(body)?),
             ReadRequest::WorkItems { .. } => Self::WorkItems(serde_json::from_value(body)?),
             ReadRequest::WorkItem(_) => Self::WorkItem(serde_json::from_value(body)?),
         })

@@ -75,7 +75,14 @@ fn every_read() -> Vec<ReadRequest> {
             project: Some("acme-web".parse().unwrap()),
         },
         ReadRequest::Run(RunId::restore(Uuid::from_u128(4))),
-        ReadRequest::Conversation(RunId::restore(Uuid::from_u128(4))),
+        ReadRequest::Conversation {
+            run: RunId::restore(Uuid::from_u128(4)),
+            bodies: ren_store::query::ItemBodies::Kept,
+        },
+        ReadRequest::Conversation {
+            run: RunId::restore(Uuid::from_u128(4)),
+            bodies: ren_store::query::ItemBodies::Omitted,
+        },
         ReadRequest::WorkItems {
             limit,
             shelf: Shelf::Current,

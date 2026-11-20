@@ -691,7 +691,7 @@ impl ClaudeStreamJson {
                         text,
                         images: self.echoing.pop(),
                     },
-                    body: DriveItem::without_image_bytes(message["message"].clone()),
+                    body: message["message"].clone(),
                 },
             });
             return;
@@ -1247,7 +1247,8 @@ mod tests {
                 images: vec![image.read().clone()],
             }
         );
-        assert!(!item.body.to_string().contains(&image.base64()));
+        // Its body keeps the image's bytes here; `Driver::receive` drops
+        // them from every item it reports.
         // Images alone go without a text block.
         let _ = feed(
             &mut codec,
