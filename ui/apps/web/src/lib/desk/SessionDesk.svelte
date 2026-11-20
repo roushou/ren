@@ -70,6 +70,7 @@
   import ActionMenu, { type ActionItem } from '#lib/ActionMenu.svelte';
   import { assertNever } from '#lib/decode.ts';
   import FolderPicker from './FolderPicker.svelte';
+  import ImageViewer from './ImageViewer.svelte';
   import SignInSheet from '#lib/SignInSheet.svelte';
   import { SignIns } from '#lib/signIn.ts';
   import RunSettingsBar from './RunSettingsBar.svelte';
@@ -568,6 +569,8 @@
   /** Each session's attachments as the daemon lists them, to show what a prompt sent. */
   const kept = new SvelteMap<SessionId, KeptAttachment[]>();
   const gallery = $derived(new Gallery(chosen ? (kept.get(chosen) ?? []) : []));
+  /** The image open full size over the page, if one is. */
+  let viewing = $state.raw<{ src: string; read: AttachmentRead } | null>(null);
   /** Whether the composer offers images: not for a client that takes none. */
   const imagesTaken = $derived(session?.images !== 'never');
   let picker = $state<HTMLInputElement>();
@@ -1176,13 +1179,14 @@
           {#each entry.images as image, index (index)}
             {@const id = gallery.find(image)}
             {#if id && chosen}
-              <a
+              {@const src = Gallery.url(chosen, id)}
+              <button
+                type="button"
                 class="sent-image"
-                href={Gallery.url(chosen, id)}
-                target="_blank"
-                rel="noopener"
                 title="{image.name} · {Gallery.describe(image)}"
-                ><img src={Gallery.url(chosen, id)} alt={image.name} loading="lazy" /></a
+                aria-label="View {image.name}"
+                onclick={() => (viewing = { src, read: image })}
+                ><img {src} alt={image.name} loading="lazy" /></button
               >
             {:else}
               <span class="sent-image named" title={Gallery.describe(image)}
@@ -1622,7 +1626,14 @@
               {#each tray.chips as chip (chip.key)}
                 <li class="tray-chip {chip.state}">
                   {#if chip.state === 'ready' && chosen}
-                    <img src={Gallery.url(chosen, chip.id)} alt="" />
+                    {@const src = Gallery.url(chosen, chip.id)}
+                    {@const read = chip.read}
+                    <button
+                      type="button"
+                      class="tray-view"
+                      aria-label="View {read.name}"
+                      onclick={() => (viewing = { src, read })}><img {src} alt="" /></button
+                    >
                     <span class="tray-name" title={Gallery.describe(chip.read)}
                       >{chip.read.name}</span
                     >
@@ -1827,6 +1838,14 @@
     {/if}
   </section>
 </div>
+{#if viewing}
+  <ImageViewer
+    src={viewing.src}
+    name={viewing.read.name}
+    detail={Gallery.describe(viewing.read)}
+    onclose={() => (viewing = null)}
+  />
+{/if}
 {#if signingIn}
   {@const harness = signingIn}
   <SignInSheet
@@ -2077,6 +2096,13 @@
     gap: 6px;
     font-size: 12px;
   }
+  button.sent-image,
+  .tray-view {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-in;
+  }
   .sent-image + .sent-image {
     border-left: 1px solid var(--line);
   }
@@ -2255,6 +2281,9 @@
     padding: 0 6px 0 0;
     border-right: 1px solid var(--line);
     font-size: 12px;
+  }
+  .tray-view {
+    display: block;
   }
   .tray-chip img {
     width: 40px;
