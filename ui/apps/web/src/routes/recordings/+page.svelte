@@ -470,6 +470,17 @@
     fill: var(--muted);
     background: var(--muted);
   }
+  /* Narrower, the day bar and the time active go first, so the recording
+     keeps its width; the summary takes two rows, then three. */
+  @media (max-width: 1200px) {
+    .recordings-table .col-day,
+    .recordings-table .day-cell,
+    .recordings-table .col-active,
+    .recordings-table td:last-child,
+    .recordings-table th:last-child {
+      display: none;
+    }
+  }
   @media (max-width: 960px) {
     .summary {
       grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -563,6 +574,12 @@
     }
     .day-row th {
       display: table-cell !important;
+    }
+  }
+  /* Last, so it wins over the 960px rule above on a phone. */
+  @media (max-width: 560px) {
+    .summary {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
 </style>

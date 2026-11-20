@@ -469,6 +469,20 @@ pre {
   align-items: center;
   gap: 4px;
 }
+/* Narrower than the header's one line holds: where you are drops to a row
+   of its own under the header's controls, scrolling sideways if it must. */
+@media (max-width: 1100px) {
+  .workbench-header {
+    flex-wrap: wrap;
+  }
+  .workbench-context {
+    flex-basis: 100%;
+    order: 10;
+    min-height: 34px;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+  }
+}
 /* The header's right side, by weight: ⌘K and Pending first, then Inspect
    and Host, quieter than Projects on the left. */
 .command-open {
@@ -1768,10 +1782,6 @@ tr.call-row {
   }
 }
 @media (max-width: 560px) {
-  /* One row: the context scrolls sideways between the wordmark and the theme. */
-  .workbench-context {
-    flex: 1;
-  }
   .brand {
     flex: none;
     padding: 0 8px;
@@ -2417,6 +2427,9 @@ td.zero {
    It hides behind a button and opens as a flush panel below the bar, its
    groups stacked, so nothing ever wraps into a ragged second line. */
 .scope-toggle {
+  display: none;
+}
+.workbench-toolbar.folded .scope-toggle {
   display: inline-flex;
 }
 .workbench-toolbar.folded .scope {
@@ -2445,6 +2458,40 @@ td.zero {
 }
 .workbench-toolbar.folded.scope-open .scope-group:first-child {
   border-top: 0;
+}
+/* A phone folds the scope by its width alone, before any script measures:
+   the same panel as above. */
+@media (max-width: 760px) {
+  .scope-toggle {
+    display: inline-flex;
+  }
+  .workbench-toolbar .scope {
+    display: none;
+  }
+  .workbench-toolbar .page-actions {
+    margin-left: auto;
+  }
+  .workbench-toolbar.scope-open .scope {
+    display: flex;
+    flex-basis: 100%;
+    order: 3;
+    flex-direction: column;
+    align-items: stretch;
+    margin: 4px -12px -4px;
+    border-top: 1px solid var(--line);
+    background: var(--surface-subtle);
+    white-space: normal;
+  }
+  .workbench-toolbar.scope-open .scope-group {
+    flex-wrap: wrap;
+    margin: 0;
+    padding: 8px 12px;
+    border-left: 0;
+    border-top: 1px solid var(--line-subtle);
+  }
+  .workbench-toolbar.scope-open .scope-group:first-child {
+    border-top: 0;
+  }
 }
 .scope .scope-search {
   width: 260px;
