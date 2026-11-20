@@ -27,11 +27,11 @@
     type ResultMark,
     type ToolLine,
     type TurnCall,
-    type TurnTally,
     type UnreadCall,
   } from '#lib/board.ts';
   import Icon, { type IconName } from '#lib/Icon.svelte';
   import Glyph from '#lib/Glyph.svelte';
+  import { Marks } from '#lib/marks.ts';
   import Select, { type SelectOption } from '#lib/Select.svelte';
   import Markdown from 'markdown/Markdown.svelte';
   import StreamingReply from '#lib/StreamingReply.svelte';
@@ -187,9 +187,6 @@
         return 'tool';
     }
   }
-  function tallyParts(tally: TurnTally): string[] {
-    return [`read ${tally.read}`, `wrote ${tally.wrote}`, `ran ${tally.ran}`];
-  }
   /** A call not read yet: open (waiting for its head, or responding), or just finished. */
   function unreadLabel(unread: UnreadCall, now: number, thinking: boolean): string {
     const { call } = unread;
@@ -265,7 +262,7 @@
       >{tool.name}{#if count > 1}<span class="live-count"> ×{count}</span>{/if}</b
     >
     {#if tool.target}<span class="live-target" title={tool.target}>{tool.target}</span>{/if}
-    <span class="live-result {result.tone}">{result.label}</span>
+    <span class="live-result"><Glyph mark={Marks.ofTone(result.tone)} label={result.label} /></span>
     {#if tool.output}<span class="live-output" class:error={tool.result.tone === 'error'}
         >⎿ {tool.output}</span
       >{/if}
@@ -276,7 +273,9 @@
   {#if board}
     <div class="scope-group live-pulse" aria-label="Right now">
       <span class="live-active">
-        <span class="chip">{board.tiles.length + board.overflow} active</span><Select
+        <span class="chip" title="Recordings active in the window"
+          ><Glyph mark="responding" label="Active" />{board.tiles.length + board.overflow}</span
+        ><Select
           label="How far back a recording counts as active"
           size="compact"
           options={windowOptions}
@@ -284,14 +283,17 @@
           onchange={chooseWindow}
         />
       </span>
-      <span class="chip" class:live={board.inFlight > 0}
-        ><Glyph mark={board.inFlight > 0 ? 'responding' : 'idle'} />{board.inFlight} in flight</span
+      <span class="chip" class:live={board.inFlight > 0} title="Model calls in flight now"
+        ><Glyph
+          mark={board.inFlight > 0 ? 'waiting' : 'idle'}
+          label="In flight"
+        />{board.inFlight}</span
       >
       {#if board.overflow}<a
           class="chip"
           href="/recordings"
           title="Active recordings without a tile: the board keeps the busiest and most recent {Board.maxTiles}"
-          >{board.overflow} not shown</a
+          >+{board.overflow}</a
         >{/if}
       {#if only}<a
           class="chip live-only"
@@ -310,7 +312,7 @@
   {:else if pending}
     <div class="scope-group live-pulse" aria-label="Right now" aria-busy="true">
       <span class="live-active">
-        <span class="chip"><Skeleton width="1.5em" /> active</span><Select
+        <span class="chip"><Glyph mark="responding" /><Skeleton width="1.5em" /></span><Select
           label="How far back a recording counts as active"
           size="compact"
           options={windowOptions}
@@ -318,7 +320,7 @@
           onchange={chooseWindow}
         />
       </span>
-      <span class="chip"><Glyph mark="idle" /><Skeleton width="1.5em" /> in flight</span>
+      <span class="chip"><Glyph mark="idle" /><Skeleton width="1.5em" /></span>
     </div>
   {/if}
   <div class="scope-group end">
@@ -809,8 +811,19 @@
                 {#if tile.workdir}<span class="live-workdir" title={tile.workdir}
                     >{Board.folder(tile.workdir)}</span
                   >{/if}
-                {#each tallyParts(tile.tally) as part (part)}<span>{part}</span>{/each}
-                {#if tile.tally.failed}<span class="error">{tile.tally.failed} failed</span>{/if}
+                <span class="tally" title="Files read"
+                  ><Icon name="file" size={11} />{tile.tally.read}</span
+                >
+                <span class="tally" title="Files written"
+                  ><Icon name="pencil" size={11} />{tile.tally.wrote}</span
+                >
+                <span class="tally" title="Commands run"
+                  ><Icon name="terminal" size={11} />{tile.tally.ran}</span
+                >
+                {#if tile.tally.failed}<span class="tally"
+                    ><Glyph mark="failed" label="{tile.tally.failed} failed" />{tile.tally
+                      .failed}</span
+                  >{/if}
               </div>
             {/if}
             <footer class="live-tile-foot mono">
@@ -834,6 +847,11 @@
 </div>
 
 <style>
+  .tally {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
   .live-page {
     flex: 1;
     min-height: 0;
@@ -1544,18 +1562,9 @@
     mask-image: none;
   }
   .live-result {
+    display: inline-flex;
     flex: none;
     margin-left: auto;
-    color: var(--muted);
-  }
-  .live-result.success {
-    color: var(--success);
-  }
-  .live-result.warning {
-    color: var(--warning);
-  }
-  .live-result.error {
-    color: var(--error);
   }
   .live-tile-body > .live-step-reply {
     flex: none;
