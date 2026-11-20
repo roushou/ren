@@ -940,9 +940,6 @@ table {
   font-size: 11px;
   text-align: left;
 }
-.requests-table {
-  table-layout: fixed;
-}
 th {
   color: var(--muted);
   background: var(--sidebar);
@@ -955,24 +952,6 @@ td {
   padding: 7px 10px;
   border-bottom: 1px solid var(--line);
   vertical-align: top;
-}
-.requests-table td {
-  overflow-wrap: anywhere;
-}
-.requests-table th:nth-child(1) {
-  width: 17%;
-}
-.requests-table th:nth-child(2) {
-  width: 21%;
-}
-.requests-table th:nth-child(3) {
-  width: 32%;
-}
-.requests-table th:nth-child(4) {
-  width: 30%;
-}
-.time-column {
-  white-space: nowrap;
 }
 tbody tr:hover {
   background: var(--row-hover);
@@ -1813,18 +1792,6 @@ tr.call-row {
   .main-search {
     flex-basis: 100%;
   }
-  .time-column {
-    display: none;
-  }
-  .requests-table th:nth-child(2) {
-    width: 25%;
-  }
-  .requests-table th:nth-child(3) {
-    width: 35%;
-  }
-  .requests-table th:nth-child(4) {
-    width: 40%;
-  }
   td,
   th {
     padding-inline: 8px;
@@ -1923,12 +1890,6 @@ tr.call-row {
   font-size: 10.5px;
   line-height: 16px;
   padding: 0 6px;
-}
-.outcome-line {
-  display: flex;
-  gap: 8px;
-  margin-top: 2px;
-  font-family: 'SFMono-Regular', Consolas, monospace;
 }
 td > .chip {
   margin: 5px 4px 0 0;
@@ -2071,16 +2032,10 @@ td.zero {
   opacity: 0.55;
 }
 /* Values never break inside: a status code, a duration, a token count. */
-.outcome-line > *,
 .mono.numeric,
 .status-code,
 .chip {
   white-space: nowrap;
-}
-.outcome-line {
-  flex-wrap: wrap;
-  column-gap: 8px;
-  row-gap: 0;
 }
 .thinking-chip {
   color: var(--role-thinking);

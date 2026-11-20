@@ -2,7 +2,7 @@
   import Glyph from '#lib/Glyph.svelte';
   import SlideOver from '#lib/layer/SlideOver.svelte';
   import Toolbar from './Toolbar.svelte';
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { goto } from '$app/navigation';
   import { page, navigating } from '$app/state';
@@ -16,14 +16,11 @@
   import { num, short, title, clock, providerName, providerMark } from './api.ts';
   import {
     isActive,
-    callBadge,
     captureChip,
     duration,
-    elapsed,
     date,
     httpChip,
     streamChip,
-    tokenSummary,
     recordingTone,
     compactOrDash,
     callerShown,
@@ -46,6 +43,9 @@
   import Icon from './Icon.svelte';
   import RecordingActions from './RecordingActions.svelte';
   import Inspector from './Inspector.svelte';
+  import CallOverview from './CallOverview.svelte';
+  import { CallTimeline } from './timeline.ts';
+  import { Steps } from './steps.ts';
   import Select, { type SelectOption } from './Select.svelte';
   import Segmented, { type SegmentedOption } from './Segmented.svelte';
   import ConnectClient from './ConnectClient.svelte';
@@ -63,10 +63,15 @@
   const retained = $derived(shown.state === 'ready' ? shown.snapshot : null);
   /** The listing's columns: its header and its outline rows are drawn from them. */
   const callColumns: Column[] = [
-    { label: 'Time', class: 'time-column' },
-    { label: 'Call' },
-    { label: 'Model / upstream' },
-    { label: 'Outcome / duration' },
+    { label: 'Time', class: 'col-time' },
+    { label: '', class: 'col-mark' },
+    { label: 'Call', class: 'col-call' },
+    { label: 'Model', class: 'col-model' },
+    { label: 'Tools requested', class: 'col-tools' },
+    { label: 'Context · cached', class: 'col-context', numeric: true },
+    { label: 'Out', class: 'col-out', numeric: true },
+    { label: 'Duration', class: 'col-duration', numeric: true },
+    { label: 'HTTP', class: 'col-http', numeric: true },
   ];
   const calls = $derived(retained?.value?.calls ?? []);
   const nextAfter = $derived(retained?.value?.next ?? null);
@@ -101,30 +106,14 @@
   let filterError = $state('');
   let moreFilters = $state(false);
   let searchInput = $state<HTMLInputElement>();
-  // On a phone the list and the call are separate screens: nothing is
-  // selected until a row is tapped.
-  let narrow = $state(false);
-  onMount(() => {
-    const query = window.matchMedia('(max-width: 760px)');
-    narrow = query.matches;
-    const change = () => (narrow = query.matches);
-    query.addEventListener('change', change);
-    return () => query.removeEventListener('change', change);
-  });
   const linkedCall = $derived(page.url.searchParams.get('call'));
   // A clicked row is selected at once; the URL catches up a moment later.
   let pending = $state<CallId | null>(null);
   $effect(() => {
     if (pending !== null && linkedCall === pending) pending = null;
   });
-  const selectedId = $derived(
-    pending ??
-      (linkedCall !== null
-        ? CallId.parse(linkedCall)
-        : page.url.searchParams.get('inspect') === 'off' || narrow
-          ? null
-          : calls[0]?.id),
-  );
+  /** The call open beside the list: only one the operator picked. */
+  const selectedId = $derived(pending ?? (linkedCall !== null ? CallId.parse(linkedCall) : null));
   let observed = $state<CallView | undefined>();
   // A linked call that is not on this page is read on its own; the listing
   // never reloads for a selection.
@@ -160,6 +149,10 @@
     workbench.callCount = 0;
     workbench.activeCount = 0;
   });
+  /** The page's longest finished call: each row's duration bar is its share. */
+  const longest = $derived(Math.max(0, ...calls.map((call) => duration(call) ?? 0)));
+  /** When the page was read: an open call runs to it on the timeline. */
+  const readAt = $derived(updated ?? 0);
   const groups = $derived(
     recordingId
       ? turnGroups(calls)
@@ -171,23 +164,6 @@
     url.searchParams.delete('inspect');
     return url.pathname + url.search;
   }
-  $effect(() => {
-    // Canonicalize the initial selection through Kit's data-loading navigation. Live
-    // refreshes must never switch the inspector when a newer call arrives.
-    if (
-      !narrow &&
-      !page.url.searchParams.has('call') &&
-      page.url.searchParams.get('inspect') !== 'off' &&
-      calls.length
-    ) {
-      void goto(callHref(calls[0].id), {
-        replace: true,
-        reset: false,
-        state: page.state,
-        persistState: true,
-      });
-    }
-  });
   /** A click anywhere on a row selects it, except on its own links and
    * buttons, or when the click ended a text selection. */
   function selectRow(event: MouseEvent, id: CallId) {
@@ -213,7 +189,6 @@
     const id = selectedId;
     const url = new URL(page.url.href);
     url.searchParams.delete('call');
-    url.searchParams.set('inspect', 'off');
     await goto(url, { reset: false, state: page.state, persistState: true });
     if (id) document.getElementById(`call-${id}`)?.focus();
   }
@@ -367,7 +342,9 @@
 {#snippet callHead()}
   <thead
     ><tr
-      >{#each callColumns as column (column.label)}<th class={column.class}>{column.label}</th
+      >{#each callColumns as column (column.class)}<th
+          class={column.class}
+          class:numeric={column.numeric}>{column.label}</th
         >{/each}</tr
     ></thead
   >
@@ -583,10 +560,21 @@
           </div>{/if}
       </form>
     {/if}
+    {#if !recordingId && !outlined && calls.length}<CallOverview
+        {calls}
+        now={readAt}
+        name={(id) =>
+          details.get(id)?.prompt?.text.trim().split('\n')[0] ||
+          short(recordingsById.get(id)?.native_id ?? id)}
+        selected={selectedId}
+        onrecording={(recording) => pick((f) => (f.recording = recording))}
+        href={callHref}
+        oncall={selectCall}
+      />{/if}
     <div class="list-content" class:busy={loading && calls.length > 0} aria-busy={loading}>
       {#if outlined}
         <div class="attempt-list">
-          <table class="requests-table">
+          <table class="calls-table">
             {@render callHead()}
             <tbody><SkeletonRows columns={callColumns} rows={12} /></tbody>
           </table>
@@ -653,25 +641,25 @@
                     >What this turn did <Icon name="arrow" size={12} /></a
                   >{/if}
               </div>{/if}
-            <table class="requests-table">
+            <table class="calls-table">
               {@render callHead()}
               <tbody>
-                {#each group.rows as c, index (c.id)}{@const badge = callBadge(c)}{@const http =
-                    httpChip(c.status)}{@const stream = streamChip(c)}{@const capture = captureChip(
-                    c,
-                    bodyLimit,
-                  )}{@const tokens = tokenSummary(c.usage)}
+                {#each group.rows as c, index (c.id)}{@const said =
+                    CallTimeline.mark(c)}{@const http = httpChip(c.status)}{@const stream =
+                    streamChip(c)}{@const capture = captureChip(c, bodyLimit)}{@const context =
+                    CallTimeline.context(c)}{@const took = duration(c)}
                   <tr
                     class="call-row"
                     class:selected={selectedId === c.id}
                     onclick={(event) => selectRow(event, c.id)}
                   >
-                    <td class="time-column mono" title={new Date(c.started_at).toLocaleString()}
+                    <td class="col-time mono" title={new Date(c.started_at).toLocaleString()}
                       >{clock(c.started_at)}{#if date(c.started_at) !== today}<small
                           >{date(c.started_at)}</small
                         >{/if}</td
                     >
-                    <td
+                    <td class="col-mark"><Glyph mark={said.mark} label={said.label} /></td>
+                    <td class="col-call"
                       ><a
                         class="row-link mono"
                         id={`call-${c.id}`}
@@ -679,7 +667,13 @@
                         onclick={(event) => selectCall(event, c.id)}
                         aria-label={`Inspect call ${c.id}`}
                         aria-current={selectedId === c.id ? 'true' : undefined}>{short(c.id)}</a
-                      >{#if !recordingId}{@const previous = group.rows[index - 1]}<small
+                      >{#if stream.tone !== 'success' && stream.tone !== 'live'}<span
+                          class="chip {stream.tone}"
+                          title={stream.title}>{stream.label}</span
+                        >{/if}{#if capture.tone === 'warning'}<span
+                          class="chip warning"
+                          title={capture.title}>{capture.label}</span
+                        >{/if}{#if !recordingId}{@const previous = group.rows[index - 1]}<small
                           class="mono recording-line"
                           title={c.attribution.hint?.session ??
                             'No session identifier was reported'}
@@ -711,37 +705,61 @@
                             >{/if}</small
                         >{/if}</td
                     >
-                    <td
+                    <td class="col-model"
                       ><span class="model-line"
                         ><span
                           class="provider-mark tiny {c.provider}"
                           title={providerName(c.provider)}>{providerMark(c.provider)}</span
-                        ><span class="model-name" title={c.model ?? title(c.endpoint)}
+                        ><span class="model-name mono" title={c.model ?? title(c.endpoint)}
                           >{c.model ??
                             (isActive(c) ? 'Awaiting observation' : title(c.endpoint))}</span
                         ></span
+                      ></td
+                    >
+                    <td class="col-tools"
                       >{#if c.tool_names.length}<span class="tool-chips"
-                          >{#each c.tool_names.slice(0, 3) as name}<span class="chip tool-chip"
-                              ><Icon name="tool" size={10} />{name}</span
-                            >{/each}{#if c.tool_names.length > 3}<span class="chip"
-                              >+{c.tool_names.length - 3}</span
+                          >{#each c.tool_names.slice(0, 2) as name, at (at)}<span
+                              class="chip tool-chip mono">{name}</span
+                            >{/each}{#if c.tool_names.length > 2}<span class="chip mono"
+                              >+{c.tool_names.length - 2}</span
                             >{/if}</span
                         >{/if}</td
                     >
-                    <td
-                      ><span class="badge {badge.tone}">{badge.label}</span><small
-                        class="outcome-line"
-                        ><span class="status-code {http.tone}" title={http.title}>{http.label}</span
-                        ><span>{elapsed(duration(c))}</span>{#if tokens}<span title={tokens.title}
-                            >{tokens.input} in · {tokens.output} out</span
-                          >{/if}</small
-                      >{#if stream.tone !== 'success' && stream.tone !== 'live'}<span
-                          class="chip {stream.tone}"
-                          title={stream.title}>{stream.label}</span
-                        >{/if}{#if capture.tone === 'warning'}<span
-                          class="chip warning"
-                          title={capture.title}>{capture.label}</span
-                        >{/if}</td
+                    <td class="col-context numeric mono"
+                      >{#if context}<span
+                          class="figure"
+                          title="{context.tokens.toLocaleString()} tokens of prompt, {Math.round(
+                            context.cached * 100,
+                          )}% read from the cache"
+                          ><svg class="meter" viewBox="0 0 100 4" preserveAspectRatio="none"
+                            ><rect class="meter-whole" width="100" height="4" /><rect
+                              class="meter-cached"
+                              width={context.cached * 100}
+                              height="4"
+                            /></svg
+                          >{compactOrDash(context.tokens)}</span
+                        >{:else}<span class="muted">—</span>{/if}</td
+                    >
+                    <td class="col-out numeric mono"
+                      >{compactOrDash(c.usage?.output_tokens ?? null)}</td
+                    >
+                    <td class="col-duration numeric mono"
+                      ><span class="figure"
+                        >{#if took !== null && longest > 0}<svg
+                            class="meter"
+                            viewBox="0 0 100 4"
+                            preserveAspectRatio="none"
+                            ><rect class="meter-whole" width="100" height="4" /><rect
+                              class="meter-took state-{said.mark}"
+                              width={Math.max(2, (took / longest) * 100)}
+                              height="4"
+                            /></svg
+                          >{/if}{took === null ? '' : Steps.time(took)}</span
+                      ></td
+                    >
+                    <td class="col-http numeric mono"
+                      ><span class="status-code {http.tone}" title={http.title}>{http.label}</span
+                      ></td
                     >
                   </tr>
                 {/each}
@@ -775,3 +793,111 @@
         />{/key}</SlideOver
     >{/if}
 </div>
+
+<style>
+  .calls-table {
+    table-layout: fixed;
+  }
+  .calls-table :global(td) {
+    vertical-align: middle;
+  }
+  .calls-table .col-time {
+    width: 88px;
+    white-space: nowrap;
+  }
+  .calls-table .col-mark {
+    width: 26px;
+    padding-right: 0;
+  }
+  .calls-table .col-call {
+    width: 24%;
+  }
+  .calls-table .col-model {
+    width: 16%;
+  }
+  .calls-table .col-tools {
+    width: 16%;
+  }
+  .calls-table .col-context {
+    width: 128px;
+  }
+  .calls-table .col-out {
+    width: 64px;
+  }
+  .calls-table .col-duration {
+    width: 112px;
+  }
+  .calls-table .col-http {
+    width: 56px;
+  }
+  .numeric {
+    text-align: right;
+  }
+  .col-time small {
+    display: block;
+    color: var(--muted);
+  }
+  .col-call {
+    overflow: hidden;
+  }
+  .col-call .chip {
+    margin-left: 6px;
+  }
+  .model-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .model-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tool-chips {
+    display: flex;
+    gap: 4px;
+    overflow: hidden;
+  }
+  .figure {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    width: 100%;
+  }
+  .meter {
+    flex: 1;
+    max-width: 52px;
+    height: 4px;
+  }
+  .meter-whole {
+    fill: var(--line);
+  }
+  .meter-cached {
+    fill: var(--success);
+  }
+  .meter-took {
+    fill: var(--muted);
+  }
+  .meter-took.state-failed {
+    fill: var(--error);
+  }
+  .meter-took.state-warning,
+  .meter-took.state-unknown {
+    fill: var(--warning);
+  }
+  @media (max-width: 960px) {
+    .calls-table .col-tools,
+    .calls-table .col-out,
+    .calls-table .col-http {
+      display: none;
+    }
+  }
+  @media (max-width: 760px) {
+    .calls-table .col-context,
+    .calls-table .col-model {
+      display: none;
+    }
+  }
+</style>
