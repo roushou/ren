@@ -2,7 +2,7 @@
 
 use ren_recorder::{project::ProjectName, time::UnixMillis};
 use ren_store::query::{
-    CallFilter, CallQuery, Cursor, PageLimit, QueryError, SearchText, Shelf, TimeRange,
+    CallFilter, CallQuery, Cursor, PageLimit, QueryError, SearchText, Shelf, TimeRange, UsageScope,
 };
 use ren_store::search::{ExposureQuery, SearchQuery, SearchTerms};
 use serde::Deserialize;
@@ -88,7 +88,7 @@ impl RawShelfQuery {
 }
 
 /// `GET /api/usage` parameters: an inclusive range of call start times,
-/// of every project or of the one named.
+/// of every call, of the project named, or of the session named.
 #[derive(Debug, Default, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export, optional_fields)]
@@ -97,10 +97,14 @@ pub(super) struct RawUsageQuery {
     until_ms: Option<u64>,
     /// A project's name: its sessions' runs' calls.
     project: Option<String>,
+    /// A session's id: its runs' calls.
+    #[serde(default)]
+    #[ts(as = "Option<String>")]
+    session: RawLabel,
 }
 
 impl RawUsageQuery {
-    pub fn parse(self) -> Result<(TimeRange, Option<ProjectName>), QueryError> {
+    pub fn parse(self) -> Result<(TimeRange, UsageScope), QueryError> {
         let range = TimeRange::new(
             self.from_ms.map(UnixMillis::from_millis),
             self.until_ms.map(UnixMillis::from_millis),
@@ -109,7 +113,8 @@ impl RawUsageQuery {
             .project
             .map(|name| name.parse().map_err(|_| QueryError::Filter))
             .transpose()?;
-        Ok((range, project))
+        let scope = UsageScope::new(project, self.session.parse()?)?;
+        Ok((range, scope))
     }
 }
 
@@ -300,10 +305,10 @@ mod tests {
     #[test]
     fn usage_search_and_exposures_parse_a_project_name_once() {
         let acme = Some("acme-web".parse().unwrap());
-        let (_, project) = query::<RawUsageQuery>("/api/usage?project=acme-web")
+        let (_, scope) = query::<RawUsageQuery>("/api/usage?project=acme-web")
             .parse()
             .unwrap();
-        assert_eq!(project, acme);
+        assert_eq!(scope.project(), acme.as_ref());
         let search = SearchQuery::try_from(query::<RawSearchQuery>(
             "/api/search?q=migration&project=acme-web",
         ))
@@ -331,5 +336,23 @@ mod tests {
                 Err(QueryError::Filter)
             ));
         }
+    }
+
+    #[test]
+    fn usage_is_read_for_everything_one_project_or_one_session() {
+        use ren_store::query::UsageScope;
+        let session = "0198f6c2-3a4b-7c5d-8e9f-0a1b2c3d4e5f";
+        let scope = |path: &str| query::<RawUsageQuery>(path).parse().map(|(_, scope)| scope);
+        assert_eq!(scope("/api/usage"), Ok(UsageScope::Everything));
+        assert_eq!(scope("/api/usage?session="), Ok(UsageScope::Everything));
+        assert_eq!(
+            scope(&format!("/api/usage?session={session}")),
+            Ok(UsageScope::Session(session.parse().unwrap()))
+        );
+        assert_eq!(scope("/api/usage?session=acme"), Err(QueryError::Filter));
+        assert_eq!(
+            scope(&format!("/api/usage?project=acme-web&session={session}")),
+            Err(QueryError::Scope)
+        );
     }
 }

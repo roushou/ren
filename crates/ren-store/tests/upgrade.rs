@@ -46,7 +46,7 @@ use ren_recorder::{
 };
 use ren_store::{
     Reader, Store,
-    query::{CallQuery, PageLimit, Shelf, TimeRange},
+    query::{CallQuery, PageLimit, Shelf, TimeRange, UsageScope},
     read::{ReadRequest, ReadResponse},
     search::{ExposureQuery, SearchQuery},
 };
@@ -355,7 +355,7 @@ impl Reads {
         }
         serve(ReadRequest::Usage {
             range: TimeRange::default(),
-            project: None,
+            scope: UsageScope::Everything,
         })
         .await;
         let ReadResponse::Search(hits) = serve(ReadRequest::Search(SearchQuery {

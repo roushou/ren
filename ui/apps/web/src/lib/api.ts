@@ -87,6 +87,7 @@ import type { ErrorBody as WireErrorBody } from './wire/ErrorBody.ts';
 import type { Metrics as WireMetrics } from './wire/Metrics.ts';
 import type { RawPreview as WireRawPreview } from './wire/RawPreview.ts';
 import { query, type Query } from './query.ts';
+import type { SessionId } from './runs.ts';
 import type { RawCallQuery } from './wire/RawCallQuery.ts';
 import type { RawExposureQuery } from './wire/RawExposureQuery.ts';
 import type { RawPageQuery } from './wire/RawPageQuery.ts';
@@ -1651,10 +1652,13 @@ export class ManagementApi {
   body(id: CallId, direction: Direction, signal?: AbortSignal): Promise<BodyPreview> {
     return this.#read(`/api/calls/${id}/body/${direction}`, bodyPreview, signal);
   }
-  /** Totals, hours, and models for calls started within the range. */
-  /** Usage over `range`; with `project`, only its sessions' runs' calls. */
+  /** Totals, hours, models, and users for calls started within the range;
+   * with `project`, only its sessions' runs' calls; with `session`, only its
+   * runs' calls. */
   usage(
-    range: { from_ms?: number; until_ms?: number; project?: string | null },
+    range: { from_ms?: number; until_ms?: number } & (
+      { project?: string | null; session?: never } | { session: SessionId; project?: never }
+    ),
     signal?: AbortSignal,
   ): Promise<UsageView> {
     const params = query<RawUsageQuery>(range);

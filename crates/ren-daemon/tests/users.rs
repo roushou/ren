@@ -155,7 +155,10 @@ async fn every_call_records_its_caller_and_identity_never_reaches_the_provider()
     assert_eq!(bobs.len(), 1);
     assert_eq!(bobs[0].id, calls[1].id);
     let mut usage: Vec<(Option<String>, u64)> = reader
-        .usage(TimeRange::default(), None)
+        .usage(
+            TimeRange::default(),
+            &ren_store::query::UsageScope::Everything,
+        )
         .await
         .unwrap()
         .users

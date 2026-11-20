@@ -5,7 +5,7 @@ use ren_harness::Harness;
 use ren_protocol::route::Provider;
 use ren_recorder::{
     caller::UserId,
-    id::{CallId, RecordingId},
+    id::{CallId, RecordingId, SessionId},
     project::ProjectName,
     time::UnixMillis,
 };
@@ -25,6 +25,8 @@ pub enum QueryError {
     TimeRange,
     #[error("unknown filter value")]
     Filter,
+    #[error("usage is read for a project or a session, not both")]
+    Scope,
 }
 
 /// How many rows one page returns.
@@ -218,6 +220,47 @@ pub enum ToolFilter {
     WithTools,
     #[strum(to_string = "false")]
     WithoutTools,
+}
+
+/// Whose calls a usage read covers.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum UsageScope {
+    /// Every call.
+    #[default]
+    Everything,
+    /// The calls of a project's sessions' runs.
+    Project(ProjectName),
+    /// The calls of one session's runs, on every conversation they held.
+    Session(SessionId),
+}
+
+impl UsageScope {
+    /// The scope a project or a session names; refused when both are given.
+    pub fn new(
+        project: Option<ProjectName>,
+        session: Option<SessionId>,
+    ) -> Result<Self, QueryError> {
+        match (project, session) {
+            (None, None) => Ok(Self::Everything),
+            (Some(project), None) => Ok(Self::Project(project)),
+            (None, Some(session)) => Ok(Self::Session(session)),
+            (Some(_), Some(_)) => Err(QueryError::Scope),
+        }
+    }
+
+    pub fn project(&self) -> Option<&ProjectName> {
+        match self {
+            Self::Project(project) => Some(project),
+            Self::Everything | Self::Session(_) => None,
+        }
+    }
+
+    pub fn session(&self) -> Option<SessionId> {
+        match self {
+            Self::Session(session) => Some(*session),
+            Self::Everything | Self::Project(_) => None,
+        }
+    }
 }
 
 /// An inclusive range of call start times.

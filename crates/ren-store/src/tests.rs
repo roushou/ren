@@ -1029,7 +1029,7 @@ async fn sessions_total_their_errors_and_tokens_including_cached_input() {
 
 #[tokio::test]
 async fn usage_totals_by_hour_and_by_model_over_a_range() {
-    use crate::query::TimeRange;
+    use crate::query::{TimeRange, UsageScope};
     use ren_protocol::inspect::{InputAccounting, Usage};
     use ren_recorder::time::UnixMillis;
     let mut fixture = Fixture::new().await;
@@ -1065,7 +1065,7 @@ async fn usage_totals_by_hour_and_by_model_over_a_range() {
 
     let all = fixture
         .reader
-        .usage(TimeRange::default(), None)
+        .usage(TimeRange::default(), &UsageScope::Everything)
         .await
         .unwrap();
     assert_eq!((all.totals.calls, all.totals.errors), (3, 1));
@@ -1107,7 +1107,11 @@ async fn usage_totals_by_hour_and_by_model_over_a_range() {
         Some(UnixMillis::from_millis(start.as_millis() + 3_600_000)),
     )
     .unwrap();
-    let first = fixture.reader.usage(early, None).await.unwrap();
+    let first = fixture
+        .reader
+        .usage(early, &UsageScope::Everything)
+        .await
+        .unwrap();
     assert_eq!((first.totals.calls, first.hours.len()), (2, 1));
     let none = fixture
         .reader
@@ -1117,7 +1121,7 @@ async fn usage_totals_by_hour_and_by_model_over_a_range() {
                 Some(UnixMillis::from_millis(2)),
             )
             .unwrap(),
-            None,
+            &UsageScope::Everything,
         )
         .await
         .unwrap();
@@ -1261,7 +1265,7 @@ async fn calls_narrow_by_session_client_and_kind() {
 
 mod digests {
     use super::*;
-    use crate::query::TimeRange;
+    use crate::query::{TimeRange, UsageScope};
     use crate::search::{ExposureQuery, SearchField, SearchQuery, SearchTerms};
     use ren_harness::{Harness, tools::InterpretedCall};
     use ren_protocol::activity::{
@@ -1512,8 +1516,8 @@ mod digests {
 
     impl Fixture {
         /// A project named `name`, with a session working for it whose run
-        /// worked in the client session `native` names.
-        async fn project_run(&mut self, name: &str, native: u128) {
+        /// worked in the client session `native` names. Returns the session.
+        async fn project_run(&mut self, name: &str, native: u128) -> ren_recorder::id::SessionId {
             use ren_protocol::native::NativeThreadId;
             use ren_recorder::{
                 batch::{
@@ -1573,13 +1577,14 @@ mod digests {
                 }));
             }
             self.store.commit(&batch).await.unwrap();
+            session
         }
     }
 
     #[tokio::test]
     async fn usage_search_and_exposures_narrow_to_one_projects_calls() {
         let mut fixture = Fixture::new().await;
-        fixture.project_run("acme-web", 10).await;
+        let web_session = fixture.project_run("acme-web", 10).await;
         fixture.project_run("acme-api", 20).await;
         let key = format!("sk-ant-{}a1b2", "api03xY9z".repeat(5));
         let mut calls = Vec::new();
@@ -1612,21 +1617,22 @@ mod digests {
         let acme_api: ProjectName = "acme-api".parse().unwrap();
         let unused: ProjectName = "acme-docs".parse().unwrap();
 
-        let usage = |project: Option<&ProjectName>| {
-            let project = project.cloned();
-            async move {
-                reader
-                    .usage(TimeRange::default(), project.as_ref())
-                    .await
-                    .unwrap()
-                    .totals
-                    .calls
-            }
+        let usage = |scope: UsageScope| async move {
+            reader
+                .usage(TimeRange::default(), &scope)
+                .await
+                .unwrap()
+                .totals
+                .calls
         };
-        assert_eq!(usage(None).await, 3);
-        assert_eq!(usage(Some(&acme_web)).await, 1);
-        assert_eq!(usage(Some(&acme_api)).await, 1);
-        assert_eq!(usage(Some(&unused)).await, 0);
+        assert_eq!(usage(UsageScope::Everything).await, 3);
+        assert_eq!(usage(UsageScope::Project(acme_web.clone())).await, 1);
+        assert_eq!(usage(UsageScope::Project(acme_api.clone())).await, 1);
+        assert_eq!(usage(UsageScope::Project(unused.clone())).await, 0);
+        // A session's usage is its own runs' conversations only.
+        assert_eq!(usage(UsageScope::Session(web_session)).await, 1);
+        let idle = ren_recorder::id::SessionId::generate(fixture.ids.as_ref());
+        assert_eq!(usage(UsageScope::Session(idle)).await, 0);
 
         let searched = |project: Option<&ProjectName>| {
             let mut query = query("migration");
@@ -3054,7 +3060,10 @@ async fn usage_from_one_scan_matches_a_query_per_breakdown() {
     assert_eq!(per_breakdown.models.len(), 5, "provider and model pairs");
     assert_eq!(per_breakdown.users.len(), 2);
     assert_eq!(
-        reader.usage(TimeRange::default(), None).await.unwrap(),
+        reader
+            .usage(TimeRange::default(), &crate::query::UsageScope::Everything)
+            .await
+            .unwrap(),
         per_breakdown
     );
 }

@@ -628,7 +628,7 @@ mod tests {
             gateway
                 .serve(&ReadRequest::Usage {
                     range: ren_store::query::TimeRange::default(),
-                    project: None,
+                    scope: ren_store::query::UsageScope::Everything,
                 })
                 .await
         })

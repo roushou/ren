@@ -8,6 +8,7 @@ import type {
   ChannelView,
   MessageView,
   ModelOutcome,
+  TokenTotals,
   Usage,
 } from './api.ts';
 import type { Stored } from './decode.ts';
@@ -446,6 +447,23 @@ export function tokenSummary(
   return {
     input: compact(input),
     output: usage.output_tokens === null ? '—' : compact(usage.output_tokens),
+    title: `${parts.join(' · ')} (provider reported; not subscription allowance or charges)`,
+  };
+}
+
+/**
+ * Tokens summed over calls, as `412k in · 18k out`, with the cached part of
+ * input in its title; null when no call reported usage.
+ */
+export function spentSummary(tokens: TokenTotals): { text: string; title: string } | null {
+  if (tokens.input === null && tokens.output === null) return null;
+  const parts = [
+    `${(tokens.input ?? 0).toLocaleString()} input`,
+    tokens.cache_read ? `of which ${tokens.cache_read.toLocaleString()} read from cache` : '',
+    `${(tokens.output ?? 0).toLocaleString()} output`,
+  ].filter(Boolean);
+  return {
+    text: `${compactOrDash(tokens.input)} in · ${compactOrDash(tokens.output)} out`,
     title: `${parts.join(' · ')} (provider reported; not subscription allowance or charges)`,
   };
 }
