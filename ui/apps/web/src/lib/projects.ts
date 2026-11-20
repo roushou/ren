@@ -4,14 +4,18 @@
 // still queued. Read from `/api/projects` and `/api/work`.
 import type { Project } from './api.ts';
 import {
+  Runs,
   Sessions,
   type ApprovalAsk,
   type ApprovalId,
+  type RunClient,
   type RunSnapshot,
   type SessionBody,
   type SessionId,
 } from './runs.ts';
 import { Work, type WorkItem } from './work.ts';
+import type { Said } from './layer/toasts.svelte.ts';
+import { SignIns } from './signIn.ts';
 
 /** An approval a running session waits on, with the project it works for. */
 export interface Approval {
@@ -49,6 +53,8 @@ export class ProjectBoard {
   readonly sessions: readonly SessionBody[];
   /** The one project the board is for, by name; null for every project. */
   readonly only: string | null;
+  /** Each client and its sign-in on the daemon's host. */
+  readonly clients: readonly RunClient[];
 
   constructor(
     projects: readonly Project[],
@@ -56,12 +62,20 @@ export class ProjectBoard {
     live: readonly RunSnapshot[] = [],
     sessions: readonly SessionBody[] = [],
     only: string | null = null,
+    clients: readonly RunClient[] = [],
   ) {
     this.projects = projects;
     this.work = work;
     this.live = live;
     this.sessions = sessions;
     this.only = only;
+    this.clients = clients;
+  }
+
+  /** Clients signed out on the daemon's host: a run cannot use them until
+   * the operator signs them in. */
+  get signedOut(): RunClient[] {
+    return this.clients.filter((client) => SignIns.signedOut(client.sign_in));
   }
 
   /** The board of `project` alone: its work (Ren's holds the items from
@@ -133,13 +147,77 @@ export class ProjectBoard {
       );
   }
 
+  /** How many things wait on the operator: what the top bar's Pending
+   * counts. */
+  get waiting(): number {
+    return (
+      this.approvals.length +
+      this.toPromote.length +
+      this.previews.length +
+      this.queued.length +
+      this.signedOut.length
+    );
+  }
+
+  /**
+   * What newly waits on the operator between two boards, said as toasts: an
+   * approval a run started asking, a canary that newly passed. What stopped
+   * waiting, and what waited already, says nothing.
+   */
+  static news(before: ProjectBoard, after: ProjectBoard): Said[] {
+    const asked = new Set(before.approvals.map(ProjectBoard.#approvalKey));
+    const approvals = after.approvals
+      .filter((waiting) => !asked.has(ProjectBoard.#approvalKey(waiting)))
+      .map((waiting): Said => {
+        const said = Runs.ask(waiting.ask);
+        return {
+          mark: 'yours',
+          text: said.action,
+          detail: [waiting.project ?? 'No project', waiting.prompt]
+            .filter((part) => part !== null)
+            .join(' · '),
+          link: {
+            label: 'Open session',
+            href: Sessions.deskHref(waiting.project, { session: waiting.session }),
+          },
+        };
+      });
+    const passed = new Set(before.toPromote.map(ProjectBoard.#canaryKey));
+    const canaries = after.toPromote
+      .filter((project) => !passed.has(ProjectBoard.#canaryKey(project)))
+      .map((project): Said => ({
+        mark: 'passed',
+        text: `${project.name}: canary passed`,
+        detail: project.release?.canary?.commit.slice(0, 12) ?? null,
+        // Where Ren promotes, the toast asks it of Release's modal.
+        link:
+          project.factory === 'ren' && project.release?.canary
+            ? {
+                label: 'Promote…',
+                href: `${ProjectBoard.releaseHref(project)}?promote=${encodeURIComponent(project.release.canary.commit)}`,
+              }
+            : { label: 'Release', href: ProjectBoard.releaseHref(project) },
+      }));
+    return [...approvals, ...canaries];
+  }
+
+  static #approvalKey(waiting: Approval): string {
+    return `${waiting.session}:${waiting.approval}`;
+  }
+
+  /** A project's canary by its build: a newer one passing is news again. */
+  static #canaryKey(project: Project): string {
+    return `${project.id}:${project.release?.canary?.commit ?? ''}`;
+  }
+
   /** Whether anything waits on the operator. */
   get pending(): boolean {
     return (
       this.approvals.length > 0 ||
       this.toPromote.length > 0 ||
       this.previews.length > 0 ||
-      this.queued.length > 0
+      this.queued.length > 0 ||
+      this.signedOut.length > 0
     );
   }
 

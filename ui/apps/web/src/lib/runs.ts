@@ -64,6 +64,7 @@ import {
   type ImageTaking,
   type KeptAttachment,
 } from './attachments.ts';
+import type { Mark } from './marks.ts';
 import { Refusals, type Refusal } from './refusal.ts';
 import { processExit, type ProcessExit } from './exit.ts';
 import { Questions, type Question, type QuestionKey } from './questions.ts';
@@ -1005,6 +1006,8 @@ const storedConversation = versioned(
       object<StoredConversation['entries'][number], WireRunEntryView>({
         run: RunId.decode,
         seq: count,
+        at: brandedCount<'UnixMillis'>(),
+        started_at: brandedCount<'UnixMillis'>(),
         event: (value, path) => driveEvent(value, path),
       }),
     ),
@@ -1425,9 +1428,22 @@ export type Entry =
   | { kind: 'turn_end'; turn: NativeTurnId; end: TurnEnd }
   | { kind: 'notice'; tone: 'warn' | 'danger'; text: string };
 
+/** When a conversation item started and when it completed. */
+export interface ItemSpan {
+  from: UnixMillis;
+  to: UnixMillis;
+}
+
 /** A run's conversation as the daemon stored it (`/api/runs/{id}/conversation`). */
 export interface StoredConversation {
-  entries: { run: RunId; seq: number; event: DriveEvent }[];
+  /** Each event, with when its item was first and last reported. */
+  entries: {
+    run: RunId;
+    seq: number;
+    at: UnixMillis;
+    started_at: UnixMillis;
+    event: DriveEvent;
+  }[];
   /** Older entries were left out of the read. */
   earlier: boolean;
 }
@@ -1447,30 +1463,44 @@ export class Transcript {
   readonly read: boolean;
   /** Older entries were left out of the read. */
   readonly earlier: boolean;
+  /** When each stored item started and completed. Only what the daemon
+   * stored says: an item that finished on the live feed has its span once
+   * the conversation is read again. */
+  readonly spans: ReadonlyMap<ItemId, ItemSpan>;
 
   constructor(
     entries: Entry[] = [],
     turn: NativeTurnId | null = null,
     read = false,
     earlier = false,
+    spans: ReadonlyMap<ItemId, ItemSpan> = new Map(),
   ) {
     this.entries = entries;
     this.turn = turn;
     this.read = read;
     this.earlier = earlier;
+    this.spans = spans;
   }
 
   /** What the daemon stored, with what streamed in meanwhile kept. */
   load(stored: StoredConversation): Transcript {
     let loaded = new Transcript();
-    for (const entry of stored.entries) loaded = loaded.apply(entry.event, entry.run);
+    const spans = new Map(this.spans);
+    for (const entry of stored.entries) {
+      loaded = loaded.apply(entry.event, entry.run);
+      if (entry.event.kind === 'item' && entry.event.phase === 'completed')
+        spans.set(Transcript.#own(entry.event.item.id, entry.run), {
+          from: entry.started_at,
+          to: entry.at,
+        });
+    }
     const entries = loaded.entries.slice();
     for (const live of this.entries) {
       const at = entries.findIndex((entry) => Transcript.same(entry, live));
       if (at === -1) entries.push(live);
       else if (Transcript.done(live) && !Transcript.done(entries[at]!)) entries[at] = live;
     }
-    return new Transcript(entries, this.turn ?? loaded.turn, true, stored.earlier);
+    return new Transcript(entries, this.turn ?? loaded.turn, true, stored.earlier, spans);
   }
 
   /** Every prompt sent, oldest first, to recall. */
@@ -1482,6 +1512,11 @@ export class Transcript {
   firstPrompt(): string | null {
     const prompt = this.entries.find((entry) => entry.kind === 'prompt');
     return prompt?.kind === 'prompt' ? prompt.text : null;
+  }
+
+  /** An item's id within the process that reported it. */
+  static #own(item: ItemId, run: RunId | null): ItemId {
+    return run === null ? item : (`${run}/${item}` as ItemId);
   }
 
   static #itemOf(entry: Entry): ItemId | null {
@@ -1522,10 +1557,10 @@ export class Transcript {
    * a process, by its name alone.
    */
   apply(event: DriveEvent, run: RunId | null = null): Transcript {
-    const own = (item: ItemId): ItemId => (run === null ? item : (`${run}/${item}` as ItemId));
+    const own = (item: ItemId): ItemId => Transcript.#own(item, run);
     switch (event.kind) {
       case 'turn_started':
-        return new Transcript(this.entries, event.turn, this.read, this.earlier);
+        return new Transcript(this.entries, event.turn, this.read, this.earlier, this.spans);
       case 'delta': {
         const item = own(event.item);
         const index = this.#find(item);
@@ -1538,7 +1573,7 @@ export class Transcript {
       case 'item':
         return this.#item({ ...event.item, id: own(event.item.id) }, event.phase === 'completed');
       case 'turn_ended':
-        return new Transcript(this.entries, event.turn, this.read, this.earlier).#push({
+        return new Transcript(this.entries, event.turn, this.read, this.earlier, this.spans).#push({
           kind: 'turn_end',
           turn: event.turn,
           end: event.end,
@@ -1628,11 +1663,11 @@ export class Transcript {
   #replace(index: number, entry: Entry): Transcript {
     const entries = this.entries.slice();
     entries[index] = entry;
-    return new Transcript(entries, this.turn, this.read, this.earlier);
+    return new Transcript(entries, this.turn, this.read, this.earlier, this.spans);
   }
 
   #append(entry: Entry): Transcript {
-    return new Transcript([...this.entries, entry], this.turn, this.read, this.earlier);
+    return new Transcript([...this.entries, entry], this.turn, this.read, this.earlier, this.spans);
   }
 
   /** Add `entry`, or put it in the place of the same entry said before. */
@@ -1666,10 +1701,11 @@ export const UNSTARTED: RunControls = {
   approvals: [],
 };
 
-/** How a run's state reads in the sidebar and header. */
+/** How a run's state reads in the sidebar and header: its mark, and the
+ * words the mark's tooltip says. */
 export interface PhaseMark {
   label: string;
-  tone: 'live' | 'warn' | 'neutral' | 'danger' | 'ok';
+  mark: Mark;
 }
 
 export class Runs {
@@ -1705,26 +1741,27 @@ export class Runs {
     }
   }
 
-  /** A run's state in a few words, with the tone of its dot. */
+  /** A run's state as a mark, with its words. Only an approval it waits on
+   * is the operator's: a run between turns rests. */
   static mark(state: RunState): PhaseMark {
     switch (state.phase) {
       case 'starting':
-        return { label: 'Starting', tone: 'neutral' };
+        return { label: 'Starting', mark: 'waiting' };
       case 'idle':
-        return { label: 'Your turn', tone: 'ok' };
+        return { label: 'Your turn', mark: 'idle' };
       case 'working':
         return state.approvals.length
-          ? { label: 'Needs you', tone: 'warn' }
-          : { label: 'Working', tone: 'live' };
+          ? { label: 'Needs you', mark: 'yours' }
+          : { label: 'Working', mark: 'responding' };
       case 'stopping':
-        return { label: 'Stopping', tone: 'neutral' };
+        return { label: 'Stopping', mark: 'waiting' };
       case 'ended':
         return {
           label: Runs.endLabel(state.end, state.exit),
-          tone: Runs.endTone(state.end, state.exit),
+          mark: Runs.endMark(state.end, state.exit),
         };
       case 'unrecognized':
-        return { label: state.text, tone: 'neutral' };
+        return { label: state.text, mark: 'unknown' };
       default:
         return assertNever(state);
     }
@@ -1763,22 +1800,24 @@ export class Runs {
     }
   }
 
-  static endTone(end: Stored<RunEnd>, exit: ProcessExit | null = null): PhaseMark['tone'] {
+  /** How a run's ending marks it: a clean stop rests, an ending that lost
+   * work needs a look, and a client that never ran failed. */
+  static endMark(end: Stored<RunEnd>, exit: ProcessExit | null = null): Mark {
     switch (end) {
       case 'stopped':
       case 'idled':
-        return 'neutral';
+        return 'idle';
       case 'exited':
-        return exit?.kind === 'code' && exit.value === 0 ? 'neutral' : 'warn';
+        return exit?.kind === 'code' && exit.value === 0 ? 'idle' : 'warning';
       case 'drained':
       case 'recovered':
-        return 'warn';
+        return 'warning';
       case 'spawn_failed':
       case 'open_refused':
-        return 'danger';
+        return 'failed';
       default:
         unrecognised(end);
-        return 'neutral';
+        return 'unknown';
     }
   }
 
@@ -1820,6 +1859,39 @@ export class Runs {
     const homed = offered.find((place) => place.shown.startsWith('~/'));
     const home = homed ? homed.path.slice(0, homed.path.length - homed.shown.length + 1) : null;
     return home && workdir.startsWith(`${home}/`) ? `~${workdir.slice(home.length)}` : workdir;
+  }
+
+  /** How the operator says `decision`: its button, what it does, and how
+   * the answer reads once given. Lowest consequence first is `decisions`'
+   * own order; a form lists them the other way, the primary one last. */
+  static decision(decision: Decision): {
+    label: string;
+    hint: string;
+    mark: Mark;
+    done: string;
+  } {
+    switch (decision) {
+      case 'accept':
+        return { label: 'Allow', hint: 'Allow this once', mark: 'passed', done: 'Allowed' };
+      case 'accept_for_session':
+        return {
+          label: 'Allow for this run',
+          hint: 'Allow this, and the same kind of action for the rest of the session',
+          mark: 'passed',
+          done: 'Allowed for this run',
+        };
+      case 'decline':
+        return { label: 'Deny', hint: 'Refuse it; the turn goes on', mark: 'idle', done: 'Denied' };
+      case 'cancel':
+        return {
+          label: 'Deny and stop',
+          hint: 'Refuse it and end the turn',
+          mark: 'idle',
+          done: 'Denied, and the turn stopped',
+        };
+      default:
+        return assertNever(decision);
+    }
   }
 
   /** One line saying what an approval asks. */
@@ -2270,15 +2342,15 @@ export class Sessions {
     const state = session.state;
     if (state && Sessions.running(session)) {
       return state.phase === 'idle' && session.phase === 'draft'
-        ? { label: 'Draft', tone: 'neutral' }
+        ? { label: 'Draft', mark: 'draft' }
         : Runs.mark(state);
     }
-    if (state?.phase === 'ended' && Runs.endTone(state.end, state.exit) === 'danger') {
+    if (state?.phase === 'ended' && Runs.endMark(state.end, state.exit) === 'failed') {
       return Runs.mark(state);
     }
     return session.phase === 'draft'
-      ? { label: 'Draft', tone: 'neutral' }
-      : { label: client, tone: 'neutral' };
+      ? { label: 'Draft', mark: 'draft' }
+      : { label: client, mark: 'idle' };
   }
 
   /**

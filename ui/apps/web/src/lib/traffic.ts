@@ -175,6 +175,8 @@ export interface TurnGroup {
  */
 export function turnGroups(calls: CallView[]): TurnGroup[] {
   const groups: TurnGroup[] = [];
+  // Turns are numbered in the order they first appear on the page.
+  const numbers = new Map<string, number>();
   for (const call of calls) {
     const last = groups.at(-1);
     const key = call.turn ?? null;
@@ -182,11 +184,12 @@ export function turnGroups(calls: CallView[]): TurnGroup[] {
       last.rows.push(call);
       continue;
     }
+    if (key !== null && !numbers.has(key)) numbers.set(key, numbers.size + 1);
     groups.push({
       // A turn can recur after calls outside it, so a group is keyed by its
       // first call, which is unique.
       id: `${key ?? 'outside'}-${call.id}`,
-      label: key ? `Turn ${key.slice(0, 8)}` : 'Outside a turn',
+      label: key ? `T${numbers.get(key)}` : 'Outside a turn',
       turn: key,
       rows: [call],
     });

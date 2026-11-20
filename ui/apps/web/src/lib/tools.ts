@@ -9,6 +9,7 @@ import {
   ShapeError,
   array,
   assertNever,
+  unrecognised,
   branded,
   brandedCount,
   isRecord,
@@ -20,6 +21,7 @@ import {
   type Stored,
   type AnyDecoder,
 } from './decode.ts';
+import type { Mark } from './marks.ts';
 import { Refusals, type Refusal } from './refusal.ts';
 import type { GenerationInstall as WireGenerationInstall } from './wire/GenerationInstall.ts';
 import type { GenerationView as WireGenerationView } from './wire/GenerationView.ts';
@@ -126,6 +128,36 @@ export interface ToolChange {
   generation: Generation;
   changes: PackageChange[];
   failures: InstallFailure[];
+}
+
+export class ToolChanges {
+  /** What a change came to, as a toast says it: activated, nothing to do, or
+   * which installs failed and at which stage. */
+  static said(change: ToolChange): { mark: Mark; text: string; detail: string | null } {
+    const outcome = change.outcome;
+    switch (outcome) {
+      case 'activated':
+        return {
+          mark: 'passed',
+          text: `Generation ${change.generation} is current`,
+          detail:
+            change.changes.map((c) => `${c.package} ${c.to ?? 'removed'}`).join(' · ') || null,
+        };
+      case 'unchanged':
+        return { mark: 'idle', text: 'Nothing to change', detail: null };
+      case 'failed':
+        return {
+          mark: 'failed',
+          text:
+            change.failures.length === 1
+              ? '1 install failed'
+              : `${change.failures.length} installs failed`,
+          detail: change.failures.map((f) => `${f.package} · ${f.stage}`).join(' · ') || null,
+        };
+      default:
+        return { mark: 'unknown', text: unrecognised(outcome), detail: null };
+    }
+  }
 }
 
 export interface ToolCollection {
@@ -272,6 +304,26 @@ export class Supplies {
         return pkg.needed_by.length > 0 ? 'missing' : 'none';
       default:
         return assertNever(supply);
+    }
+  }
+
+  /** How a package stands, as a mark and its words: Ren's install of the
+   * catalog's release passes, another release needs a look, a package a
+   * client needs and runs would not find failed, and any other rests. */
+  static mark(pkg: ToolPackage): { mark: Mark; word: string } {
+    if (Standings.of(pkg).kind === 'outdated') return { mark: 'warning', word: 'Update available' };
+    const tone = Supplies.tone(pkg);
+    switch (tone) {
+      case 'managed':
+        return { mark: 'passed', word: 'Installed by Ren' };
+      case 'system':
+        return { mark: 'idle', word: 'On the host’s PATH' };
+      case 'none':
+        return { mark: 'idle', word: 'Not installed' };
+      case 'missing':
+        return { mark: 'failed', word: 'Missing' };
+      default:
+        return assertNever(tone);
     }
   }
 
@@ -502,6 +554,14 @@ export interface KindGroup {
 /** A header chip's narrowing: one way packages stand. */
 export type Only = 'managed' | 'system' | 'missing' | 'updates';
 
+/** Each narrowing's mark, the same its packages carry. */
+export const ONLY_MARKS: Record<Only, Mark> = {
+  managed: 'passed',
+  system: 'idle',
+  missing: 'failed',
+  updates: 'warning',
+};
+
 /** What the view shows: packages matching `query`, narrowed to `only`. */
 export interface ToolFilter {
   query: string;
@@ -662,5 +722,46 @@ export class ToolsApi {
       throw new ShapeError('api_version', `${API_VERSION}`);
     }
     return decode(parsed, '');
+  }
+}
+
+/** The newest generations side by side, as columns beside the packages:
+ * which release of each package each held, and where that changed from
+ * the generation before it. */
+export class ToolHistory {
+  /** Newest first, at most `max`. */
+  readonly generations: GenerationView[];
+  readonly #versions: Map<Generation, Map<PackageId, Version>>;
+  /** The generation just older than the oldest column, to tell a change in it. */
+  readonly #before: Map<PackageId, Version> | null;
+
+  constructor(listing: ToolListing, max = 5) {
+    const newest = listing.generations.toSorted((a, b) => b.generation - a.generation);
+    this.generations = newest.slice(0, max);
+    this.#versions = new Map(
+      newest.map((generation) => [
+        generation.generation,
+        new Map(generation.installs.map((install) => [install.package, install.version])),
+      ]),
+    );
+    const before = newest[max];
+    this.#before = before ? (this.#versions.get(before.generation) ?? null) : null;
+  }
+
+  /** The release of `pkg` that generation `index` (0 the newest) held. */
+  version(pkg: PackageId, index: number): Version | null {
+    const generation = this.generations[index];
+    return generation ? (this.#versions.get(generation.generation)?.get(pkg) ?? null) : null;
+  }
+
+  /** Whether generation `index` changed `pkg` from the one before it. */
+  changed(pkg: PackageId, index: number): boolean {
+    const older =
+      index + 1 < this.generations.length
+        ? this.version(pkg, index + 1)
+        : this.#before === null
+          ? undefined
+          : (this.#before.get(pkg) ?? null);
+    return older !== undefined && older !== this.version(pkg, index);
   }
 }

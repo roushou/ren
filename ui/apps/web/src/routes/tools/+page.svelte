@@ -1,4 +1,9 @@
 <script lang="ts">
+  import Glyph from '#lib/Glyph.svelte';
+  import SlideOver from '#lib/layer/SlideOver.svelte';
+  import FloatingBar from '#lib/layer/FloatingBar.svelte';
+  import Modal from '#lib/layer/Modal.svelte';
+  import { toasts } from '#lib/layer/toasts.svelte.ts';
   import Toolbar from '#lib/Toolbar.svelte';
   import { onMount, untrack } from 'svelte';
   import SignInSheet from '#lib/SignInSheet.svelte';
@@ -15,13 +20,15 @@
     ToolFilters,
     ToolGroups,
     type Only,
+    ONLY_MARKS,
+    ToolChanges,
     ToolPlan,
     ToolsApi,
     ToolsError,
+    ToolHistory,
     type Generation,
     type GenerationView,
     type PackageId,
-    type ToolChange,
     type ToolPackage,
   } from '#lib/tools.ts';
 
@@ -34,12 +41,10 @@
   /** What the page shows: the daemon's listing, why there is none, or its
    * outline while the first read is on its way. */
   type Loaded = ToolsInitial | { kind: 'pending' };
-  /** What the plan bar is doing. */
-  type Applying =
-    | { kind: 'idle' }
-    | { kind: 'applying' }
-    | { kind: 'done'; change: ToolChange }
-    | { kind: 'failed'; message: string };
+  /** Whether a change is on its way; how it ended is a toast. */
+  type Applying = { kind: 'idle' } | { kind: 'applying' };
+  /** The change the operator is asked to confirm, if any. */
+  type Confirming = { kind: 'apply' } | { kind: 'restore'; generation: Generation } | null;
 
   // The server's first read, done or on its way; later reads come from this page.
   let loaded = $state<Loaded>(
@@ -47,13 +52,9 @@
   );
   let plan = $state(ToolPlan.EMPTY);
   let applying = $state<Applying>({ kind: 'idle' });
-  let selected = $state<PackageId | null>(
-    untrack(() =>
-      data.initial.kind === 'ready'
-        ? (data.initial.listing.packages.find((p) => p.release !== null)?.id ?? null)
-        : null,
-    ),
-  );
+  let confirming = $state<Confirming>(null);
+  /** The package whose details are open; none until one is chosen. */
+  let selected = $state<PackageId | null>(null);
 
   // The first read, when it was handed over on its way.
   $effect(() => {
@@ -86,8 +87,6 @@
     loaded = read;
     if (read.kind === 'failed') return;
     plan = plan.within(read.listing);
-    if (selected === null)
-      selected = read.listing.packages.find((p) => p.release !== null)?.id ?? null;
   }
 
   async function load() {
@@ -107,28 +106,36 @@
   const OUTLINE_WIDTHS = ['62%', '48%', '71%', '55%'] as const;
 
   async function apply() {
+    confirming = null;
     if (plan.empty || applying.kind === 'applying') return;
     applying = { kind: 'applying' };
     try {
       const change = await api.change(plan);
-      applying = { kind: 'done', change };
+      toasts.show(ToolChanges.said(change));
       if (change.outcome !== 'failed') plan = ToolPlan.EMPTY;
     } catch (error) {
-      applying = { kind: 'failed', message: message(error) };
+      toasts.show({ mark: 'failed', text: 'The change was not applied', detail: message(error) });
     }
+    applying = { kind: 'idle' };
     await load();
   }
 
   /** Make the next generation hold what `generation` held. */
   async function rollBack(generation: Generation) {
+    confirming = null;
     if (applying.kind === 'applying') return;
     applying = { kind: 'applying' };
     try {
-      applying = { kind: 'done', change: await api.rollBack(generation) };
+      toasts.show(ToolChanges.said(await api.rollBack(generation)));
       plan = ToolPlan.EMPTY;
     } catch (error) {
-      applying = { kind: 'failed', message: message(error) };
+      toasts.show({
+        mark: 'failed',
+        text: `Generation ${generation} was not restored`,
+        detail: message(error),
+      });
     }
+    applying = { kind: 'idle' };
     await load();
   }
 
@@ -219,8 +226,7 @@
           class="chip filter {tone}"
           class:active={filter.only === only}
           aria-pressed={filter.only === only}
-          onclick={() => narrow(only)}
-          ><span class="dot {only === 'updates' ? 'managed' : only}"></span>{count} {word}</button
+          onclick={() => narrow(only)}><Glyph mark={ONLY_MARKS[only]} />{count} {word}</button
         >
       {/snippet}
       {@render narrowing('managed', tally.managed, 'managed', 'success')}
@@ -270,7 +276,7 @@
           {#each { length: group.rows }, row (row)}
             <tr aria-hidden="true">
               <td class="mono name"
-                ><span class="dot none"></span><Skeleton
+                ><Glyph mark="idle" /><Skeleton
                   width={OUTLINE_WIDTHS[row % OUTLINE_WIDTHS.length]}
                 /></td
               >
@@ -285,40 +291,10 @@
       {/each}
     </table>
   </section>
-  <aside class="tools-inspector" aria-label="Details" aria-busy="true">
-    <section class="head">
-      <h2 class="mono"><span class="dot none"></span><Skeleton width="45%" /></h2>
-      <span class="chip-row"><Skeleton width="7em" /></span>
-    </section>
-    <section>
-      <dl>
-        <dt>Runs use</dt>
-        <dd><Skeleton width="35%" /></dd>
-        <dt>Pinned</dt>
-        <dd><Skeleton width="35%" /></dd>
-        <dt>SHA-256</dt>
-        <dd><Skeleton width="55%" /></dd>
-        <dt>Install</dt>
-        <dd><Skeleton width="85%" /></dd>
-      </dl>
-    </section>
-    <section>
-      <h3>History</h3>
-      <ul class="generations">
-        {#each OUTLINE_WIDTHS.slice(0, 3) as width, index (index)}
-          <li aria-hidden="true">
-            <Skeleton width="1.6em" />
-            <Skeleton {width} />
-            <span class="end"></span>
-          </li>
-        {/each}
-      </ul>
-    </section>
-  </aside>
 {/snippet}
 
 {#snippet dot(pkg: ToolPackage)}
-  <span class="dot {Supplies.tone(pkg)}" aria-hidden="true"></span>
+  {@const standing = Supplies.mark(pkg)}<Glyph mark={standing.mark} label={standing.word} />
 {/snippet}
 
 <Toolbar {scope} />
@@ -332,18 +308,51 @@
   {:else if loaded.kind === 'pending'}
     {@render outline()}
   {:else if listing}
+    <!-- The newest generations, as columns beside the packages. -->
+    {@const history = new ToolHistory(listing)}
     <section class="tools-main" aria-label="Packages">
       <table class="tools-table">
         <colgroup>
           <col class="c-name" />
           <col class="c-version" />
           <col />
+          {#each history.generations as generation (generation.generation)}<col
+              class="c-gen"
+            />{/each}
           <col class="c-action" />
         </colgroup>
+        <thead>
+          <tr>
+            <th>Package</th>
+            <th>Version</th>
+            <th>Where runs find it</th>
+            {#each history.generations as generation (generation.generation)}
+              <th class="gen-head" class:current={generation.state === 'current'}
+                ><span class="mono">#{generation.generation}</span
+                >{#if generation.state === 'current'}<Glyph
+                    mark="passed"
+                    label={stateLabel(generation.state)}
+                  />{:else if generation.state === 'in_use'}<Glyph
+                    mark="responding"
+                    label="In use by runs"
+                  />{/if}{#if generation.state !== 'current' && listing.platform}<button
+                    class="icon-button restore"
+                    title="Restore generation {generation.generation}…"
+                    aria-label="Restore generation {generation.generation}"
+                    disabled={applying.kind === 'applying'}
+                    onclick={() =>
+                      (confirming = { kind: 'restore', generation: generation.generation })}
+                    ><Icon name="refresh" size={11} /></button
+                  >{/if}</th
+              >
+            {/each}
+            <th></th>
+          </tr>
+        </thead>
         {#each groups as group (group.kind)}
           <tbody>
             <tr class="tools-group">
-              <th colspan="4" scope="rowgroup"
+              <th colspan={4 + history.generations.length} scope="rowgroup"
                 >{group.title} <span class="count">{group.packages.length}</span></th
               >
             </tr>
@@ -376,14 +385,15 @@
                       >{/if}{:else}<span class="muted">—</span>{/if}</td
                 >
                 <td class="source"
-                  >{#if supply.kind === 'managed'}<span class="chip success">Ren</span
-                    >{#if supply.shadows}<span
+                  >{#if supply.kind === 'managed'}{#if supply.shadows}<span
                         class="mono muted path shadowed"
                         title="Runs find Ren’s first">{supply.shadows.path}</span
-                      >{/if}{:else if supply.kind === 'system'}<span class="chip">system</span><span
-                      class="mono muted path">{supply.system.path}</span
-                    >{:else if pkg.needed_by.length > 0}<span class="chip error"
-                      >missing · {pkg.needed_by.map(harnessLabel).join(', ')}</span
+                      >{/if}{:else if supply.kind === 'system'}<span class="mono muted path"
+                      >{supply.system.path}</span
+                    >{:else if pkg.needed_by.length > 0}<span
+                      class="muted"
+                      title="Needed by {pkg.needed_by.map(harnessLabel).join(', ')}"
+                      >{pkg.needed_by.map(harnessLabel).join(', ')}</span
                     >{/if}{#if clientOf(pkg)}{@const shown = SignIns.chip(
                       clientOf(pkg)?.sign_in ?? { kind: 'not_checked' },
                     )}{#if shown}<span
@@ -395,6 +405,16 @@
                           />{/if}{shown.text}</span
                       >{/if}{/if}</td
                 >
+                {#each history.generations as generation, index (generation.generation)}
+                  {@const held = history.version(pkg.id, index)}
+                  <td
+                    class="mono gen"
+                    class:changed={history.changed(pkg.id, index)}
+                    title={history.changed(pkg.id, index)
+                      ? 'Changed in this generation'
+                      : undefined}>{held ?? '—'}</td
+                  >
+                {/each}
                 <td class="end">
                   {#if label && listing.platform}
                     <button
@@ -412,185 +432,177 @@
           </tbody>
         {:else}
           <tbody>
-            <tr><td colspan="4" class="muted">No tool matches.</td></tr>
+            <tr><td colspan={4 + history.generations.length} class="muted">No tool matches.</td></tr
+            >
           </tbody>
         {/each}
       </table>
-    </section>
-    <aside class="tools-inspector" aria-label="Details">
-      {#if !plan.empty || applying.kind !== 'idle'}
-        <section class="changes" aria-live="polite">
-          <h3>
-            Changes
-            {#if applying.kind === 'done' || applying.kind === 'failed'}
-              <button
-                class="icon-button"
-                aria-label="Dismiss"
-                onclick={() => (applying = { kind: 'idle' })}
-                ><Icon name="close" size={12} /></button
-              >
-            {/if}
-          </h3>
-          {#if applying.kind === 'applying'}
-            <p class="muted">Installing…</p>
-          {:else if !plan.empty}
-            <ul class="change-list">
-              {#each effects as change (change.id)}
-                <li class={change.change}>
-                  <span class="sign"
-                    >{change.change === 'add' ? '+' : change.change === 'remove' ? '−' : '↑'}</span
-                  >
-                  <span class="mono">{change.id}</span>
-                  <span class="mono muted">{change.from ?? '—'}</span>
-                  <span class="mono muted">→</span>
-                  <span class="mono to {change.toKind}">{change.to ?? '—'}</span>
-                </li>
-              {/each}
-            </ul>
-            <div class="change-actions">
-              <button class="button" onclick={() => (plan = ToolPlan.EMPTY)}>Clear</button>
-              <button class="button primary" onclick={apply}
-                >Apply {changes.length} change{changes.length === 1 ? '' : 's'}</button
-              >
-            </div>
-          {:else if applying.kind === 'done'}
-            {#if applying.change.outcome === 'failed'}
-              {#each applying.change.failures as failure (failure.package)}
-                <span class="chip error mono" title={failure.reason}
-                  >{failure.package} · {failure.stage} failed</span
-                >
-              {/each}
-            {:else if applying.change.outcome === 'activated'}
-              <span class="chip success">applied</span>
-            {:else}
-              <span class="chip">no change</span>
-            {/if}
-          {:else if applying.kind === 'failed'}
-            <span class="chip error">{applying.message}</span>
-          {/if}
-        </section>
+      {#if listing.generations.length > 0}
+        <div class="collect">
+          <span class="muted"
+            >{listing.generations.length} generation{listing.generations.length === 1 ? '' : 's'}
+            kept · the newest {history.generations.length} shown above</span
+          >
+          <button class="button small" onclick={collect}>Clean up</button>
+          {#if collecting}<span class="muted">{collecting}</span>{/if}
+        </div>
       {/if}
-      {#if chosen}
-        {@const supply = Supplies.of(chosen)}
-        <section class="head">
-          <h2 class="mono">{@render dot(chosen)}{chosen.id}</h2>
-          <span class="chip-row">
-            {#if supply.kind === 'managed'}<span class="chip success">Ren</span
-              >{:else if supply.kind === 'system'}<span class="chip">system</span
-              >{:else if chosen.needed_by.length > 0}<span class="chip error">missing</span
-              >{:else}<span class="chip">not installed</span>{/if}
-            {#if chosen.kind}<span class="chip">{chosen.kind}</span>{/if}
-            {#if chosen.origin === 'operator'}<span class="chip">custom</span
-              >{:else if chosen.origin === null}<span class="chip warning">removed</span>{/if}
-          </span>
-        </section>
-        <section>
-          <dl>
-            <dt>Runs use</dt>
-            <dd class="mono">
-              {#if supply.kind === 'managed'}{supply.version}{:else if supply.kind === 'system'}{supply
-                  .system.version ?? '?'}{:else}—{/if}
-            </dd>
-            {#if chosen.release}
-              <dt>Pinned</dt>
-              <dd class="mono">{chosen.release}</dd>
-            {/if}
-            {#if chosen.installed}
-              <dt>SHA-256</dt>
-              <dd class="mono" title={chosen.installed.sha256}>{short(chosen.installed.sha256)}</dd>
-              <dt>Install</dt>
-              <dd class="mono">{chosen.installed.dir}</dd>
-            {/if}
-            {#if chosen.system}
-              <dt>PATH</dt>
-              <dd class="mono" class:shadowed={chosen.installed !== null}>
-                {chosen.system.path}
-                <span class="muted">{chosen.system.version ?? chosen.system.unread ?? ''}</span>
+    </section>
+    {#if chosen}
+      {@const supply = Supplies.of(chosen)}
+      {@const entry = clientOf(chosen)}
+      {@const harness = entry ? Runs.drivable(entry.harness) : null}
+      <SlideOver label="{chosen.id} details" pin="package" onclose={() => (selected = null)}
+        ><div class="tools-inspector">
+          <section class="head">
+            <h2 class="mono">{@render dot(chosen)}{chosen.id}</h2>
+            <span class="chip-row">
+              {#if chosen.kind}<span class="chip">{chosen.kind}</span>{/if}
+              {#if chosen.origin === 'operator'}<span class="chip">custom</span
+                >{:else if chosen.origin === null}<Glyph
+                  mark="warning"
+                  label="Taken out of the catalog"
+                />{/if}
+            </span>
+          </section>
+          <section>
+            <dl>
+              <dt>Runs use</dt>
+              <dd class="mono">
+                {#if supply.kind === 'managed'}{supply.version}{:else if supply.kind === 'system'}{supply
+                    .system.version ?? '?'}{:else}—{/if}
               </dd>
-            {/if}
-            {#if chosen.needed_by.length > 0}
-              <dt>Needed by</dt>
-              <dd>{chosen.needed_by.map(harnessLabel).join(', ')}</dd>
-            {/if}
-          </dl>
-        </section>
-        {@const entry = clientOf(chosen)}
-        {@const harness = entry ? Runs.drivable(entry.harness) : null}
-        {#if entry && harness && (entry.sign_in.kind !== 'not_checked' || entry.sign_in_methods.length > 0)}
-          {@const shown = SignIns.chip(entry.sign_in)}
-          <section class="sign-in" class:out={SignIns.signedOut(entry.sign_in)}>
-            <h3>
-              Sign-in
-              {#if shown}<span class="chip {shown.tone}">{shown.text}</span>{/if}
-            </h3>
-            <p class="muted">
-              {#if entry.sign_in.kind === 'signed_out'}
-                {harnessLabel(harness)} is signed out here: its sessions can’t send until it is signed
-                in.
-              {:else if entry.sign_in.kind === 'unknown'}
-                {entry.sign_in.reason}
-              {:else if entry.sign_in.kind === 'signed_in'}
-                As {harnessLabel(harness)}’s own status command says.
-              {:else}
-                Not read yet.
+              {#if chosen.release}
+                <dt>Pinned</dt>
+                <dd class="mono">{chosen.release}</dd>
               {/if}
-            </p>
-            <div class="change-actions">
-              <button
-                class="button small"
-                disabled={checking === harness}
-                onclick={() => void check(harness)}
-                >{checking === harness ? 'Checking…' : 'Check again'}</button
-              >
-              {#if entry.sign_in_methods.length > 0}
+              {#if chosen.installed}
+                <dt>SHA-256</dt>
+                <dd class="mono" title={chosen.installed.sha256}>
+                  {short(chosen.installed.sha256)}
+                </dd>
+                <dt>Install</dt>
+                <dd class="mono">{chosen.installed.dir}</dd>
+              {/if}
+              {#if chosen.system}
+                <dt>PATH</dt>
+                <dd class="mono" class:shadowed={chosen.installed !== null}>
+                  {chosen.system.path}
+                  <span class="muted">{chosen.system.version ?? chosen.system.unread ?? ''}</span>
+                </dd>
+              {/if}
+              {#if chosen.needed_by.length > 0}
+                <dt>Needed by</dt>
+                <dd>{chosen.needed_by.map(harnessLabel).join(', ')}</dd>
+              {/if}
+            </dl>
+          </section>
+          {#if entry && harness && (entry.sign_in.kind !== 'not_checked' || entry.sign_in_methods.length > 0)}
+            {@const shown = SignIns.chip(entry.sign_in)}
+            <section class="sign-in" class:out={SignIns.signedOut(entry.sign_in)}>
+              <h3>
+                Sign-in
+                {#if shown}<span class="chip {shown.tone}">{shown.text}</span>{/if}
+              </h3>
+              <p class="muted">
+                {#if entry.sign_in.kind === 'signed_out'}
+                  {harnessLabel(harness)} is signed out here: its sessions can’t send until it is signed
+                  in.
+                {:else if entry.sign_in.kind === 'unknown'}
+                  {entry.sign_in.reason}
+                {:else if entry.sign_in.kind === 'signed_in'}
+                  As {harnessLabel(harness)}’s own status command says.
+                {:else}
+                  Not read yet.
+                {/if}
+              </p>
+              <div class="change-actions">
                 <button
                   class="button small"
-                  class:primary={entry.sign_in.kind !== 'signed_in'}
-                  onclick={() => (signingIn = harness)}
-                  >{entry.sign_in.kind === 'signed_in' ? 'Sign in again' : 'Sign in'}</button
+                  disabled={checking === harness}
+                  onclick={() => void check(harness)}
+                  >{checking === harness ? 'Checking…' : 'Check again'}</button
                 >
-              {/if}
-            </div>
-          </section>
-        {/if}
-      {/if}
-      {#if listing.generations.length > 0}
-        <section>
-          <h3>History</h3>
-          <ul class="generations">
-            {#each listing.generations as generation (generation.generation)}
-              <li class={generation.state}>
-                <span class="mono muted">#{generation.generation}</span>
-                <span class="mono installs"
-                  >{generation.installs.map((i) => `${i.package} ${i.version}`).join(', ') ||
-                    '—'}</span
-                >
-                <span class="end">
-                  {#if generation.state === 'idle' || generation.state === 'in_use'}
-                    {#if generation.state === 'in_use'}<span class="chip live">in use</span>{/if}
-                    {#if listing.platform}
-                      <button
-                        class="button small"
-                        disabled={applying.kind === 'applying'}
-                        onclick={() => rollBack(generation.generation)}>Restore</button
-                      >
-                    {/if}
-                  {:else}
-                    <span class="chip success">{stateLabel(generation.state)}</span>
-                  {/if}
-                </span>
-              </li>
-            {/each}
-          </ul>
-          <div class="collect">
-            <button class="button small" onclick={collect}>Clean up</button>
-            {#if collecting}<span class="muted">{collecting}</span>{/if}
-          </div>
-        </section>
-      {/if}
-    </aside>
+                {#if entry.sign_in_methods.length > 0}
+                  <button
+                    class="button small"
+                    class:primary={entry.sign_in.kind !== 'signed_in'}
+                    onclick={() => (signingIn = harness)}
+                    >{entry.sign_in.kind === 'signed_in' ? 'Sign in again' : 'Sign in'}</button
+                  >
+                {/if}
+              </div>
+            </section>
+          {/if}
+        </div></SlideOver
+      >{/if}
+    {#if applying.kind === 'applying'}<FloatingBar label="Changes"
+        ><Glyph mark="running" /><span>Installing…</span></FloatingBar
+      >{:else if !plan.empty}<FloatingBar label="Staged changes"
+        ><Glyph mark="yours" /><b>{changes.length} staged</b><span class="mono muted staged"
+          >{effects.map((e) => `${e.id} ${e.to ?? 'removed'}`).join(' · ')}</span
+        ><button class="button small" onclick={() => (plan = ToolPlan.EMPTY)}>Clear</button><button
+          class="button primary small"
+          onclick={() => (confirming = { kind: 'apply' })}
+          >Apply {changes.length} change{changes.length === 1 ? '' : 's'}…</button
+        ></FloatingBar
+      >{/if}
   {/if}
 </div>
+
+{#if confirming && listing}
+  {@const asked = confirming}
+  {#if asked.kind === 'apply'}
+    <Modal
+      eyebrow="Tools · {listing.platform ? Platforms.label(listing.platform) : 'this host'}"
+      title="Apply {changes.length} change{changes.length === 1 ? '' : 's'}?"
+      onclose={() => (confirming = null)}
+    >
+      <ul class="change-list">
+        {#each effects as change (change.id)}
+          <li class={change.change}>
+            <span class="sign"
+              >{change.change === 'add' ? '+' : change.change === 'remove' ? '−' : '↑'}</span
+            >
+            <span class="mono">{change.id}</span>
+            <span class="mono muted">{change.from ?? '—'}</span>
+            <span class="mono muted">→</span>
+            <span class="mono to {change.toKind}">{change.to ?? '—'}</span>
+          </li>
+        {/each}
+      </ul>
+      <p class="muted">
+        It becomes generation {listing.generation + 1}. Running sessions keep generation {listing.generation}
+        until they start again, and generation {listing.generation} stays to restore.
+      </p>
+      {#snippet actions()}
+        <button class="button" onclick={() => (confirming = null)}>Cancel</button>
+        <button class="button primary" onclick={() => void apply()}>Apply</button>
+      {/snippet}
+    </Modal>
+  {:else}
+    {@const restored = listing.generations.find((g) => g.generation === asked.generation)}
+    <Modal
+      eyebrow="Tools · history"
+      title="Restore generation {asked.generation}?"
+      onclose={() => (confirming = null)}
+    >
+      <p>Runs started from now on get what it held:</p>
+      <p class="mono">
+        {restored?.installs.map((i) => `${i.package} ${i.version}`).join(', ') || 'nothing'}
+      </p>
+      <p class="muted">
+        It becomes a new generation; generation {listing.generation} stays to restore.
+      </p>
+      {#snippet actions()}
+        <button class="button" onclick={() => (confirming = null)}>Cancel</button>
+        <button class="button primary" onclick={() => void rollBack(asked.generation)}
+          >Restore</button
+        >
+      {/snippet}
+    </Modal>
+  {/if}
+{/if}
 
 {#if signingIn}
   {@const harness = signingIn}
@@ -611,8 +623,9 @@
 
 <style>
   .tools-view {
+    position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-columns: minmax(0, 1fr);
     height: 100%;
     min-height: 0;
     background: var(--surface);
@@ -631,14 +644,13 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    border-right: 1px solid var(--line);
   }
   .tally {
     display: flex;
     align-items: center;
     gap: 6px;
   }
-  .tally .chip .dot {
+  .tally .chip :global(.glyph) {
     margin-right: 2px;
   }
   .tools-main {
@@ -754,33 +766,14 @@
   .unknown {
     color: var(--warning);
   }
-  .dot {
-    display: inline-block;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
+  .name :global(.glyph),
+  h2 :global(.glyph) {
     margin-right: 8px;
-    vertical-align: 1px;
-    background: var(--muted);
   }
-  .dot.managed {
-    background: var(--success);
-  }
-  .dot.system {
-    background: var(--muted);
-  }
-  .dot.none {
-    background: transparent;
-    box-shadow: inset 0 0 0 1px var(--muted);
-  }
-  .dot.missing {
-    background: transparent;
-    box-shadow: inset 0 0 0 1.5px var(--error);
-  }
-  .changes h3 {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+  .staged {
+    max-width: 420px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .change-list {
     list-style: none;
@@ -842,12 +835,27 @@
   .head .chip-row {
     margin: 6px 0 0;
   }
-  .tools-inspector h3 {
-    margin: 0 0 6px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--muted);
+  .gen-head {
+    white-space: nowrap;
   }
+  .gen-head > * {
+    vertical-align: middle;
+  }
+  .gen-head :global(.glyph) {
+    margin-left: 5px;
+  }
+  .restore {
+    margin-left: 4px;
+  }
+  td.gen {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  td.gen.changed {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--ink);
+  }
+  .tools-inspector h3,
   dl {
     display: grid;
     grid-template-columns: 72px minmax(0, 1fr);
@@ -861,44 +869,10 @@
     margin: 0;
     overflow-wrap: anywhere;
   }
-  .generations {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    border-top: 1px solid var(--line);
-  }
-  .generations li {
-    display: grid;
-    grid-template-columns: 28px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 0;
-    min-height: 33px;
-    border-bottom: 1px solid var(--line);
-  }
-  .generations .end {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .generations .installs {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   .collect {
     display: flex;
     align-items: center;
     gap: 8px;
     margin-top: 8px;
-  }
-  @media (max-width: 900px) {
-    .tools-view {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .tools-main {
-      border-right: 0;
-      border-bottom: 1px solid var(--line);
-    }
   }
 </style>

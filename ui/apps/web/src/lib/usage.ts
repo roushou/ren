@@ -136,3 +136,42 @@ export function cacheShare(counts: UsageCounts): number | null {
   const { input, cache_read } = counts.tokens;
   return input && cache_read !== null ? cache_read / input : null;
 }
+
+/** One day's row of the hour-of-day grid: its label and calls per local hour. */
+export interface HourRow {
+  day: number;
+  cells: number[];
+}
+
+/**
+ * Calls by local hour of day over the last week: one row per local day,
+ * oldest first, each with 24 hourly counts, and the busiest hour to shade
+ * against. The API counts by UTC hour; each is placed in the local day and
+ * hour it starts in, so a zone off the hour still lands in one cell.
+ */
+export class HourGrid {
+  readonly rows: HourRow[];
+  readonly busiest: number;
+
+  private constructor(rows: HourRow[]) {
+    this.rows = rows;
+    this.busiest = Math.max(0, ...rows.flatMap((row) => row.cells));
+  }
+
+  static of(
+    hours: readonly UsageBucket[],
+    now: number,
+    dayStart: (ms: number) => number = localDayStart,
+    hourOf: (ms: number) => number = (ms) => new Date(ms).getHours(),
+  ): HourGrid {
+    const days: number[] = [];
+    for (let at = dayStart(now - 6 * DAY); days.length < 7; at = dayStart(at + DAY + HOUR))
+      days.push(at);
+    const rows = days.map((day) => ({ day, cells: Array.from({ length: 24 }, () => 0) }));
+    for (const hour of hours) {
+      const row = rows.find((each) => each.day === dayStart(hour.start));
+      if (row) row.cells[hourOf(hour.start)]! += hour.calls;
+    }
+    return new HourGrid(rows);
+  }
+}

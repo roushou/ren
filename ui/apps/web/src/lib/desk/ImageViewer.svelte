@@ -95,7 +95,7 @@
     border-radius: 0;
     background: var(--popover);
     color: var(--ink);
-    box-shadow: var(--popover-shadow);
+    box-shadow: var(--elev-modal);
     font-size: 13px;
   }
   .viewer[open] {
@@ -103,7 +103,7 @@
     flex-direction: column;
   }
   .viewer::backdrop {
-    background: rgb(0 0 0 / 0.6);
+    background: var(--scrim);
   }
   header {
     display: flex;

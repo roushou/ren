@@ -83,7 +83,7 @@ test('runs of calls outside a turn share one group; turns keep theirs', () => {
     turnGroups(calls).map((g) => [g.label, g.rows.length]),
     [
       ['Outside a turn', 2],
-      ['Turn 00000000', 2],
+      ['T1', 2],
       ['Outside a turn', 1],
     ],
   );
@@ -95,6 +95,11 @@ test('runs of calls outside a turn share one group; turns keep theirs', () => {
   // A turn that resumes after an outside call is a new group with its own key.
   const resumed = turnGroups([...calls, finishedFixture(callId(6), { turn: turn(7) })]);
   assert.equal(new Set(resumed.map((g) => g.id)).size, resumed.length);
+  // ...and keeps its number.
+  assert.deepEqual(
+    resumed.map((g) => g.label),
+    ['Outside a turn', 'T1', 'Outside a turn', 'T1'],
+  );
 });
 
 test('j and k step through calls and stop at the ends', () => {

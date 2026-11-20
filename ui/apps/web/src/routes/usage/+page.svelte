@@ -6,6 +6,7 @@
   import { compactOrDash, SEPARATOR } from '#lib/display.ts';
   import {
     cacheShare,
+    HourGrid,
     parseRange,
     usageMeasures,
     usagePoints,
@@ -14,6 +15,7 @@
   } from '#lib/usage.ts';
   import UsageChart from '#lib/UsageChart.svelte';
   import Icon from '#lib/Icon.svelte';
+  import Glyph from '#lib/Glyph.svelte';
   import RecordingName from '#lib/RecordingName.svelte';
   import Segmented, { type SegmentedOption } from '#lib/Segmented.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
@@ -62,8 +64,12 @@
         };
   }
   const share = $derived(totals ? cacheShare(totals) : null);
+  /** Calls by local hour of day over the last week. */
+  const grid = $derived(current ? HourGrid.of(current.usage.hours, current.now) : null);
   const errorRate = $derived(totals && totals.calls ? totals.errors / totals.calls : null);
   const models = $derived(current?.usage.models ?? []);
+  /** Each model's share of the range's tokens in. */
+  const modelInput = $derived(models.reduce((sum, model) => sum + (model.tokens.input ?? 0), 0));
   const topModelInput = $derived(Math.max(1, ...models.map((m) => m.tokens.input ?? 0)));
   // Shown once a named user made calls in the range; all callers are listed then.
   const users = $derived(current?.usage.users ?? []);
@@ -120,13 +126,18 @@
             >{#if pending}<Skeleton size="figure" width="5em" />{:else}{num(
                 totals?.calls,
               )}{/if}</strong
+          ><small
+            >{#if !pending && totals && points.length}{num(
+                Math.round(totals.calls / points.length),
+              )} / {byHour ? 'hour' : 'day'}{/if}</small
           >
         </div>
         <div class="usage-tile">
-          <span>Failed work calls</span><strong class="mono" class:error-count={!!totals?.errors}
-            >{#if pending}<Skeleton size="figure" width="3em" />{:else}{num(
-                totals?.errors,
-              )}{/if}</strong
+          <span>Failed work calls</span><strong class="mono failed-figure"
+            >{#if totals?.errors}<Glyph mark="failed" label={true} />{/if}{#if pending}<Skeleton
+                size="figure"
+                width="3em"
+              />{:else}{num(totals?.errors)}{/if}</strong
           ><small
             >{#if pending}<Skeleton width="7em" />{:else}{errorRate === null
                 ? '—'
@@ -151,6 +162,10 @@
             >{#if pending}<Skeleton size="figure" width="4em" />{:else}{compactOrDash(
                 totals?.tokens.output ?? null,
               )}{/if}</strong
+          ><small
+            >{#if !pending && totals?.calls && totals.tokens.output !== null}{compactOrDash(
+                Math.round(totals.tokens.output / totals.calls),
+              )} / call{/if}</small
           >
         </div>
       </section>
@@ -163,15 +178,79 @@
         {#if pending}
           <div class="chart-outline"><Skeleton size="block" width="100%" /></div>
         {:else if totals?.calls}
-          <UsageChart {points} {measure} label={measureLabel} {period} />
+          <UsageChart
+            {points}
+            {measure}
+            label={measureLabel}
+            {period}
+            cached={measure === 'input'
+              ? points.map((point) => point.tokens.cache_read ?? 0)
+              : null}
+          />
+          {#if measure === 'input'}<p class="chart-key muted">
+              <span><span class="swatch cached"></span>read from cache</span>
+              <span><span class="swatch fresh"></span>uncached input</span>
+            </p>{/if}
         {:else}
           <p class="quiet-empty">No calls in this range.</p>
         {/if}
       </section>
 
+      {#if grid && grid.busiest > 0}
+        <section class="panel usage-panel" aria-labelledby="usage-hours-title">
+          <header class="panel-heading">
+            <h2 id="usage-hours-title">Calls by hour of day</h2>
+            <span class="muted">the last seven days · local time</span>
+          </header>
+          <div class="hour-grid">
+            {#each grid.rows as row (row.day)}
+              <span class="muted mono day"
+                >{new Date(row.day).toLocaleDateString([], { weekday: 'short' })}</span
+              >
+              <svg viewBox="0 0 240 10" preserveAspectRatio="none" aria-hidden="true"
+                >{#each row.cells as calls, hour (hour)}<rect
+                    class="cell"
+                    x={hour * 10 + 0.5}
+                    y="0"
+                    width="9"
+                    height="10"
+                    fill-opacity={calls ? 0.15 + 0.85 * (calls / grid.busiest) : 0.04}
+                    ><title>{hour}:00 · {calls} calls</title></rect
+                  >{/each}</svg
+              >
+            {/each}
+            <span></span>
+            <span class="hours muted mono"
+              ><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></span
+            >
+          </div>
+        </section>
+      {/if}
+
       <div class="usage-columns usage-fill">
         <section class="panel usage-panel" aria-labelledby="usage-models-title">
           <header class="panel-heading"><h2 id="usage-models-title">By model</h2></header>
+          {#if modelInput > 0}<svg
+              class="model-share"
+              viewBox="0 0 100 6"
+              preserveAspectRatio="none"
+              aria-label="Each model's share of tokens in"
+              >{#each models as model, index (`${model.provider}-${model.model}`)}<rect
+                  class="share-{index % 5}"
+                  x={(models
+                    .slice(0, index)
+                    .reduce((sum, one) => sum + (one.tokens.input ?? 0), 0) /
+                    modelInput) *
+                    100}
+                  width={((model.tokens.input ?? 0) / modelInput) * 100}
+                  height="6"
+                  ><title
+                    >{model.model ?? 'No model reported'}: {Math.round(
+                      ((model.tokens.input ?? 0) / modelInput) * 100,
+                    )}%</title
+                  ></rect
+                >{/each}</svg
+            >{/if}
           {#if models.length || pending}
             <table class="usage-list">
               {@render head(modelColumns)}
@@ -283,6 +362,72 @@
 </div>
 
 <style>
+  .failed-figure {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .chart-key {
+    display: flex;
+    gap: 14px;
+    margin: 0;
+    padding: 0 16px 10px;
+    font-size: 11px;
+  }
+  .chart-key > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .swatch {
+    width: 8px;
+    height: 8px;
+  }
+  .swatch.cached {
+    background: color-mix(in srgb, var(--success) 70%, transparent);
+  }
+  .swatch.fresh {
+    background: var(--chart);
+  }
+  .hour-grid {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 3px 10px;
+    align-items: center;
+    padding: 12px 16px;
+    font-size: 10.5px;
+  }
+  .hour-grid svg {
+    width: 100%;
+    height: 12px;
+  }
+  .cell {
+    fill: var(--chart);
+  }
+  .hours {
+    display: flex;
+    justify-content: space-between;
+  }
+  .model-share {
+    display: block;
+    width: 100%;
+    height: 6px;
+  }
+  .share-0 {
+    fill: var(--chart);
+  }
+  .share-1 {
+    fill: var(--accent);
+  }
+  .share-2 {
+    fill: var(--role-tool);
+  }
+  .share-3 {
+    fill: var(--success);
+  }
+  .share-4 {
+    fill: var(--muted);
+  }
   /* The page fills the window: the bottom panels take whatever height is left. */
   .console {
     min-height: 100%;

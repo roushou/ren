@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ToolHistory,
   Platforms,
   RowActions,
   Standings,
   Supplies,
+  ToolChanges,
   ToolFilters,
   ToolGroups,
   ToolPlan,
@@ -264,6 +266,15 @@ test('where runs get each package, and the header tally', async () => {
   );
   assert.equal(Supplies.tone({ ...fd, needed_by: ['pi'] }), 'missing');
   assert.deepEqual(Supplies.tally(read), { managed: 3, system: 1, missing: 0, updates: 1 });
+  assert.deepEqual(Supplies.mark(claude), { mark: 'idle', word: 'On the host’s PATH' });
+  assert.deepEqual(Supplies.mark(fd), { mark: 'idle', word: 'Not installed' });
+  assert.deepEqual(Supplies.mark({ ...fd, needed_by: ['pi'] }), {
+    mark: 'failed',
+    word: 'Missing',
+  });
+  const marks = read.packages.map((p) => Supplies.mark(p).mark);
+  assert.equal(marks.filter((mark) => mark === 'warning').length, 1, 'the one update needs a look');
+  assert.equal(marks.filter((mark) => mark === 'passed').length, 2, 'the other installs pass');
   assert.equal(Platforms.label('linux_x64'), 'Linux x64');
 });
 
@@ -322,4 +333,71 @@ test('the view narrows by name, program, or path, and by how packages stand', as
   assert.deepEqual(ids('/opt/acme', null), ['claude']);
   assert.deepEqual(ids('J', null), ['jq']);
   assert.deepEqual(ids('jq', 'system'), []);
+});
+
+test('a change says what it came to in a toast', () => {
+  const base = { generation: 15 as never, changes: [], failures: [] };
+  assert.deepEqual(
+    ToolChanges.said({
+      ...base,
+      outcome: 'activated',
+      changes: [
+        {
+          change: 'replace',
+          package: 'node' as never,
+          from: '24.0.0' as never,
+          to: '24.1.0' as never,
+        },
+      ],
+    }),
+    { mark: 'passed', text: 'Generation 15 is current', detail: 'node 24.1.0' },
+  );
+  assert.equal(ToolChanges.said({ ...base, outcome: 'unchanged' }).mark, 'idle');
+  assert.deepEqual(
+    ToolChanges.said({
+      ...base,
+      outcome: 'failed',
+      failures: [
+        { package: 'fd' as never, version: '10.2.0' as never, stage: 'verify', reason: 'sha256' },
+      ],
+    }),
+    { mark: 'failed', text: '1 install failed', detail: 'fd · verify' },
+  );
+});
+
+test('the history sets the newest generations side by side, marking where a package changed', () => {
+  const generation = (n: number, installs: [string, string][]) => ({
+    generation: n as never,
+    state: 'idle' as never,
+    installs: installs.map(([pkg, version]) => ({
+      package: pkg as never,
+      version: version as never,
+    })),
+  });
+  const history = new ToolHistory(
+    {
+      generations: [
+        generation(12, [['rg', '14.0']]),
+        generation(14, [
+          ['rg', '14.1'],
+          ['fd', '10.2'],
+        ]),
+        generation(13, [['rg', '14.1']]),
+      ],
+    } as never,
+    2,
+  );
+  assert.deepEqual(
+    history.generations.map((g) => g.generation),
+    [14, 13],
+  );
+  assert.deepEqual(
+    [history.version('rg' as never, 0), history.version('rg' as never, 1)],
+    ['14.1', '14.1'],
+  );
+  // 14 added fd; 13 updated rg from 12, the generation past the columns.
+  assert.equal(history.changed('fd' as never, 0), true);
+  assert.equal(history.changed('rg' as never, 0), false);
+  assert.equal(history.changed('rg' as never, 1), true);
+  assert.equal(history.version('fd' as never, 1), null);
 });

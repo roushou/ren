@@ -339,7 +339,7 @@
     border: 1px solid var(--popover-border);
     border-top: 2px solid var(--accent);
     background: var(--popover);
-    box-shadow: var(--popover-shadow);
+    box-shadow: var(--elev-popover);
     outline: none;
   }
   .search {

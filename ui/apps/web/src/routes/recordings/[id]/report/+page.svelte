@@ -13,6 +13,9 @@
   import { ContextChart, findingLine, rowPrompt, turnHref, turnRows } from '#lib/activity.ts';
   import RecordingName from '#lib/RecordingName.svelte';
   import FindingList from '#lib/FindingList.svelte';
+  import HoverCard from '#lib/layer/HoverCard.svelte';
+  import Glyph from '#lib/Glyph.svelte';
+  import { Marks } from '#lib/marks.ts';
   import Icon from '#lib/Icon.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import SkeletonRows from '#lib/SkeletonRows.svelte';
@@ -31,9 +34,12 @@
   const rows = $derived(current ? turnRows(current.report, current.turns) : []);
   const findings = $derived(report ? report.findings.map(findingLine) : []);
   const chart = $derived(new ContextChart(rows));
+  /** The recording's peak context: each turn's range is drawn against it. */
+  const peak = $derived(Math.max(1, totals?.peak_context_tokens ?? 0));
   /** The chart's height in SVG units, drawn at the same height in pixels. */
   const CHART = 120;
   const turnColumns: Column[] = [
+    { label: '', class: 'turn-number' },
     { label: 'Started' },
     { label: 'Prompt', class: 'turn-prompt' },
     { label: 'Calls', numeric: true },
@@ -83,7 +89,18 @@
     {:else}
       <section class="usage-tiles" aria-label="Totals" aria-busy={pending}>
         <div class="usage-tile">
-          <span>Peak context</span><strong class="mono"
+          <span
+            ><HoverCard label="What peak context counts"
+              >{#snippet trigger()}<button type="button" class="tip-trigger">Peak context</button
+                >{/snippet}
+              <strong>The largest prompt one call sent</strong>
+              <span
+                >Tokens of prompt in the recording's biggest call, as the provider reported them:
+                new input plus the cache read and written. The model's limit is not reported, so
+                none is compared.</span
+              ></HoverCard
+            ></span
+          ><strong class="mono"
             >{@render value(totals && compact(totals.peak_context_tokens), '4em', 'figure')}</strong
           ><small>tokens in one call</small>
         </div>
@@ -127,140 +144,167 @@
         </div>
       </section>
 
-      {#if pending}
-        <section class="panel usage-panel" aria-labelledby="report-context-title">
-          <header class="panel-heading">
-            <h2 id="report-context-title">Context per turn</h2>
-          </header>
-          <div class="context-chart">
-            <div class="chart-outline"><Skeleton size="block" width="100%" /></div>
-          </div>
-        </section>
-      {:else if chart.bars.length > 1}
-        <section class="panel usage-panel" aria-labelledby="report-context-title">
-          <header class="panel-heading">
-            <h2 id="report-context-title">Context per turn</h2>
-            <span class="muted"
-              >Oldest to newest · each bar is the context a turn ended with, its tick where it
-              started · the model's limit is not reported, so none is drawn</span
-            >
-          </header>
-          <div class="context-chart">
-            <span class="context-scale mono">{compact(chart.max)}</span>
-            <svg
-              viewBox="0 0 1000 {CHART}"
-              preserveAspectRatio="none"
-              aria-label="Context per turn"
-            >
-              {#each [0.25, 0.5, 0.75] as at (at)}<line
-                  class="grid"
-                  x1="0"
-                  y1={CHART * at}
-                  x2="1000"
-                  y2={CHART * at}
-                />{/each}
-              {#each chart.bars as bar (bar.turn)}
-                <a href={turnHref(bar.turn)} class:flagged={bar.flagged}
-                  ><title>{bar.title}</title><rect
-                    class="bar"
-                    x={bar.x}
-                    width={bar.width}
-                    y={CHART * (1 - bar.end)}
-                    height={CHART * bar.end}
-                  /><rect
-                    class="start"
-                    x={bar.x}
-                    width={bar.width}
-                    y={CHART * (1 - bar.start) - 1}
-                    height="2"
-                  /></a
+      <div class="report-body">
+        <div class="report-main">
+          {#if pending}
+            <section class="panel usage-panel" aria-labelledby="report-context-title">
+              <header class="panel-heading">
+                <h2 id="report-context-title">Context per turn</h2>
+              </header>
+              <div class="context-chart">
+                <div class="chart-outline"><Skeleton size="block" width="100%" /></div>
+              </div>
+            </section>
+          {:else if chart.bars.length > 1}
+            <section class="panel usage-panel" aria-labelledby="report-context-title">
+              <header class="panel-heading">
+                <h2 id="report-context-title">Context per turn</h2>
+                <span class="muted"
+                  >Oldest to newest · each bar is the context a turn ended with, its tick where it
+                  started · the model's limit is not reported, so none is drawn</span
                 >
-              {/each}
-            </svg>
-          </div>
-        </section>
-      {/if}
+              </header>
+              <div class="context-chart">
+                <span class="context-scale mono">{compact(chart.max)}</span>
+                <svg
+                  viewBox="0 0 1000 {CHART}"
+                  preserveAspectRatio="none"
+                  aria-label="Context per turn"
+                >
+                  {#each [0.25, 0.5, 0.75] as at (at)}<line
+                      class="grid"
+                      x1="0"
+                      y1={CHART * at}
+                      x2="1000"
+                      y2={CHART * at}
+                    />{/each}
+                  {#each chart.bars as bar (bar.turn)}
+                    <a href={turnHref(bar.turn)} class:flagged={bar.flagged}
+                      ><title>{bar.title}</title><rect
+                        class="bar"
+                        x={bar.x}
+                        width={bar.width}
+                        y={CHART * (1 - bar.end)}
+                        height={CHART * bar.end}
+                      /><rect
+                        class="start"
+                        x={bar.x}
+                        width={bar.width}
+                        y={CHART * (1 - bar.start) - 1}
+                        height="2"
+                      /></a
+                    >
+                  {/each}
+                </svg>
+              </div>
+            </section>
+          {/if}
 
-      <section class="panel usage-panel" aria-labelledby="report-findings-title">
-        <header class="panel-heading">
-          <h2 id="report-findings-title">Findings</h2>
-          <span class="muted">Measured against fixed thresholds; causes are not inferred</span>
-        </header>
-        {#if pending}
-          <ul class="finding-list">
-            {#each ['62%', '48%'] as width (width)}
-              <li>
-                <Skeleton width="7em" /><span class="finding-detail"><Skeleton {width} /></span>
-              </li>
-            {/each}
-          </ul>
-        {:else if findings.length}
-          <FindingList {findings} recording={data.recordingId} page="recording" />
-        {:else}
-          <p class="quiet-empty">No cache rebuilds or large context steps in this recording.</p>
-        {/if}
-      </section>
-
-      <section class="panel usage-panel" aria-labelledby="report-turns-title">
-        <header class="panel-heading">
-          <h2 id="report-turns-title">Turns</h2>
-          <span class="muted">Newest first · one user prompt each, as the client grouped them</span>
-        </header>
-        {#if rows.length || pending}
-          <div class="table-scroll">
-            <table class="usage-list turn-table">
-              <thead
-                ><tr
-                  >{#each turnColumns as column (column.label)}<th class:numeric={column.numeric}
-                      >{column.label}</th
-                    >{/each}</tr
-                ></thead
+          <section class="panel usage-panel" aria-labelledby="report-turns-title">
+            <header class="panel-heading">
+              <h2 id="report-turns-title">Turns</h2>
+              <span class="muted"
+                >Newest first · one user prompt each, as the client grouped them</span
               >
-              <tbody>
-                {#if pending}<SkeletonRows columns={turnColumns} rows={8} />{/if}
-                {#each rows as row (row.metrics.turn)}
-                  {@const metrics = row.metrics}
-                  <tr>
-                    <td
-                      ><span>{date(metrics.started_at)}</span><small
-                        >{clock(metrics.started_at)}</small
-                      ></td
-                    >
-                    <td class="turn-prompt">
-                      <a class="row-link" href={turnHref(metrics.turn)}>{rowPrompt(row)}</a>
-                      {#each row.findings as line, index (index)}<span class="chip {line.tone}"
-                          >{line.title}</span
-                        >{/each}
-                    </td>
-                    <td class="mono numeric"
-                      >{num(metrics.call_count)}{#if row.summary?.error_count}<small
-                          class="error-count"
+            </header>
+            {#if rows.length || pending}
+              <div class="table-scroll">
+                <table class="usage-list turn-table">
+                  <thead
+                    ><tr
+                      >{#each turnColumns as column (column.label)}<th
+                          class:numeric={column.numeric}>{column.label}</th
+                        >{/each}</tr
+                    ></thead
+                  >
+                  <tbody>
+                    {#if pending}<SkeletonRows columns={turnColumns} rows={8} />{/if}
+                    {#each rows as row, index (row.metrics.turn)}
+                      {@const metrics = row.metrics}
+                      {@const start = metrics.context_start_tokens ?? 0}
+                      {@const end = metrics.context_end_tokens ?? start}
+                      <tr>
+                        <td class="turn-number mono muted">T{rows.length - index}</td>
+                        <td
+                          ><span>{date(metrics.started_at)}</span><small
+                            >{clock(metrics.started_at)}</small
+                          ></td
                         >
-                          · {row.summary.error_count} err</small
-                        >{/if}</td
-                    >
-                    <td class="mono numeric"
-                      >{metrics.idle_before_ms === null ? '—' : span(metrics.idle_before_ms)}</td
-                    >
-                    <td class="mono numeric"
-                      >{compactOrDash(metrics.context_start_tokens)} → {compactOrDash(
-                        metrics.context_end_tokens,
-                      )}</td
-                    >
-                    <td class="mono numeric">{percentOrDash(metrics.cache_hit_percent)}</td>
-                    <td class="mono numeric">{compact(metrics.cache_written_tokens)}</td>
-                    <td class="mono numeric">{compact(metrics.output_tokens)}</td>
-                  </tr>
+                        <td class="turn-prompt">
+                          <a class="row-link" href={turnHref(metrics.turn)}>{rowPrompt(row)}</a>
+                          {#each row.findings as line, at (at)}<Glyph
+                              mark={Marks.ofTone(line.tone)}
+                              label={`${line.title}: ${line.detail}`}
+                            />{/each}
+                        </td>
+                        <td class="mono numeric"
+                          >{#if row.summary?.error_count}<span class="errors"
+                              ><Glyph mark="failed" label="{row.summary.error_count} failed" />{row
+                                .summary.error_count}</span
+                            >{/if}{num(metrics.call_count)}</td
+                        >
+                        <td class="mono numeric"
+                          >{metrics.idle_before_ms === null
+                            ? '—'
+                            : span(metrics.idle_before_ms)}</td
+                        >
+                        <td class="mono numeric"
+                          ><span class="range"
+                            ><svg viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"
+                              ><rect class="range-whole" width="100" height="6" /><rect
+                                class="range-span"
+                                x={(Math.min(start, end) / peak) * 100}
+                                width={Math.max(1, (Math.abs(end - start) / peak) * 100)}
+                                height="6"
+                              /></svg
+                            >{compactOrDash(metrics.context_start_tokens)} → {compactOrDash(
+                              metrics.context_end_tokens,
+                            )}</span
+                          ></td
+                        >
+                        <td class="mono numeric"
+                          >{#if metrics.cache_hit_percent !== null && metrics.cache_hit_percent < 50}<Glyph
+                              mark="warning"
+                              label="Most of this turn's context was not read from the cache"
+                            />{/if}{percentOrDash(metrics.cache_hit_percent)}</td
+                        >
+                        <td class="mono numeric">{compact(metrics.cache_written_tokens)}</td>
+                        <td class="mono numeric">{compact(metrics.output_tokens)}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {:else}
+              <p class="quiet-empty">
+                This recording has no turns. Turns come from the client's own grouping; Pi sends
+                none.
+              </p>
+            {/if}
+          </section>
+        </div>
+        <aside class="report-aside">
+          <section class="panel usage-panel" aria-labelledby="report-findings-title">
+            <header class="panel-heading">
+              <h2 id="report-findings-title">Findings</h2>
+              <span class="muted">Measured against fixed thresholds; causes are not inferred</span>
+            </header>
+            {#if pending}
+              <ul class="finding-list">
+                {#each ['62%', '48%'] as width (width)}
+                  <li>
+                    <Skeleton width="7em" /><span class="finding-detail"><Skeleton {width} /></span>
+                  </li>
                 {/each}
-              </tbody>
-            </table>
-          </div>
-        {:else}
-          <p class="quiet-empty">
-            This recording has no turns. Turns come from the client's own grouping; Pi sends none.
-          </p>
-        {/if}
-      </section>
+              </ul>
+            {:else if findings.length}
+              <FindingList {findings} recording={data.recordingId} page="recording" />
+            {:else}
+              <p class="quiet-empty">No cache rebuilds or large context steps in this recording.</p>
+            {/if}
+          </section>
+        </aside>
+      </div>
       {#if report?.omitted_calls}<p class="quiet-empty">
           {num(report.omitted_calls)} older calls beyond the report's limit are not included.
         </p>{/if}
@@ -269,6 +313,65 @@
 </div>
 
 <style>
+  .tip-trigger {
+    padding: 0;
+    border: 0;
+    border-bottom: 1px dotted currentColor;
+    border-radius: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: help;
+  }
+  .report-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+    align-items: start;
+    gap: 0;
+  }
+  .report-main {
+    min-width: 0;
+  }
+  .report-aside {
+    position: sticky;
+    top: 0;
+    border-left: 1px solid var(--line);
+  }
+  @media (max-width: 1100px) {
+    .report-body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .report-aside {
+      position: static;
+      border-left: 0;
+    }
+  }
+  .turn-number {
+    width: 36px;
+  }
+  .errors {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-right: 8px;
+    color: var(--muted);
+  }
+  .range {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .range svg {
+    width: 56px;
+    height: 6px;
+  }
+  .range-whole {
+    fill: var(--surface-inset);
+  }
+  .range-span {
+    fill: var(--chart);
+  }
   .context-chart {
     position: relative;
     padding: 18px 16px 12px;

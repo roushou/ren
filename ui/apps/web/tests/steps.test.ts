@@ -107,6 +107,12 @@ test('a command reads as its client said it, and as written only when it said no
   assert.deepEqual([mixed.act, mixed.targets], ['run', ['rg todo && make']]);
   const failed = Steps.read(command('c4', 'cargo test', undefined, 'failed', 101) as never, WORK);
   assert.deepEqual([failed.state, failed.failure], ['failed', 'exit 101']);
+  const bare = Steps.read(command('c5', 'rm -rf build', undefined, 'failed', null) as never, WORK);
+  assert.deepEqual(
+    [bare.state, bare.failure],
+    ['failed', null],
+    'a failure with no exit code says nothing more than its mark',
+  );
 });
 
 test('a tool reads as its effects, and as its name without any', () => {
@@ -165,4 +171,24 @@ test('a group reads in a line, by kind, files read again counted once', () => {
     ]),
     'Run the tests',
   );
+});
+
+test('a step’s time reads in tenths, then seconds, then minutes', () => {
+  assert.deepEqual(
+    [0, 420, 2_500, 9_949, 12_400, 59_400, 64_000, 3_725_000].map((ms) => Steps.time(ms)),
+    ['0.0 s', '0.4 s', '2.5 s', '9.9 s', '12 s', '59 s', '1:04', '62:05'],
+  );
+});
+
+test('picked steps quote as a prompt’s list, and copy as commands with their output', () => {
+  const steps = [
+    Steps.read(command('c1', 'cargo test', undefined, 'completed', 101) as never, WORK),
+    Steps.read(read('r1', 'src/lib.rs') as never, WORK),
+  ];
+  assert.equal(
+    Steps.quote(steps),
+    'About these steps:\n- Run `cargo test` (failed, exit 101)\n- Read `src/lib.rs`',
+  );
+  assert.equal(Steps.quote(steps.slice(1)), 'About this step:\n- Read `src/lib.rs`');
+  assert.equal(Steps.text(steps), '$ cargo test\n\nRead src/lib.rs');
 });

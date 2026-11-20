@@ -19,7 +19,8 @@
   const loading = $derived(controls?.loading() ?? false);
   const problem = $derived(controls?.problem() ?? '');
 
-  /** When the scope does not fit on one line it folds behind a button. */
+  /** When the scope does not fit on one line it folds behind a button: by
+   * measurement here, and on a phone by its width in CSS. */
   let scopeOpen = $state(false);
   let folded = $state(false);
   let bar = $state<HTMLElement>();
@@ -29,29 +30,46 @@
   function fit() {
     if (!bar || !scopeElement) return;
     if (!folded) {
-      // The content's own width: its groups and the 24px between each.
-      const groups = [...scopeElement.children] as HTMLElement[];
-      natural =
-        groups.reduce((sum, group) => sum + group.offsetWidth, 0) +
-        Math.max(0, groups.length - 1) * 24;
+      // The content's own width on one line: laid out for a moment at its
+      // max-content width, so nothing inside is shrunk while it is read.
+      // (Set from script; the CSP refuses only inline style in markup.)
+      const before = scopeElement.style.cssText;
+      scopeElement.style.flex = 'none';
+      scopeElement.style.width = 'max-content';
+      natural = scopeElement.offsetWidth;
+      scopeElement.style.cssText = before;
     }
     const actions = bar.querySelector<HTMLElement>('.page-actions')?.offsetWidth ?? 0;
     const padding = 24 + 12;
+    // A phone folds by its width in CSS; this measures every other width.
     folded = !!scope && natural > bar.clientWidth - actions - padding;
-    if (!folded) scopeOpen = false;
+    // Unfolded, the panel has nothing to open; a phone keeps it folded, so
+    // what the operator opened there stays open.
+    if (!folded && !window.matchMedia('(max-width: 760px)').matches) scopeOpen = false;
   }
   onMount(() => {
     void tick().then(fit);
     const observer = new ResizeObserver(() => fit());
     if (bar) observer.observe(bar);
-    return () => observer.disconnect();
+    // The scope grows as the page's data arrives (a recording's name, its
+    // figures): measure again, unfolded, whenever it changes.
+    const changes = new MutationObserver(() => {
+      if (folded) return;
+      fit();
+    });
+    if (scopeElement)
+      changes.observe(scopeElement, { childList: true, subtree: true, characterData: true });
+    return () => {
+      observer.disconnect();
+      changes.disconnect();
+    };
   });
 </script>
 
 <div class="workbench-toolbar" class:folded class:scope-open={scopeOpen} bind:this={bar}>
   <!-- The nav tab names the view; the bar shows its scope. -->
   <h1 class="sr-only">{title}</h1>
-  {#if scope && folded}<button
+  {#if scope}<button
       class="button small scope-toggle"
       aria-expanded={scopeOpen}
       aria-controls="scope"

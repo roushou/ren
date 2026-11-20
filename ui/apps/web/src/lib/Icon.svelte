@@ -55,6 +55,7 @@
     ],
     grid: ['M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z'],
     rows: ['M3 5h18M3 12h18M3 19h18'],
+    folder: ['M3 6.5h6.5l2 2H21V19H3z'],
     pulse: ['M2 12h4l3-8 6 16 3-8h4'],
     info: ['M12 11v6m0-10h.01', 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z'],
     file: ['M14 3H6v18h12V7l-4-4Z', 'M14 3v4h4M9 12h6M9 16h6'],

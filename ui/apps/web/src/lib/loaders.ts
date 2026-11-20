@@ -19,7 +19,10 @@ import {
   type TurnId,
   type TurnSummary,
   type UsageView,
+  type Project,
 } from './api.ts';
+import { RunsClient, type RunClient, type RunSnapshot, type SessionBody } from './runs.ts';
+import { WorkApi, type WorkItem } from './work.ts';
 import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
 import { listingQuery } from './traffic.ts';
 import { readSnapshot, snapshotError, type Snapshot } from './snapshots.ts';
@@ -688,4 +691,44 @@ export class LiveReader {
       };
     });
   }
+}
+
+/** What every page reads for Pending, and the Projects view for its board;
+ * a list that fails to read is left empty. */
+export interface ProjectsData {
+  projects: Project[];
+  /** Why the projects did not read, when they did not. */
+  failed: string | null;
+  /** Work items under way, across every project. */
+  work: WorkItem[];
+  /** The runs the daemon holds, for the approvals they wait on; none when
+   * this UI only reads. */
+  live: RunSnapshot[];
+  /** The current sessions, for the project each run works for. */
+  sessions: SessionBody[];
+  /** Each client and its sign-in on the daemon's host; none when this UI
+   * only reads. */
+  clients: RunClient[];
+}
+
+export async function projectsData(
+  fetcher: typeof fetch,
+  runsControl: boolean,
+): Promise<ProjectsData> {
+  const api = new ManagementApi(fetcher);
+  const runs = new RunsClient(fetcher);
+  const [listed, work, live, sessions, clients] = await Promise.all([
+    api.projects().then(
+      (projects) => ({ projects, failed: null }),
+      (failure: unknown) => ({
+        projects: [],
+        failed: failure instanceof Error ? failure.message : 'The projects did not read.',
+      }),
+    ),
+    new WorkApi(fetcher).list('current').catch(() => []),
+    runsControl ? runs.live().catch(() => []) : Promise.resolve([]),
+    runsControl ? runs.sessions('current').catch(() => []) : Promise.resolve([]),
+    runsControl ? runs.clients().catch(() => []) : Promise.resolve([]),
+  ]);
+  return { ...listed, work, live, sessions, clients };
 }

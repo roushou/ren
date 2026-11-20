@@ -10,7 +10,8 @@
   import ConnectClient from '#lib/ConnectClient.svelte';
   import CopyButton from '#lib/CopyButton.svelte';
   import { LaunchCommand } from '#lib/launch.ts';
-  import StateGlyph from '#lib/StateGlyph.svelte';
+  import Glyph from '#lib/Glyph.svelte';
+  import { Marks } from '#lib/marks.ts';
   import Icon from '#lib/Icon.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
@@ -132,8 +133,9 @@
           {#each items as item (item.label)}{#if item.href}<a
                 class={item.tone}
                 href={item.href}
-                title={item.title}><i></i>{item.label}</a
-              >{:else}<span class={item.tone} title={item.title}><i></i>{item.label}</span
+                title={item.title}><Glyph mark={Marks.ofTone(item.tone)} />{item.label}</a
+              >{:else}<span class={item.tone} title={item.title}
+                ><Glyph mark={Marks.ofTone(item.tone)} />{item.label}</span
               >{/if}{/each}
         </div>
       </section>
@@ -171,7 +173,14 @@
               {/each}
             {:else}{#each attention?.groups ?? [] as group (group.key)}
                 <a class="ov-attention {group.severity}" href={group.href}>
-                  <i></i>
+                  <Glyph
+                    mark={group.severity === 'error'
+                      ? 'failed'
+                      : group.severity === 'warning'
+                        ? 'warning'
+                        : 'info'}
+                    label={true}
+                  />
                   <span class="ov-attention-text">
                     <strong>{group.title}</strong>
                     <small>{group.detail}</small>
@@ -198,8 +207,8 @@
                 </a>
               {:else}
                 <p class="ov-clear">
-                  <StateGlyph mark="yours" />Nothing needs a look: no failed or cut-off work, no
-                  exposed secrets, no capture loss in the last 24 hours.
+                  <Glyph mark="passed" /> Nothing needs a look: no failed or cut-off work, no exposed
+                  secrets, no capture loss in the last 24 hours.
                 </p>
               {/each}{/if}
           </section>
@@ -233,7 +242,7 @@
                     <strong>{Board.clientName(tile.harness)}</strong>
                     <span class="mono muted">{short(tile.recording.native_id)}</span>
                     <span class="mono live-state {chip.tone} state-{chip.mark}" title={chip.title}
-                      ><StateGlyph mark={chip.mark} />{chip.label}</span
+                      ><Glyph mark={chip.mark} label={chip.label} /></span
                     >
                   </span>
                   <span class="ov-recording-prompt"
@@ -425,6 +434,10 @@
     --state: var(--success);
   }
   .ov-verdict p {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 8px;
     margin: 0;
     font-size: 13.5px;
   }
@@ -463,26 +476,11 @@
   .ov-health a:hover {
     color: var(--ink);
   }
-  .ov-health i {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--muted);
-  }
-  .ov-health .success i {
-    background: var(--success);
-  }
   .ov-health .warning {
     color: var(--warning);
   }
-  .ov-health .warning i {
-    background: var(--warning);
-  }
   .ov-health .error {
     color: var(--error);
-  }
-  .ov-health .error i {
-    background: var(--error);
   }
 
   .ov-top {
@@ -525,11 +523,11 @@
   /* Attention: one line per kind of trouble, its repeats folded into a count. */
   .ov-attention {
     display: grid;
-    grid-template-columns: 4px minmax(0, 1fr) auto auto;
+    grid-template-columns: 10px minmax(0, 1fr) auto auto;
     align-items: center;
     gap: 0 12px;
     min-height: 46px;
-    padding-right: 16px;
+    padding: 0 16px 0 14px;
     border-bottom: 1px solid var(--line);
     color: var(--ink);
     text-decoration: none;
@@ -540,12 +538,6 @@
   .ov-attention > i {
     align-self: stretch;
     background: var(--line);
-  }
-  .ov-attention.error > i {
-    background: var(--error);
-  }
-  .ov-attention.warning > i {
-    background: var(--warning);
   }
   .ov-attention-text {
     display: flex;

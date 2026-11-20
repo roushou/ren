@@ -1,23 +1,44 @@
 <!--
-  What waits on the operator: approvals a working run asks (answered here),
-  a canary to promote, a preview to check, work still queued. The Projects
-  view shows it across every project (`ProjectBoard.of`).
+  What waits on the operator, across every project: approvals a working run
+  asks, a client signed out, a canary to promote, a preview to check, work
+  still queued. An
+  approval is a decision with consequences, so it is answered in a modal
+  that shows it whole (or in its session), never from the list itself.
 -->
 <script lang="ts">
   import Icon from '#lib/Icon.svelte';
+  import Modal from '#lib/layer/Modal.svelte';
+  import { toasts } from '#lib/layer/toasts.svelte.ts';
   import { invalidateAll } from '$app/navigation';
   import { ProjectBoard, type Approval } from '#lib/projects.ts';
-  import { RunCommandError, Runs, RunsClient, Sessions, type Decision } from '#lib/runs.ts';
+  import {
+    decisions,
+    RunCommandError,
+    Runs,
+    RunsClient,
+    Sessions,
+    type Decision,
+  } from '#lib/runs.ts';
   import { Work } from '#lib/work.ts';
+  import { harnessLabel } from '#lib/activity.ts';
 
   let { board }: { board: ProjectBoard } = $props();
   const runs = new RunsClient();
-  /** The approval being answered, and what went wrong with the last answer. */
-  let answering = $state<string | null>(null);
+  /** The approval under review in the modal; null when none is. */
+  let reviewing = $state<Approval | null>(null);
+  /** Whether an answer is on its way, and what went wrong with the last. */
+  let answering = $state(false);
   let failed = $state<string | null>(null);
+  /** The modal's answers, the primary one (Allow) last. */
+  const answers = decisions.toReversed();
+
+  function review(waiting: Approval) {
+    failed = null;
+    reviewing = waiting;
+  }
 
   async function answer(waiting: Approval, decision: Decision) {
-    answering = waiting.approval;
+    answering = true;
     failed = null;
     try {
       await runs.toSession(waiting.session, {
@@ -25,13 +46,28 @@
         approval: waiting.approval,
         decision,
       });
+      const said = Runs.decision(decision);
+      toasts.show({
+        mark: said.mark,
+        text: said.done,
+        detail: Runs.ask(waiting.ask).action,
+        link: {
+          label: 'Open session',
+          href: Sessions.deskHref(waiting.project, { session: waiting.session }),
+        },
+      });
+      reviewing = null;
       await invalidateAll();
     } catch (failure) {
       failed = failure instanceof RunCommandError ? failure.message : 'The answer did not go.';
     } finally {
-      answering = null;
+      answering = false;
     }
   }
+
+  /** Where an approval comes from: its project, and its session's prompt. */
+  const origin = (waiting: Approval) =>
+    [waiting.project ?? 'No project', waiting.prompt].filter((part) => part !== null).join(' · ');
 </script>
 
 <h2>Pending</h2>
@@ -40,42 +76,22 @@
 {/if}
 {#if board.approvals.length}
   <h3>Approvals</h3>
-  {#if failed}<p class="error quiet" role="alert">{failed}</p>{/if}
   <ul>
     {#each board.approvals as waiting (`${waiting.session}:${waiting.approval}`)}
       {@const said = Runs.ask(waiting.ask)}
       <li>
-        <span class="muted"
-          >{[waiting.project ?? 'no project', waiting.prompt]
-            .filter((part) => part !== null)
-            .join(' · ')}</span
-        >
+        <span class="muted">{origin(waiting)}</span>
         <span>{said.action}</span>
         {#if said.detail}<code class="ask">{said.detail}</code>{/if}
-        {#if said.reason}<span class="muted">{said.reason}</span>{/if}
         <span class="actions">
           {#if waiting.ask.kind === 'questions'}
-            <!-- Questions are answered in their session, or skipped here. -->
+            <!-- Questions are answered in their session. -->
             <a
               class="button primary small"
               href={Sessions.deskHref(waiting.project, { session: waiting.session })}>Answer</a
             >
-            <button
-              class="button small"
-              disabled={answering !== null}
-              onclick={() => void answer(waiting, 'decline')}>Skip</button
-            >
           {:else}
-            <button
-              class="button primary small"
-              disabled={answering !== null}
-              onclick={() => void answer(waiting, 'accept')}>Approve</button
-            >
-            <button
-              class="button small"
-              disabled={answering !== null}
-              onclick={() => void answer(waiting, 'decline')}>Decline</button
-            >
+            <button class="button primary small" onclick={() => review(waiting)}>Review…</button>
             <a
               class="button small"
               href={Sessions.deskHref(waiting.project, { session: waiting.session })}
@@ -83,6 +99,42 @@
             >
           {/if}
         </span>
+      </li>
+    {/each}
+  </ul>
+{/if}
+{#if reviewing}
+  {@const waiting = reviewing}
+  {@const said = Runs.ask(waiting.ask)}
+  <Modal title={said.action} eyebrow={origin(waiting)} onclose={() => (reviewing = null)}>
+    {#if said.detail}<pre class="detail mono">{said.detail}</pre>{/if}
+    {#if waiting.ask.kind === 'command' && waiting.ask.cwd}<span class="muted mono"
+        >in {waiting.ask.cwd}</span
+      >{/if}
+    {#if said.reason}<p class="reason">{said.reason}</p>{/if}
+    {#if failed}<p class="error quiet" role="alert">{failed}</p>{/if}
+    {#snippet actions()}
+      {#each answers as decision (decision)}
+        {@const words = Runs.decision(decision)}
+        <button
+          class="button small"
+          class:primary={decision === 'accept'}
+          disabled={answering}
+          title={words.hint}
+          onclick={() => void answer(waiting, decision)}>{words.label}</button
+        >
+      {/each}
+    {/snippet}
+  </Modal>
+{/if}
+{#if board.signedOut.length}
+  <h3>Signed out</h3>
+  <ul>
+    {#each board.signedOut as client (client.harness)}
+      <li>
+        <span>{harnessLabel(client.harness)}</span>
+        <span class="muted">Runs cannot start with it until it is signed in on this host.</span>
+        <span class="actions"><a class="button primary small" href="/tools">Sign in…</a></span>
       </li>
     {/each}
   </ul>
@@ -133,6 +185,19 @@
 {/if}
 
 <style>
+  .detail {
+    margin: 0;
+    padding: 10px 12px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    background: var(--surface-inset);
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .reason {
+    margin: 0;
+  }
   h2 {
     margin: 0;
     padding: 12px 16px;

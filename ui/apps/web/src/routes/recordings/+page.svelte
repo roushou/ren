@@ -10,7 +10,9 @@
   import { RecordingList, type RecordingRow } from '#lib/recordings.ts';
   import { Board } from '#lib/board.ts';
   import Icon from '#lib/Icon.svelte';
-  import StateGlyph from '#lib/StateGlyph.svelte';
+  import Glyph from '#lib/Glyph.svelte';
+  import SlideOver from '#lib/layer/SlideOver.svelte';
+  import RecordingPreview from '#lib/RecordingPreview.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import SkeletonRows from '#lib/SkeletonRows.svelte';
   import type { Column } from '#lib/columns.ts';
@@ -26,8 +28,10 @@
   const tableColumns: Column[] = [
     { label: 'Recording' },
     { label: 'Now' },
+    { label: 'Day' },
     { label: 'Requests', numeric: true },
     { label: 'Turns', numeric: true },
+    { label: 'Err', numeric: true },
     { label: 'Tokens in · out', numeric: true },
     { label: 'Active for', numeric: true },
   ];
@@ -51,10 +55,17 @@
   );
   const shown = $derived(list.groups.reduce((sum, group) => sum + group.rows.length, 0));
   const recordingHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
+  /** The recording whose report shows beside the list. */
+  let previewing = $state<RecordingRow | null>(null);
+  /** A plain click on a row previews it; a modified click, or its link
+   * opened elsewhere, goes to its page. */
   function open(event: MouseEvent, row: RecordingRow) {
-    if (event.target instanceof Element && event.target.closest('a,button,summary')) return;
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+      return;
+    if (event.target instanceof Element && event.target.closest('button,summary')) return;
     if (window.getSelection()?.toString()) return;
-    void goto(recordingHref(row.recording.id));
+    event.preventDefault();
+    previewing = previewing?.recording.id === row.recording.id ? null : row;
   }
 </script>
 
@@ -95,9 +106,11 @@
 
 {#snippet columns()}
   <colgroup
-    ><col class="col-recording" /><col class="col-now" /><col class="col-requests" /><col
-      class="col-turns"
-    /><col class="col-tokens" /><col class="col-active" /></colgroup
+    ><col class="col-recording" /><col class="col-now" /><col class="col-day" /><col
+      class="col-requests"
+    /><col class="col-turns" /><col class="col-errors" /><col class="col-tokens" /><col
+      class="col-active"
+    /></colgroup
   >
 {/snippet}
 
@@ -122,21 +135,40 @@
             class="provider-mark tiny {recording.provider}"
             title={providerName(recording.provider)}>{providerMark(recording.provider)}</span
           >
-          {#if recording.error_count}<span class="recording-errors"
-              >{num(recording.error_count)} error{recording.error_count === 1 ? '' : 's'}</span
-            >{/if}
         </span>
       </a>
     </td>
     <td class="recording-now mono">
       {#if row.now.kind === 'open'}<span class="now-open state-{row.now.mark}"
-          ><StateGlyph mark={row.now.mark} />{row.now.label}</span
+          ><Glyph mark={row.now.mark} label={row.now.label} /></span
         >{:else if row.now.kind === 'recent'}<span class="now-recent"
           ><span class="recent-dot"></span>active {ago(row.now.at, now)}</span
         >{:else}<span class="muted" title={clock(row.now.at)}>{clock(row.now.at)}</span>{/if}
     </td>
+    <td class="day-cell"
+      ><svg class="day-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"
+        ><rect class="day-whole" width="100" height="6" />{#each [25, 50, 75] as tick (tick)}<rect
+            class="day-tick"
+            x={tick}
+            width="0.4"
+            height="6"
+          />{/each}<rect
+          class="day-span state-{row.now.kind === 'open' ? row.now.mark : row.now.kind}"
+          x={row.day.from * 100}
+          width={Math.max(0.8, (row.day.to - row.day.from) * 100)}
+          height="6"
+        /></svg
+      ></td
+    >
     <td class="numeric mono sized">{num(recording.call_count)}{@render bar(row.requests)}</td>
     <td class="numeric mono">{num(recording.turn_count)}</td>
+    <td class="numeric mono"
+      >{#if recording.error_count}<span class="errors"
+          ><Glyph mark="failed" label="{recording.error_count} failed" />{num(
+            recording.error_count,
+          )}</span
+        >{:else}<span class="muted">—</span>{/if}</td
+    >
     <td
       class="numeric mono sized"
       title="Provider reported; input includes cached context. Not subscription allowance or charges."
@@ -150,6 +182,49 @@
 {/snippet}
 
 <Toolbar {scope} />
+{#if !pending && list.summary.recordings}
+  {@const summary = list.summary}
+  <section class="summary" aria-label="The listed recordings at a glance">
+    <div class="tile">
+      <span class="cap">Recordings</span><span class="mono big">{num(summary.recordings)}</span>
+    </div>
+    <div class="tile">
+      <span class="cap">Open now</span><span class="mono big"
+        >{#if summary.open}<Glyph mark="responding" label={true} />{/if}{num(summary.open)}</span
+      >
+    </div>
+    <div class="tile">
+      <span class="cap">Requests</span><span class="mono big">{num(summary.requests)}</span>
+    </div>
+    <div class="tile">
+      <span class="cap">Errors</span><span class="mono big"
+        >{#if summary.errors}<Glyph mark="failed" label={true} />{/if}{num(summary.errors)}</span
+      >
+    </div>
+    <div class="tile">
+      <span class="cap">Tokens in</span><span class="mono big"
+        >{compactOrDash(summary.tokensIn)}</span
+      >
+    </div>
+    <div class="clients">
+      <span class="cap">Clients · share of requests</span>
+      <svg class="client-bar" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"
+        >{#each summary.clients as client, index (client.client)}<rect
+            class="client-{index % 4}"
+            x={summary.clients.slice(0, index).reduce((sum, one) => sum + one.share, 0) * 100}
+            width={client.share * 100}
+            height="8"
+          />{/each}</svg
+      >
+      <span class="client-legend"
+        >{#each summary.clients.slice(0, 4) as client, index (client.client)}<span
+            ><span class="swatch client-{index % 4}"></span>{client.client}
+            {Math.round(client.share * 100)}%</span
+          >{/each}</span
+      >
+    </div>
+  </section>
+{/if}
 <section class="panel list-panel recordings-panel">
   <div class="list-content">
     {#if pending || shown || list.folded.length}
@@ -167,7 +242,7 @@
           {#each list.groups as group (group.key)}
             <tbody>
               <tr class="day-row"
-                ><th colspan="6">{group.label}<span class="muted"> · {group.rows.length}</span></th
+                ><th colspan="8">{group.label}<span class="muted"> · {group.rows.length}</span></th
                 ></tr
               >
               {#each group.rows as each (each.recording.id)}{@render row(each)}{/each}
@@ -215,6 +290,11 @@
           >{/if}
       </div>{/if}
   </div>
+  {#if previewing}
+    <SlideOver label="Recording report" pin="report" onclose={() => (previewing = null)}>
+      <RecordingPreview row={previewing} />
+    </SlideOver>
+  {/if}
 </section>
 
 <style>
@@ -288,11 +368,127 @@
   .recording-folder {
     color: var(--ink);
   }
-  .recording-errors {
-    padding: 0 5px;
-    border: 1px solid currentColor;
-    border-radius: 2px;
-    color: var(--error);
+  .errors {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .col-day {
+    width: 120px;
+  }
+  .col-errors {
+    width: 56px;
+  }
+  .day-cell {
+    padding-inline: 8px;
+  }
+  .day-bar {
+    display: block;
+    width: 100%;
+    height: 6px;
+  }
+  .day-whole {
+    fill: var(--surface-inset);
+  }
+  .day-tick {
+    fill: var(--line);
+  }
+  .day-span {
+    fill: color-mix(in srgb, var(--chart) 70%, transparent);
+  }
+  .day-span.state-responding,
+  .day-span.state-recent {
+    fill: var(--live);
+  }
+  .recordings-panel {
+    position: relative;
+  }
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(240px, 2fr);
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    font-size: 11.5px;
+  }
+  .tile,
+  .clients {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 14px;
+    border-right: 1px solid var(--line);
+  }
+  .clients {
+    border-right: 0;
+  }
+  .cap {
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .big {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 17px;
+  }
+  .client-bar {
+    width: 100%;
+    height: 8px;
+    background: var(--surface-inset);
+  }
+  .client-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+    color: var(--muted);
+  }
+  .client-legend > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .swatch {
+    width: 8px;
+    height: 8px;
+  }
+  .client-0 {
+    fill: var(--accent);
+    background: var(--accent);
+  }
+  .client-1 {
+    fill: var(--role-tool);
+    background: var(--role-tool);
+  }
+  .client-2 {
+    fill: var(--success);
+    background: var(--success);
+  }
+  .client-3 {
+    fill: var(--muted);
+    background: var(--muted);
+  }
+  /* Narrower, the day bar and the time active go first, so the recording
+     keeps its width; the summary takes two rows, then three. */
+  @media (max-width: 1200px) {
+    .recordings-table .col-day,
+    .recordings-table .day-cell,
+    .recordings-table .col-active,
+    .recordings-table td:last-child,
+    .recordings-table th:last-child {
+      display: none;
+    }
+  }
+  @media (max-width: 960px) {
+    .summary {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+    .clients {
+      grid-column: 1 / -1;
+      border-top: 1px solid var(--line);
+    }
   }
   .recording-now {
     font-size: 11.5px;
@@ -378,6 +574,12 @@
     }
     .day-row th {
       display: table-cell !important;
+    }
+  }
+  /* Last, so it wins over the 960px rule above on a phone. */
+  @media (max-width: 560px) {
+    .summary {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
 </style>

@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import Glyph from '#lib/Glyph.svelte';
+  import { Marks } from '#lib/marks.ts';
+  import { harnessLabel } from '#lib/activity.ts';
+  import Toasts from '#lib/layer/Toasts.svelte';
+  import { toasts } from '#lib/layer/toasts.svelte.ts';
+  import Popover from '#lib/layer/Popover.svelte';
+  import CommandPalette from '#lib/layer/CommandPalette.svelte';
+  import PendingPanel from '#lib/PendingPanel.svelte';
+  import { ProjectBoard } from '#lib/projects.ts';
+  import { onMount, untrack } from 'svelte';
   import { beforeNavigate, goto, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import { createSettled, createSnapshot } from '#lib/snapshot.svelte.ts';
@@ -16,7 +25,7 @@
   import { GatewayPlace, type Network } from '#lib/place.ts';
   import { RecorderReport } from '#lib/recorder.ts';
   import { ReleaseLine } from '#lib/release.ts';
-  import { PageEvidence } from '#lib/work.ts';
+  import { PageEvidence, Work } from '#lib/work.ts';
   import CopyButton from '#lib/CopyButton.svelte';
   import RedlineLayer from 'redline/RedlineLayer.svelte';
   import BriefingPanel from '#lib/BriefingPanel.svelte';
@@ -115,11 +124,61 @@
   const tab = $derived(Views.tab(target ?? view));
   /** The header's place the page is in, and so the row of pages under it. */
   const destination = $derived(Views.destination(tab));
+  /** What waits on the operator, across every project: the top bar's Pending. */
+  const board = $derived(
+    new ProjectBoard(
+      data.board.projects,
+      data.board.work,
+      data.board.live,
+      data.board.sessions,
+      null,
+      data.board.clients,
+    ),
+  );
+  /** What newly waits on the operator, said as a toast as it arrives:
+   * unless the page that says it is the one on screen. The first board says
+   * nothing; it is where the operator starts. */
+  let lastBoard: ProjectBoard | null = null;
+  $effect(() => {
+    const now = board;
+    const before = lastBoard;
+    lastBoard = now;
+    if (!before) return;
+    const here = untrack(() => `${page.url.pathname}${page.url.search}`);
+    for (const said of ProjectBoard.news(before, now))
+      if (said.link?.href !== here) toasts.show(said);
+  });
+  /** Whether ⌘K's palette is open. */
+  let commanding = $state(false);
+  function shortcut(event: KeyboardEvent) {
+    if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey) && !event.altKey) {
+      event.preventDefault();
+      commanding = true;
+    }
+  }
   /** The project whose pages the row shows, inside one. */
   const inProject = $derived.by(() => {
     const to = navigating.to ?? page;
     return to.route.id?.startsWith('/projects/[name]') ? (to.params?.name ?? null) : null;
   });
+  /** The last project visited, for the way back from Inspect and Host. */
+  let lastProject = $state<string | null>(null);
+  $effect(() => {
+    if (inProject) lastProject = inProject;
+  });
+  /** How recording stands on this host, for the top bar's health mark. */
+  const hostReport = $derived(
+    health
+      ? new RecorderReport(
+          health.recorder,
+          storage?.usage ?? null,
+          storage?.policy ?? null,
+          null,
+          Date.now(),
+        )
+      : null,
+  );
+  const hostVerdict = $derived(hostReport?.verdict ?? null);
   /** The project an Inspect page is narrowed to, when it can be. */
   const scope = $derived(Views.scoped(tab) ? page.url.searchParams.get('project') : null);
   /** The same page, for every project. */
@@ -247,6 +306,8 @@
   });
 </script>
 
+<svelte:window onkeydown={shortcut} />
+
 <svelte:head><title>Ren - {pageTitle}</title></svelte:head>
 <div class="app-shell">
   <header class="workbench-header">
@@ -261,23 +322,142 @@
         >{#if marked}<span class="instance-badge">{marked.tag}</span>{/if}</span
       ></a
     >
-    <nav class="workbench-tabs" aria-label="Ren" bind:this={tabs}>
-      {#each Views.destinations as place (place.destination)}
+    <nav class="workbench-context" aria-label="Where you are" bind:this={tabs}>
+      {#if destination === 'projects' && inProject}
+        <button class="project-pick" popovertarget="project-picker" title="Switch project"
+          ><Icon name="branch" size={13} /><strong>{inProject}</strong><Icon
+            name="chevron"
+            size={10}
+          /></button
+        >
+        <Popover id="project-picker" label="Projects" align="left">
+          <ul class="project-list">
+            {#each board.active as project (project.id)}
+              <li>
+                <a
+                  href={ProjectBoard.href(project.name)}
+                  aria-current={project.name === inProject ? 'page' : undefined}
+                  ><Glyph
+                    mark={board.approvals.some((waiting) => waiting.project === project.name)
+                      ? 'yours'
+                      : project.running
+                        ? 'responding'
+                        : 'idle'}
+                    label={true}
+                  /><span>{project.name}</span></a
+                >
+              </li>
+            {/each}
+            <li class="all"><a href="/">All projects</a></li>
+          </ul>
+        </Popover>
+      {:else if destination !== 'projects'}
+        <span class="mode-name"
+          ><Icon name={destinationIcons[destination]} size={13} />{Views.destinations.find(
+            (place) => place.destination === destination,
+          )?.label}</span
+        >
+      {/if}
+      {#each Views.pages(destination, inProject) as link (link.tab)}
+        <a
+          href={Views.scopedHref(link, scope)}
+          data-sveltekit-preload-data="hover"
+          class:active={tab === link.tab}
+          aria-current={tab === link.tab ? 'page' : undefined}
+          >{link.label}{#if link.tab === 'recorder' && (loss || degraded)}<Glyph
+              mark="warning"
+              label="Recording needs attention"
+            />{/if}</a
+        >
+      {/each}
+      {#if destination !== 'projects'}
+        <a class="back" href={lastProject ? ProjectBoard.href(lastProject) : '/'}
+          ><span aria-hidden="true">←</span>{lastProject ?? 'Projects'}</a
+        >
+      {/if}
+    </nav>
+    <button class="command-open" onclick={() => (commanding = true)}
+      ><Icon name="search" size={13} /><span>Go to anything</span><kbd>⌘K</kbd></button
+    >
+    <button
+      class="pending-open"
+      class:waiting={board.waiting > 0}
+      popovertarget="pending-popover"
+      aria-label={board.waiting ? `Pending: ${board.waiting}` : 'Pending: nothing waits on you'}
+      ><Glyph mark={board.waiting ? 'yours' : 'idle'} />Pending{#if board.waiting}<span
+          class="pending-count mono">{board.waiting}</span
+        >{/if}</button
+    >
+    <Popover id="pending-popover" label="Pending" width="wide"><PendingPanel {board} /></Popover>
+    <nav class="mode-links" aria-label="Inspect and host">
+      {#each Views.destinations.filter((place) => place.destination !== 'projects') as place (place.destination)}
         <a
           href={place.href}
           data-sveltekit-preload-data="hover"
           class:active={destination === place.destination}
           aria-current={destination === place.destination ? 'page' : undefined}
-          ><Icon
-            name={destinationIcons[place.destination]}
-            size={14}
-          />{place.label}{#if place.destination === 'host' && (loss || degraded)}<span
-              class="warning"
-              aria-label="Recording needs attention">!</span
-            >{/if}</a
+          ><Icon name={destinationIcons[place.destination]} size={13} />{place.label}</a
         >
       {/each}
+      <button
+        class="host-health"
+        popovertarget="host-popover"
+        aria-label="Host health: {hostVerdict?.headline ?? 'not read yet'}"
+        title={hostVerdict?.headline ?? 'Host health'}
+        ><Glyph
+          mark={board.signedOut.length && hostVerdict?.tone === 'success'
+            ? 'warning'
+            : hostVerdict
+              ? Marks.ofTone(hostVerdict.tone)
+              : 'waiting'}
+        /></button
+      >
     </nav>
+    <Popover id="host-popover" label="Host health">
+      <div class="host-card">
+        {#if hostReport && hostVerdict}
+          <p class="host-verdict">
+            <Glyph mark={Marks.ofTone(hostVerdict.tone)} label={true} /><strong
+              >{hostVerdict.headline}</strong
+            >
+          </p>
+          {#if hostVerdict.facts.length}<p class="muted">{hostVerdict.facts.join(' · ')}</p>{/if}
+          <dl class="host-gauges">
+            {#each hostReport.gauges.filter((gauge) => gauge.share !== null) as gauge (gauge.label)}
+              <div>
+                <dt>
+                  {gauge.label}{#if gauge.binding}<Glyph
+                      mark="warning"
+                      label="Retention prunes for this limit first"
+                    />{/if}
+                </dt>
+                <dd>
+                  <svg viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"
+                    ><rect class="gauge-whole" width="100" height="4" /><rect
+                      class="gauge-used"
+                      class:high={(gauge.share ?? 0) > 0.8}
+                      width={Math.min(100, (gauge.share ?? 0) * 100)}
+                      height="4"
+                    /></svg
+                  ><span class="mono">{gauge.used} of {gauge.limit}</span>
+                </dd>
+              </div>
+            {/each}
+          </dl>
+        {:else}<p class="muted">The gateway's health has not been read yet.</p>{/if}
+        {#each board.signedOut as client (client.harness)}
+          <p class="host-verdict">
+            <Glyph mark="warning" label="Signed out" /><span
+              >{harnessLabel(client.harness)} is signed out on this host</span
+            >
+          </p>
+        {/each}
+        <p class="host-links">
+          <a href="/recorder">Recorder <Icon name="arrow" size={11} /></a>
+          <a href="/tools">Tools <Icon name="arrow" size={11} /></a>
+        </p>
+      </div>
+    </Popover>
     <button
       class="gateway-place mono"
       class:public={place.network === 'public'}
@@ -286,9 +466,10 @@
         GatewayPlace.networkLabel(place.network)}, reached over {GatewayPlace.networkLabel(
         place.network,
       )}. {error ? 'The management API is not answering. ' : ''}Connect a client"
-      ><span class="status-dot" class:error={!!error} class:neutral={!updated && !error}
-      ></span>{#if place.node && place.network !== 'loopback'}<b>{place.node}</b><span
-          class="gateway-sep">·</span
+      ><Glyph
+        mark={error ? 'failed' : updated ? 'passed' : 'waiting'}
+      />{#if place.node && place.network !== 'loopback'}<b>{place.node}</b><span class="gateway-sep"
+          >·</span
         >{/if}<Icon name={networkIcons[place.network]} size={12} /><span
         >{place.network === 'loopback'
           ? 'this machine'
@@ -308,28 +489,21 @@
     </div>
     <ThemeControl />
   </header>
-  <nav
-    class="page-row"
-    aria-label={Views.destinations.find((place) => place.destination === destination)?.label}
-  >
-    {#if inProject}
-      <span class="crumb"
-        ><a href="/">Projects</a><span class="muted">/</span><strong>{inProject}</strong></span
-      >
-    {/if}
-    {#each Views.pages(destination, inProject) as link (link.tab)}
-      <a
-        href={Views.scopedHref(link, scope)}
-        data-sveltekit-preload-data="hover"
-        class:active={tab === link.tab}
-        aria-current={tab === link.tab ? 'page' : undefined}
-        >{link.label}{#if link.tab === 'recorder' && (loss || degraded)}<span
-            class="warning"
-            aria-label="Recording needs attention">!</span
-          >{/if}</a
-      >
-    {/each}
-  </nav>
+  {#if commanding}<CommandPalette
+      projects={board.active}
+      sources={{
+        promotable: board.toPromote.flatMap((project) =>
+          project.factory === 'ren' && project.release?.canary
+            ? [{ project: project.name, commit: project.release.canary.commit }]
+            : [],
+        ),
+        work: board.work.map((item) => {
+          const home = board.homeOf(item);
+          return { title: item.title, project: home, href: home ? Work.href(home, item.id) : null };
+        }),
+      }}
+      onclose={() => (commanding = false)}
+    />{/if}
   {#if scope}
     <div class="scope-row" role="status">
       <span>Project <a href={`/projects/${encodeURIComponent(scope)}`}>{scope}</a></span>
@@ -345,6 +519,7 @@
   <main class="workspace" class:navigating={!!navigating.to} aria-busy={!!navigating.to}>
     {@render children()}
   </main>
+  <Toasts />
   <footer class="statusline" class:redlining={redline.open} aria-label="Gateway status">
     <span
       class="read-only"
@@ -357,7 +532,7 @@
       class="connection-state"
       title={error ||
         'Last successful management API snapshot; does not establish upstream availability.'}
-      ><span class="status-dot" class:error={!!error} class:neutral={!updated}></span>{error
+      ><Glyph mark={error ? 'failed' : updated ? 'passed' : 'waiting'} />{error
         ? incompatible
           ? 'API version mismatch'
           : 'Snapshot failed'

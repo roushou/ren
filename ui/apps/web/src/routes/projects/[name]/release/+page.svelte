@@ -10,9 +10,13 @@
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
   import Icon from '#lib/Icon.svelte';
+  import Modal from '#lib/layer/Modal.svelte';
+  import { toasts } from '#lib/layer/toasts.svelte.ts';
   import { invalidateAll } from '$app/navigation';
+  import { untrack } from 'svelte';
   import { page } from '$app/state';
-  import { ReleaseLine, ReleaseApi, ReleasePage } from '#lib/release.ts';
+  import { Promotion, ReleaseLine, ReleaseApi, ReleasePage } from '#lib/release.ts';
+  import Glyph from '#lib/Glyph.svelte';
   import { Work } from '#lib/work.ts';
   import type { ReleaseView } from '#lib/api.ts';
   import type { PageProps } from './$types';
@@ -25,22 +29,43 @@
   const shipped = $derived(view ? view.shipped(data.work) : []);
   const waiting = $derived(ReleasePage.waiting(data.work));
   let asking = $state(false);
-  let error = $state<string | null>(null);
+  /** The canary build the operator is asked to confirm promoting. */
+  let confirming = $state<string | null>(null);
 
   async function promote(commit: string) {
-    error = null;
+    confirming = null;
     asking = true;
     try {
       await new ReleaseApi(fetch).promote(commit);
+      toasts.show({
+        mark: 'passed',
+        text: `Promotion of ${ReleasePage.short(commit)} asked`,
+        detail: 'The factory installs it on its next pass.',
+      });
       await invalidateAll();
     } catch (failure) {
-      error = failure instanceof Error ? failure.message : 'The promotion was not asked for.';
+      toasts.show({
+        mark: 'failed',
+        text: 'The promotion was not asked for',
+        detail: failure instanceof Error ? failure.message : null,
+      });
     } finally {
       asking = false;
     }
   }
 
   const decided = (release: ReleaseView) => ReleaseLine.decision(release);
+  // Arriving from ⌘K's Promote: ask, as the button would, once the canary
+  // it names can be promoted; the modal still decides.
+  let prompted: string | null = null;
+  $effect(() => {
+    const asked = page.url.searchParams.get('promote');
+    const canary = view?.release.canary?.commit ?? null;
+    if (!asked || asked === prompted || asked !== canary || !view?.promotable) return;
+    if (!page.data.runsControl) return;
+    prompted = asked;
+    untrack(() => (confirming = asked));
+  });
 </script>
 
 {#snippet scope()}
@@ -73,31 +98,48 @@
     </p>
   {:else}
     {@const release = view.release}
-    {@const [decision, tone] = decided(release)}
-    <div class="lanes" aria-label="Builds">
-      <div class="lane">
-        <span class="lane-label">Production</span>
-        <span class="lane-commit mono">{ReleasePage.short(view.production)}</span>
-        <span class="lane-note">{view.behind}</span>
-      </div>
-      <div class="lane">
-        <span class="lane-label">Canary</span>
-        <span class="lane-commit mono">{ReleasePage.short(release.canary?.commit ?? null)}</span>
-        <span
-          class="lane-note"
-          class:ok={release.canary?.passed}
-          class:bad={release.canary && !release.canary.passed}
-          >{release.canary ? (release.canary.passed ? 'passed' : 'failed') : 'none checked'}</span
-        >
-      </div>
+    {@const [decision] = decided(release)}
+    {@const promotion = Promotion.of(release.decision)}
+    <div class="lanes" aria-label="Where a change moves">
       <div class="lane">
         <span class="lane-label">Main</span>
         <span class="lane-commit mono">{ReleasePage.short(release.main)}</span>
         <span class="lane-note">its tip, as the factory last fetched it</span>
       </div>
+      <span class="arrow" aria-hidden="true"><Icon name="arrow" size={14} /></span>
+      <div class="lane">
+        <span class="lane-label">Canary</span>
+        <span class="lane-commit mono">{ReleasePage.short(release.canary?.commit ?? null)}</span>
+        {#if release.canary}
+          {@const checks = release.canary.checks}
+          <span class="check-blocks" aria-hidden="true"
+            >{#each checks as check, index (index)}<span class:failed={!check.passed}
+              ></span>{/each}</span
+          >
+          <span class="lane-figure mono"
+            ><Glyph
+              mark={release.canary.passed ? 'passed' : 'failed'}
+              label={release.canary.passed ? 'Passed' : 'Failed'}
+            />{checks.filter((check) => check.passed).length}/{checks.length}</span
+          >
+        {:else}<span class="lane-note">none checked</span>{/if}
+      </div>
+      <span class="arrow" aria-hidden="true"><Icon name="arrow" size={14} /></span>
+      <div class="lane">
+        <span class="lane-label">Production</span>
+        <span class="lane-commit mono">{ReleasePage.short(view.production)}</span>
+        {#if release.behind}<span
+            class="behind mono"
+            title="Production is {view.behind}"
+            aria-label="Production is {view.behind}">↓{release.behind}</span
+          >{:else}<span class="lane-note">{view.behind}</span>{/if}
+      </div>
+      <span class="arrow" aria-hidden="true"><Icon name="arrow" size={14} /></span>
       <div class="lane decision">
-        <span class="lane-label">Promotion · {release.policy}</span>
-        <span class="lane-decision tone-{tone}">{decision}</span>
+        <span class="lane-label">Decision · {release.policy}</span>
+        <span class="lane-decision" title={decision}
+          ><Glyph mark={promotion.mark} label={promotion.sentence} />{promotion.word}</span
+        >
         {#if view.asked}
           <span class="lane-note">Asked: the factory's next pass installs it.</span>
         {:else if view.promotable && release.canary && data.project.factory !== 'ren'}
@@ -110,11 +152,10 @@
             title={page.data.runsControl
               ? 'The factory installs it on its next pass, with the install’s steps'
               : 'This UI only reads: give it the control token to promote'}
-            onclick={() => void promote(commit)}
-            >{asking ? 'Asking…' : `Promote ${ReleasePage.short(commit)}`}</button
+            onclick={() => (confirming = commit)}
+            >{asking ? 'Asking…' : `Promote ${ReleasePage.short(commit)}…`}</button
           >
         {/if}
-        {#if error}<span class="error" role="alert">{error}</span>{/if}
       </div>
     </div>
 
@@ -181,6 +222,38 @@
   {/if}
 </section>
 
+{#if confirming && view}
+  {@const commit = confirming}
+  {@const release = view.release}
+  <Modal
+    eyebrow="Release · {data.project.name}"
+    title="Promote {ReleasePage.short(commit)} to production?"
+    onclose={() => (confirming = null)}
+  >
+    <p>
+      {release.behind === null
+        ? 'Production runs a build that is not on main.'
+        : `Production is ${release.behind} ${release.behind === 1 ? 'commit' : 'commits'} behind main; this build brings it to the canary's.`}
+    </p>
+    {#if release.canary}
+      <p class="muted">
+        The canary passed {release.canary.checks.filter((c) => c.passed).length} of {release.canary
+          .checks.length} checks. The policy is {release.policy}.
+      </p>
+    {/if}
+    {#if waiting.length}
+      <ul class="promoting">
+        {#each waiting as item (item.id)}<li>{item.title}</li>{/each}
+      </ul>
+    {/if}
+    <p class="muted">The factory installs it on its next pass, with the install's steps.</p>
+    {#snippet actions()}
+      <button class="button" onclick={() => (confirming = null)}>Cancel</button>
+      <button class="button primary" onclick={() => void promote(commit)}>Promote</button>
+    {/snippet}
+  </Modal>
+{/if}
+
 <style>
   .release {
     flex: 1;
@@ -190,8 +263,44 @@
   }
   .lanes {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.6fr);
+    grid-template-columns:
+      minmax(0, 1fr) 24px minmax(0, 1fr) 24px minmax(0, 1fr) 24px
+      minmax(0, 1.4fr);
+    align-items: stretch;
     border-bottom: 1px solid var(--line);
+  }
+  .arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+  }
+  .check-blocks {
+    display: flex;
+    gap: 2px;
+  }
+  .check-blocks span {
+    flex: 1;
+    max-width: 18px;
+    height: 6px;
+    background: var(--success);
+  }
+  .check-blocks span.failed {
+    background: var(--error);
+  }
+  .lane-figure,
+  .lane-decision {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .behind {
+    align-self: flex-start;
+    padding: 0 6px;
+    border: 1px solid var(--warning);
+    border-radius: 2px;
+    color: var(--warning);
+    font-size: 12px;
   }
   .lane {
     display: flex;
@@ -200,9 +309,7 @@
     padding: 12px 16px;
     min-width: 0;
   }
-  .lane + .lane {
-    border-left: 1px solid var(--line);
-  }
+
   .lane-label {
     font-size: 11px;
     font-weight: 600;
@@ -216,17 +323,6 @@
   .lane-note {
     color: var(--muted);
     font-size: 12px;
-  }
-  .lane-note.ok,
-  .tone-ok {
-    color: var(--success);
-  }
-  .lane-note.bad,
-  .tone-bad {
-    color: var(--error);
-  }
-  .tone-warning {
-    color: var(--warning);
   }
   .decision {
     align-items: flex-start;
@@ -321,6 +417,11 @@
   .empty {
     padding: 16px;
   }
+  .promoting {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 12.5px;
+  }
   .error {
     color: var(--error);
   }
@@ -332,10 +433,13 @@
     .work-columns {
       grid-template-columns: minmax(0, 1fr);
     }
-    .lane + .lane,
     .work-columns > div + div {
       border-left: none;
       border-top: 1px solid var(--line);
+    }
+    .arrow {
+      transform: rotate(90deg);
+      padding: 2px 0;
     }
   }
 </style>

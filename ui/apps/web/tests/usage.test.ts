@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  HourGrid,
   axisTicks,
   cacheShare,
   measureValue,
@@ -104,4 +105,28 @@ test('measures and cache share read the right numbers', () => {
     cacheShare({ ...counts, tokens: { input: null, output: null, cache_read: null } }),
     null,
   );
+});
+
+test('the hour grid places each hour’s calls in its local day and hour, over the last week', () => {
+  const DAY = 86_400_000;
+  const HOUR = 3_600_000;
+  const dayStart = (ms: number) => Math.floor(ms / DAY) * DAY;
+  const hourOf = (ms: number) => Math.floor((ms % DAY) / HOUR);
+  const now = 20 * DAY + 15 * HOUR;
+  const bucket = (start: number, calls: number) =>
+    ({ start, calls, errors: 0, tokens: { input: null, output: null, cache_read: null } }) as never;
+  const grid = HourGrid.of(
+    [bucket(20 * DAY + 9 * HOUR, 4), bucket(14 * DAY + 23 * HOUR, 2), bucket(10 * DAY, 99)],
+    now,
+    dayStart,
+    hourOf,
+  );
+  assert.deepEqual(
+    grid.rows.map((row) => row.day / DAY),
+    [14, 15, 16, 17, 18, 19, 20],
+  );
+  assert.equal(grid.rows[6]?.cells[9], 4);
+  assert.equal(grid.rows[0]?.cells[23], 2);
+  // Older than the week: left out.
+  assert.equal(grid.busiest, 4);
 });
