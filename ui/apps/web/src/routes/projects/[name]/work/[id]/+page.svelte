@@ -47,11 +47,10 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 12px 16px;
-    max-width: 760px;
   }
   .error {
-    margin: 0 0 8px;
+    margin: 0;
+    padding: 8px 16px;
     color: var(--error);
   }
   .muted {

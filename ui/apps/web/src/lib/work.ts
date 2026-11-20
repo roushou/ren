@@ -16,6 +16,7 @@ import {
   object,
   string,
   unrecognised,
+  assertNever,
   ShapeError,
   type AnyDecoder,
   type Brand,
@@ -25,6 +26,7 @@ import { Redline, type Mark, type PageContext } from 'redline';
 import { Briefing, type BriefProject, type RenPage, type WorkPlace } from './briefing.ts';
 import { Refusals, type Refusal } from './refusal.ts';
 import { SessionId } from './runs.ts';
+import type { Mark as GlyphMark } from './marks.ts';
 import type { EvidenceBody as WireEvidence } from './wire/EvidenceBody.ts';
 import type { MarkedPageBody as WireMarkedPage } from './wire/MarkedPageBody.ts';
 import type { WorkAnswer as WireWorkAnswer } from './wire/WorkAnswer.ts';
@@ -63,6 +65,14 @@ export interface WorkOrder {
   page: MarkedPage;
   marks: WireWorkMark[];
   evidence: Evidence;
+}
+
+/** One step of a work item's way to production, as its page draws it. */
+export interface WayStep {
+  step: WorkState;
+  label: string;
+  detail: string | null;
+  mark: GlyphMark;
 }
 
 /** One work item, as the daemon keeps it. */
@@ -533,6 +543,52 @@ export class Work {
   }
 
   /** What a work item's state reads as. */
+  /** A work item's way to production, step by step: each reached step
+   * passed, the one it stands at marked as under way (or waiting), the rest
+   * still to come; a dismissed item stops where it was. */
+  static way(item: WorkItem): WayStep[] {
+    const order: WorkState[] = ['queued', 'sent', 'landed', 'shipped'];
+    const at = item.state === 'dismissed' ? -1 : order.indexOf(item.state as WorkState);
+    const reached = (index: number) =>
+      index === 0 ||
+      (index === 1 && item.session !== null) ||
+      (index === 2 && item.landed !== null) ||
+      (index === 3 && item.shipped !== null);
+    const detail = (step: WorkState): string | null => {
+      switch (step) {
+        case 'queued':
+          return `marked on ${item.order.page.path}`;
+        case 'sent':
+          return item.session ? 'its session works on it' : null;
+        case 'landed':
+          return item.landed ? `as ${item.landed.slice(0, 12)}` : null;
+        case 'shipped':
+          return item.shipped?.kind === 'commit'
+            ? `in production's build of ${item.shipped.commit.slice(0, 12)}`
+            : null;
+        case 'dismissed':
+          return null;
+        default:
+          return assertNever(step);
+      }
+    };
+    return order.map((step, index): WayStep => {
+      const mark: GlyphMark =
+        item.state === 'dismissed'
+          ? reached(index)
+            ? 'passed'
+            : 'idle'
+          : index < at || (index === at && step === 'shipped')
+            ? 'passed'
+            : index === at
+              ? step === 'queued'
+                ? 'queued'
+                : 'running'
+              : 'draft';
+      return { step, label: Work.state(step), detail: detail(step), mark };
+    });
+  }
+
   static state(state: Stored<WorkState>): string {
     switch (state) {
       case 'queued':
