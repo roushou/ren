@@ -1307,15 +1307,15 @@
       </div>
     {/if}
     {#if item.text}<Markdown text={item.text} />{/if}
-    <div class="outgoing-state" role="status">
-      {#if progress.kind === 'sending'}
+    {#if progress.kind === 'sending'}
+      <div class="outgoing-state" role="status">
         <span class="phase-dot tone-live"></span>
         {progress.starts === 'client' && session
           ? `Starting ${harnessLabel(session.harness)}…`
           : 'Sending…'}
-      {:else if progress.kind === 'sent'}
-        <Icon name="check" size={11} /> Sent
-      {:else}
+      </div>
+    {:else if progress.kind === 'refused' || progress.kind === 'unknown'}
+      <div class="outgoing-state" role="status">
         <Icon name="alert" size={12} />
         <span class="outgoing-reason"
           >{progress.kind === 'refused'
@@ -1329,8 +1329,8 @@
           title={progress.kind === 'unknown' ? 'It may arrive twice' : null}
           onclick={() => resend(item)}>Send again</button
         >
-      {/if}
-    </div>
+      </div>
+    {/if}
   </div>
 {/snippet}
 
