@@ -128,7 +128,7 @@ test('controls follow the state: prompt when idle, answer and interrupt while wo
 });
 
 test('the transcript streams a reply, then commands and file changes as items update', () => {
-  let transcript = new Transcript().prompted('fix the failing test');
+  let transcript = new Transcript();
   for (const value of [
     { kind: 'turn_started', turn: 'turn-1' },
     {
@@ -316,24 +316,6 @@ test('an echoed prompt keeps what each image sent with it is', () => {
   ]);
 });
 
-test('a prompt shows once, whether the echo or the local copy comes first', () => {
-  const echo = event({
-    kind: 'item',
-    phase: 'completed',
-    item: { id: 'u1', kind: 'user_message', read: { as: 'prompt', text: 'go' } },
-  });
-  const ended = event({ kind: 'turn_ended', turn: 't1', end: { kind: 'completed' } });
-  assert.deepEqual(new Transcript().apply(echo).prompted('go').entries, [
-    { kind: 'prompt', item: 'u1', text: 'go', images: [] },
-  ]);
-  assert.deepEqual(new Transcript().prompted('go').apply(echo).entries, [
-    { kind: 'prompt', item: 'u1', text: 'go', images: [] },
-  ]);
-  // The same words in a later turn are a new prompt.
-  const again = new Transcript().prompted('go').apply(ended).prompted('go');
-  assert.equal(again.entries.filter((entry) => entry.kind === 'prompt').length, 2);
-});
-
 test('a transcript joined mid-turn learns the turn when it ends', () => {
   const transcript = new Transcript()
     .apply(event({ kind: 'delta', item: 'm1', text: 'Done.' }))
@@ -463,10 +445,9 @@ test('the stored conversation and the live feed merge into one, nothing cut', ()
       phase: 'completed',
       item: { id, kind: 'user_message', read: { as: 'prompt', text } },
     });
-  // Live, before the read lands: a prompt sent from here, its echo, and the
-  // next reply streaming.
+  // Live, before the read lands: a prompt's echo, and the next reply
+  // streaming.
   const live = new Transcript()
-    .prompted('and the docs')
     .apply(prompt('u2', 'and the docs'), run as never)
     .apply(event({ kind: 'delta', item: 'm2', text: 'Upd' }), run as never);
   const loaded = live.load({
