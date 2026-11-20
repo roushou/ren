@@ -256,11 +256,11 @@ impl Slot {
                 endpoint: fake("github/graphql"),
                 repository: Self::PROJECTS
                     .iter()
+                    .chain(&["ren"])
                     .map(|project| {
                         Ok(WatchedRepository {
                             project: project.parse().map_err(|_| DevError::Config)?,
-                            github: project
-                                .replacen('-', "/", 1)
+                            github: format!("acme/{}", project.trim_start_matches("acme-"))
                                 .parse()
                                 .map_err(|_| DevError::Config)?,
                         })

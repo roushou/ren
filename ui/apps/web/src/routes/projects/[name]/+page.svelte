@@ -19,6 +19,7 @@
   import { ProjectBoard } from '#lib/projects.ts';
   import { ReleaseLine } from '#lib/release.ts';
   import { PullRequests } from '#lib/pulls.ts';
+  import { Previews, PreviewsApi } from '#lib/previews.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -40,6 +41,39 @@
   const pulls = $derived(data.pulls);
   /** The newest answer from GitHub, and whether it is current. */
   const seen = $derived(pulls ? PullRequests.sighting(pulls) : null);
+  const previews = $derived(data.previews);
+  const asked = $derived(previews ? Previews.asked(previews) : []);
+  const previewsApi = new PreviewsApi(fetch);
+  let askFor = $state('');
+  let askFailed = $state<string | null>(null);
+  const commitPattern = /^[0-9a-f]{40}$/;
+
+  async function ask(event: SubmitEvent) {
+    event.preventDefault();
+    const commit = askFor.trim().toLowerCase();
+    askFailed = null;
+    if (!commitPattern.test(commit)) {
+      askFailed = 'A commit is its 40 hex digits.';
+      return;
+    }
+    try {
+      await previewsApi.ask(commit);
+      askFor = '';
+      await invalidateAll();
+    } catch (failure) {
+      askFailed = failure instanceof Error ? failure.message : 'The ask was not recorded.';
+    }
+  }
+
+  async function withdraw(commit: string) {
+    askFailed = null;
+    try {
+      await previewsApi.withdraw(commit);
+      await invalidateAll();
+    } catch (failure) {
+      askFailed = failure instanceof Error ? failure.message : 'The ask was not withdrawn.';
+    }
+  }
   const base = $derived(ProjectBoard.href(project.name));
   const inspect = $derived(new URLSearchParams({ project: project.name }).toString());
 
@@ -168,6 +202,24 @@
                 {#each notes as [note, tone] (note)}
                   <span class="note tone-{tone}">{note}</span>
                 {/each}
+                {#if previews}
+                  {@const preview = Previews.ofPull(previews, pull.number)}
+                  {#if preview}
+                    {@const [said, tone] = Previews.note(preview)}
+                    {@const url = Previews.url(preview, page.url)}
+                    {#if url}
+                      <a class="note tone-{tone}" href={url} target="_blank" rel="noreferrer"
+                        >{said}</a
+                      >
+                    {:else}
+                      <span
+                        class="note tone-{tone}"
+                        title={preview.state.state === 'failed' ? preview.state.detail : undefined}
+                        >{said}</span
+                      >
+                    {/if}
+                  {/if}
+                {/if}
                 {#each pull.work_items as id (id)}
                   <a
                     class="note"
@@ -187,6 +239,51 @@
         {#if seen.sighting.truncated}
           <p class="empty">Only the most recently updated are listed.</p>
         {/if}
+      {/if}
+
+      {#if project.factory === 'ren' && previews}
+        <h2>Commit previews</h2>
+        {#if !asked.length}
+          <p class="empty">No commit is asked for: each open pull request has its own preview.</p>
+        {/if}
+        <ul class="rows">
+          {#each asked as { commit, preview } (commit)}
+            {@const [said, tone] = preview
+              ? Previews.state(preview)
+              : ['waiting for a slot', 'quiet']}
+            {@const url = preview ? Previews.url(preview, page.url) : null}
+            <li>
+              <span
+                class="tone-{tone}"
+                title={preview?.state.state === 'failed' ? preview.state.detail : undefined}
+                >{said}</span
+              >
+              <span class="mono">{Previews.short(commit)}</span>
+              <span class="notes"
+                >{#if url}<a href={url} target="_blank" rel="noreferrer">Open it</a>{/if}</span
+              >
+              <span class="when"
+                >{#if page.data.runsControl}<button
+                    class="button small"
+                    onclick={() => void withdraw(commit)}>Withdraw</button
+                  >{/if}</span
+              >
+            </li>
+          {/each}
+        </ul>
+        {#if page.data.runsControl}
+          <form class="ask" onsubmit={(event) => void ask(event)}>
+            <input
+              class="mono"
+              aria-label="A commit to preview"
+              placeholder="A commit's 40 hex digits"
+              bind:value={askFor}
+              spellcheck="false"
+            />
+            <button class="button small" type="submit">Preview it</button>
+          </form>
+        {/if}
+        {#if askFailed}<p class="error" role="alert">{askFailed}</p>{/if}
       {/if}
 
       <h2>Work under way</h2>
@@ -420,6 +517,17 @@
     content: '·';
     margin: 0 6px;
     color: var(--muted);
+  }
+  .ask {
+    display: flex;
+    gap: 8px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--line-subtle);
+  }
+  .ask input {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
   }
   .pulls.stale {
     opacity: 0.6;

@@ -376,9 +376,8 @@ spec (phase 7):
      pull requests from the fake GitHub (passing and approved, behind with
      checks running, conflicting, blocked, and a draft), and Ren's, not
      watched there, said so.
-9. **Previews of every pull request, and of any commit.** In progress:
-   the planner and the factory's pass are built; asking from the CLI or
-   UI, the gateway's view of them, and GitHub deployments are not.
+9. **Previews of every pull request, and of any commit.** Built, but for
+   GitHub deployments and the canary as the preview of `main` (see below).
    - A preview's lifecycle is a pure, persisted state machine: requested,
      building, running, superseded, stopped, failed. Its transitions are
      `(State, Event) -> (State, Vec<Action>)`, tested without I/O.
@@ -407,6 +406,22 @@ spec (phase 7):
      and not tried again; a second pass changed nothing; withdrawing the
      ask gave its slot to the next pull request, whose failure left the
      slot empty.
+   - Built: `GET /api/projects/{name}/previews`, `POST
+     /control/v1/previews/ask` and `/withdraw`, `ren preview
+     list|ask|withdraw`, and on the project Overview each pull request's
+     preview (a link when the tailnet reaches it) and the Commit previews,
+     with a field to ask for one and Withdraw. A running preview records
+     whether the pass published it (`Reach`): the canary timer publishes
+     only when enabled with `--publish`, and a preview on loopback alone
+     says so rather than linking where no browser elsewhere can go.
+   - Verified in the dev slot, whose fake GitHub now has `acme/ren`: the
+     pass previewed an asked-for commit in slot 0 and recorded pull
+     request #7's unfetchable head as failed in slot 1; Ren's Overview
+     showed both; `ren preview ask`, `list`, and `withdraw` changed the
+     asks through the dev daemon, and a second withdrawal was `404`.
+   - Not built: GitHub deployments, which need a token that can write;
+     and the canary as the branch preview of `main`: it keeps its own
+     pass and ports, beside the previews.
    - With a token allowed to write deployments, each preview is posted to
      its pull request as a GitHub deployment, so its address appears on
      the pull request too. Merging from Ren is not part of this phase: it

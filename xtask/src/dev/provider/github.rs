@@ -1,6 +1,6 @@
 //! The fake provider's stand-in for GitHub's GraphQL endpoint: it answers
 //! the daemon's pull-request query (`ren_github::Watch`) for the dev slot's
-//! fake repositories, `acme/web` and `acme/api`, with invented pull
+//! fake repositories, `acme/web`, `acme/api`, and `acme/ren`, with invented pull
 //! requests in the states the project page draws: passing and approved,
 //! failing, behind with checks running, conflicting, blocked, and a draft.
 //! Any other repository is not found, as GitHub says for one a token
@@ -45,6 +45,7 @@ impl FakeGithub {
         let pulls = match (owner, name) {
             ("acme", "web") => Self::web(),
             ("acme", "api") => Self::api(),
+            ("acme", "ren") => Self::ren(),
             _ => {
                 return (
                     StatusCode::OK,
@@ -110,6 +111,38 @@ impl FakeGithub {
                         FakeCheck::done("Compatibility", "SUCCESS"),
                     ],
                 )),
+                draft: false,
+            },
+        ]
+    }
+
+    /// The checkout's own project, `ren`: its pull requests' invented heads
+    /// are on no remote, so the factory's previews of them fail to fetch,
+    /// as the Overview shows.
+    fn ren() -> Vec<FakePull> {
+        vec![
+            FakePull {
+                number: 7,
+                title: "feat: the Overview lists each pull request's preview",
+                branch: "pull-previews",
+                merge: "CLEAN",
+                review: Some("APPROVED"),
+                checks: Some((
+                    "SUCCESS",
+                    vec![
+                        FakeCheck::done("CI", "SUCCESS"),
+                        FakeCheck::done("Compatibility", "SUCCESS"),
+                    ],
+                )),
+                draft: false,
+            },
+            FakePull {
+                number: 6,
+                title: "fix: a canary pass keeps its previews' builds",
+                branch: "keep-builds",
+                merge: "BEHIND",
+                review: Some("REVIEW_REQUIRED"),
+                checks: Some(("PENDING", vec![FakeCheck::running("CI")])),
                 draft: false,
             },
         ]

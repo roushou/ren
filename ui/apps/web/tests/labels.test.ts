@@ -7,6 +7,7 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import * as api from '../src/lib/api.ts';
 import * as attachments from '../src/lib/attachments.ts';
 import * as exit from '../src/lib/exit.ts';
+import * as previews from '../src/lib/previews.ts';
 import * as pulls from '../src/lib/pulls.ts';
 import * as runs from '../src/lib/runs.ts';
 import * as signIn from '../src/lib/signIn.ts';
@@ -88,6 +89,7 @@ const ui: [string, readonly string[]][] = [
   ['ren-supervisor PlaceKind', runs.placeKinds],
   ['ren-recorder capture::RunEnd', runs.runEnds],
   ['ren-recorder capture::ExitKind', exit.exitKinds],
+  ['ren-preview preview::Reach', previews.reaches],
   ['ren-github github::CheckState', pulls.checkStates],
   ['ren-github github::ChecksState', pulls.checksStates],
   ['ren-github github::MergeState', pulls.mergeStates],
