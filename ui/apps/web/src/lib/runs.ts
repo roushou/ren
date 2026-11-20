@@ -66,7 +66,10 @@ import {
 } from './attachments.ts';
 import { Refusals, type Refusal } from './refusal.ts';
 import { processExit, type ProcessExit } from './exit.ts';
+import { Questions, type Question, type QuestionKey } from './questions.ts';
 import type { ApprovalAsk as WireApprovalAsk } from './wire/ApprovalAsk.ts';
+import type { ReplyRequest as WireReplyRequest } from './wire/ReplyRequest.ts';
+import type { RawConversationQuery as WireRawConversationQuery } from './wire/RawConversationQuery.ts';
 import type { CommandIntent as WireCommandIntent } from './wire/CommandIntent.ts';
 import type { CommandPart as WireCommandPart } from './wire/CommandPart.ts';
 import type { ConversationView as WireConversationView } from './wire/ConversationView.ts';
@@ -180,6 +183,8 @@ export type ApprovalAsk =
   | { kind: 'command'; command: string | null; cwd: string | null; reason: string | null }
   | { kind: 'file_change'; reason: string | null }
   | { kind: 'tool'; tool: string; detail: string | null }
+  /** Questions to answer with replies, or decline. */
+  | { kind: 'questions'; title: string | null; questions: Question[] }
   | { kind: 'unrecognized'; text: string };
 
 export interface Waiting {
@@ -249,6 +254,13 @@ export type ItemRead =
   /** Another tool: its name as the client gave it, and what it does as Ren
    * reads it (none for items stored before Ren read them). */
   | { as: 'tool'; name: string; effects: ToolEffect[]; status: ItemStatus }
+  /** Questions the client asked, with the answer it reported for each, by key. */
+  | {
+      as: 'questions';
+      questions: Question[];
+      answers: Partial<Record<QuestionKey, string>>;
+      status: ItemStatus;
+    }
   /** Nothing read, or a reading a newer daemon gives: shown by the item's kind. */
   | { as: 'unread' };
 
@@ -358,6 +370,11 @@ const approvalAsk = tagged<ApprovalAsk, WireApprovalAsk, 'kind'>(
       kind: tagValue('tool'),
       tool: string,
       detail: optionalString,
+    }),
+    questions: object<AskOf<'questions'>, SentAsk<'questions'>>({
+      kind: tagValue('questions'),
+      title: optionalString,
+      questions: array(Questions.decode),
     }),
   },
   (value, path) => {
@@ -472,6 +489,19 @@ const commandIntent = tagged<CommandIntent, WireCommandIntent, 'said'>(
   () => ({ said: 'unsaid' }),
 );
 
+/** Each question's answer, by its key. */
+const answers: Decoder<Partial<Record<QuestionKey, string>>, Partial<Record<string, string>>> = (
+  value,
+  path,
+) => {
+  if (!isRecord(value)) throw new ShapeError(path, 'an object');
+  const read: Partial<Record<QuestionKey, string>> = {};
+  for (const [key, answer] of Object.entries(value)) {
+    read[key as QuestionKey] = string(answer, `${path}.${key}`);
+  }
+  return read;
+};
+
 type ReadOf<K> = Extract<ItemRead, { as: K }>;
 type SentRead<K> = Variant<WireItemRead, 'as', K>;
 const itemRead = tagged<ItemRead, WireItemRead, 'as'>(
@@ -502,6 +532,12 @@ const itemRead = tagged<ItemRead, WireItemRead, 'as'>(
       as: tagValue('tool'),
       name: string,
       effects: absentAs(array(toolEffect), []),
+      status: string,
+    }),
+    questions: object<ReadOf<'questions'>, SentRead<'questions'>>({
+      as: tagValue('questions'),
+      questions: array(Questions.decode),
+      answers: absentAs(answers, {}),
       status: string,
     }),
     unread: object<ReadOf<'unread'>, SentRead<'unread'>>({ as: tagValue('unread') }),
@@ -1164,6 +1200,7 @@ export class RunsClient {
       /** A draft's folder; null: a new scratch folder of its own. */
       | { kind: 'folder'; dir: string | null }
       | { kind: 'answer'; approval: ApprovalId; decision: Decision }
+      | { kind: 'reply'; approval: ApprovalId; request: WireReplyRequest }
       | { kind: 'unqueue' | 'interrupt' | 'stop' | 'archive' | 'unarchive' | 'delete' },
   ): Promise<void> {
     const base = `/control/sessions/${session}`;
@@ -1207,6 +1244,13 @@ export class RunsClient {
           'POST',
           `${base}/approvals/${encodeURIComponent(command.approval)}`,
           { decision: command.decision } satisfies WireAnswerRequest,
+          null,
+        );
+      case 'reply':
+        return this.#send(
+          'POST',
+          `${base}/approvals/${encodeURIComponent(command.approval)}/replies`,
+          command.request,
           null,
         );
       case 'unqueue':
@@ -1305,7 +1349,9 @@ export class RunsClient {
   async conversation(run: RunId, signal?: AbortSignal): Promise<StoredConversation> {
     return this.#send(
       'GET',
-      `/api/runs/${run}/conversation`,
+      // Only what Ren read of each item is shown, never the client's own
+      // body, which holds every tool's input and output again.
+      `/api/runs/${run}/conversation?${query<WireRawConversationQuery>({ bodies: 'omitted' })}`,
       undefined,
       storedConversation,
       signal,
@@ -1369,6 +1415,13 @@ export type Entry =
     }
   | { kind: 'file_change'; item: ItemId; paths: string[]; status: string }
   | { kind: 'tool'; item: ItemId; name: string; effects: ToolEffect[]; done: boolean }
+  | {
+      kind: 'questions';
+      item: ItemId;
+      questions: Question[];
+      answers: Partial<Record<QuestionKey, string>>;
+      status: string;
+    }
   | { kind: 'turn_end'; turn: NativeTurnId; end: TurnEnd }
   | { kind: 'notice'; tone: 'warn' | 'danger'; text: string };
 
@@ -1448,6 +1501,7 @@ export class Transcript {
         return entry.done;
       case 'command':
       case 'file_change':
+      case 'questions':
         return entry.status !== 'in_progress';
       case 'prompt':
       case 'turn_end':
@@ -1554,6 +1608,15 @@ export class Transcript {
         break;
       case 'tool':
         entry = { kind: 'tool', item: item.id, name: read.name, effects: read.effects, done };
+        break;
+      case 'questions':
+        entry = {
+          kind: 'questions',
+          item: item.id,
+          questions: read.questions,
+          answers: read.answers,
+          status: read.status,
+        };
         break;
       case 'unread':
         entry = { kind: 'tool', item: item.id, name: item.kind, effects: [], done };
@@ -1786,6 +1849,12 @@ export class Runs {
         return { action: 'Change files', detail: null, reason: ask.reason };
       case 'tool':
         return { action: `Use ${ask.tool}`, detail: ask.detail, reason: null };
+      case 'questions':
+        return {
+          action: ask.title ?? 'Answer a question',
+          detail: Questions.summary(ask.questions),
+          reason: null,
+        };
       case 'unrecognized':
         return { action: `Allow ${ask.text}`, detail: null, reason: null };
       default:

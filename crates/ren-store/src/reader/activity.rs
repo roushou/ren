@@ -10,11 +10,12 @@ use crate::millis::SqlMillis;
 use crate::search::ExposureQuery;
 use crate::{
     StoreError,
-    query::{CallQuery, PageLimit, TimeRange},
+    query::{CallQuery, ItemBodies, PageLimit, TimeRange},
     view::{
         BodyPrefix, CallView, Columns, ConversationView, HistoryTarget, RunEntryView, TokenTotals,
     },
 };
+use ren_harness::drive::DriveEvent;
 use ren_protocol::encoding::{ResponseEncoding, ResponseFormat};
 use ren_protocol::{direction::Direction, label::Labeled};
 use ren_recorder::batch::{BodyKey, HistorySubject};
@@ -235,6 +236,7 @@ impl Reader {
         &self,
         run: RunId,
         limit: u32,
+        bodies: ItemBodies,
     ) -> Result<Option<ConversationView>, StoreError> {
         let id = run.to_string();
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runs WHERE id = ?)")
@@ -263,14 +265,18 @@ impl Reader {
             .map(|row| {
                 let columns = Columns(row);
                 let event: String = row.try_get("event")?;
+                let event: DriveEvent =
+                    serde_json::from_str(&event).map_err(|_| StoreError::Corrupt("run entry"))?;
                 Ok(RunEntryView {
                     run: columns.id("run")?,
                     seq: columns.count("seq")?,
                     at: columns.time("at")?,
                     started_at: columns.time("entry_started_at")?,
                     turn: columns.text("turn")?,
-                    event: serde_json::from_str(&event)
-                        .map_err(|_| StoreError::Corrupt("run entry"))?,
+                    event: match bodies {
+                        ItemBodies::Kept => event,
+                        ItemBodies::Omitted => event.without_body(),
+                    },
                 })
             })
             .collect::<Result<_, StoreError>>()?;

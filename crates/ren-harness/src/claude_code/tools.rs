@@ -36,6 +36,8 @@ pub enum ClaudeCodeTool {
     WebFetch,
     #[strum(to_string = "WebSearch")]
     WebSearch,
+    #[strum(to_string = "AskUserQuestion")]
+    AskUserQuestion,
 }
 
 impl ClaudeCodeTool {
@@ -61,7 +63,7 @@ impl ClaudeCodeTool {
             Some(Self::Task | Self::Agent) => effect(EffectKind::Delegate, "description"),
             Some(Self::WebFetch) => effect(EffectKind::Fetch, "url"),
             Some(Self::WebSearch) => effect(EffectKind::Search, "query"),
-            None => Vec::new(),
+            Some(Self::AskUserQuestion) | None => Vec::new(),
         }
     }
 

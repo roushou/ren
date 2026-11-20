@@ -1408,12 +1408,113 @@ async fn an_image_is_uploaded_read_removed_kept_across_a_restart_and_deleted_wit
 /// own 404 or 405 for a path or method it does not serve. The bodies are
 /// the routes' own types, so a body a route refuses is `invalid_request`.
 #[tokio::test]
+async fn questions_are_answered_through_the_control_api() {
+    let upstream = mock(Router::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gateway = TestGateway::with_runs(
+        &config(&upstream),
+        dir.path(),
+        vec![PathBuf::from("/work")],
+        ScriptedHost,
+    )
+    .await;
+    let control = Control::new(&gateway);
+    let events = control
+        .http
+        .get(format!("{}/runs/events", control.base))
+        .bearer_auth(TestGateway::CONTROL_TOKEN)
+        .send()
+        .await
+        .unwrap();
+    let (status, body) = control
+        .post(
+            "/sessions",
+            json!({ "harness": "codex", "dir": "/work/acme" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let session = body["session"].as_str().unwrap().to_owned();
+    let (status, _) = control
+        .post(
+            &format!("/sessions/{session}/prompt"),
+            json!({ "text": "ask me" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let made = control
+        .until_session(&session, |s| !s["served"]["process"].is_null())
+        .await;
+    let run = made["served"]["process"].as_str().unwrap().to_owned();
+    let waiting = control
+        .until_run(&run, |state| {
+            state["approvals"].as_array().is_some_and(|a| !a.is_empty())
+        })
+        .await;
+    assert_eq!(
+        waiting["approvals"],
+        json!([{ "approval": "ui-1", "ask": { "kind": "questions", "title": null, "questions": [
+            { "key": "scope", "header": "Scope", "text": "How far should it go?", "detail": null,
+              "form": { "form": "choice", "pick": "one", "write_in": "allowed", "options": [
+                { "label": "Route only", "description": "A few lines" },
+                { "label": "Whole feature", "description": "All of it" }] } }] } }])
+    );
+    let replies = format!("/sessions/{session}/approvals/ui-1/replies");
+    // Questions are not allowed, and replies must fit them.
+    let (status, body) = control
+        .post(
+            &format!("/sessions/{session}/approvals/ui-1"),
+            json!({ "decision": "accept" }),
+        )
+        .await;
+    assert_eq!(
+        (status, &body["error"]),
+        (StatusCode::CONFLICT, &json!("unanswered"))
+    );
+    let (status, body) = control
+        .post(
+            &replies,
+            json!({ "replies": { "scope": { "as": "chose", "picked": ["Everything"] } } }),
+        )
+        .await;
+    assert_eq!(
+        (status, &body["error"]),
+        (StatusCode::UNPROCESSABLE_ENTITY, &json!("unfit_reply"))
+    );
+    let (status, body) = control
+        .post(
+            &replies,
+            json!({ "replies": { "scope": { "as": "chose", "picked": ["Route only"] } } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    control
+        .until_run(&run, |state| state["phase"] == "idle")
+        .await;
+
+    // The client got the answer by question id.
+    let mut feed = String::new();
+    let mut events = events;
+    while !feed.contains("\"kind\":\"turn_ended\"") {
+        let chunk = tokio::time::timeout(Duration::from_secs(5), events.chunk())
+            .await
+            .expect("an update")
+            .unwrap()
+            .expect("the feed is open");
+        feed.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    assert!(
+        feed.contains(r#"{\"scope\":{\"answers\":[\"Route only\"]}}"#),
+        "{feed}"
+    );
+}
+
+#[tokio::test]
 async fn every_control_request_reaches_its_route() {
     use ren_gateway::ControlRefusal;
     use ren_gateway::api::control::request::{
         AnswerRequest, BlockRequest, CancelRequest, ControlFeed, ControlMethod, ControlRequest,
         CreateRequest, LandWorkRequest, PauseRequest, PreviewWorkRequest, PromoteRequest,
-        PromptRequest, SendWorkRequest, ShipWorkRequest, WorkChange,
+        PromptRequest, ReplyBody, ReplyRequest, SendWorkRequest, ShipWorkRequest, WorkChange,
     };
     use ren_harness::{Harness, drive::Decision};
     use ren_protocol::native::NativeSessionId;
@@ -1484,6 +1585,20 @@ async fn every_control_request_reaches_its_route() {
             approval: "approval-1".into(),
             answer: AnswerRequest {
                 decision: Decision::Accept,
+            },
+        },
+        ControlRequest::Reply {
+            session,
+            approval: "approval-1".into(),
+            reply: ReplyRequest {
+                replies: [(
+                    "scope".to_owned(),
+                    ReplyBody::Chose {
+                        picked: vec!["Route only".into()],
+                        written: None,
+                    },
+                )]
+                .into(),
             },
         },
         ControlRequest::Interrupt(session),

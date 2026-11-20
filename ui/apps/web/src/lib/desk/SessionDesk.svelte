@@ -48,7 +48,7 @@
     type DeskSession,
     type SessionBody,
     type SessionScope,
-    type SessionId,
+    SessionId,
     type StoredConversation,
     type ClientCommand,
     type FileMatch,
@@ -69,6 +69,7 @@
   import type { Attachment } from 'svelte/attachments';
   import ComposerMenu, { type MenuEntry } from './ComposerMenu.svelte';
   import CommandStep from './CommandStep.svelte';
+  import QuestionCard from './QuestionCard.svelte';
   import StepGroup from './StepGroup.svelte';
   import { Steps } from '#lib/steps.ts';
   import Icon from '#lib/Icon.svelte';
@@ -84,6 +85,7 @@
   import Skeleton from '#lib/Skeleton.svelte';
   import type { Arriving } from '#lib/arrival.ts';
   import type { Snapshot } from '#lib/snapshots.ts';
+  import type { ReplyRequest } from '#lib/wire/ReplyRequest.ts';
   import type { DeskData } from './load.ts';
 
   let {
@@ -137,8 +139,11 @@
       transcripts.set(given.run, new Transcript().load(given.conversation.snapshot.value));
     }
   });
-  /** The session the page shows, from the URL. */
-  const chosen = $derived(data.session);
+  /** The session the page shows, from the URL: the one it was loaded
+   * with, or the one chosen since without loading it again (`select`). */
+  const chosen = $derived(
+    page.shallow ? SessionId.parse(page.shallow.url.searchParams.get('session')) : data.session,
+  );
   /** On a phone the page shows one pane at a time: the list, a session, or
    * the new-session form that New session opened. */
   let starting = $state(false);
@@ -452,8 +457,16 @@
     }
   }
 
+  /**
+   * Show `next`. Shallow: the address changes (so back, forward, and a
+   * reload show it), but the page's load does not run again. The desk keeps
+   * every conversation it has read and the feed keeps them current, so a
+   * session seen before shows at once, and a new one reads its conversation
+   * itself (`readConversation`).
+   */
   function select(next: SessionId | null, how: 'push' | 'replace' = 'push') {
     void goto(next ? `?session=${next}` : page.url.pathname, {
+      shallow: true,
       replaceState: how === 'replace',
     });
   }
@@ -896,6 +909,14 @@
     );
   }
 
+  function reply(waiting: Waiting, request: ReplyRequest) {
+    const target = chosen;
+    if (!target) return;
+    void act(() =>
+      client.toSession(target, { kind: 'reply', approval: waiting.approval, request }),
+    );
+  }
+
   /** Take the queued prompt back into the composer to change it. */
   async function editQueued(queued: string) {
     const target = chosen;
@@ -1181,6 +1202,21 @@
 {/snippet}
 
 {#snippet ask(waiting: Waiting, index: number)}
+  {#if waiting.ask.kind === 'questions'}
+    <QuestionCard
+      title={waiting.ask.title}
+      questions={waiting.ask.questions}
+      {index}
+      {busy}
+      onreply={(request) => reply(waiting, request)}
+      ondecide={(decision) => answer(waiting, decision)}
+    />
+  {:else}
+    {@render permission(waiting, index)}
+  {/if}
+{/snippet}
+
+{#snippet permission(waiting: Waiting, index: number)}
   {@const line = Runs.ask(waiting.ask)}
   <div class="approval" role="group" aria-label="Approval {index + 1}">
     <div class="approval-text">
@@ -1297,6 +1333,20 @@
           >{effect.target}</span
         >{/each}
       {#if !entry.done}<span class="chip live">running</span>{/if}
+    </div>
+  {:else if entry.kind === 'questions'}
+    <div class="entry asked">
+      {#each entry.questions as question (question.key)}
+        {@const said = entry.answers[question.key]}
+        <div class="asked-row">
+          <Icon name="sessions" size={12} />
+          <span class="asked-text">{question.text}</span>
+          {#if said}<span class="asked-answer">{said}</span>
+          {:else}<span class="chip {entry.status === 'in_progress' ? 'live' : 'neutral'}"
+              >{entry.status === 'in_progress' ? 'waiting for you' : 'not answered'}</span
+            >{/if}
+        </div>
+      {/each}
     </div>
   {:else if entry.kind === 'turn_end'}
     {#if entry.end.kind !== 'completed'}<p
@@ -2152,6 +2202,28 @@
   /* A turn: its prompt, steps, and reply as rows, ruled off from the next. */
   .turn {
     border-bottom: 1px solid var(--line);
+  }
+  .entry.asked {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--line-subtle);
+    font-size: 12px;
+  }
+  .asked-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+  .asked-text {
+    color: var(--muted);
+  }
+  .asked-answer {
+    font-weight: 600;
+    color: var(--ink);
+    overflow-wrap: anywhere;
   }
   .entry {
     padding: 0 16px;

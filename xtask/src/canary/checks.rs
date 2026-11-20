@@ -251,7 +251,7 @@ mod tests {
             ReadRequest::Exposures(_) => "/api/exposures",
             ReadRequest::Runs { .. } => "/api/runs?",
             ReadRequest::Run(_) => "/api/runs/{run}",
-            ReadRequest::Conversation(_) => "/api/runs/{run}/conversation",
+            ReadRequest::Conversation { .. } => "/api/runs/{run}/conversation",
             ReadRequest::WorkItems { .. } => "/api/work?",
             ReadRequest::WorkItem(_) => "/api/work/{item}",
         }

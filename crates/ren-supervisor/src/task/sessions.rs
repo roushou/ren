@@ -423,6 +423,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             RunCommand::Unqueue
             | RunCommand::Configure(_)
             | RunCommand::Answer { .. }
+            | RunCommand::Reply { .. }
             | RunCommand::Interrupt
             | RunCommand::Stop => None,
         };
@@ -453,6 +454,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                     | RunCommand::Steer(_)
                     | RunCommand::Unqueue
                     | RunCommand::Answer { .. }
+                    | RunCommand::Reply { .. }
                     | RunCommand::Interrupt
                     | RunCommand::Stop,
                     None,

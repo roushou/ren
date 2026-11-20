@@ -361,6 +361,11 @@ impl OpenCodeAcp {
                 }
                 TurnSlot::Idle => Err(CommandRefused::NoTurn),
             },
+            // opencode asks no questions.
+            DriveCommand::Reply { approval, .. } => {
+                self.approvals.get(&approval)?;
+                Err(CommandRefused::NotQuestions(approval))
+            }
             DriveCommand::Answer { approval, decision } => {
                 let waiting = self.approvals.answer(approval)?;
                 let wanted = match decision {

@@ -373,15 +373,42 @@ async fn serve(
                 Some("turn/start") => {
                     let turn = json!({ "id": TURN, "status": "inProgress" });
                     send(&mut out, json!({ "id": id, "result": { "turn": turn } })).await;
-                    send(
-                        &mut out,
+                    // A prompt that asks for a question gets one; any other
+                    // asks to edit files.
+                    let asks = message["params"]["input"][0]["text"] == "ask me";
+                    let request = if asks {
+                        json!({ "id": "ui-1", "method": "item/tool/requestUserInput",
+                            "params": { "threadId": THREAD, "turnId": TURN, "itemId": "call",
+                                        "isBlocking": true, "questions": [
+                                { "id": "scope", "header": "Scope",
+                                  "question": "How far should it go?", "isOther": true,
+                                  "options": [
+                                    { "label": "Route only", "description": "A few lines" },
+                                    { "label": "Whole feature", "description": "All of it" }] }] } })
+                    } else {
                         json!({ "id": "ap-1", "method": "item/fileChange/requestApproval",
                             "params": { "threadId": THREAD, "turnId": TURN, "itemId": "fc",
-                                        "startedAtMs": 1, "reason": "edit src" } }),
+                                        "startedAtMs": 1, "reason": "edit src" } })
+                    };
+                    send(&mut out, request).await;
+                }
+                Some(_) => {}
+                // The answers come back as the reply's text.
+                None if id == "ui-1" => {
+                    let answers = message["result"]["answers"].to_string();
+                    send(
+                        &mut out,
+                        json!({ "method": "item/agentMessage/delta", "params": { "threadId": THREAD,
+                            "turnId": TURN, "itemId": "msg", "delta": answers } }),
+                    )
+                    .await;
+                    send(
+                        &mut out,
+                        json!({ "method": "turn/completed", "params": { "threadId": THREAD,
+                            "turn": { "id": TURN, "status": "completed" } } }),
                     )
                     .await;
                 }
-                Some(_) => {}
                 None if id == "ap-1" => {
                     send(
                         &mut out,

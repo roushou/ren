@@ -5,11 +5,13 @@
 use ren_depot::source::Sha256;
 use ren_harness::attachment::{ByteSize, ImageFormat};
 use ren_harness::drive::{ApprovalId, ItemId, ItemKind, ItemStatus, RawLine, RequestKind};
+use ren_harness::question::{Echo, Pick, QuestionKey, TextLines, WriteIn};
 use ren_harness::tools::EffectKind;
 use ren_protocol::label::Stored;
 use ren_protocol::native::NativeThreadId;
 use ren_protocol::native::NativeTurnId;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use ts_rs::TS;
 
 /// What a driven client reported, as Ren reads it, tagged by its `kind`.
@@ -264,6 +266,16 @@ pub enum ItemRead {
         #[ts(as = "String")]
         status: Stored<ItemStatus>,
     },
+    /// Questions the client asked the operator, with the answer its client
+    /// reported for each, by question key; none while they wait.
+    Questions {
+        questions: Vec<Question>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        #[ts(as = "BTreeMap<String, String>")]
+        answers: BTreeMap<QuestionKey, String>,
+        #[ts(as = "String")]
+        status: Stored<ItemStatus>,
+    },
     /// An item Ren reads nothing from; its kind and body say what it is.
     Unread,
 }
@@ -301,6 +313,15 @@ impl From<ren_harness::drive::ItemRead> for ItemRead {
             } => Self::Tool {
                 name,
                 effects: effects.into_iter().map(Into::into).collect(),
+                status,
+            },
+            ren_harness::drive::ItemRead::Questions {
+                questions,
+                answers,
+                status,
+            } => Self::Questions {
+                questions: questions.into_iter().map(Into::into).collect(),
+                answers,
                 status,
             },
             ren_harness::drive::ItemRead::Unread => Self::Unread,
@@ -418,6 +439,11 @@ pub enum ApprovalAsk {
         tool: String,
         detail: Option<String>,
     },
+    /// Answer these questions, or decline them.
+    Questions {
+        title: Option<String>,
+        questions: Vec<Question>,
+    },
 }
 
 impl From<ren_harness::drive::ApprovalAsk> for ApprovalAsk {
@@ -434,7 +460,137 @@ impl From<ren_harness::drive::ApprovalAsk> for ApprovalAsk {
             },
             ren_harness::drive::ApprovalAsk::FileChange { reason } => Self::FileChange { reason },
             ren_harness::drive::ApprovalAsk::Tool { tool, detail } => Self::Tool { tool, detail },
+            ren_harness::drive::ApprovalAsk::Questions { title, questions } => Self::Questions {
+                title,
+                questions: questions.into_iter().map(Into::into).collect(),
+            },
         }
+    }
+}
+
+/// One question a client asked the operator. Its `key` names it in a reply.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Question {
+    #[ts(as = "String")]
+    pub key: QuestionKey,
+    pub header: Option<String>,
+    pub text: String,
+    pub detail: Option<String>,
+    pub form: QuestionForm,
+}
+
+impl From<ren_harness::question::Question> for Question {
+    fn from(value: ren_harness::question::Question) -> Self {
+        let ren_harness::question::Question {
+            key,
+            header,
+            text,
+            detail,
+            form,
+        } = value;
+        Self {
+            key,
+            header,
+            text,
+            detail,
+            form: form.into(),
+        }
+    }
+}
+
+/// How a question is answered.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "form", rename_all = "snake_case")]
+#[ts(export)]
+pub enum QuestionForm {
+    /// Pick from options (`one` or `many`), and, where `write_in` is
+    /// `allowed`, answer in the operator's own words instead.
+    Choice {
+        options: Vec<QuestionOption>,
+        #[ts(as = "String")]
+        pick: Pick,
+        #[ts(as = "String")]
+        write_in: WriteIn,
+    },
+    /// Free text, on `one` line or `many`; `hidden` text is a secret.
+    Text {
+        #[ts(as = "String")]
+        lines: TextLines,
+        #[ts(as = "String")]
+        echo: Echo,
+        placeholder: Option<String>,
+        prefill: Option<String>,
+    },
+    /// A number between `min` and `max`.
+    Number {
+        #[ts(as = "f64")]
+        min: serde_json::Number,
+        #[ts(as = "f64")]
+        max: serde_json::Number,
+        #[ts(as = "Option<f64>")]
+        step: Option<serde_json::Number>,
+        #[ts(as = "Option<f64>")]
+        start: Option<serde_json::Number>,
+        unit: Option<String>,
+    },
+    /// Yes or no.
+    Confirm,
+}
+
+impl From<ren_harness::question::QuestionForm> for QuestionForm {
+    fn from(value: ren_harness::question::QuestionForm) -> Self {
+        match value {
+            ren_harness::question::QuestionForm::Choice {
+                options,
+                pick,
+                write_in,
+            } => Self::Choice {
+                options: options.into_iter().map(Into::into).collect(),
+                pick,
+                write_in,
+            },
+            ren_harness::question::QuestionForm::Text {
+                lines,
+                echo,
+                placeholder,
+                prefill,
+            } => Self::Text {
+                lines,
+                echo,
+                placeholder,
+                prefill,
+            },
+            ren_harness::question::QuestionForm::Number {
+                min,
+                max,
+                step,
+                start,
+                unit,
+            } => Self::Number {
+                min,
+                max,
+                step,
+                start,
+                unit,
+            },
+            ren_harness::question::QuestionForm::Confirm => Self::Confirm,
+        }
+    }
+}
+
+/// One option of a choice.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct QuestionOption {
+    pub label: String,
+    pub description: Option<String>,
+}
+
+impl From<ren_harness::question::QuestionOption> for QuestionOption {
+    fn from(value: ren_harness::question::QuestionOption) -> Self {
+        let ren_harness::question::QuestionOption { label, description } = value;
+        Self { label, description }
     }
 }
 

@@ -9,12 +9,15 @@
 //! echoes it back (`--replay-user-messages`) with its own id, which names the
 //! turn, and ends the turn with a `result`. Permission prompts arrive as
 //! `can_use_tool` control requests (`--permission-prompt-tool stdio`) and are
-//! answered with the operator's decision. Every other control request is
-//! refused: Ren provides no hooks, tools, or MCP servers.
+//! answered with the operator's decision; `AskUserQuestion` asks its
+//! questions the same way, answered with the operator's replies as the
+//! tool's input (`question`). Every other control request is refused: Ren
+//! provides no hooks, tools, or MCP servers.
 //!
 //! Claude Code reports no turn identifier that matches the prompt id its
 //! model requests carry, so a driven turn's id is its prompt's message id.
 
+use super::question::AskUserQuestion;
 use super::tools::ClaudeCodeTool;
 use crate::{
     codec::{ApprovalBook, EchoQueue, Envelope, RequestLedger, Stop, TurnSlot},
@@ -125,9 +128,14 @@ impl Pending {
 
 /// What a permission prompt asked, kept to answer it.
 #[derive(Debug)]
-struct Asked {
-    input: Value,
-    suggestions: Vec<Value>,
+enum Asked {
+    /// Whether a tool may run on `input`.
+    Permission {
+        input: Value,
+        suggestions: Vec<Value>,
+    },
+    /// `AskUserQuestion`'s questions, in its `input`.
+    Questions { input: Value },
 }
 
 #[derive(Debug)]
@@ -154,6 +162,8 @@ struct Streaming {
 
 /// What Ren tells Claude Code when the operator refuses a tool call.
 const DECLINED: &str = "The operator declined this action.";
+/// What Ren tells Claude Code when the operator declines its questions.
+const UNANSWERED: &str = "The operator declined to answer these questions.";
 
 impl ClaudeStreamJson {
     /// The arguments every driven Claude Code process starts with.
@@ -291,33 +301,69 @@ impl ClaudeStreamJson {
                 )])
             }
             DriveCommand::Answer { approval, decision } => {
+                if let (Asked::Questions { .. }, Decision::Accept | Decision::AcceptForSession) =
+                    (self.approvals.get(&approval)?, decision)
+                {
+                    return Err(CommandRefused::Unanswered(approval));
+                }
                 let asked = self.approvals.answer(approval.clone())?;
-                let answer = match decision {
-                    Decision::Accept => json!({ "behavior": "allow", "updatedInput": asked.input }),
-                    Decision::AcceptForSession => json!({
-                        "behavior": "allow",
-                        "updatedInput": asked.input,
-                        "updatedPermissions": Self::for_session(asked.suggestions),
-                    }),
-                    Decision::Decline => json!({ "behavior": "deny", "message": DECLINED }),
-                    Decision::Cancel => {
+                let refusal = match asked {
+                    Asked::Questions { .. } => UNANSWERED,
+                    Asked::Permission { .. } => DECLINED,
+                };
+                let answer = match (decision, asked) {
+                    (Decision::Accept, Asked::Permission { input, .. }) => {
+                        json!({ "behavior": "allow", "updatedInput": input })
+                    }
+                    (Decision::AcceptForSession, Asked::Permission { input, suggestions }) => {
+                        json!({
+                            "behavior": "allow",
+                            "updatedInput": input,
+                            "updatedPermissions": Self::for_session(suggestions),
+                        })
+                    }
+                    // Refused above, before the approval was taken.
+                    (Decision::Accept | Decision::AcceptForSession, Asked::Questions { .. }) => {
+                        return Err(CommandRefused::Unanswered(approval));
+                    }
+                    (Decision::Decline, Asked::Permission { .. } | Asked::Questions { .. }) => {
+                        json!({ "behavior": "deny", "message": refusal })
+                    }
+                    (Decision::Cancel, Asked::Permission { .. } | Asked::Questions { .. }) => {
                         // The turn ends interrupted, as far as one runs.
                         if self.turn.under_way() {
                             self.turn.stop()?;
                         }
-                        json!({ "behavior": "deny", "message": DECLINED, "interrupt": true })
+                        json!({ "behavior": "deny", "message": refusal, "interrupt": true })
                     }
                 };
-                Ok(vec![Line::json(&json!({
-                    "type": "control_response",
-                    "response": {
-                        "subtype": "success",
-                        "request_id": approval.to_string(),
-                        "response": answer,
-                    },
-                }))])
+                Ok(vec![Self::answer(&approval, &answer)])
+            }
+            DriveCommand::Reply { approval, replies } => {
+                let Asked::Questions { .. } = self.approvals.get(&approval)? else {
+                    return Err(CommandRefused::NotQuestions(approval));
+                };
+                let (Asked::Questions { input } | Asked::Permission { input, .. }) =
+                    self.approvals.answer(approval.clone())?;
+                let answer = json!({
+                    "behavior": "allow",
+                    "updatedInput": AskUserQuestion::answered(&input, &replies),
+                });
+                Ok(vec![Self::answer(&approval, &answer)])
             }
         }
+    }
+
+    /// The line that answers the permission prompt `approval`.
+    fn answer(approval: &ApprovalId, answer: &Value) -> Line {
+        Line::json(&json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": approval.to_string(),
+                "response": answer,
+            },
+        }))
     }
 
     /// The control requests that move the conversation to `settings`:
@@ -529,19 +575,29 @@ impl ClaudeStreamJson {
                     return;
                 };
                 let input = request.get("input").cloned().unwrap_or(Value::Null);
-                let ask = Self::ask(tool, request, &input);
                 let approval = ApprovalId(id.to_owned());
-                self.approvals.ask(
-                    approval.clone(),
-                    Asked {
-                        input,
-                        suggestions: request
-                            .get("permission_suggestions")
-                            .and_then(Value::as_array)
-                            .cloned()
-                            .unwrap_or_default(),
-                    },
-                );
+                let questions = (ClaudeCodeTool::from_label(tool)
+                    == Some(ClaudeCodeTool::AskUserQuestion))
+                .then(|| AskUserQuestion::read(&input))
+                .flatten();
+                let (ask, asked) = match questions {
+                    Some((title, questions)) => (
+                        ApprovalAsk::Questions { title, questions },
+                        Asked::Questions { input },
+                    ),
+                    None => (
+                        Self::ask(tool, request, &input),
+                        Asked::Permission {
+                            input,
+                            suggestions: request
+                                .get("permission_suggestions")
+                                .and_then(Value::as_array)
+                                .cloned()
+                                .unwrap_or_default(),
+                        },
+                    ),
+                };
+                self.approvals.ask(approval.clone(), asked);
                 received.events.push(DriveEvent::Approval { approval, ask });
             }
             (Some(id), subtype) => {
@@ -635,7 +691,7 @@ impl ClaudeStreamJson {
                         text,
                         images: self.echoing.pop(),
                     },
-                    body: DriveItem::without_image_bytes(message["message"].clone()),
+                    body: message["message"].clone(),
                 },
             });
             return;
@@ -690,6 +746,11 @@ impl ClaudeStreamJson {
                 ItemRead::Tool { name, effects, .. } => ItemRead::Tool {
                     name,
                     effects,
+                    status: Stored::Known(status),
+                },
+                ItemRead::Questions { questions, .. } => ItemRead::Questions {
+                    questions,
+                    answers: AskUserQuestion::answers(&message["tool_use_result"]),
                     status: Stored::Known(status),
                 },
                 other @ (ItemRead::Prompt { .. }
@@ -889,6 +950,17 @@ impl ClaudeStreamJson {
                 },
             ),
             Some(ClaudeCodeTool::WebSearch) => other(ItemKind::WebSearch.into()),
+            Some(ClaudeCodeTool::AskUserQuestion) => match AskUserQuestion::read(input) {
+                Some((_, questions)) => (
+                    Stored::from_label(name),
+                    ItemRead::Questions {
+                        questions,
+                        answers: BTreeMap::new(),
+                        status: ItemStatus::InProgress.into(),
+                    },
+                ),
+                None => other(Stored::from_label(name)),
+            },
             Some(
                 ClaudeCodeTool::Read
                 | ClaudeCodeTool::Glob
@@ -1039,7 +1111,7 @@ impl ClaudeStreamJson {
 
 #[cfg(test)]
 mod tests {
-    use super::ClaudeStreamJson;
+    use super::{ClaudeStreamJson, UNANSWERED};
     use crate::{
         drive::{
             ApprovalAsk, ApprovalId, CommandRefused, Decision, DriveCommand, DriveEvent, ItemKind,
@@ -1049,6 +1121,7 @@ mod tests {
         lines::{Framed, Line},
         prompt::Prompt,
     };
+    use ren_protocol::label::Stored;
     use ren_protocol::native::NativeThreadId;
     use serde_json::{Value, json};
 
@@ -1174,7 +1247,8 @@ mod tests {
                 images: vec![image.read().clone()],
             }
         );
-        assert!(!item.body.to_string().contains(&image.base64()));
+        // Its body keeps the image's bytes here; `Driver::receive` drops
+        // them from every item it reports.
         // Images alone go without a text block.
         let _ = feed(
             &mut codec,
@@ -1312,6 +1386,134 @@ mod tests {
             Err(CommandRefused::NoTurn)
         );
         assert!(codec.command(prompt("next")).is_ok());
+    }
+
+    #[test]
+    fn asks_ask_user_question_as_questions_and_answers_with_replies() {
+        use crate::question::{QuestionKey, Replies, Reply};
+        let mut codec = ready();
+        codec.command(prompt("plan it")).unwrap().remove(0);
+        let _ = echo(&mut codec, "plan it");
+        let input = json!({ "questions": [
+            { "question": "Which store?", "header": "Store", "multiSelect": false,
+              "options": [{ "label": "SQLite", "description": "One file" },
+                          { "label": "Postgres", "description": "A server" }] }] });
+        let call = feed(
+            &mut codec,
+            json!({ "type": "assistant", "message": { "id": "msg_9", "role": "assistant",
+                    "content": [{ "type": "tool_use", "id": "toolu_9",
+                                  "name": "AskUserQuestion", "input": input }] },
+                    "parent_tool_use_id": null, "session_id": SESSION }),
+        );
+        assert!(matches!(
+            call.events.as_slice(),
+            [DriveEvent::Item { item, .. }]
+                if matches!(&item.read, ItemRead::Questions { questions, answers, .. }
+                    if questions.len() == 1 && answers.is_empty())
+        ));
+        let asked = feed(
+            &mut codec,
+            json!({ "type": "control_request", "request_id": "perm-9", "request": {
+                "subtype": "can_use_tool", "tool_name": "AskUserQuestion",
+                "input": input, "tool_use_id": "toolu_9" } }),
+        );
+        let approval = ApprovalId("perm-9".into());
+        let [
+            DriveEvent::Approval {
+                ask: ApprovalAsk::Questions { questions, .. },
+                ..
+            },
+        ] = asked.events.as_slice()
+        else {
+            panic!("not questions: {:?}", asked.events);
+        };
+        assert_eq!(questions[0].text, "Which store?");
+        // Questions are answered with replies, not allowed.
+        assert_eq!(
+            codec.command(DriveCommand::Answer {
+                approval: approval.clone(),
+                decision: Decision::Accept,
+            }),
+            Err(CommandRefused::Unanswered(approval.clone()))
+        );
+        let replies = Replies::new(
+            [(
+                QuestionKey::new("Which store?".into()),
+                Reply::Chose {
+                    picked: vec!["SQLite".into()],
+                    written: None,
+                },
+            )]
+            .into(),
+        )
+        .fit(questions)
+        .unwrap();
+        let answer = codec
+            .command(DriveCommand::Reply {
+                approval: approval.clone(),
+                replies,
+            })
+            .unwrap()
+            .remove(0);
+        let mut answered = input.clone();
+        answered["answers"] = json!({ "Which store?": "SQLite" });
+        assert_eq!(
+            sent(&answer),
+            json!({ "type": "control_response", "response": { "subtype": "success",
+                "request_id": "perm-9", "response": {
+                    "behavior": "allow", "updatedInput": answered } } })
+        );
+        // The call's result shows what was answered.
+        let result = feed(
+            &mut codec,
+            json!({ "type": "user", "message": { "role": "user", "content": [
+                      { "type": "tool_result", "tool_use_id": "toolu_9",
+                        "content": "The user answered: Which store? = SQLite" }] },
+                    "parent_tool_use_id": null, "session_id": SESSION,
+                    "tool_use_result": { "questions": input["questions"],
+                                         "answers": { "Which store?": "SQLite" } } }),
+        );
+        assert!(matches!(
+            result.events.as_slice(),
+            [DriveEvent::Item { item, .. }]
+                if matches!(&item.read, ItemRead::Questions { answers, status, .. }
+                    if answers.get(&QuestionKey::new("Which store?".into()))
+                        == Some(&"SQLite".to_owned())
+                        && *status == Stored::Known(ItemStatus::Completed))
+        ));
+
+        // Declined, Claude Code hears the operator chose not to answer.
+        let _ = feed(
+            &mut codec,
+            json!({ "type": "control_request", "request_id": "perm-10", "request": {
+                "subtype": "can_use_tool", "tool_name": "AskUserQuestion",
+                "input": input, "tool_use_id": "toolu_10" } }),
+        );
+        let declined = codec
+            .command(DriveCommand::Answer {
+                approval: ApprovalId("perm-10".into()),
+                decision: Decision::Decline,
+            })
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            sent(&declined)["response"]["response"],
+            json!({ "behavior": "deny", "message": UNANSWERED })
+        );
+        // Replies answer only questions.
+        let _ = feed(
+            &mut codec,
+            json!({ "type": "control_request", "request_id": "perm-11", "request": {
+                "subtype": "can_use_tool", "tool_name": "Bash",
+                "input": { "command": "ls" } } }),
+        );
+        assert_eq!(
+            codec.command(DriveCommand::Reply {
+                approval: ApprovalId("perm-11".into()),
+                replies: Replies::default().fit(&[]).unwrap(),
+            }),
+            Err(CommandRefused::NotQuestions(ApprovalId("perm-11".into())))
+        );
     }
 
     #[test]

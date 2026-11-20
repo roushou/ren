@@ -285,6 +285,7 @@ impl Process {
             | RunCommand::Unqueue
             | RunCommand::Steer(_)
             | RunCommand::Answer { .. }
+            | RunCommand::Reply { .. }
             | RunCommand::Interrupt
             | RunCommand::Stop => None,
         };

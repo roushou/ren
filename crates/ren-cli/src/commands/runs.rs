@@ -8,10 +8,11 @@ use crate::commands::{Client, control::ControlTarget, history::TargetArgs};
 use crate::context::Context;
 use crate::management::Target;
 use crate::style::Tone;
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 use clap::{Args, Subcommand, ValueEnum};
 use ren_gateway::api::control::request::{
     AnswerRequest, Checkout, ControlFeed, ControlRequest, CreateRequest, PromptRequest,
+    ReplyRequest,
 };
 use ren_harness::Harness;
 use ren_harness::drive::Decision;
@@ -49,8 +50,12 @@ enum RunsAction {
     /// Send a prompt to a session: start a turn, starting its client again
     /// when none runs.
     Say(SayArgs),
-    /// Answer an approval the session's client is waiting for.
+    /// Answer an approval the session's client is waiting for. One that
+    /// asks questions is only declined or cancelled this way: `reply`
+    /// answers it.
     Answer(AnswerArgs),
+    /// Answer the questions an approval asks.
+    Reply(ReplyArgs),
     /// Interrupt the session's running turn.
     Interrupt(SessionArg),
     /// Stop the session's client; the session goes on.
@@ -120,6 +125,20 @@ impl From<Answer> for Decision {
 }
 
 #[derive(Args)]
+struct ReplyArgs {
+    session: SessionId,
+    /// The approval id, as `ren runs ls` shows it.
+    approval: String,
+    /// The replies as JSON, by question key, for example
+    /// `{"scope": {"as": "chose", "picked": ["Route only"]}}`. Each is
+    /// `chose` (`picked` labels, and `written` for an answer in your own
+    /// words), `wrote` or `secret` (`text`), `number` (`value`),
+    /// `confirmed` (`answer`: yes or no), or `skipped`; a question left
+    /// out is skipped.
+    replies: String,
+}
+
+#[derive(Args)]
 struct AnswerArgs {
     session: SessionId,
     /// The approval id, as `ren runs ls` shows it.
@@ -183,6 +202,14 @@ impl RunsCmd {
                 approval: args.approval,
                 answer: AnswerRequest {
                     decision: args.decision.into(),
+                },
+            },
+            RunsAction::Reply(args) => ControlRequest::Reply {
+                session: args.session,
+                approval: args.approval,
+                reply: ReplyRequest {
+                    replies: serde_json::from_str(&args.replies)
+                        .context("the replies are not JSON replies by question key")?,
                 },
             },
             RunsAction::Interrupt(args) => ControlRequest::Interrupt(args.session),
