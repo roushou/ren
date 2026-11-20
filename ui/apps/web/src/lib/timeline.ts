@@ -4,8 +4,8 @@
 // still open). Read from the listed page of calls alone, so it says what
 // that page holds, not the whole time range. Pure: no DOM, no clock.
 
-import type { CallView, RecordingId } from './api.ts';
-import { bookkeeping, callStatus } from './display.ts';
+import type { AttemptView, CallView, RecordingId } from './api.ts';
+import { bookkeeping, callStatus, httpChip, streamChip, type Tone } from './display.ts';
 import { assertNever } from './decode.ts';
 import type { Mark } from './marks.ts';
 
@@ -44,6 +44,26 @@ export interface Figures {
   open: number;
   /** Quota probes and other calls the client made for itself. */
   probes: number;
+}
+
+/** One upstream try of a call, placed across the call's span. */
+export interface AttemptBar {
+  attempt: AttemptView;
+  left: number;
+  width: number;
+  mark: Mark;
+  /** Its HTTP status and how its stream ended, in words. */
+  label: string;
+}
+
+/** A call's prompt split by where its tokens came from, and its output. */
+export interface TokenSplit {
+  /** The whole prompt: read from the cache, written to it, and new. */
+  context: number;
+  read: number;
+  written: number;
+  fresh: number;
+  output: number | null;
 }
 
 /** The most lanes drawn; the quietest recordings past it are counted. */
@@ -156,15 +176,77 @@ export class CallTimeline {
   /** The prompt `call` sent, in tokens, and the share of it read from the
    * cache; null when the provider reported no usage. */
   static context(call: CallView): { tokens: number; cached: number } | null {
+    const split = CallTimeline.tokens(call);
+    if (!split) return null;
+    return {
+      tokens: split.context,
+      cached: split.context > 0 ? Math.min(1, split.read / split.context) : 0,
+    };
+  }
+
+  /** `call`'s prompt split three ways, as its provider's accounting counts
+   * the cache; null when it reported no input. */
+  static tokens(call: CallView): TokenSplit | null {
     const usage = call.usage;
     if (!usage || usage.input_tokens === null) return null;
     const read = usage.cache_read_tokens ?? 0;
     const written = usage.cache_creation_tokens ?? 0;
-    const tokens =
-      usage.accounting === 'excludes_cache'
-        ? usage.input_tokens + read + written
-        : usage.input_tokens;
-    return { tokens, cached: tokens > 0 ? Math.min(1, read / tokens) : 0 };
+    const excludes = usage.accounting === 'excludes_cache';
+    const context = excludes ? usage.input_tokens + read + written : usage.input_tokens;
+    return {
+      context,
+      read,
+      written,
+      fresh: Math.max(0, excludes ? usage.input_tokens : usage.input_tokens - read - written),
+      output: usage.output_tokens,
+    };
+  }
+
+  /** `call`'s attempts across its span, from its start to its end (or to
+   * `now` while open), each marked by how it ended. */
+  static attempts(call: CallView, attempts: readonly AttemptView[], now: number): AttemptBar[] {
+    const end = call.ended_at ?? now;
+    const span = Math.max(1, end - call.started_at);
+    return attempts.map((attempt) => {
+      const stream = streamChip(attempt);
+      const status = attempt.status === null ? null : httpChip(attempt.status);
+      const worst: Tone =
+        status?.tone === 'error' || stream.tone === 'error'
+          ? 'error'
+          : status?.tone === 'warning' || stream.tone === 'warning'
+            ? 'warning'
+            : stream.tone;
+      const left = ((attempt.started_at - call.started_at) / span) * 100;
+      return {
+        attempt,
+        left: Math.max(0, left),
+        width: Math.min(
+          Math.max(MIN_WIDTH, (((attempt.ended_at ?? end) - attempt.started_at) / span) * 100),
+          100 - Math.max(0, left),
+        ),
+        mark: CallTimeline.#toneMark(worst),
+        label: [status ? `HTTP ${status.label}` : null, stream.label]
+          .filter((part) => part !== null)
+          .join(' · '),
+      };
+    });
+  }
+
+  static #toneMark(tone: Tone): Mark {
+    switch (tone) {
+      case 'success':
+        return 'passed';
+      case 'error':
+        return 'failed';
+      case 'warning':
+        return 'warning';
+      case 'live':
+        return 'responding';
+      case 'neutral':
+        return 'idle';
+      default:
+        return assertNever(tone);
+    }
   }
 
   static #figures(calls: readonly CallView[], span: number): Figures {

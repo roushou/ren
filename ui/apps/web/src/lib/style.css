@@ -1187,19 +1187,10 @@ tr.selected .row-link {
   padding: 10px 44px 5px 12px;
   flex-shrink: 0;
 }
-.drawer-eyebrow {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  color: var(--muted);
-  font-size: 10px;
-  letter-spacing: 0.5px;
-}
 .drawer-heading h2 {
-  font-family: 'SFMono-Regular', Consolas, monospace;
   font-weight: 400;
-  font-size: 12px;
-  margin-top: 5px;
+  font-size: 13px;
+  margin-top: 2px;
   overflow-wrap: anywhere;
 }
 .drawer-identity {
@@ -1317,26 +1308,6 @@ tr.selected .row-link {
 .method {
   color: var(--accent-foreground);
   margin-right: 6px;
-}
-.usage-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin: 12px 0;
-}
-.usage-grid span {
-  color: var(--muted);
-  font-size: 11px;
-  display: block;
-}
-.usage-grid strong {
-  font:
-    13px 'SFMono-Regular',
-    Consolas,
-    monospace;
-  display: block;
-  margin-top: 5px;
-  overflow-wrap: anywhere;
 }
 .fine-print {
   font-size: 11px;
@@ -1709,9 +1680,6 @@ tr.call-row {
     gap: 4px 10px;
     min-width: 0;
   }
-  .drawer-eyebrow {
-    display: none;
-  }
   .drawer-heading h2,
   .drawer-identity {
     margin: 0;
@@ -1814,9 +1782,6 @@ tr.call-row {
   }
   .id-list {
     grid-template-columns: 85px minmax(0, 1fr);
-  }
-  .usage-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .inspector-footer small {
     display: none;

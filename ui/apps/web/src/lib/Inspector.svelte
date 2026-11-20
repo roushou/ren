@@ -1,5 +1,7 @@
 <script lang="ts">
   import BodyInspector from './BodyInspector.svelte';
+  import Glyph from './Glyph.svelte';
+  import { CallTimeline } from './timeline.ts';
   import Icon from './Icon.svelte';
   import CopyButton from './CopyButton.svelte';
   import {
@@ -53,12 +55,18 @@
   const inspection = $derived(attempts.at(-1)?.inspection ?? null);
   /** The limit headers the final attempt's response head carried. */
   const limitHeaders = $derived(attempts.at(-1)?.limit_headers ?? []);
+  const workbench = getWorkbench();
   const usage = $derived(current.usage ?? inspection?.usage ?? null);
+  const split = $derived(CallTimeline.tokens({ ...current, usage }));
+  const said = $derived(CallTimeline.mark(current));
+  /** Attempts across the call's span; an open call's runs to the last read. */
+  const attemptBars = $derived(
+    CallTimeline.attempts(current, attempts, (void workbench.refreshed, Date.now())),
+  );
   const tokens = $derived(tokenSummary(usage));
   // Reload detail after every page refresh (live or manual), which is when the
   // listed row can change. Depend on the id text and the refresh count only:
   // passing detail back up replaces the `call` prop and must not reload again.
-  const workbench = getWorkbench();
   const id = $derived(call.id);
   function accept(record: CallDetail) {
     if (record.call.id !== id) return;
@@ -117,16 +125,21 @@
 <aside class="inspector-pane" aria-labelledby="inspector-title">
   <div class="drawer-heading">
     <div>
-      <span class="drawer-eyebrow"><Icon name="logs" size={14} /> CALL</span>
-      <h2 id="inspector-title">
-        {current.model ?? (isActive(current) ? 'Request in progress' : 'Captured request')}
+      <h2 id="inspector-title" class="call-title">
+        <Glyph mark={said.mark} label={said.label} />
+        <span class="mono"
+          >{current.model ?? (isActive(current) ? 'Request in progress' : 'Captured request')}</span
+        >
       </h2>
       <div class="drawer-identity">
         <span class="provider-cell"
           ><span class="provider-mark tiny {current.provider}"
             >{providerMark(current.provider)}</span
           >{providerName(current.provider)}</span
-        ><span class="divider"></span><code>{short(current.id)}</code><CopyButton
+        ><span class="divider"></span><span class="mono">{current.method} {current.endpoint}</span
+        ><span class="divider"></span><span class="mono">{clock(current.started_at)}</span><span
+          class="divider"
+        ></span><code>{short(current.id)}</code><CopyButton
           text={current.id}
           label="Copy call ID"
         />
@@ -139,14 +152,22 @@
       >Recording <span class="mono">{short(current.attribution.hint?.session ?? recording)}</span
       ><Icon name="arrow" size={12} /></button
     >{:else}<p class="inspector-recording muted">No recording</p>{/if}
-  <div class="chip-row drawer-chips" aria-label="Call state">
-    {#each [modelChip(current), streamChip(current), captureChip(current, bodyLimit)] as chip}<span
-        class="chip {chip.tone}"
-        title={chip.title}>{chip.label}</span
-      >{/each}{#if current.status !== null}{@const http = httpChip(current.status)}<span
+  <div class="chip-row drawer-chips" aria-label="Call figures">
+    {#if current.status !== null}{@const http = httpChip(current.status)}<span
         class="chip mono {http.tone}"
         title={http.title}>HTTP {http.label}</span
-      >{/if}
+      >{/if}{#if attempts.length > 1}<span class="chip mono" title="Upstream tries"
+        >{attempts.length} attempts</span
+      >{/if}{#if current.request}<span class="chip mono" title="Request body stored"
+        >{bytes(current.request.stored_bytes)} sent</span
+      >{/if}{#if current.response}<span class="chip mono" title="Response body stored"
+        >{bytes(current.response.stored_bytes)} back</span
+      >{/if}<span class="chip mono" title="From the request to the response's end"
+      >{elapsed(duration(current))}</span
+    >{#each [streamChip(current), captureChip(current, bodyLimit)].filter((chip) => chip.tone === 'warning' || chip.tone === 'error') as chip}<span
+        class="chip {chip.tone}"
+        title={chip.title}>{chip.label}</span
+      >{/each}
   </div>
   {#if current.outcome === 'completed' && current.terminal === 'interrupted'}<p
       class="inspector-notice"
@@ -254,30 +275,32 @@
           <h3>Attempts <span class="count-pill">{num(attempts.length)}</span></h3>
           <span class="subtle-label">Upstream tries</span>
         </div>
-        {#if attempts.length}<dl class="detail-list">
-            {#each attempts as attempt (attempt.id)}{@const stream = streamChip(attempt)}
-              <div>
-                <dt>
-                  #{attempt.ordinal} <span class="mono">{short(attempt.id)}</span> · {providerName(
-                    attempt.upstream,
-                  )}
-                </dt>
-                <dd class="chip-row attempt-chips">
-                  {#if attempt.status !== null}{@const http = httpChip(attempt.status)}<span
-                      class="chip mono {http.tone}"
-                      title={http.title}>{http.label}</span
-                    >{/if}<span
-                    class="chip {stream.tone}"
-                    title={attemptEnding(attempt) ?? stream.title}>{stream.label}</span
-                  ><span class="chip mono">{elapsed(duration(attempt))}</span
-                  >{#if attempt.response_format}<span class="chip"
-                      >{title(attempt.response_format)}</span
-                    >{/if}{#if attempt.response_encoding && attempt.response_encoding !== 'identity'}<span
-                      class="chip">{attempt.response_encoding}</span
-                    >{/if}
-                </dd>
-              </div>{/each}
-          </dl>{:else}<p class="quiet-empty">
+        {#if attempts.length}<div class="attempts">
+            {#each attemptBars as bar (bar.attempt.id)}
+              <span class="mono muted">#{bar.attempt.ordinal}</span>
+              <span class="attempt-said" title={attemptEnding(bar.attempt) ?? bar.label}
+                ><Glyph mark={bar.mark} label={bar.label} /><span class="mono">{bar.label}</span
+                ></span
+              >
+              <svg class="attempt-track" viewBox="0 0 100 6" preserveAspectRatio="none"
+                ><rect class="track-whole" width="100" height="6" /><rect
+                  class="track-part state-{bar.mark}"
+                  x={bar.left}
+                  width={bar.width}
+                  height="6"
+                /></svg
+              >
+              <span class="mono numeric">{elapsed(duration(bar.attempt))}</span>
+            {/each}
+          </div>
+          <p class="fine-print">
+            {attempts
+              .map((attempt) => providerName(attempt.upstream))
+              .filter((name, at, all) => all.indexOf(name) === at)
+              .join(', ')}{attempts.some((attempt) => attempt.response_format)
+              ? ` · ${attempts.flatMap((attempt) => (attempt.response_format ? [title(attempt.response_format)] : [])).at(-1)}`
+              : ''}
+          </p>{:else}<p class="quiet-empty">
             {detail ? 'No upstream attempt was recorded.' : 'Loading attempts…'}
           </p>{/if}
       </section>
@@ -300,12 +323,43 @@
           <h3>Token usage</h3>
           <span class="subtle-label">Provider reported</span>
         </div>
-        <div class="usage-grid">
-          <div><span>Input</span><strong>{num(usage?.input_tokens)}</strong></div>
-          <div><span>Output</span><strong>{num(usage?.output_tokens)}</strong></div>
-          <div><span>Cache read</span><strong>{num(usage?.cache_read_tokens)}</strong></div>
-          <div><span>Cache write</span><strong>{num(usage?.cache_creation_tokens)}</strong></div>
-        </div>
+        {#if split}
+          <svg class="token-bar" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"
+            ><rect
+              class="tok-read"
+              width={(split.read / Math.max(1, split.context)) * 100}
+              height="8"
+            /><rect
+              class="tok-written"
+              x={(split.read / Math.max(1, split.context)) * 100}
+              width={(split.written / Math.max(1, split.context)) * 100}
+              height="8"
+            /><rect
+              class="tok-fresh"
+              x={((split.read + split.written) / Math.max(1, split.context)) * 100}
+              width={(split.fresh / Math.max(1, split.context)) * 100}
+              height="8"
+            /></svg
+          >
+          <dl class="token-legend">
+            <div>
+              <dt><span class="swatch tok-read"></span>Read from cache</dt>
+              <dd class="mono">{num(split.read)}</dd>
+            </div>
+            <div>
+              <dt><span class="swatch tok-written"></span>Written to cache</dt>
+              <dd class="mono">{num(split.written)}</dd>
+            </div>
+            <div>
+              <dt><span class="swatch tok-fresh"></span>New input</dt>
+              <dd class="mono">{num(split.fresh)}</dd>
+            </div>
+            <div>
+              <dt><span class="swatch"></span>Output</dt>
+              <dd class="mono">{num(split.output)}</dd>
+            </div>
+          </dl>
+        {:else}<p class="quiet-empty">No usage reported or captured.</p>{/if}
         <dl class="detail-list">
           <div>
             <dt>Reasoning tokens</dt>
@@ -447,3 +501,97 @@
     ><small>Provider reported · input includes cached context</small>
   </div>
 </aside>
+
+<style>
+  .call-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .attempts {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) minmax(80px, 1.2fr) 64px;
+    align-items: center;
+    gap: 6px 10px;
+    font-size: 11.5px;
+  }
+  .attempt-said {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .attempt-said .mono {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .attempt-track {
+    width: 100%;
+    height: 6px;
+  }
+  .track-whole {
+    fill: var(--surface-inset);
+  }
+  .track-part {
+    fill: var(--muted);
+  }
+  .track-part.state-failed {
+    fill: var(--error);
+  }
+  .track-part.state-warning {
+    fill: var(--warning);
+  }
+  .track-part.state-responding {
+    fill: var(--live);
+  }
+  .numeric {
+    text-align: right;
+  }
+  .token-bar {
+    width: 100%;
+    height: 8px;
+    margin: 10px 0;
+    background: var(--surface-inset);
+  }
+  .tok-read {
+    fill: var(--success);
+    background: var(--success);
+  }
+  .tok-written {
+    fill: var(--warning);
+    background: var(--warning);
+  }
+  .tok-fresh {
+    fill: var(--accent);
+    background: var(--accent);
+  }
+  .token-legend {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 16px;
+    margin: 0 0 10px;
+    font-size: 11.5px;
+  }
+  .token-legend > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .token-legend dt {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+  }
+  .token-legend dd {
+    margin: 0;
+  }
+  .swatch {
+    width: 8px;
+    height: 8px;
+    background: var(--line);
+  }
+</style>
