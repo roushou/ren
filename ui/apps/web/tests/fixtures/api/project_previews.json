@@ -1,0 +1,32 @@
+{
+  "api_version": 1,
+  "previews": [
+    {
+      "slot": 0,
+      "of": {
+        "kind": "pull",
+        "number": 12
+      },
+      "commit": "2222222222222222222222222222222222222222",
+      "state": {
+        "state": "running"
+      },
+      "ui_port": 18101,
+      "published_ui_port": 9451
+    },
+    {
+      "slot": 1,
+      "of": {
+        "kind": "commit"
+      },
+      "commit": "3333333333333333333333333333333333333333",
+      "state": {
+        "state": "failed",
+        "detail": "the build failed"
+      },
+      "ui_port": 18103,
+      "published_ui_port": 9453
+    }
+  ],
+  "requested": ["3333333333333333333333333333333333333333"]
+}

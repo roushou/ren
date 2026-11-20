@@ -12,7 +12,7 @@ use crate::client::{ClientError, GatewayChoice};
 use ren_gateway::api::ErrorCode;
 use ren_gateway::api::control::request::{ControlFeed, ControlMethod, ControlRequest};
 use ren_gateway::api::read::ReadBody;
-use ren_gateway::api::{projects::ProjectsBody, release::ReleaseBody};
+use ren_gateway::api::{previews::PreviewsBody, projects::ProjectsBody, release::ReleaseBody};
 use ren_gateway::{ApiRead, ControlRefusal, ControlToken};
 use ren_harness::{endpoint::GatewayEndpoint, host::HostEnv};
 use ren_protocol::direction::Direction;
@@ -371,6 +371,15 @@ impl Management {
     pub async fn release(&self, project: &ProjectName) -> Result<ReleaseBody, ManagementError> {
         let body = self
             .read(&format!("/api/projects/{project}/release"))
+            .await?;
+        serde_json::from_value(Value::Object(body)).map_err(ManagementError::Answer)
+    }
+
+    /// `project`'s previews and the commits asked for,
+    /// `/api/projects/{name}/previews`.
+    pub async fn previews(&self, project: &ProjectName) -> Result<PreviewsBody, ManagementError> {
+        let body = self
+            .read(&format!("/api/projects/{project}/previews"))
             .await?;
         serde_json::from_value(Value::Object(body)).map_err(ManagementError::Answer)
     }

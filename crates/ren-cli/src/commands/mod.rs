@@ -3,6 +3,7 @@ pub mod doctor;
 pub mod history;
 pub mod init;
 pub mod mcp;
+pub mod preview;
 pub mod project;
 pub mod release;
 pub mod run;

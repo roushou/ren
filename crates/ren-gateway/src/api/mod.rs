@@ -15,6 +15,7 @@ pub mod health;
 pub mod live;
 mod params;
 pub mod preview;
+pub mod previews;
 pub mod projects;
 pub mod pulls;
 pub mod read;
@@ -281,6 +282,7 @@ impl ApiState {
             .route("/api/projects/{name}", get(Self::project))
             .route("/api/projects/{name}/release", get(Self::project_release))
             .route("/api/projects/{name}/pulls", get(Self::project_pulls))
+            .route("/api/projects/{name}/previews", get(Self::project_previews))
             .route(
                 "/api/projects/{name}/release/shots/{shot}",
                 get(Self::project_shot),

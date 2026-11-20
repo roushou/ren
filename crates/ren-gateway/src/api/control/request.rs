@@ -71,6 +71,16 @@ pub struct PromoteRequest {
     pub commit: Commit,
 }
 
+/// `POST previews/ask` and `previews/withdraw`: the operator asks for a
+/// preview of `commit`, or withdraws the ask, for the factory's next pass.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewAskRequest {
+    #[ts(as = "String")]
+    pub commit: Commit,
+}
+
 /// What happens to a work item, as a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkChange {
@@ -401,6 +411,10 @@ pub enum ControlRequest {
     },
     /// Ask that production take the canary's build.
     Promote(PromoteRequest),
+    /// Ask for a preview of a commit.
+    AskPreview(PreviewAskRequest),
+    /// Withdraw the ask for a preview of a commit.
+    WithdrawPreview(PreviewAskRequest),
     /// Move a work item on.
     Work {
         item: WorkItemId,
@@ -462,6 +476,8 @@ impl ControlRequest {
             | Self::Stop(_)
             | Self::QueueWork { .. }
             | Self::Promote(_)
+            | Self::AskPreview(_)
+            | Self::WithdrawPreview(_)
             | Self::RegisterProject(_)
             | Self::ArchiveProject(_)
             | Self::UnarchiveProject(_)
@@ -511,6 +527,8 @@ impl ControlRequest {
                 None => "work".to_owned(),
             },
             Self::Promote(_) => "release/promote".to_owned(),
+            Self::AskPreview(_) => "previews/ask".to_owned(),
+            Self::WithdrawPreview(_) => "previews/withdraw".to_owned(),
             Self::RegisterProject(_) => "projects".to_owned(),
             Self::ArchiveProject(name) => format!("projects/{name}/archive"),
             Self::UnarchiveProject(name) => format!("projects/{name}/unarchive"),
@@ -533,6 +551,7 @@ impl ControlRequest {
             Self::Reply { reply, .. } => serde_json::to_vec(reply).map(Some),
             Self::QueueWork { order, .. } => serde_json::to_vec(order).map(Some),
             Self::Promote(promote) => serde_json::to_vec(promote).map(Some),
+            Self::AskPreview(ask) | Self::WithdrawPreview(ask) => serde_json::to_vec(ask).map(Some),
             Self::RegisterProject(project) => serde_json::to_vec(project).map(Some),
             Self::Work { change, .. } => match change {
                 WorkChange::Send(send) => serde_json::to_vec(send).map(Some),

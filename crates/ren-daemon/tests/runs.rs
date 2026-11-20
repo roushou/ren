@@ -1498,8 +1498,9 @@ async fn every_control_request_reaches_its_route() {
     use ren_gateway::ControlRefusal;
     use ren_gateway::api::control::request::{
         AnswerRequest, BlockRequest, CancelRequest, ControlFeed, ControlMethod, ControlRequest,
-        CreateRequest, LandWorkRequest, PauseRequest, PreviewWorkRequest, PromoteRequest,
-        PromptRequest, ReplyBody, ReplyRequest, SendWorkRequest, ShipWorkRequest, WorkChange,
+        CreateRequest, LandWorkRequest, PauseRequest, PreviewAskRequest, PreviewWorkRequest,
+        PromoteRequest, PromptRequest, ReplyBody, ReplyRequest, SendWorkRequest, ShipWorkRequest,
+        WorkChange,
     };
     use ren_harness::{Harness, drive::Decision};
     use ren_protocol::native::NativeSessionId;
@@ -1625,6 +1626,12 @@ async fn every_control_request_reaches_its_route() {
             change: WorkChange::Preview(PreviewWorkRequest { preview: None }),
         },
         ControlRequest::Promote(PromoteRequest {
+            commit: "62e9e9e0000000000000000000000000000000ff".parse().unwrap(),
+        }),
+        ControlRequest::AskPreview(PreviewAskRequest {
+            commit: "62e9e9e0000000000000000000000000000000ff".parse().unwrap(),
+        }),
+        ControlRequest::WithdrawPreview(PreviewAskRequest {
             commit: "62e9e9e0000000000000000000000000000000ff".parse().unwrap(),
         }),
     ];
