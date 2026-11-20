@@ -175,3 +175,34 @@ test('attempts lie across their call, a failed try before the one that streamed'
     ],
   );
 });
+
+test('the context chart stacks each call’s prompt against the peak, turns as bands', () => {
+  const usage = (input: number) =>
+    ({
+      accounting: 'includes_cache',
+      input_tokens: input,
+      output_tokens: 1,
+      cache_read_tokens: input / 2,
+      cache_creation_tokens: input / 4,
+      reasoning_tokens: null,
+    }) as never;
+  const chart = CallTimeline.contextChart([
+    finishedFixture(callId(1), { usage: usage(1_000), turn: 't1' as never }),
+    finishedFixture(callId(2), { usage: usage(2_000), turn: 't1' as never }),
+    finishedFixture(callId(3)),
+    finishedFixture(callId(4), { usage: usage(2_000), turn: 't2' as never, status: 500 }),
+  ]);
+  assert.equal(chart.peak, 2_000);
+  assert.deepEqual(
+    chart.bars.map((bar) => [bar.read, bar.written, bar.fresh, bar.failed]),
+    [
+      [0.25, 0.125, 0.125, false],
+      [0.5, 0.25, 0.25, false],
+      [0.5, 0.25, 0.25, true],
+    ],
+  );
+  assert.deepEqual(chart.bands, [
+    { turn: 't1', from: 0, to: 2 },
+    { turn: 't2', from: 2, to: 3 },
+  ]);
+});

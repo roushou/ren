@@ -66,6 +66,22 @@ export interface TokenSplit {
   output: number | null;
 }
 
+/** One call's prompt as a stacked bar, in shares of the chart's peak. */
+export interface ContextBar {
+  call: CallView;
+  read: number;
+  written: number;
+  fresh: number;
+  failed: boolean;
+}
+
+/** A run of the chart's bars within one turn, by bar index (`to` exclusive). */
+export interface TurnBand {
+  turn: string;
+  from: number;
+  to: number;
+}
+
 /** The most lanes drawn; the quietest recordings past it are counted. */
 const LANES = 6;
 /** The narrowest bar, as a share of the window, so a short call shows. */
@@ -230,6 +246,36 @@ export class CallTimeline {
           .join(' · '),
       };
     });
+  }
+
+  /** `calls`' prompts as stacked bars against the largest, in order, with
+   * the runs of each turn as bands; calls without usage are left out. */
+  static contextChart(calls: readonly CallView[]): {
+    peak: number;
+    bars: ContextBar[];
+    bands: TurnBand[];
+  } {
+    const split = calls.flatMap((call) => {
+      const tokens = CallTimeline.tokens(call);
+      return tokens ? [{ call, tokens }] : [];
+    });
+    const peak = Math.max(0, ...split.map((one) => one.tokens.context));
+    const bars = split.map(({ call, tokens }) => ({
+      call,
+      read: peak ? tokens.read / peak : 0,
+      written: peak ? tokens.written / peak : 0,
+      fresh: peak ? tokens.fresh / peak : 0,
+      failed: CallTimeline.mark(call).mark === 'failed',
+    }));
+    const bands: TurnBand[] = [];
+    bars.forEach((bar, index) => {
+      const turn = bar.call.turn;
+      const last = bands.at(-1);
+      if (turn === null) return;
+      if (last && last.turn === turn && last.to === index) last.to = index + 1;
+      else bands.push({ turn, from: index, to: index + 1 });
+    });
+    return { peak, bars, bands };
   }
 
   static #toneMark(tone: Tone): Mark {

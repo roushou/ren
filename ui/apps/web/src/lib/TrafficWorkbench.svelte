@@ -44,6 +44,7 @@
   import RecordingActions from './RecordingActions.svelte';
   import Inspector from './Inspector.svelte';
   import CallOverview from './CallOverview.svelte';
+  import ContextChart from './ContextChart.svelte';
   import { CallTimeline } from './timeline.ts';
   import { Steps } from './steps.ts';
   import Select, { type SelectOption } from './Select.svelte';
@@ -560,6 +561,15 @@
           </div>{/if}
       </form>
     {/if}
+    {#if recordingId && !outlined && calls.length}<ContextChart
+        {calls}
+        labels={new Map(
+          groups.flatMap((group) => (group.turn ? [[group.turn, group.label] as const] : [])),
+        )}
+        selected={selectedId}
+        href={callHref}
+        oncall={selectCall}
+      />{/if}
     {#if !recordingId && !outlined && calls.length}<CallOverview
         {calls}
         now={readAt}
@@ -631,19 +641,26 @@
         </div>
       {:else}
         <div class="attempt-list">
-          {#each groups as group (group.id)}
-            {#if recordingId}<div class="turn-heading">
-                <Icon name="sessions" size={13} /><strong>{group.label}</strong><span
-                  >{group.rows.length} call{group.rows.length === 1 ? '' : 's'}</span
-                >{#if group.turn}<a
-                    class="text-button turn-link"
-                    href={`/turns/${encodeURIComponent(group.turn)}`}
-                    >What this turn did <Icon name="arrow" size={12} /></a
-                  >{/if}
-              </div>{/if}
-            <table class="calls-table">
-              {@render callHead()}
+          <table class="calls-table">
+            {@render callHead()}
+            {#each groups as group (group.id)}
               <tbody>
+                {#if recordingId}<tr class="turn-row"
+                    ><th colspan={callColumns.length}
+                      ><span class="turn-label mono">{group.label}</span><span class="muted"
+                        >{group.rows.length} call{group.rows.length === 1
+                          ? ''
+                          : 's'}{#if group.rows.some((call) => CallTimeline.mark(call).mark === 'failed')}{' '}·{' '}<Glyph
+                            mark="failed"
+                            label={true}
+                          />{/if}</span
+                      >{#if group.turn}<a
+                          class="text-button turn-link"
+                          href={`/turns/${encodeURIComponent(group.turn)}`}
+                          >What this turn did <Icon name="arrow" size={12} /></a
+                        >{/if}</th
+                    ></tr
+                  >{/if}
                 {#each group.rows as c, index (c.id)}{@const said =
                     CallTimeline.mark(c)}{@const http = httpChip(c.status)}{@const stream =
                     streamChip(c)}{@const capture = captureChip(c, bodyLimit)}{@const context =
@@ -764,8 +781,8 @@
                   </tr>
                 {/each}
               </tbody>
-            </table>
-          {/each}
+            {/each}
+          </table>
         </div>
       {/if}
     </div>
@@ -832,6 +849,29 @@
   }
   .numeric {
     text-align: right;
+  }
+  .turn-row th {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-subtle);
+    color: var(--ink);
+    font-weight: 400;
+    text-align: left;
+  }
+  .turn-row th > * {
+    vertical-align: middle;
+  }
+  .turn-label {
+    margin-right: 10px;
+    font-weight: 600;
+  }
+  .turn-row .muted {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .turn-link {
+    float: right;
   }
   .col-time small {
     display: block;
