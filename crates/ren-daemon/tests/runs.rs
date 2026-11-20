@@ -708,7 +708,7 @@ async fn a_prompt_queued_during_a_turn_goes_out_as_it_ends() {
 /// it runs, then gone from both the store and the supervisor, so no list
 /// shows it again.
 #[tokio::test]
-async fn a_session_is_deleted_once_its_process_has_stopped() {
+async fn a_running_session_is_stopped_and_deleted() {
     let upstream = mock(Router::new()).await;
     let dir = tempfile::tempdir().unwrap();
     let gateway = TestGateway::with_runs(
@@ -744,23 +744,8 @@ async fn a_session_is_deleted_once_its_process_has_stopped() {
         .until_run(&process, |state| state["phase"] == "working")
         .await;
 
-    let (status, body) = control
-        .post(&format!("/sessions/{session}/delete"), json!({}))
-        .await;
-    assert_eq!(
-        (status, body["error"].clone()),
-        (StatusCode::CONFLICT, json!("run_running"))
-    );
-    let (status, _) = control
-        .post(&format!("/sessions/{session}/stop"), json!({}))
-        .await;
-    assert_eq!(status, StatusCode::ACCEPTED);
-    control
-        .until_run(&process, |state| state["phase"] == "ended")
-        .await;
-    control
-        .until_session(&session, |s| s["stored"]["runs"][0]["ended_at"].is_number())
-        .await;
+    // Deleting it while its client works stops the client, waits for its
+    // run's end to be recorded, and deletes it: one request.
     let (status, body) = control
         .post(&format!("/sessions/{session}/delete"), json!({}))
         .await;

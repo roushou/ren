@@ -1168,13 +1168,12 @@
         label: archived_ ? 'Unarchive' : 'Archive',
         onselect: () => void edit(archived_ ? 'unarchive' : 'archive'),
       });
-      if (!Sessions.running(session)) {
-        items.push({
-          label: 'Delete…',
-          danger: true,
-          onselect: () => deleting({ kind: 'ask', session: target, from: 'header' }),
-        });
-      }
+      // Always: a running client is stopped first.
+      items.push({
+        label: 'Delete…',
+        danger: true,
+        onselect: () => deleting({ kind: 'ask', session: target, from: 'header' }),
+      });
     }
     return items;
   });
@@ -1570,7 +1569,9 @@
                 ? 'Deleting this session and its recorded calls…'
                 : asking.phase === 'failed'
                   ? asking.reason
-                  : 'Delete this session and its recorded calls for good?'}</span
+                  : Sessions.running(session)
+                    ? 'Stop its client, and delete this session and its recorded calls for good?'
+                    : 'Delete this session and its recorded calls for good?'}</span
             >
             <button
               class="button small danger confirm"
