@@ -400,7 +400,11 @@ impl Reads {
         assert!(!runs.is_empty(), "runs");
         for run in &runs {
             serve(ReadRequest::Run(run.id)).await;
-            serve(ReadRequest::Conversation(run.id)).await;
+            serve(ReadRequest::Conversation {
+                run: run.id,
+                bodies: ren_store::query::ItemBodies::Kept,
+            })
+            .await;
         }
         let mut sessions = Vec::new();
         for shelf in [Shelf::Current, Shelf::Archived] {

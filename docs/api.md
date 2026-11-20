@@ -361,6 +361,13 @@ stood: `at` is when it was last reported and `started_at` when it was first
 this one on the same client thread (a resumed conversation reads as one) and
 its session's earlier runs, even before this one has opened its thread, up
 to the newest 20,000 entries; `earlier` says older ones were left out.
+`?bodies=omitted` leaves each item's `body`, the client's own copy of it,
+out as `null`, keeping what Ren read of it (`read`): what the UI reads,
+since a body holds every tool's input and output again (`kept`, the
+default, keeps them). No item keeps an image's bytes, in its body or
+anywhere: a prompt's image, or one a tool read (a screenshot), is kept as
+a note of its length. Entries stored before Ren dropped tool results'
+images keep theirs.
 Deleting a run deletes its conversation.
 
 ### Archiving and deleting

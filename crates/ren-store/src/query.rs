@@ -158,6 +158,20 @@ pub enum KindFilter {
     Other,
 }
 
+/// Whether a conversation read keeps each item's body, the client's own copy
+/// of it, or leaves it out (`null`) for a reader that needs only what Ren
+/// read of it.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr,
+)]
+pub enum ItemBodies {
+    #[default]
+    Kept,
+    Omitted,
+}
+
 /// Which part of a listing: what is current, or what was archived.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]

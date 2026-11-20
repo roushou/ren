@@ -69,6 +69,7 @@ import { processExit, type ProcessExit } from './exit.ts';
 import { Questions, type Question, type QuestionKey } from './questions.ts';
 import type { ApprovalAsk as WireApprovalAsk } from './wire/ApprovalAsk.ts';
 import type { ReplyRequest as WireReplyRequest } from './wire/ReplyRequest.ts';
+import type { RawConversationQuery as WireRawConversationQuery } from './wire/RawConversationQuery.ts';
 import type { CommandIntent as WireCommandIntent } from './wire/CommandIntent.ts';
 import type { CommandPart as WireCommandPart } from './wire/CommandPart.ts';
 import type { ConversationView as WireConversationView } from './wire/ConversationView.ts';
@@ -1348,7 +1349,9 @@ export class RunsClient {
   async conversation(run: RunId, signal?: AbortSignal): Promise<StoredConversation> {
     return this.#send(
       'GET',
-      `/api/runs/${run}/conversation`,
+      // Only what Ren read of each item is shown, never the client's own
+      // body, which holds every tool's input and output again.
+      `/api/runs/${run}/conversation?${query<WireRawConversationQuery>({ bodies: 'omitted' })}`,
       undefined,
       storedConversation,
       signal,
