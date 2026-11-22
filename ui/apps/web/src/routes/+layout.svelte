@@ -482,13 +482,13 @@
   </main>
   <Toasts />
   <footer class="statusline" class:redlining={redline.open} aria-label="Gateway status">
-    <span
-      class="read-only"
-      title={page.data.runsControl
-        ? 'History is read-only; this UI starts and drives sessions'
-        : 'This UI only reads: give it the control token to drive sessions'}
-      >{page.data.runsControl ? 'DRIVES SESSIONS' : 'READ ONLY'}</span
-    >
+    <!-- Driving sessions is the normal case and goes unsaid; a UI without
+         the control token says why it cannot start or steer one. -->
+    {#if !page.data.runsControl}<span
+        class="read-only"
+        title="This UI only reads: give it the control token to start and steer sessions"
+        >READ ONLY</span
+      >{/if}
     <span
       class="connection-state"
       title={error ||
