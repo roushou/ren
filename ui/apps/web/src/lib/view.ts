@@ -26,10 +26,10 @@ export type View =
   | 'recordings'
   | 'recording'
   | 'report'
-  | 'turn'
   | 'search'
   | 'usage'
   | 'tools'
+  | 'integrations'
   | 'release'
   | 'recorder';
 
@@ -48,6 +48,7 @@ export type Tab =
   | 'recordings'
   | 'search'
   | 'tools'
+  | 'integrations'
   | 'usage'
   | 'recorder';
 
@@ -99,14 +100,14 @@ export class Views {
         return 'recording';
       case '/monitor/sessions/[id]/report':
         return 'report';
-      case '/monitor/turns/[id]':
-        return 'turn';
       case '/monitor/search':
         return 'search';
       case '/monitor/usage':
         return 'usage';
       case '/system/tools':
         return 'tools';
+      case '/system/integrations':
+        return 'integrations';
       case '/system/recorder':
         return 'recorder';
       default:
@@ -119,7 +120,6 @@ export class Views {
     switch (view) {
       case 'recording':
       case 'report':
-      case 'turn':
         return 'recordings';
       case 'work':
         return 'release';
@@ -134,6 +134,7 @@ export class Views {
       case 'search':
       case 'usage':
       case 'tools':
+      case 'integrations':
       case 'release':
       case 'recorder':
         return view;
@@ -187,6 +188,7 @@ export class Views {
       case 'usage':
         return 'monitor';
       case 'tools':
+      case 'integrations':
       case 'recorder':
         return 'system';
       default: {
@@ -223,6 +225,7 @@ export class Views {
       case 'system':
         return [
           { tab: 'tools', href: '/system/tools', label: 'Tools' },
+          { tab: 'integrations', href: '/system/integrations', label: 'Integrations' },
           { tab: 'recorder', href: '/system/recorder', label: 'Recorder' },
         ];
       default: {
@@ -248,6 +251,7 @@ export class Views {
       case 'sessions':
       case 'release':
       case 'tools':
+      case 'integrations':
       case 'usage':
       case 'recorder':
         return false;
@@ -290,14 +294,14 @@ export class Views {
         return 'Session calls';
       case 'report':
         return 'Session report';
-      case 'turn':
-        return 'Turn';
       case 'search':
         return 'Search';
       case 'usage':
         return 'Usage';
       case 'tools':
         return 'Tools';
+      case 'integrations':
+        return 'Integrations';
       case 'release':
         return 'Release';
       case 'recorder':

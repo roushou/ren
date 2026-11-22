@@ -452,12 +452,6 @@ export function reportSnapshot(fetcher: typeof fetch, recordingId: RecordingId) 
   });
 }
 
-/** What one turn did, read from its calls' bodies. */
-export function turnSnapshot(fetcher: typeof fetch, turnId: TurnId) {
-  const api = new ManagementApi(fetcher);
-  return Arrival.read(`/turns/${turnId}`, () => api.turn(turnId));
-}
-
 export interface SearchData {
   /** The text searched for; empty before a search. */
   q: string;

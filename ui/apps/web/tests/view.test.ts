@@ -16,12 +16,11 @@ test('each route is its view, and an unknown one is Traffic', () => {
   assert.equal(Views.of('/monitor/traffic'), 'traffic');
   assert.equal(Views.of('/monitor/sessions/[id]'), 'recording');
   assert.equal(Views.of('/monitor/sessions/[id]/report'), 'report');
-  assert.equal(Views.of('/monitor/turns/[id]'), 'turn');
   assert.equal(Views.of(null), 'traffic');
 });
 
 test("a session's calls, its report, and its turns sit under Monitor's Sessions tab", () => {
-  for (const view of ['recordings', 'recording', 'report', 'turn'] as const) {
+  for (const view of ['recordings', 'recording', 'report'] as const) {
     assert.equal(Views.tab(view), 'recordings');
   }
   // A work item sits under its project's Release, where work is listed.
@@ -49,7 +48,7 @@ test('three places hold every page, each page in exactly one', () => {
       place.place === 'projects' ? 'projects' : Views.pages(place.place)[0]?.tab,
     );
   }
-  assert.equal(Views.place(Views.tab('turn')), 'monitor');
+  assert.equal(Views.place(Views.tab('report')), 'monitor');
   assert.equal(Views.place(Views.tab('usage')), 'monitor');
   assert.equal(Views.place(Views.tab('work')), 'projects');
   assert.equal(Views.place('recorder'), 'system');

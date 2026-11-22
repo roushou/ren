@@ -131,9 +131,6 @@
       {:else}<p class="meta">None.</p>{/each}
       <div class="actions">
         <a class="button small" href={report}>Open in report</a>
-        <a class="button small" href="/monitor/turns/{encodeURIComponent(turn)}"
-          >What this turn did</a
-        >
       </div>
     </section>
   {/if}

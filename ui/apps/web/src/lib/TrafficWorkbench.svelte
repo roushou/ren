@@ -43,7 +43,7 @@
   import Icon from './Icon.svelte';
   import SessionHead from './SessionHead.svelte';
   import TurnPanel from './TurnPanel.svelte';
-  import { ManagementApi, type TurnId, type TurnMetrics } from './api.ts';
+  import { ManagementApi, TurnId, type TurnMetrics } from './api.ts';
   import Inspector from './Inspector.svelte';
   import CallOverview from './CallOverview.svelte';
   import ContextChart from './ContextChart.svelte';
@@ -96,8 +96,12 @@
     });
   });
   const turns = $derived(turnInfo && turnInfo.recording === recordingId ? turnInfo : null);
-  /** The turn open beside the calls. */
+  /** The turn open beside the calls; a link to a turn opens it (`?turn=`). */
   let turnOpen = $state<TurnId | null>(null);
+  $effect(() => {
+    const asked = TurnId.parse(page.url.searchParams.get('turn') ?? '');
+    if (asked) untrack(() => (turnOpen = asked));
+  });
   // The scope bar shows the narrowing controls, or the recording itself.
   const arrival = createArrival(() => snapshot);
   const shown = $derived(arrival.current);
