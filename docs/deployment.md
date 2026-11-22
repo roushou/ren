@@ -157,6 +157,21 @@ run `systemctl --user reset-failed ren` before restarting if it hits that limit.
 Launchd throttles respawns to at most once every 10 seconds. Neither manager's
 "running" status proves recording health: use `ren doctor` after starting.
 
+`install-vps --contain all` runs the daemon itself in a container too,
+`ren-production-daemon`, as `ren.service`'s main process (`podman run` in the
+foreground): it sees, each at its host path, only the installed `ren` and its
+configuration (read-only), its data, its run roots, places, and scratch folder,
+`[runs.container]`'s paths, what every client keeps, the Podman socket's
+folder, and the SSH agent. It needs its runs held in containers through the
+operator's Podman API socket (`[runs] hold = "container"`,
+`[runs.container] podman_socket = "/run/user/<uid>/podman/podman.sock"`);
+the install turns on `podman.socket` and builds the instance image. The unit
+keeps what `ren.service`'s drop-ins set (keys, the search path), which the
+container inherits. Upgrades, their pause and backup, the rollback, and
+`ren doctor` are as for the host install; the pause and backup talk to the
+running daemon with the build being installed, which reads the configuration as
+the new daemon will. The choice is saved with the publishing flags.
+
 The renderer validates configuration and the executable, resolves paths to absolute
 paths, and fixes the data directory through a CLI override. It rejects an ephemeral
 listen port. Config files remain referenced, so ordinary settings take effect on

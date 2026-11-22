@@ -445,8 +445,9 @@ spec (phase 7):
       every check does now.
 
 11. **Production in a pod, each run in a container.** In progress: runs in
-    containers are built (`[runs] hold = "container"`); production in a pod,
-    the swap, and the dev slot pod are not. Every instance runs the same
+    containers are built (`[runs] hold = "container"`), and so is the daemon
+    in a container (`install-vps --contain all`, `cargo xtask dev up --contain
+    all`); production has not been switched. Every instance runs the same
     way, so the canary checks what production runs, and a run sees only
     what it works on.
     - Runs first, while production is still a host install. A run host
@@ -490,9 +491,26 @@ spec (phase 7):
       the repository's git folder, `.codex`, and the SSH agent, and not
       `~/.config` or the main checkout; it was taken up again through a
       daemon restart; stopping it removed its container and its scope.
-    - Not yet: inside the container the operator's uid is named for the
-      image's user (`node`), not the operator's name; a real client's run in
-      a container has not been driven.
+    - Built: the daemon in a container (`DaemonContainer`, xtask), started
+      by `install-vps --contain all` as `ren.service`'s foreground
+      `podman run`, or as the dev slot's daemon unit. It starts its runs'
+      containers through the operator's Podman API socket
+      (`[runs.container] podman_socket`, `PodmanReach::Socket`), whose
+      service watches them apart from the daemon. The install's pause and
+      backup talk to the running daemon with the build being installed.
+    - Deviation: no pod. The daemon and the UI are each one container that
+      a systemd unit runs in the foreground, on the host's network: the unit
+      keeps the instance across boots, restarts, logs, and rollback as it
+      did, and a pod would add nothing on the host's network. The UI is not
+      yet in a container.
+    - Verified in the dev slot with `--contain all`: the daemon in its
+      container started a run's container through the socket; the run
+      outlived a restart of the daemon's container and took a second turn;
+      stopping it removed its container. The daemon's container did not see
+      production's configuration or data, the main checkout, or `~/.ssh`.
+    - Not yet: production switched; the UI in a container; inside a
+      container the operator's uid is named for the image's user (`node`);
+      a real client's run in a container has not been driven.
 
 Phases 1 and 2 come first: without them, upgrading automatically only breaks
 things faster. Each phase is useful on its own. Phases 7 and 8 do not depend

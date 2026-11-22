@@ -9,6 +9,7 @@ pub(crate) mod slot;
 mod traffic;
 mod work;
 
+use crate::daemon_container::Contain;
 use crate::file::FileError;
 use crate::invocation::InvocationError;
 use crate::tailscale::{TailscaleCli, TailscaleError};
@@ -25,7 +26,7 @@ use provider::{FakeProvider, ProviderError};
 use ren_harness::host::HostEnv;
 use seed::{Scenario, SeedError, Seeder};
 use shot::{Camera, Page};
-use slot::{Contain, Preview, RunWait, Slot};
+use slot::{Preview, RunWait, Slot};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use traffic::{Pace, SettingsError, Traffic, TrafficError};

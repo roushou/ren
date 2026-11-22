@@ -9,7 +9,7 @@ use crate::file::{FileError, FileMode};
 use crate::progress::Progress;
 use crate::{
     daemon::{Busy, Ending, RunPolicy, Runs, StillBusy},
-    daemon_container::DaemonContainer,
+    daemon_container::{Contain, DaemonContainer},
     invocation::{Echo, Invocation, InvocationError},
     pod::Pod,
     tailscale::{TailscaleCli, TailscaleError},
@@ -138,22 +138,6 @@ pub struct Slot {
     /// The host's environment, which a daemon in a container is given
     /// its home and SSH agent from.
     env: HostEnv,
-}
-
-/// What of the dev slot runs in containers (docs/plans/self-build.md,
-/// phase 11).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
-pub enum Contain {
-    /// Nothing: its daemon on the host, its runs held in systemd units, as
-    /// the installed service holds them by default.
-    #[default]
-    None,
-    /// Its runs: each in a container that sees only what it works on
-    /// (`[runs] hold = "container"`); its daemon on the host.
-    Runs,
-    /// Its daemon too, in a container of its own, starting its runs'
-    /// containers through the Podman API socket.
-    All,
 }
 
 impl Slot {
