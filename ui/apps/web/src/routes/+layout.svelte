@@ -549,9 +549,7 @@
               >Dismiss</button
             ><a class="button small" href="/system/recorder">Recorder →</a></span
           >
-        {:else}<Glyph mark="idle" /><span
-            ><b>Read only.</b> This UI can't start or steer sessions.</span
-          ><span class="strip-acts muted">give it the control token to drive them</span>
+        {:else}<Glyph mark="idle" /><span><b>Read only</b></span>
         {/if}
         {#if place === 0 && strips.length > 1}<button
             class="strip-more mono"

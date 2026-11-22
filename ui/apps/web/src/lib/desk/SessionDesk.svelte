@@ -1644,13 +1644,7 @@
       {:else}
         <div class="empty-state">
           <div class="empty-icon"><Icon name="lock" size={26} /></div>
-          <h2>This UI is read-only</h2>
-          <p>
-            To start and drive agent runs here, give the UI server the daemon’s control token file
-            with <code>REN_CONTROL_TOKEN_FILE</code> (and, when published with Tailscale Serve, the
-            allowed logins in <code>REN_CONTROL_LOGINS</code>), and add folders to the daemon’s
-            <code>[runs] roots</code>.
-          </p>
+          <h2>Read-only</h2>
         </div>
       {/if}
     {:else}
