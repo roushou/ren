@@ -52,7 +52,7 @@ test('three destinations hold every page, each page in exactly one', () => {
 test("inside a project, the row holds the project's own pages", () => {
   assert.deepEqual(
     Views.pages('projects').map((page) => page.label),
-    ['Projects', 'Scratch'],
+    ['Projects'],
   );
   assert.deepEqual(
     Views.pages('projects', 'acme web').map((page) => [page.tab, page.href]),

@@ -347,9 +347,9 @@
       ></a
     >
     <nav class="workbench-context" aria-label="Where you are" bind:this={tabs}>
-      {#if destination === 'projects' && inProject}
+      {#if destination === 'projects' && (inProject || view === 'scratch')}
         <button class="project-pick" popovertarget="project-picker" title="Switch project"
-          ><Icon name="branch" size={13} /><strong>{inProject}</strong><Icon
+          ><Icon name="branch" size={13} /><strong>{inProject ?? 'Scratch'}</strong><Icon
             name="chevron"
             size={10}
           /></button
@@ -372,6 +372,12 @@
                 >
               </li>
             {/each}
+            <li>
+              <a href="/scratch" aria-current={view === 'scratch' ? 'page' : undefined}
+                ><Glyph mark="idle" label="Sessions that work for no project" /><span>Scratch</span
+                ></a
+              >
+            </li>
             <li class="all"><a href="/projects">All projects</a></li>
           </ul>
         </Popover>
@@ -382,7 +388,7 @@
           )?.label}</span
         >
       {/if}
-      {#each Views.pages(destination, inProject) as link (link.tab)}
+      {#each view === 'scratch' ? [] : Views.pages(destination, inProject) as link (link.tab)}
         <a
           href={Views.scopedHref(link, scope)}
           data-sveltekit-preload-data="hover"

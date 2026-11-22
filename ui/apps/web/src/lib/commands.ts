@@ -95,7 +95,15 @@ export class Commands {
         : [],
     );
     const desk: Command = { kind: 'go', label: 'Desk', detail: 'Ren', href: '/', project: null };
-    return [...actions, desk, ...places, ...own, ...work];
+    // Scratch is picked like a project, so it is no page of a row.
+    const scratch: Command = {
+      kind: 'go',
+      label: 'Scratch',
+      detail: 'Sessions for no project',
+      href: '/scratch',
+      project: null,
+    };
+    return [...actions, desk, ...places, scratch, ...own, ...work];
   }
 
   /**

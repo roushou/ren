@@ -180,10 +180,8 @@ export class Views {
             { tab: 'release', href: `${base}/release`, label: 'Release' },
           ];
         }
-        return [
-          { tab: 'projects', href: '/projects', label: 'Projects' },
-          { tab: 'scratch', href: '/scratch', label: 'Scratch' },
-        ];
+        // Scratch is not a page of the row: it is picked like a project.
+        return [{ tab: 'projects', href: '/projects', label: 'Projects' }];
       }
       case 'inspect':
         return [
