@@ -7,10 +7,12 @@ const projects = [{ name: 'acme-api' }, { name: 'acme-web' }];
 test('the palette offers every page, then each project’s own', () => {
   const all = Commands.all(projects);
   const hrefs = all.map((command) => command.href);
-  assert.ok(hrefs.includes('/traffic') && hrefs.includes('/tools') && hrefs.includes('/'));
+  assert.ok(
+    hrefs.includes('/monitor/traffic') && hrefs.includes('/system/tools') && hrefs.includes('/'),
+  );
   assert.ok(hrefs.includes('/projects/acme-api/release'));
   assert.equal(new Set(hrefs).size, hrefs.length, 'no page is offered twice');
-  assert.equal(all.find((c) => c.href === '/traffic')?.detail, 'Monitor');
+  assert.equal(all.find((c) => c.href === '/monitor/traffic')?.detail, 'Monitor');
   assert.equal(all.find((c) => c.href === '/projects')?.label, 'Work');
   assert.equal(all.find((c) => c.href === '/projects/acme-web/sessions')?.detail, 'acme-web');
 });
@@ -21,10 +23,10 @@ test('typing narrows by every word, label or place, and offers a search last', (
   const release = Commands.match(all, 'web rel');
   assert.deepEqual(
     release.map((c) => c.href),
-    ['/projects/acme-web/release', '/search?q=web+rel'],
+    ['/projects/acme-web/release', '/monitor/search?q=web+rel'],
   );
   const search = Commands.match(all, 'TRAFFIC');
-  assert.equal(search[0]?.href, '/traffic', 'case does not matter');
+  assert.equal(search[0]?.href, '/monitor/traffic', 'case does not matter');
   assert.equal(search.at(-1)?.kind, 'search');
 });
 
@@ -59,13 +61,13 @@ test('inside a project, the palette keeps its own commands and those of none', (
   assert.ok(here.some((c) => c.href === '/projects/acme-web/release'));
   assert.ok(!here.some((c) => c.project === 'acme-api'), 'another project is left out');
   assert.ok(
-    here.some((c) => c.href === '/traffic'),
+    here.some((c) => c.href === '/monitor/traffic'),
     'places of no project stay',
   );
   // A search from inside a project searches it.
   assert.equal(
     Commands.match(all, 'retry', 'acme-web').at(-1)?.href,
-    '/search?q=retry&project=acme-web',
+    '/monitor/search?q=retry&project=acme-web',
   );
 });
 

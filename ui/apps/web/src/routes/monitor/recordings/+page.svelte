@@ -54,7 +54,7 @@
     }),
   );
   const shown = $derived(list.groups.reduce((sum, group) => sum + group.rows.length, 0));
-  const recordingHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
+  const recordingHref = (id: string) => `/monitor/recordings/${encodeURIComponent(id)}`;
   /** The recording whose report shows beside the list. */
   let previewing = $state<RecordingRow | null>(null);
   /** A plain click on a row previews it; a modified click, or its link
@@ -82,11 +82,13 @@
     >
   </div>
   <div class="scope-group segmented" role="group" aria-label="Which recordings">
-    <a class="button small" class:chosen={data.shelf === 'current'} href="/recordings">Current</a>
+    <a class="button small" class:chosen={data.shelf === 'current'} href="/monitor/recordings"
+      >Current</a
+    >
     <a
       class="button small"
       class:chosen={data.shelf === 'archived'}
-      href="/recordings?shelf=archived">Archived</a
+      href="/monitor/recordings?shelf=archived">Archived</a
     >
   </div>
   <label class="scope-group end search-input scope-search"
@@ -274,7 +276,9 @@
           Archive a recording from its page, or a run from Runs. A recording with new traffic is
           listed with the current ones again.
         </p>
-        <a class="button" href="/recordings">Current recordings <Icon name="arrow" size={14} /></a>
+        <a class="button" href="/monitor/recordings"
+          >Current recordings <Icon name="arrow" size={14} /></a
+        >
       </div>
     {:else}<div class="empty-state">
         <div class="empty-icon"><Icon name="sessions" size={25} /></div>
@@ -285,7 +289,7 @@
             : 'Recordings appear when clients send session identifiers through Ren.'}
         </p>
         {#if query}<button class="button" onclick={() => (query = '')}>Clear search</button
-          >{:else}<button class="button" onclick={() => goto('/traffic')}
+          >{:else}<button class="button" onclick={() => goto('/monitor/traffic')}
             >Go to request logs <Icon name="arrow" size={14} /></button
           >{/if}
       </div>{/if}

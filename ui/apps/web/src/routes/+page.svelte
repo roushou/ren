@@ -204,7 +204,9 @@
                   >System · new {harnessLabel(client.harness)} sessions cannot start until it signs in</span
                 >
               </div>
-              <div class="acts"><a class="button small primary" href="/tools">Sign in</a></div>
+              <div class="acts">
+                <a class="button small primary" href="/system/tools">Sign in</a>
+              </div>
             </article>
           {/each}
           {#if crowded}
@@ -216,7 +218,7 @@
                   >System · {crowded.used} of {crowded.limit} · the oldest calls go first at the limit</span
                 >
               </div>
-              <div class="acts"><a class="button small" href="/recorder">Recorder</a></div>
+              <div class="acts"><a class="button small" href="/system/recorder">Recorder</a></div>
             </article>
           {/if}
           {#each board.toPromote as project (project.id)}

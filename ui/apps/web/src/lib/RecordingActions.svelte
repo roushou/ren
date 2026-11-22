@@ -43,7 +43,7 @@
     try {
       await client.edit({ kind: 'recording', id: recording }, change);
       if (change === 'delete') {
-        await goto('/recordings');
+        await goto('/monitor/recordings');
         return;
       }
       archived = change === 'archive';

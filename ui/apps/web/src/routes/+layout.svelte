@@ -284,16 +284,16 @@
     for (const route of [
       '/',
       '/projects',
-      '/overview',
-      '/live',
-      '/traffic',
-      '/recordings',
-      '/usage',
-      '/recorder',
-      '/recordings/[id]',
-      '/recordings/[id]/report',
-      '/turns/[id]',
-      '/search',
+      '/monitor/overview',
+      '/monitor/live',
+      '/monitor/traffic',
+      '/monitor/recordings',
+      '/monitor/usage',
+      '/system/recorder',
+      '/monitor/recordings/[id]',
+      '/monitor/recordings/[id]/report',
+      '/monitor/turns/[id]',
+      '/monitor/search',
       '/scratch',
     ] as const)
       void preloadCode(route);
@@ -504,7 +504,7 @@
     <button
       class="recorder-status"
       class:warning={loss || degraded}
-      onclick={() => goto('/recorder')}
+      onclick={() => goto('/system/recorder')}
       title="Recorder counters since startup; open diagnostics"
       ><Icon name={loss || degraded ? 'alert' : 'storage'} size={13} />{!health
         ? 'Recorder unknown'

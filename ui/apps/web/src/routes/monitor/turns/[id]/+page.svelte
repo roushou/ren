@@ -41,9 +41,11 @@
     >
   </div>
   {#if turn}<div class="scope-group end">
-      <a class="text-button" href={`/recordings/${encodeURIComponent(turn.recording)}/report`}
+      <a
+        class="text-button"
+        href={`/monitor/recordings/${encodeURIComponent(turn.recording)}/report`}
         >Recording report <Icon name="arrow" size={12} /></a
-      ><a class="text-button" href={`/recordings/${encodeURIComponent(turn.recording)}`}
+      ><a class="text-button" href={`/monitor/recordings/${encodeURIComponent(turn.recording)}`}
         >Recording calls <Icon name="arrow" size={12} /></a
       >
     </div>{/if}

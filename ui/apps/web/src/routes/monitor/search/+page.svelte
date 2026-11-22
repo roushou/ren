@@ -57,7 +57,7 @@
     if (q) query.set('q', q);
     if (field) query.set('field', field);
     if (project) query.set('project', project);
-    return `/search?${query}`;
+    return `/monitor/search?${query}`;
   };
   /** The input takes the keyboard when the page opens, and on `/`. */
   let input = $state<HTMLInputElement>();
@@ -111,7 +111,7 @@
 {/snippet}
 
 {#snippet searchForm(hero: boolean)}
-  <form class="search-form" class:hero method="GET" action="/search" role="search">
+  <form class="search-form" class:hero method="GET" action="/monitor/search" role="search">
     {#if project}<input type="hidden" name="project" value={project} />{/if}
     <label class="search-box">
       <Icon name="search" size={hero ? 18 : 15} />

@@ -68,8 +68,8 @@ export class Views {
     label: string;
   }[] = [
     { place: 'work', href: '/projects', label: 'Work' },
-    { place: 'monitor', href: '/overview', label: 'Monitor' },
-    { place: 'system', href: '/tools', label: 'System' },
+    { place: 'monitor', href: '/monitor/overview', label: 'Monitor' },
+    { place: 'system', href: '/system/tools', label: 'System' },
   ];
 
   /** The view a SvelteKit route id is; an unknown route is Traffic, the
@@ -88,25 +88,25 @@ export class Views {
         return 'release';
       case '/scratch':
         return 'scratch';
-      case '/overview':
+      case '/monitor/overview':
         return 'overview';
-      case '/live':
+      case '/monitor/live':
         return 'live';
-      case '/recordings':
+      case '/monitor/recordings':
         return 'recordings';
-      case '/recordings/[id]':
+      case '/monitor/recordings/[id]':
         return 'recording';
-      case '/recordings/[id]/report':
+      case '/monitor/recordings/[id]/report':
         return 'report';
-      case '/turns/[id]':
+      case '/monitor/turns/[id]':
         return 'turn';
-      case '/search':
+      case '/monitor/search':
         return 'search';
-      case '/usage':
+      case '/monitor/usage':
         return 'usage';
-      case '/tools':
+      case '/system/tools':
         return 'tools';
-      case '/recorder':
+      case '/system/recorder':
         return 'recorder';
       default:
         return 'traffic';
@@ -140,6 +140,27 @@ export class Views {
         const never: never = view;
         return never;
       }
+    }
+  }
+
+  /** Where an address from before the places leads now (Inspect's pages
+   * moved under `/monitor`, Host's under `/system`); null for any other. */
+  static moved(pathname: string): string | null {
+    const first = pathname.split('/')[1] ?? '';
+    switch (first) {
+      case 'overview':
+      case 'live':
+      case 'traffic':
+      case 'recordings':
+      case 'turns':
+      case 'search':
+      case 'usage':
+        return `/monitor${pathname}`;
+      case 'tools':
+      case 'recorder':
+        return `/system${pathname}`;
+      default:
+        return null;
     }
   }
 
@@ -187,17 +208,17 @@ export class Views {
       }
       case 'monitor':
         return [
-          { tab: 'overview', href: '/overview', label: 'Overview' },
-          { tab: 'live', href: '/live', label: 'Live' },
-          { tab: 'traffic', href: '/traffic', label: 'Traffic' },
-          { tab: 'recordings', href: '/recordings', label: 'Recordings' },
-          { tab: 'search', href: '/search', label: 'Search' },
-          { tab: 'usage', href: '/usage', label: 'Usage' },
+          { tab: 'overview', href: '/monitor/overview', label: 'Overview' },
+          { tab: 'live', href: '/monitor/live', label: 'Live' },
+          { tab: 'traffic', href: '/monitor/traffic', label: 'Traffic' },
+          { tab: 'recordings', href: '/monitor/recordings', label: 'Recordings' },
+          { tab: 'search', href: '/monitor/search', label: 'Search' },
+          { tab: 'usage', href: '/monitor/usage', label: 'Usage' },
         ];
       case 'system':
         return [
-          { tab: 'tools', href: '/tools', label: 'Tools' },
-          { tab: 'recorder', href: '/recorder', label: 'Recorder' },
+          { tab: 'tools', href: '/system/tools', label: 'Tools' },
+          { tab: 'recorder', href: '/system/recorder', label: 'Recorder' },
         ];
       default: {
         const never: never = place;

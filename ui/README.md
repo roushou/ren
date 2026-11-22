@@ -24,7 +24,7 @@ the last 15 minutes in the Live page's state colours; the day's calls (against t
 before), failed work calls, input tokens cached and fresh, and output tokens; and input
 per hour with failed and cut-off calls ticked along the same hours, filling the rest of
 the window; with nothing recorded in the last day it leads with how to connect a client), Live
-(`/live`: the recordings active in the last 15 minutes as they work (or 5 minutes, an
+(`/monitor/live`: the recordings active in the last 15 minutes as they work (or 5 minutes, an
 hour, or four hours, chosen beside the active count; a window holding more than the page
 reads at once is marked partial), on a four-by-two board
 of cards or as rows: each recording's client and provider, its state (shown by a coloured edge down the card and
@@ -48,20 +48,20 @@ the eight cards; quiet ones dim. While a call streams, its card shows the end of
 reply so far, the tools it has begun, and whether the model is thinking (never stored); a
 client that reports no turns shows only that. The full text appears once the call finishes
 and its activity is derived),
-Traffic (`/traffic`; wherever a recording appears, there and on a recording's page, in Search,
-and in Usage, it is named by its client, its newest prompt, and its folder), Recordings (`/recordings`: each recording's client, its newest prompt, and its folder, what it
+Traffic (`/monitor/traffic`; wherever a recording appears, there and on a recording's page, in Search,
+and in Usage, it is named by its client, its newest prompt, and its folder), Recordings (`/monitor/recordings`: each recording's client, its newest prompt, and its folder, what it
 is doing now, and its size against the rest, grouped by day, with single-call recordings
-that have no turn folded away; `/recordings/:id`, each recording's context and
-cache report at `/recordings/:id/report` (with each turn's context drawn oldest to newest,
-from where it started to where it ended), and what a turn did at `/turns/:id`: its prompt,
+that have no turn folded away; `/monitor/recordings/:id`, each recording's context and
+cache report at `/monitor/recordings/:id/report` (with each turn's context drawn oldest to newest,
+from where it started to where it ended), and what a turn did at `/monitor/turns/:id`: its prompt,
 tool calls with their effects and reported results, files, commands (one row each,
 opening to the whole command), and findings, with paths shown relative to the folder the
 turn works in), Search
-(`/search`: full-text search over prompts, replies, and tool input and output), Usage
-(`/usage`: calls, failed work calls (with failed bookkeeping counted apart), and tokens
+(`/monitor/search`: full-text search over prompts, replies, and tool input and output), Usage
+(`/monitor/usage`: calls, failed work calls (with failed bookkeeping counted apart), and tokens
 over the last day by hour, the last week, or all retained calls by local day, by model,
 and the busiest recordings), and Recorder
-(`/recorder`: whether recording is healthy, how close storage, calls, and history are to
+(`/system/recorder`: whether recording is healthy, how close storage, calls, and history are to
 their retention limits with the nearest marked as the one pruned for first, and only the
 loss and error counters that are not zero; bytes past the capture policy are noted as
 left out by design, never as loss, here, in the Recorder tab, and in the footer). The header names where the gateway runs

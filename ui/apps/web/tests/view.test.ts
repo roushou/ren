@@ -12,11 +12,11 @@ test('each route is its view, and an unknown one is Traffic', () => {
   assert.equal(Views.of('/projects/[name]/sessions'), 'sessions');
   assert.equal(Views.of('/projects/[name]/release'), 'release');
   assert.equal(Views.of('/scratch'), 'scratch');
-  assert.equal(Views.of('/overview'), 'overview');
-  assert.equal(Views.of('/traffic'), 'traffic');
-  assert.equal(Views.of('/recordings/[id]'), 'recording');
-  assert.equal(Views.of('/recordings/[id]/report'), 'report');
-  assert.equal(Views.of('/turns/[id]'), 'turn');
+  assert.equal(Views.of('/monitor/overview'), 'overview');
+  assert.equal(Views.of('/monitor/traffic'), 'traffic');
+  assert.equal(Views.of('/monitor/recordings/[id]'), 'recording');
+  assert.equal(Views.of('/monitor/recordings/[id]/report'), 'report');
+  assert.equal(Views.of('/monitor/turns/[id]'), 'turn');
   assert.equal(Views.of(null), 'traffic');
 });
 
@@ -67,15 +67,34 @@ test("Work's own home has no pages; inside a project, the row holds the project'
 });
 
 test('only the pages that read a project carry it between them', () => {
-  const traffic = { tab: 'traffic', href: '/traffic', label: 'Traffic' } as const;
-  const live = { tab: 'live', href: '/live', label: 'Live' } as const;
-  const tools = { tab: 'tools', href: '/tools', label: 'Tools' } as const;
-  assert.equal(Views.scopedHref(traffic, 'acme-web'), '/traffic?project=acme-web');
-  assert.equal(Views.scopedHref(traffic, null), '/traffic');
+  const traffic = { tab: 'traffic', href: '/monitor/traffic', label: 'Traffic' } as const;
+  const live = { tab: 'live', href: '/monitor/live', label: 'Live' } as const;
+  const tools = { tab: 'tools', href: '/system/tools', label: 'Tools' } as const;
+  assert.equal(Views.scopedHref(traffic, 'acme-web'), '/monitor/traffic?project=acme-web');
+  assert.equal(Views.scopedHref(traffic, null), '/monitor/traffic');
   // Monitor's pages read a project; System's do not.
-  assert.equal(Views.scopedHref(live, 'acme-web'), '/live?project=acme-web');
-  assert.equal(Views.scopedHref(tools, 'acme-web'), '/tools');
+  assert.equal(Views.scopedHref(live, 'acme-web'), '/monitor/live?project=acme-web');
+  assert.equal(Views.scopedHref(tools, 'acme-web'), '/system/tools');
   assert.ok(Views.scoped('recordings'));
   assert.ok(Views.scoped('search'));
   assert.equal(Views.scoped('usage'), false);
+});
+
+test('an address from before the places leads to the same page in its place', () => {
+  assert.equal(Views.moved('/traffic'), '/monitor/traffic');
+  assert.equal(Views.moved('/recordings/r1/report'), '/monitor/recordings/r1/report');
+  assert.equal(Views.moved('/turns/t1'), '/monitor/turns/t1');
+  assert.equal(Views.moved('/tools'), '/system/tools');
+  assert.equal(Views.moved('/recorder'), '/system/recorder');
+  for (const kept of [
+    '/',
+    '/projects',
+    '/projects/acme-web/sessions',
+    '/scratch',
+    '/monitor/traffic',
+    '/api/calls',
+    '/trafficking',
+  ]) {
+    assert.equal(Views.moved(kept), null, kept);
+  }
 });

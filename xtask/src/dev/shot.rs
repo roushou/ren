@@ -96,22 +96,22 @@ impl Page {
             Self::Desk => Some("/".into()),
             Self::Projects => Some("/projects".into()),
             Self::Release => project.map(|base| format!("{base}/release")),
-            Self::Overview => Some("/overview".into()),
-            Self::Live => Some("/live".into()),
-            Self::Traffic => Some("/traffic".into()),
-            Self::Recordings => Some("/recordings".into()),
+            Self::Overview => Some("/monitor/overview".into()),
+            Self::Live => Some("/monitor/live".into()),
+            Self::Traffic => Some("/monitor/traffic".into()),
+            Self::Recordings => Some("/monitor/recordings".into()),
             Self::Recording => newest
                 .recording
                 .as_ref()
-                .map(|id| format!("/recordings/{id}")),
-            Self::Usage => Some("/usage".into()),
-            Self::Search => Some("/search?q=retry".into()),
+                .map(|id| format!("/monitor/recordings/{id}")),
+            Self::Usage => Some("/monitor/usage".into()),
+            Self::Search => Some("/monitor/search?q=retry".into()),
             Self::Sessions => Some(match (project, newest.run.as_deref()) {
                 (Some(base), Some(run)) => format!("{base}/sessions?run={run}"),
                 (Some(base), None) => format!("{base}/sessions"),
                 (None, Some(_) | None) => "/scratch".into(),
             }),
-            Self::Tools => Some("/tools".into()),
+            Self::Tools => Some("/system/tools".into()),
         }
     }
 }
@@ -328,7 +328,7 @@ mod tests {
             match page {
                 Page::Recording => {
                     assert_eq!(page.path(&none), None);
-                    assert_eq!(page.path(&some).as_deref(), Some("/recordings/s1"));
+                    assert_eq!(page.path(&some).as_deref(), Some("/monitor/recordings/s1"));
                 }
                 Page::Release => {
                     assert_eq!(page.path(&none), None);

@@ -98,7 +98,7 @@
 {#snippet scope()}
   <nav class="scope-group segmented" aria-label="Time range">
     {#each usageRanges as item}<a
-        href={`/usage?range=${item.range}`}
+        href={`/monitor/usage?range=${item.range}`}
         class:chosen={range === item.range}
         aria-current={range === item.range ? 'page' : undefined}>{item.label}</a
       >{/each}
@@ -304,7 +304,9 @@
                 {#each recordings as recording (recording.id)}
                   <tr>
                     <td class="fill"
-                      ><a class="row-link" href={`/recordings/${encodeURIComponent(recording.id)}`}
+                      ><a
+                        class="row-link"
+                        href={`/monitor/recordings/${encodeURIComponent(recording.id)}`}
                         ><RecordingName {recording} detail={details.get(recording.id)} /></a
                       ></td
                     >
@@ -336,7 +338,8 @@
                     <td
                       >{#if user.user}<a
                           class="row-link"
-                          href={`/traffic?user=${encodeURIComponent(user.user)}`}>{user.user}</a
+                          href={`/monitor/traffic?user=${encodeURIComponent(user.user)}`}
+                          >{user.user}</a
                         >{:else}<span
                           class="subtle-label"
                           title="Unlisted Tailscale logins, unidentified callers, and calls with no stored caller"

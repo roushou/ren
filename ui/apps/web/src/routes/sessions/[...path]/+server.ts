@@ -10,5 +10,5 @@ import type { RequestHandler } from './$types';
  */
 export const GET: RequestHandler = async ({ params, url, request }) => {
   if (!params.path) redirect(307, await OldAddress.sessions(request, url));
-  redirect(308, `/recordings/${params.path}${url.search}`);
+  redirect(308, `/monitor/recordings/${params.path}${url.search}`);
 };

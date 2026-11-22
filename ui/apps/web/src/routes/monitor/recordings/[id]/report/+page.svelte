@@ -71,9 +71,11 @@
     ><Icon name="info" size={12} /> Provider-reported tokens</span
   >
   <div class="scope-group end">
-    <a class="text-button" href={`/recordings/${encodeURIComponent(data.recordingId)}`}
+    <a class="text-button" href={`/monitor/recordings/${encodeURIComponent(data.recordingId)}`}
       >Recording calls <Icon name="arrow" size={12} /></a
-    ><a class="text-button" href="/recordings">All recordings <Icon name="arrow" size={12} /></a>
+    ><a class="text-button" href="/monitor/recordings"
+      >All recordings <Icon name="arrow" size={12} /></a
+    >
   </div>
 {/snippet}
 

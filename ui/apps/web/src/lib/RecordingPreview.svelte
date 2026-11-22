@@ -17,7 +17,7 @@
 
   let { row }: { row: RecordingRow } = $props();
   const recording = $derived(row.recording);
-  const href = $derived(`/recordings/${encodeURIComponent(recording.id)}`);
+  const href = $derived(`/monitor/recordings/${encodeURIComponent(recording.id)}`);
 
   type Read =
     | { state: 'reading' }

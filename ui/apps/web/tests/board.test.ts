@@ -342,20 +342,20 @@ test('the URL place parses density, band, grouping, and window once', () => {
   });
   assert.equal(
     LivePlace.href(view),
-    '/live?window=1h&density=compact&band=area&by=model&series=m-a',
+    '/monitor/live?window=1h&density=compact&band=area&by=model&series=m-a',
   );
   // Ribbon and grouping by client are the defaults, kept off the URL.
-  assert.equal(LivePlace.href(plain), '/live');
+  assert.equal(LivePlace.href(plain), '/monitor/live');
   // A board narrowed to a project stays narrowed as it changes.
   assert.equal(LivePlace.parse(new URLSearchParams('project=acme-web')).project, 'acme-web');
   assert.equal(
     LivePlace.href({ ...plain, project: 'acme-web', window: '1h' }),
-    '/live?window=1h&project=acme-web',
+    '/monitor/live?window=1h&project=acme-web',
   );
-  assert.equal(LivePlace.href({ ...plain, band: 'area' }), '/live?band=area');
+  assert.equal(LivePlace.href({ ...plain, band: 'area' }), '/monitor/live?band=area');
   const focused = LivePlace.parse(new URLSearchParams(`focus=${sid(1).toUpperCase()}`));
   assert.equal(focused.focus, sid(1));
-  assert.equal(LivePlace.href(focused), `/live?focus=${sid(1)}`);
+  assert.equal(LivePlace.href(focused), `/monitor/live?focus=${sid(1)}`);
   assert.equal(LivePlace.parse(new URLSearchParams('band=seismo')).band, 'ribbon');
   assert.equal(LivePlace.parse(new URLSearchParams('by=harness')).by, 'client');
   assert.equal(LivePlace.parse(new URLSearchParams('series=')).series, null);
@@ -919,7 +919,7 @@ test('pins parse once, deduplicated, and toggle in the URL', () => {
     new URLSearchParams(`pin=${sid(2)}&pin=nope&pin=${sid(1).toUpperCase()}&pin=${sid(2)}`),
   );
   assert.deepEqual(view.pins, [sid(2), sid(1)]);
-  assert.equal(LivePlace.href(view), `/live?pin=${sid(2)}&pin=${sid(1)}`);
+  assert.equal(LivePlace.href(view), `/monitor/live?pin=${sid(2)}&pin=${sid(1)}`);
   assert.deepEqual(LivePlace.togglePin(view, sid(2)).pins, [sid(1)]);
   assert.deepEqual(LivePlace.togglePin(view, sid(3)).pins, [sid(2), sid(1), sid(3)]);
 });

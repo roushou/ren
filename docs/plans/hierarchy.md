@@ -184,6 +184,9 @@ Records outside the tree stay, and each says why it is outside:
    **System** (Host renamed: Tools and Recorder). Inside a place the bar
    holds only its name and its pages (`Views.place`, `Views.pages`);
    Pending sits in Work alone, and System's warnings reach Home's list.
+   Monitor's pages live under `/monitor/…` and System's under
+   `/system/…`; an old address is redirected to its page there
+   (`Views.moved`, in the server hook).
 
    Approvals are among what is pending: when this UI drives sessions, the
    Projects view reads the daemon's live runs (`/control/v1/runs`) and the

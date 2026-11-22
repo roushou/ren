@@ -692,7 +692,7 @@ export class Board {
   static alerts(tile: Tile, calls: CallView[], now: number): Alert[] {
     const recording = tile.recording.id;
     const callHref = (call: CallView) =>
-      `/recordings/${encodeURIComponent(recording)}?call=${encodeURIComponent(call.id)}`;
+      `/monitor/recordings/${encodeURIComponent(recording)}?call=${encodeURIComponent(call.id)}`;
     const alerts: Alert[] = [];
     if (tile.phase.kind === 'awaiting' && now - tile.phase.since >= Board.slowHeadMs) {
       alerts.push({
@@ -770,7 +770,7 @@ export class Board {
           label: line.title,
           detail: line.detail,
           at: tile.turn.ended_at ?? tile.turn.started_at ?? tile.recording.last_seen,
-          href: `/turns/${encodeURIComponent(tile.turn.turn)}`,
+          href: `/monitor/turns/${encodeURIComponent(tile.turn.turn)}`,
         };
       }
       case 'cache_rebuild':
@@ -822,7 +822,7 @@ export class Feed {
     const of = (id: RecordingId | null) => (id ? (recordings.get(id) ?? null) : null);
     const callHref = (call: CallView) =>
       call.recording
-        ? `/recordings/${encodeURIComponent(call.recording)}?call=${encodeURIComponent(call.id)}`
+        ? `/monitor/recordings/${encodeURIComponent(call.recording)}?call=${encodeURIComponent(call.id)}`
         : null;
     const calm = (at: number) => at <= now && now - at <= Feed.calmMs;
     const items: FeedItem[] = [];
@@ -838,12 +838,12 @@ export class Feed {
         detail: `${Board.clientName(harness)} → ${providerName(recording.provider)}`,
         at: recording.first_seen,
         pinned: false,
-        href: `/recordings/${encodeURIComponent(recording.id)}`,
+        href: `/monitor/recordings/${encodeURIComponent(recording.id)}`,
       });
     }
 
     for (const turn of input.turns.values()) {
-      const href = `/turns/${encodeURIComponent(turn.turn)}`;
+      const href = `/monitor/turns/${encodeURIComponent(turn.turn)}`;
       if (turn.prompt && turn.started_at !== null && calm(turn.started_at)) {
         items.push({
           key: `${turn.turn}:prompt`,
@@ -1047,7 +1047,7 @@ export class LivePlace {
     for (const pin of view.pins) params.append('pin', pin);
     if (view.project) params.set('project', view.project);
     const query = params.toString();
-    return query ? `/live?${query}` : '/live';
+    return query ? `/monitor/live?${query}` : '/monitor/live';
   }
 
   /** The view with this recording pinned, or unpinned if it was. */

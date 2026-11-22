@@ -138,7 +138,7 @@ export class Commands {
         kind: 'search',
         label: `Search recorded history for “${trimmed}”`,
         detail: here ?? 'Search',
-        href: `/search?${search}`,
+        href: `/monitor/search?${search}`,
         project: here,
       },
     ];

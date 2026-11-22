@@ -72,7 +72,7 @@ test('each problem says what is wrong, and where to look', () => {
     label: 'Recording failing',
     tone: 'error',
     title: 'Storage or retention errors since the daemon started',
-    href: '/recorder',
+    href: '/system/recorder',
   });
   assert.deepEqual(labels(healthLine(null, null, 'Cannot reach Ren.')), [
     ["Can't reach Ren", 'error'],
@@ -138,14 +138,14 @@ test('attention ranks secrets, then failed work, then cut-off work, then bookkee
   assert.equal(attention.worst, 'error');
   const [secrets, , , probes] = attention.groups;
   // One recording: the secrets link to its report, and say what and where.
-  assert.equal(secrets?.href, `/recordings/${uuid(9)}/report`);
+  assert.equal(secrets?.href, `/monitor/recordings/${uuid(9)}/report`);
   assert.match(secrets?.detail ?? '', /OpenAI API key in prompt · 1 recording · rotate them/);
   // Repeats fold into one line, with when each happened along the day.
   assert.deepEqual(
     probes?.marks.map((mark) => Math.round(mark * 24)),
     [23, 21, 15],
   );
-  assert.equal(probes?.href, '/traffic?status=errors&kind=other&since=24h');
+  assert.equal(probes?.href, '/monitor/traffic?status=errors&kind=other&since=24h');
   assert.match(probes?.detail ?? '', /not your agents' work/);
 });
 

@@ -144,7 +144,7 @@
   const outlineLines = ['82%', '64%', '91%', '57%', '76%', '69%', '88%', '61%'];
   const emptySlots = $derived(board ? Math.max(0, board.capacity - board.tiles.length) : 0);
   const pinHref = (tile: Tile) => LivePlace.href(LivePlace.togglePin(view, tile.recording.id));
-  const turnHref = (turn: string) => `/turns/${encodeURIComponent(turn)}`;
+  const turnHref = (turn: string) => `/monitor/turns/${encodeURIComponent(turn)}`;
   /** The call a card is about: the open or last one its state names, else the newest. */
   function callHref(tile: Tile): string | null {
     const call = tile.phase.kind === 'idle' ? tile.latest : tile.phase.call;
@@ -235,7 +235,7 @@
       ? `\n… ${excerpt.omitted_chars.toLocaleString('en')} more characters`
       : '';
 
-  const recordingHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
+  const recordingHref = (id: string) => `/monitor/recordings/${encodeURIComponent(id)}`;
   const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
   const harnessClass = (tile: Tile) => `harness-${tile.harness ?? 'unknown'}`;
   /** The tile's facts line: model, cached share, output. The context is in the header. */
@@ -291,7 +291,7 @@
       >
       {#if board.overflow}<a
           class="chip"
-          href="/recordings"
+          href="/monitor/recordings"
           title="Active recordings without a tile: the board keeps the busiest and most recent {Board.maxTiles}"
           >+{board.overflow}</a
         >{/if}

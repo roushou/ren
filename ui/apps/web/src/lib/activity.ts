@@ -304,19 +304,19 @@ export function harnessLabel(harness: Stored<Harness>): string {
 
 /** A call, selected in its recording's traffic. */
 export function callHref(recording: RecordingId, call: CallId): string {
-  return `/recordings/${encodeURIComponent(recording)}?call=${encodeURIComponent(call)}`;
+  return `/monitor/recordings/${encodeURIComponent(recording)}?call=${encodeURIComponent(call)}`;
 }
 
 /** What one turn did. */
 export function turnHref(turn: TurnId): string {
-  return `/turns/${encodeURIComponent(turn)}`;
+  return `/monitor/turns/${encodeURIComponent(turn)}`;
 }
 
 /** A search hit: its turn, else its call in its recording, else the call in Traffic. */
 export function searchHitHref(hit: SearchHit): string {
   if (hit.turn) return turnHref(hit.turn);
   if (hit.recording) return callHref(hit.recording, hit.call);
-  return `/traffic?call=${encodeURIComponent(hit.call)}`;
+  return `/monitor/traffic?call=${encodeURIComponent(hit.call)}`;
 }
 
 /** Where a finding's link leads, and what it says. */

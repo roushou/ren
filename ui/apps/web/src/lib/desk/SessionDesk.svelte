@@ -627,7 +627,7 @@
       query.set('from_ms', String(window.from - 30_000));
       query.set('until_ms', String(window.to + 30_000));
     }
-    return `/traffic?${query}`;
+    return `/monitor/traffic?${query}`;
   }
   const pickedCalls = $derived(callsAround(pickedSteps));
   /** Quote the picked steps in the composer, to ask about them. */
@@ -1271,7 +1271,7 @@
     if (recording)
       items.push({
         label: 'Open its calls',
-        onselect: () => void goto(`/recordings/${recording}`),
+        onselect: () => void goto(`/monitor/recordings/${recording}`),
       });
     if (data.runsControl) {
       const archived_ = session.shelf === 'archived';
@@ -1659,7 +1659,7 @@
             >
             {#if facts.recording}<a
                 class="head-chip mono"
-                href="/recordings/{facts.recording}"
+                href="/monitor/recordings/{facts.recording}"
                 title="Its recorded calls"><Icon name="rows" size={11} />{short(facts.recording)}</a
               >{/if}
             {#if spentLine}<span class="head-chip mono spent" title={spentLine.title}

@@ -198,7 +198,7 @@
     observed = record;
   }
   function showCallRecording(id: RecordingId) {
-    const url = new URL(`/recordings/${encodeURIComponent(id)}`, page.url.origin);
+    const url = new URL(`/monitor/recordings/${encodeURIComponent(id)}`, page.url.origin);
     if (selectedId) url.searchParams.set('call', selectedId);
     void goto(url);
   }
@@ -391,11 +391,13 @@
           recording={recordingId}
           shelf={recording ? recording.archived_at !== null : null}
         />{/if}
-      <a class="text-button" href={`/recordings/${encodeURIComponent(recordingId)}/report`}
+      <a class="text-button" href={`/monitor/recordings/${encodeURIComponent(recordingId)}/report`}
         >Turns and report <Icon name="arrow" size={12} /></a
-      ><a class="text-button" href={`/traffic?recording=${encodeURIComponent(recordingId)}`}
+      ><a class="text-button" href={`/monitor/traffic?recording=${encodeURIComponent(recordingId)}`}
         >Narrow in Traffic <Icon name="arrow" size={12} /></a
-      ><a class="text-button" href="/recordings">All recordings <Icon name="arrow" size={12} /></a>
+      ><a class="text-button" href="/monitor/recordings"
+        >All recordings <Icon name="arrow" size={12} /></a
+      >
     </div>
   {:else}
     <div class="scope-group">
@@ -669,7 +671,7 @@
                           />{/if}</span
                       >{#if group.turn}<a
                           class="text-button turn-link"
-                          href={`/turns/${encodeURIComponent(group.turn)}`}
+                          href={`/monitor/turns/${encodeURIComponent(group.turn)}`}
                           >What this turn did <Icon name="arrow" size={12} /></a
                         >{/if}</th
                     ></tr
@@ -744,7 +746,7 @@
                                 >
                                 <a
                                   class="text-button"
-                                  href="/recordings/{encodeURIComponent(recording)}"
+                                  href="/monitor/recordings/{encodeURIComponent(recording)}"
                                   >Open the recording <Icon name="arrow" size={11} /></a
                                 >
                               {:else}<span class="muted">Not in this page's listing.</span>{/if}

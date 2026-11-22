@@ -95,7 +95,7 @@
     }),
   );
 
-  const recordingHref = (id: string) => `/recordings/${encodeURIComponent(id)}`;
+  const recordingHref = (id: string) => `/monitor/recordings/${encodeURIComponent(id)}`;
   const spark = (values: number[]) => Day.spark(values, 22);
   const CHART = 120;
   /** Nothing recorded in the last day: the page leads with how to connect a client. */
@@ -216,7 +216,7 @@
           <section class="ov-panel" aria-labelledby="live-title" aria-busy={pending}>
             <header class="ov-heading">
               <h2 id="live-title">Live now</h2>
-              <a class="text-button" href="/live">Live <Icon name="arrow" size={12} /></a>
+              <a class="text-button" href="/monitor/live">Live <Icon name="arrow" size={12} /></a>
             </header>
             {#if pending}
               {#each { length: OUTLINE_ROWS }, row (row)}
@@ -280,7 +280,9 @@
                   >
                 </div>
               {/each}{/if}
-            {#if board && board.tiles.length > working.length}<a class="ov-more" href="/live"
+            {#if board && board.tiles.length > working.length}<a
+                class="ov-more"
+                href="/monitor/live"
                 >{board.tiles.length - working.length + board.overflow} more on Live</a
               >{/if}
           </section>
@@ -344,7 +346,9 @@
               <span><i class="stopped"></i>cut off</span>
               <span><i class="bookkeeping"></i>failed bookkeeping</span>
             </span>
-            <a class="text-button" href="/usage?range=24h">Usage <Icon name="arrow" size={12} /></a>
+            <a class="text-button" href="/monitor/usage?range=24h"
+              >Usage <Icon name="arrow" size={12} /></a
+            >
           </header>
           {#if pending}
             <div class="ov-day-outline" aria-busy="true">

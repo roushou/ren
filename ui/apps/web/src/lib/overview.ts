@@ -46,14 +46,14 @@ export function healthLine(
           label: 'Recording failing',
           tone: 'error',
           title: 'Storage or retention errors since the daemon started',
-          href: '/recorder',
+          href: '/system/recorder',
         }
       : lost
         ? {
             label: 'Capture loss',
             tone: 'warning',
             title: 'Some calls or body bytes were not recorded since the daemon started',
-            href: '/recorder',
+            href: '/system/recorder',
           }
         : {
             label: 'Recording',
@@ -100,14 +100,14 @@ export function healthLine(
             label: `${bytes(used)} stored`,
             tone: 'neutral',
             title: 'Retention is off: no storage limit',
-            href: '/recorder',
+            href: '/system/recorder',
           }
         : {
             label: `${bytes(used)} of ${bytes(budget)}`,
             tone: share >= 0.9 ? 'error' : share >= 0.7 ? 'warning' : 'success',
             title:
               'Live storage against the retention budget; the oldest calls are removed past it',
-            href: '/recorder',
+            href: '/system/recorder',
           },
     );
   }
@@ -208,8 +208,8 @@ export class Attention {
         at: newest.started_at,
         marks: found.map((exposure) => Attention.along(exposure.started_at, input.now)),
         href: only
-          ? `/recordings/${encodeURIComponent(only)}/report`
-          : `/traffic?call=${encodeURIComponent(newest.call)}`,
+          ? `/monitor/recordings/${encodeURIComponent(only)}/report`
+          : `/monitor/traffic?call=${encodeURIComponent(newest.call)}`,
       },
     ];
   }
@@ -223,7 +223,7 @@ export class Attention {
     if (!health) return [];
     const recorder = health.recorder;
     const groups: AttentionGroup[] = [];
-    const base = { at: null, marks: [], href: '/recorder' };
+    const base = { at: null, marks: [], href: '/system/recorder' };
     const capture = RecorderReport.capture(recorder);
     switch (capture.kind) {
       case 'failing':
@@ -292,7 +292,7 @@ export class Attention {
         detail: models.length ? `${what} · ${models.join(', ')}` : what,
         at: Math.max(...group.map((call) => call.started_at)),
         marks: group.map((call) => Attention.along(call.started_at, input.now)),
-        href: `/traffic?status=${status}${filter}&since=24h`,
+        href: `/monitor/traffic?status=${status}${filter}&since=24h`,
       };
     });
   }

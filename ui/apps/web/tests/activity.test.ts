@@ -271,8 +271,8 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
   const turnId = TurnId.parse(turn);
   const callId = CallId.parse(call);
   assert.ok(recordingId && turnId && callId);
-  assert.equal(callHref(recordingId, callId), `/recordings/${recording}?call=${call}`);
-  assert.equal(turnHref(turnId), `/turns/${turn}`);
+  assert.equal(callHref(recordingId, callId), `/monitor/recordings/${recording}?call=${call}`);
+  assert.equal(turnHref(turnId), `/monitor/turns/${turn}`);
 
   const hit = (overrides: Partial<SearchHit>): SearchHit => ({
     call: callId,
@@ -284,9 +284,12 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
     snippet: '',
     ...overrides,
   });
-  assert.equal(searchHitHref(hit({})), `/turns/${turn}`);
-  assert.equal(searchHitHref(hit({ turn: null })), `/recordings/${recording}?call=${call}`);
-  assert.equal(searchHitHref(hit({ turn: null, recording: null })), `/traffic?call=${call}`);
+  assert.equal(searchHitHref(hit({})), `/monitor/turns/${turn}`);
+  assert.equal(searchHitHref(hit({ turn: null })), `/monitor/recordings/${recording}?call=${call}`);
+  assert.equal(
+    searchHitHref(hit({ turn: null, recording: null })),
+    `/monitor/traffic?call=${call}`,
+  );
 
   const line = (overrides: Partial<FindingLine>): FindingLine => ({
     tone: 'warning',
@@ -298,15 +301,15 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
   });
   // A recording's report opens the turn first; a turn's page opens only the call.
   assert.deepEqual(findingLink(line({}), recordingId, 'recording'), {
-    href: `/turns/${turn}`,
+    href: `/monitor/turns/${turn}`,
     label: 'Open turn',
   });
   assert.deepEqual(findingLink(line({ turn: null }), recordingId, 'recording'), {
-    href: `/recordings/${recording}?call=${call}`,
+    href: `/monitor/recordings/${recording}?call=${call}`,
     label: 'Open call',
   });
   assert.deepEqual(findingLink(line({}), recordingId, 'turn'), {
-    href: `/recordings/${recording}?call=${call}`,
+    href: `/monitor/recordings/${recording}?call=${call}`,
     label: 'Open call',
   });
   assert.equal(findingLink(line({ call: null, turn: null }), recordingId, 'recording'), null);
