@@ -3,10 +3,13 @@
 // `/api/projects/{name}/pulls`; tested in tests/github.test.ts.
 import type { Pull, Pulls } from './api.ts';
 import type { Mark } from './marks.ts';
+import { assertNever } from './decode.ts';
 import { PullChips, PullWatch } from './release.ts';
 
-/** Where a pull request stands, as the watched repositories count them. */
-export type PullStanding = 'ready' | 'review' | 'failing' | 'running' | 'draft' | 'other';
+/** Where a pull request stands, as the watched repositories group them:
+ * held is waiting on its author or its base (changes requested, behind,
+ * blocked). */
+export type PullGroup = 'ready' | 'review' | 'held' | 'failing' | 'running' | 'draft' | 'unknown';
 
 /** One project's watch. */
 export interface WatchRow {
@@ -16,8 +19,8 @@ export interface WatchRow {
   mark: Mark;
   state: Pulls['watch'] | 'unread';
   pulls: Pull[];
-  /** Its pull requests by standing. */
-  standings: Record<PullStanding, number>;
+  /** Its pull requests by group. */
+  groups: Record<PullGroup, number>;
   /** When GitHub last answered; null before it did. */
   at: number | null;
   /** Why the newest poll failed. */
@@ -28,7 +31,7 @@ export interface WatchRow {
 export interface PullRow {
   project: string;
   pull: Pull;
-  standing: PullStanding;
+  group: PullGroup;
 }
 
 export interface WatchSummary {
@@ -41,30 +44,35 @@ export interface WatchSummary {
 }
 
 export class GitHubWatches {
-  static readonly standings: readonly PullStanding[] = [
+  static readonly groups: readonly PullGroup[] = [
     'ready',
     'review',
+    'held',
     'failing',
     'running',
     'draft',
-    'other',
+    'unknown',
   ];
 
-  /** Where a pull request stands, from its status chip. */
-  static standing(pull: Pull): PullStanding {
-    switch (PullChips.status(pull).mark) {
-      case 'passed':
-        return 'ready';
-      case 'yours':
-        return 'review';
-      case 'failed':
-        return 'failing';
+  /** The group a pull request is counted in. */
+  static group(pull: Pull): PullGroup {
+    const standing = PullChips.standing(pull);
+    switch (standing) {
+      case 'ready':
+      case 'review':
+      case 'failing':
       case 'running':
-        return 'running';
       case 'draft':
-        return 'draft';
+      case 'unknown':
+        return standing;
+      case 'conflicting':
+        return 'failing';
+      case 'changes':
+      case 'behind':
+      case 'blocked':
+        return 'held';
       default:
-        return 'other';
+        return assertNever(standing);
     }
   }
 
@@ -72,25 +80,19 @@ export class GitHubWatches {
   static rows(watches: readonly { project: string; watch: Pulls | null }[]): WatchRow[] {
     return watches.map(({ project, watch }): WatchRow => {
       const pulls = PullWatch.pulls(watch);
-      const standings = Object.fromEntries(
-        GitHubWatches.standings.map((standing) => [standing, 0]),
-      ) as Record<PullStanding, number>;
-      for (const pull of pulls) standings[GitHubWatches.standing(pull)] += 1;
+      const groups = Object.fromEntries(GitHubWatches.groups.map((group) => [group, 0])) as Record<
+        PullGroup,
+        number
+      >;
+      for (const pull of pulls) groups[GitHubWatches.group(pull)] += 1;
       const state = watch?.watch ?? 'unread';
       return {
         project,
         repository: PullWatch.repository(watch),
         state,
-        mark:
-          state === 'seen'
-            ? 'passed'
-            : state === 'failed' || state === 'unread'
-              ? 'failed'
-              : state === 'waiting'
-                ? 'running'
-                : 'idle',
+        mark: GitHubWatches.mark(state),
         pulls,
-        standings,
+        groups,
         at:
           watch?.watch === 'seen'
             ? watch.seen.at
@@ -102,25 +104,45 @@ export class GitHubWatches {
     });
   }
 
+  /** How a watch stands, as its glyph says it. */
+  static mark(state: WatchRow['state']): Mark {
+    switch (state) {
+      case 'seen':
+        return 'passed';
+      case 'failed':
+      case 'unread':
+        return 'failed';
+      case 'waiting':
+        return 'running';
+      case 'off':
+        return 'idle';
+      case 'unknown':
+        return 'unknown';
+      default:
+        return assertNever(state);
+    }
+  }
+
   /** The open pull requests of the watched repositories, failing first. */
   static pulls(rows: readonly WatchRow[]): PullRow[] {
-    const rank: Record<PullStanding, number> = {
+    const rank: Record<PullGroup, number> = {
       failing: 0,
-      review: 1,
-      ready: 2,
-      running: 3,
-      draft: 4,
-      other: 5,
+      held: 1,
+      review: 2,
+      ready: 3,
+      running: 4,
+      draft: 5,
+      unknown: 6,
     };
     return rows
       .flatMap((row) =>
         row.pulls.map((pull) => ({
           project: row.project,
           pull,
-          standing: GitHubWatches.standing(pull),
+          group: GitHubWatches.group(pull),
         })),
       )
-      .sort((a, b) => rank[a.standing] - rank[b.standing] || b.pull.number - a.pull.number);
+      .sort((a, b) => rank[a.group] - rank[b.group] || b.pull.number - a.pull.number);
   }
 
   static summary(rows: readonly WatchRow[]): WatchSummary {
@@ -133,7 +155,7 @@ export class GitHubWatches {
       checksFailing: pulls.filter(
         (row) => row.pull.checks === 'failing' || row.pull.checks === 'errored',
       ).length,
-      ready: pulls.filter((row) => row.standing === 'ready').length,
+      ready: pulls.filter((row) => row.group === 'ready').length,
     };
   }
 }

@@ -3,7 +3,7 @@
 // read from `/api/release` (`ReleaseView`); the factory writes it.
 import type { CheckView, Preview, Pull, Pulls, Revision } from './api.ts';
 import type { ReleaseView } from './api.ts';
-import { unrecognised } from './decode.ts';
+import { assertNever, unrecognised } from './decode.ts';
 import type { Mark } from './marks.ts';
 import { Refusals } from './refusal.ts';
 import type { WorkItem } from './work.ts';
@@ -309,21 +309,48 @@ export class PullChips {
   }
 
   /** What stands between it and merging, the most pressing first. */
-  static status(pull: Pull): PullChip {
-    if (pull.readiness === 'draft' || pull.merge === 'draft')
-      return { mark: 'draft', label: 'Draft' };
-    if (pull.checks === 'failing' || pull.checks === 'errored')
-      return { mark: 'failed', label: 'Checks failing' };
-    if (pull.merge === 'conflicting') return { mark: 'failed', label: 'Conflicts with its base' };
-    if (pull.checks === 'pending' || pull.checks === 'expected')
-      return { mark: 'running', label: 'Checks running' };
-    if (pull.review === 'changes_requested') return { mark: 'warning', label: 'Changes requested' };
-    if (pull.review === 'review_required') return { mark: 'yours', label: 'Review required' };
-    if (pull.merge === 'behind') return { mark: 'warning', label: 'Behind its base' };
-    if (pull.merge === 'blocked') return { mark: 'warning', label: 'Blocked' };
+  /** Where a pull request stands: the first that holds, in this order. */
+  static standing(pull: Pull): PullStanding {
+    if (pull.readiness === 'draft' || pull.merge === 'draft') return 'draft';
+    if (pull.checks === 'failing' || pull.checks === 'errored') return 'failing';
+    if (pull.merge === 'conflicting') return 'conflicting';
+    if (pull.checks === 'pending' || pull.checks === 'expected') return 'running';
+    if (pull.review === 'changes_requested') return 'changes';
+    if (pull.review === 'review_required') return 'review';
+    if (pull.merge === 'behind') return 'behind';
+    if (pull.merge === 'blocked') return 'blocked';
     if (pull.merge === 'clean' || pull.merge === 'unstable' || pull.merge === 'has_hooks')
-      return { mark: 'passed', label: 'Ready to merge' };
-    return { mark: 'unknown', label: 'Not worked out yet' };
+      return 'ready';
+    return 'unknown';
+  }
+
+  /** Its status chip: where it stands. */
+  static status(pull: Pull): PullChip {
+    const standing = PullChips.standing(pull);
+    switch (standing) {
+      case 'draft':
+        return { mark: 'draft', label: 'Draft' };
+      case 'failing':
+        return { mark: 'failed', label: 'Checks failing' };
+      case 'conflicting':
+        return { mark: 'failed', label: 'Conflicts with its base' };
+      case 'running':
+        return { mark: 'running', label: 'Checks running' };
+      case 'changes':
+        return { mark: 'warning', label: 'Changes requested' };
+      case 'review':
+        return { mark: 'yours', label: 'Review required' };
+      case 'behind':
+        return { mark: 'warning', label: 'Behind its base' };
+      case 'blocked':
+        return { mark: 'warning', label: 'Blocked' };
+      case 'ready':
+        return { mark: 'passed', label: 'Ready to merge' };
+      case 'unknown':
+        return { mark: 'unknown', label: 'Not worked out yet' };
+      default:
+        return assertNever(standing);
+    }
   }
 
   /** Its checks taken together, with how many passed. */
@@ -352,6 +379,19 @@ export class PullChips {
   }
 }
 
+/** Where a pull request stands, as its status chip says it. */
+export type PullStanding =
+  | 'draft'
+  | 'failing'
+  | 'conflicting'
+  | 'running'
+  | 'changes'
+  | 'review'
+  | 'behind'
+  | 'blocked'
+  | 'ready'
+  | 'unknown';
+
 /** One of the figures under the flow. */
 export interface StripItem {
   label: string;
@@ -365,7 +405,10 @@ export class ReleaseFigures {
   static of(view: ReleasePage, pulls: readonly Pull[]): StripItem[] {
     const release = view.release;
     const canary = release.canary;
-    const failing = pulls.filter((pull) => PullChips.status(pull).mark === 'failed').length;
+    const failing = pulls.filter((pull) => {
+      const standing = PullChips.standing(pull);
+      return standing === 'failing' || standing === 'conflicting';
+    }).length;
     const promotion = Promotion.of(release.decision);
     return [
       {

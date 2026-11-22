@@ -5,10 +5,11 @@
   import Modal from '#lib/layer/Modal.svelte';
   import { toasts } from '#lib/layer/toasts.svelte.ts';
   import Toolbar from '#lib/Toolbar.svelte';
-  import { onMount, untrack } from 'svelte';
+  import { invalidateAll } from '$app/navigation';
+  import { createArrival } from '#lib/snapshot.svelte.ts';
   import SignInSheet from '#lib/SignInSheet.svelte';
   import { SignIns } from '#lib/signIn.ts';
-  import { Runs, RunsClient, type Drivable, type RunClient } from '#lib/runs.ts';
+  import { Runs, RunsClient, type Drivable } from '#lib/runs.ts';
   import Icon from '#lib/Icon.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import { harnessLabel } from '#lib/activity.ts';
@@ -33,68 +34,35 @@
   } from '#lib/packages.ts';
 
   import type { PageProps } from './$types';
-  import type { PackagesInitial } from './+page.server.ts';
 
   let { data }: PageProps = $props();
   const api = new PackagesApi(fetch);
 
-  /** What the page shows: the daemon's listing, why there is none, or its
-   * outline while the first read is on its way. */
-  type Loaded = PackagesInitial | { kind: 'pending' };
   /** Whether a change is on its way; how it ended is a toast. */
   type Applying = { kind: 'idle' } | { kind: 'applying' };
   /** The change the operator is asked to confirm, if any. */
   type Confirming = { kind: 'apply' } | { kind: 'restore'; generation: Generation } | null;
 
-  // The server's first read, done or on its way; later reads come from this page.
-  let loaded = $state<Loaded>(
-    untrack(() => (data.initial.kind === 'pending' ? { kind: 'pending' } : data.initial)),
-  );
+  /** The daemon's listing: read, failed, or its outline while on its way. */
+  const listingRead = createArrival(() => data.listing);
+  const listing = $derived(listingRead.snapshot?.value ?? null);
   let plan = $state(PackagePlan.EMPTY);
   let applying = $state<Applying>({ kind: 'idle' });
   let confirming = $state<Confirming>(null);
   /** The package whose details are open; none until one is chosen. */
   let selected = $state<PackageId | null>(null);
 
-  // The first read, when it was handed over on its way.
-  $effect(() => {
-    const initial = data.initial;
-    if (initial.kind !== 'pending') return;
-    let current = true;
-    void initial.read
-      .catch((error: unknown): PackagesInitial => ({ kind: 'failed', message: message(error) }))
-      .then((read) => {
-        if (current) took(read);
-      });
-    return () => {
-      current = false;
-    };
-  });
   let collecting = $state<string | null>(null);
 
-  const listing = $derived(loaded.kind === 'ready' ? loaded.listing : null);
   let filter = $state(PackageFilters.ALL);
   const groups = $derived(listing ? PackageGroups.of(listing, filter) : []);
-  const changes = $derived(listing ? plan.changes(listing) : []);
+  /** The plan, kept within what the newest listing holds. */
+  const kept = $derived(listing ? plan.within(listing) : plan);
+  const changes = $derived(listing ? kept.changes(listing) : []);
   const chosen = $derived(listing?.packages.find((p) => p.id === selected) ?? null);
 
   const message = (error: unknown) =>
     error instanceof PackagesError || error instanceof Error ? error.message : String(error);
-
-  /** Show a read: its listing, keeping the plan within it, or why there is none. */
-  function took(read: PackagesInitial) {
-    loaded = read;
-    if (read.kind === 'failed') return;
-    plan = plan.within(read.listing);
-  }
-
-  async function load() {
-    try {
-      took({ kind: 'ready', listing: await api.listing() });
-    } catch (error) {
-      took({ kind: 'failed', message: message(error) });
-    }
-  }
 
   /** The outline's groups: the catalog's kinds, with rows varied in width. */
   const OUTLINE = KINDS.map((kind, index) => ({
@@ -106,17 +74,17 @@
 
   async function apply() {
     confirming = null;
-    if (plan.empty || applying.kind === 'applying') return;
+    if (kept.empty || applying.kind === 'applying') return;
     applying = { kind: 'applying' };
     try {
-      const change = await api.change(plan);
+      const change = await api.change(kept);
       toasts.show(GenerationChanges.said(change));
       if (change.outcome !== 'failed') plan = PackagePlan.EMPTY;
     } catch (error) {
       toasts.show({ mark: 'failed', text: 'The change was not applied', detail: message(error) });
     }
     applying = { kind: 'idle' };
-    await load();
+    await invalidateAll();
   }
 
   /** Make the next generation hold what `generation` held. */
@@ -135,7 +103,7 @@
       });
     }
     applying = { kind: 'idle' };
-    await load();
+    await invalidateAll();
   }
 
   async function collect() {
@@ -145,14 +113,14 @@
     } catch (error) {
       collecting = message(error);
     }
-    await load();
+    await invalidateAll();
   }
 
   /** A row's button label, or `null` for a package Ren does not install. */
   function action(pkg: Package): string | null {
     const row = RowActions.of(pkg);
     if (row === null) return null;
-    if (plan.staged(pkg)) return 'Undo';
+    if (kept.staged(pkg)) return 'Undo';
     switch (row.kind) {
       case 'install':
         return `Install ${row.version}`;
@@ -178,26 +146,17 @@
       .filter((generation) => generation.generation < listing.generation)
       .toSorted((a, b) => b.generation - a.generation)[0] ?? null,
   );
-  const effects = $derived(listing ? plan.effects(listing) : []);
+  const effects = $derived(listing ? kept.effects(listing) : []);
   const staged = $derived(new Map(effects.map((effect) => [effect.id, effect])));
   const short = (sha: string) => `${sha.slice(0, 12)}…`;
 
-  // Each client's sign-in on this host, read from the run API when it is on.
+  // Each client's sign-in on this host, read with the listing; none when runs
+  // are off here.
   const runs = new RunsClient(fetch);
-  // Read on the server with the listing when it could be; else here.
-  let clients = $state.raw<RunClient[]>(untrack(() => data.clients ?? []));
+  const clientsRead = createArrival(() => data.clients);
+  const clients = $derived(clientsRead.snapshot?.value ?? []);
   let signingIn = $state<Drivable | null>(null);
   let checking = $state<Drivable | null>(null);
-  async function readClients() {
-    try {
-      clients = await runs.clients();
-    } catch {
-      // Runs are off or unreachable: no sign-in is shown.
-    }
-  }
-  onMount(() => {
-    if (untrack(() => data.clients) === null) void readClients();
-  });
   /** The client a package is, with its sign-in; null for other packages. */
   const clientOf = (pkg: Package) => SignIns.clientOf(pkg, clients);
   const signedOut = $derived(
@@ -215,7 +174,7 @@
     } finally {
       checking = null;
     }
-    await readClients();
+    await invalidateAll();
   }
   const stateLabel = (state: GenerationView['state']) =>
     state === 'current' ? 'current' : state === 'in_use' ? 'in use' : state === 'idle' ? '' : state;
@@ -272,13 +231,7 @@
 
 <Toolbar {scope} />
 <div class="packages-view">
-  {#if loaded.kind === 'failed'}
-    <div class="packages-empty">
-      <Icon name="alert" size={18} />
-      <p>{loaded.message}</p>
-      <button class="button" onclick={load}><Icon name="refresh" size={12} />Try again</button>
-    </div>
-  {:else if loaded.kind === 'pending'}
+  {#if listingRead.current.state === 'pending'}
     {@render outline()}
   {:else if listing}
     <!-- The newest generations, as columns beside the packages. -->
@@ -479,7 +432,7 @@
                           class:chosen={change !== undefined}
                           onclick={(event) => {
                             event.stopPropagation();
-                            plan = plan.toggle(pkg);
+                            plan = kept.toggle(pkg);
                           }}>{label}</button
                         >
                       {/if}
@@ -612,7 +565,7 @@
       >{/if}
     {#if applying.kind === 'applying'}<FloatingBar label="Changes"
         ><Glyph mark="running" /><span>Installing…</span></FloatingBar
-      >{:else if !plan.empty}<FloatingBar label="Staged changes"
+      >{:else if !kept.empty}<FloatingBar label="Staged changes"
         ><Glyph mark="yours" /><b>{changes.length} staged</b><span class="mono muted staged"
           >{effects.map((e) => `${e.id} ${e.to ?? 'removed'}`).join(' · ')}</span
         ><button class="button small" onclick={() => (plan = PackagePlan.EMPTY)}>Clear</button
@@ -620,6 +573,14 @@
           >Apply {changes.length} change{changes.length === 1 ? '' : 's'}…</button
         ></FloatingBar
       >{/if}
+  {:else}
+    <div class="packages-empty">
+      <Icon name="alert" size={18} />
+      <p>{listingRead.snapshot?.error?.message ?? 'The packages did not read.'}</p>
+      <button class="button" onclick={() => void invalidateAll()}
+        ><Icon name="refresh" size={12} />Try again</button
+      >
+    </div>
   {/if}
 </div>
 
@@ -689,7 +650,7 @@
     cancel={() => runs.cancelSignIn(harness)}
     onclose={() => {
       signingIn = null;
-      void readClients();
+      void invalidateAll();
     }}
   />
 {/if}

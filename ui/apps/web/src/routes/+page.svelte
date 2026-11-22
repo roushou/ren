@@ -284,6 +284,9 @@
             </article>
           {/each}
           {#if pending}<p class="quiet" aria-hidden="true"><Skeleton width="14em" /></p>
+          {:else if !needs && board.unread.length}<p class="quiet muted">
+              <Glyph mark="failed" label={true} /> Not read: {board.unread.join(', ')}
+            </p>
           {:else if !needs}<p class="quiet muted">
               <Glyph mark="passed" label={true} /> Nothing needs you.
             </p>{/if}

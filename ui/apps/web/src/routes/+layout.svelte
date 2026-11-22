@@ -119,9 +119,12 @@
       ? Views.of(navigating.to.route.id)
       : null,
   );
-  const tab = $derived(Views.tab(target ?? view));
+  const tab = $derived.by(() => {
+    const shown = target ?? view;
+    return shown ? Views.tab(shown) : null;
+  });
   /** Home, or the place the page is in: the bar shows only it. */
-  const where = $derived(Views.place(tab));
+  const where = $derived(tab ? Views.place(tab) : 'home');
   /** The place's own entry: its name, and where that leads. */
   const here = $derived(Views.places.find((each) => each.place === where) ?? null);
   /** What waits on the operator, across every project: the top bar's Pending. */
@@ -185,7 +188,7 @@
     return null;
   });
   /** The project a Monitor page is narrowed to, when it can be. */
-  const scope = $derived(Views.scoped(tab) ? page.url.searchParams.get('project') : null);
+  const scope = $derived(tab && Views.scoped(tab) ? page.url.searchParams.get('project') : null);
   /** The same page, for every project. */
   const unscoped = $derived.by(() => {
     const params = new URLSearchParams(page.url.search);
@@ -206,7 +209,7 @@
     page.data.turn,
     page.data.search,
   ]);
-  const pageTitle = $derived(page.error ? 'Page unavailable' : Views.title(view));
+  const pageTitle = $derived(page.error ? 'Page unavailable' : view ? Views.title(view) : 'Ren');
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   // The header names where the gateway runs, not its address.
   const place = $derived(GatewayPlace.parse(gatewayOrigin));

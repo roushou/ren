@@ -176,3 +176,28 @@ export class HourGrid {
     return new HourGrid(rows);
   }
 }
+
+/** A small line of calls over time, as SVG paths in a `width` × `height` box:
+ * the line, and the area under it. */
+export class Sparkline {
+  readonly line: string;
+  readonly area: string;
+
+  private constructor(line: string, area: string) {
+    this.line = line;
+    this.area = area;
+  }
+
+  /** `points` drawn left to right, the busiest a pixel under the top and none
+   * a pixel above the bottom. */
+  static of(points: readonly UsagePoint[], width: number, height: number): Sparkline {
+    const top = Math.max(1, ...points.map((point) => point.calls));
+    const step = width / Math.max(1, points.length - 1);
+    const at = points.map(
+      (point, index) =>
+        `${(index * step).toFixed(1)} ${(height - 2 - (point.calls / top) * (height - 4)).toFixed(1)}`,
+    );
+    const line = `M ${at.join(' L ')}`;
+    return new Sparkline(line, `${line} L ${width} ${height} L 0 ${height} Z`);
+  }
+}

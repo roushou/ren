@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  Sparkline,
   HourGrid,
   axisTicks,
   cacheShare,
@@ -125,4 +126,18 @@ test('the hour grid places each hour’s calls in its local day and hour, over t
   assert.equal(grid.rows[0]?.cells[23], 2);
   // Older than the week: left out.
   assert.equal(grid.busiest, 4);
+});
+
+test('a sparkline draws calls left to right, busiest near the top, none near the bottom', () => {
+  const point = (calls: number) => ({
+    start: 0,
+    calls,
+    errors: 0,
+    tokens: { input: 0, output: 0, cache_read: 0 },
+  });
+  const spark = Sparkline.of([point(0), point(5), point(10)], 96, 24);
+  assert.equal(spark.line, 'M 0.0 22.0 L 48.0 12.0 L 96.0 2.0');
+  assert.equal(spark.area, `${spark.line} L 96 24 L 0 24 Z`);
+  // A quiet day is a flat line along the bottom.
+  assert.equal(Sparkline.of([point(0), point(0)], 96, 24).line, 'M 0.0 22.0 L 96.0 22.0');
 });

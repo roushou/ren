@@ -26,10 +26,18 @@ import {
   Sessions,
   type RunClient,
   type RunSnapshot,
+  type Read,
   type SessionBody,
 } from './runs.ts';
 import { WorkApi, type WorkItem } from './work.ts';
-import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
+import {
+  Sparkline,
+  localDayStart,
+  parseRange,
+  rangeStart,
+  usagePoints,
+  type UsageRange,
+} from './usage.ts';
 import { listingQuery } from './traffic.ts';
 import { readSnapshot, snapshotError, type Snapshot } from './snapshots.ts';
 import { Arrival, type Arriving } from './arrival.ts';
@@ -693,22 +701,22 @@ export class LiveReader {
   }
 }
 
-/** What every page reads for Pending, and the Projects view for its board;
- * a list that fails to read is left empty. */
+/** What every page reads for Pending, and the Projects view for its board.
+ * Each list says whether it read: a list that failed is not an empty one. */
 export interface ProjectsData {
   projects: Project[];
   /** Why the projects did not read, when they did not. */
   failed: string | null;
   /** Work items under way, across every project. */
-  work: WorkItem[];
+  work: Read<WorkItem[]>;
   /** The runs the daemon holds, for the approvals they wait on; none when
    * this UI only reads. */
-  live: RunSnapshot[];
+  live: Read<RunSnapshot[]>;
   /** The current sessions, for the project each run works for. */
-  sessions: SessionBody[];
+  sessions: Read<SessionBody[]>;
   /** Each client and its sign-in on the daemon's host; none when this UI
    * only reads. */
-  clients: RunClient[];
+  clients: Read<RunClient[]>;
 }
 
 export async function projectsData(
@@ -717,6 +725,15 @@ export async function projectsData(
 ): Promise<ProjectsData> {
   const api = new ManagementApi(fetcher);
   const runs = new RunsClient(fetcher);
+  const settle = <T>(reading: Promise<T>): Promise<Read<T>> =>
+    reading.then(
+      (value): Read<T> => ({ state: 'read', value }),
+      (failure: unknown): Read<T> => ({
+        state: 'failed',
+        reason: failure instanceof Error ? failure.message : 'The read failed.',
+      }),
+    );
+  const none = <T>(): Promise<Read<T[]>> => Promise.resolve({ state: 'read', value: [] });
   const [listed, work, live, sessions, clients] = await Promise.all([
     api.projects().then(
       (projects) => ({ projects, failed: null }),
@@ -725,10 +742,10 @@ export async function projectsData(
         failed: failure instanceof Error ? failure.message : 'The projects did not read.',
       }),
     ),
-    new WorkApi(fetcher).list('current').catch(() => []),
-    runsControl ? runs.live().catch(() => []) : Promise.resolve([]),
-    runsControl ? runs.sessions('current').catch(() => []) : Promise.resolve([]),
-    runsControl ? runs.clients().catch(() => []) : Promise.resolve([]),
+    settle(new WorkApi(fetcher).list('current')),
+    runsControl ? settle(runs.live()) : none<RunSnapshot>(),
+    runsControl ? settle(runs.sessions('current')) : none<SessionBody>(),
+    runsControl ? settle(runs.clients()) : none<RunClient>(),
   ]);
   return { ...listed, work, live, sessions, clients };
 }
@@ -743,5 +760,28 @@ export function deskLinks(fetcher: typeof fetch): Promise<Arriving<Map<Recording
       new ManagementApi(fetcher).projects().catch(() => []),
     ]);
     return Sessions.desks(bodies, projects);
+  });
+}
+
+/** Each current project's calls by hour over the last day, as sparklines
+ * 96 × 24, by project name. A project whose usage did not read has none. */
+export function projectSparks(
+  fetcher: typeof fetch,
+  now: number,
+): Promise<Arriving<Map<string, Sparkline>>> {
+  const api = new ManagementApi(fetcher);
+  return Arrival.read('projects:sparks', async () => {
+    const projects = (await api.projects()).filter((project) => project.archived_at === null);
+    const read = await Promise.all(
+      projects.map(async (project) => {
+        const usage = await api
+          .usage({ from_ms: now - 86_400_000, project: project.name })
+          .catch(() => null);
+        return usage
+          ? ([project.name, Sparkline.of(usagePoints(usage.hours, '24h', now), 96, 24)] as const)
+          : null;
+      }),
+    );
+    return new Map(read.filter((entry) => entry !== null));
   });
 }

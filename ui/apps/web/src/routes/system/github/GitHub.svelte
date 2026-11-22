@@ -7,7 +7,7 @@
   import Glyph from '#lib/Glyph.svelte';
   import { ago } from '#lib/overview.ts';
   import { PullChips } from '#lib/release.ts';
-  import { GitHubWatches, type PullStanding } from '#lib/github.ts';
+  import { GitHubWatches, type PullGroup } from '#lib/github.ts';
   import type { Mark } from '#lib/marks.ts';
   import type { GitHubData } from './+page.ts';
 
@@ -16,30 +16,32 @@
   const summary = $derived(GitHubWatches.summary(rows));
   const pulls = $derived(GitHubWatches.pulls(rows));
   const watched = $derived(rows.filter((row) => row.state !== 'off'));
-  let only = $state<PullStanding | null>(null);
-  const shown = $derived(only ? pulls.filter((row) => row.standing === only) : pulls);
+  let only = $state<PullGroup | null>(null);
+  const shown = $derived(only ? pulls.filter((row) => row.group === only) : pulls);
   const now = Date.now();
 
-  const labels: Record<PullStanding, string> = {
+  const labels: Record<PullGroup, string> = {
     ready: 'Ready to merge',
     review: 'Review required',
-    failing: 'Checks failing',
+    held: 'Held',
+    failing: 'Failing',
     running: 'Checks running',
     draft: 'Drafts',
-    other: 'Other',
+    unknown: 'Unknown',
   };
-  const marks: Record<PullStanding, Mark> = {
+  const marks: Record<PullGroup, Mark> = {
     ready: 'passed',
     review: 'yours',
+    held: 'warning',
     failing: 'failed',
     running: 'running',
     draft: 'draft',
-    other: 'unknown',
+    unknown: 'unknown',
   };
   const filters = $derived(
     (['ready', 'failing', 'review', 'draft'] as const).map((standing) => ({
       standing,
-      count: pulls.filter((row) => row.standing === standing).length,
+      count: pulls.filter((row) => row.group === standing).length,
     })),
   );
 </script>
@@ -96,14 +98,14 @@
             <svg viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true">
               <rect class="track" width="100" height="6" />
               {#if row.pulls.length}
-                {#each GitHubWatches.standings as standing, index (standing)}
-                  {@const before = GitHubWatches.standings
+                {#each GitHubWatches.groups as standing, index (standing)}
+                  {@const before = GitHubWatches.groups
                     .slice(0, index)
-                    .reduce((sum, one) => sum + row.standings[one], 0)}
+                    .reduce((sum, one) => sum + row.groups[one], 0)}
                   <rect
                     class="part {standing}"
                     x={(before / row.pulls.length) * 100}
-                    width={(row.standings[standing] / row.pulls.length) * 100}
+                    width={(row.groups[standing] / row.pulls.length) * 100}
                     height="6"
                   />
                 {/each}
@@ -116,7 +118,7 @@
           </div>
         {/each}
         <div class="key meta">
-          {#each ['ready', 'review', 'failing', 'running', 'draft'] as const as standing (standing)}
+          {#each ['ready', 'review', 'held', 'failing', 'running', 'draft'] as const as standing (standing)}
             <span><span class="swatch part {standing}"></span>{labels[standing].toLowerCase()}</span
             >
           {/each}
@@ -150,7 +152,7 @@
           {@const checks = PullChips.checks(row.pull)}
           <a
             class="pull"
-            class:bad={row.standing === 'failing'}
+            class:bad={row.group === 'failing'}
             href={row.pull.url}
             target="_blank"
             rel="noopener"
@@ -304,8 +306,12 @@
     fill: var(--live);
     background: var(--live);
   }
+  .part.held {
+    fill: color-mix(in srgb, var(--warning) 50%, transparent);
+    background: color-mix(in srgb, var(--warning) 50%, transparent);
+  }
   .part.draft,
-  .part.other {
+  .part.unknown {
     fill: var(--muted);
     background: var(--muted);
   }

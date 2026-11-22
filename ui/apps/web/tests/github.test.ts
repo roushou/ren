@@ -52,13 +52,14 @@ test('each watch counts its pull requests by where they stand', () => {
       ['acme-web', 'failed', null, 0],
     ],
   );
-  assert.deepEqual(rows[0]?.standings, {
+  assert.deepEqual(rows[0]?.groups, {
     ready: 1,
     review: 1,
+    held: 0,
     failing: 1,
     running: 0,
     draft: 1,
-    other: 0,
+    unknown: 0,
   });
   assert.equal(rows[1]?.error, 'timeout');
   const summary = GitHubWatches.summary(rows);
@@ -69,4 +70,18 @@ test('each watch counts its pull requests by where they stand', () => {
     GitHubWatches.pulls(rows).map((row) => row.pull.number),
     [2, 3, 1, 4],
   );
+});
+
+test('a pull request is grouped by where it stands, never by its glyph', () => {
+  const group = (overrides: Partial<Pull>) => GitHubWatches.group(pull(1, overrides));
+  assert.equal(group({ merge: 'conflicting' }), 'failing');
+  assert.equal(group({ review: 'changes_requested' }), 'held');
+  assert.equal(group({ merge: 'behind' }), 'held');
+  assert.equal(group({ merge: 'blocked' }), 'held');
+  assert.equal(group({ merge: 'unknown' as never }), 'unknown');
+  // A draft stands as a draft whatever its checks say.
+  assert.equal(group({ readiness: 'draft', checks: 'failing' }), 'draft');
+  // A watch this UI does not know is unknown, not idle.
+  assert.equal(GitHubWatches.mark('unknown'), 'unknown');
+  assert.equal(GitHubWatches.mark('off'), 'idle');
 });

@@ -184,6 +184,10 @@ export interface BoardInput {
 export class Board {
   /** The lanes show this much recent time: a few agent loops. */
   static readonly laneMs = 2 * 60_000;
+  /** How often a board is built again as time passes, in ms: no finer than
+   * the feed's shortest wait (`Feed.waitMs`), so no state is late. Elapsed
+   * labels tick on their own. */
+  static readonly tickMs = 5_000;
   /** The wall is a fixed 3 × 2; more recordings than this go to an overflow count. */
   static readonly maxTiles = 6;
   /** Waiting this long for a response head is worth a look. */

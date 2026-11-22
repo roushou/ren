@@ -26,7 +26,11 @@
       >{/if}
   </h2>
 </header>
-{#if !board.pending}
+{#if board.unread.length && !board.pending}
+  <p class="quiet muted">
+    <Glyph mark="failed" label={true} /> Not read: {board.unread.join(', ')}
+  </p>
+{:else if !board.pending}
   <p class="quiet muted"><Glyph mark="passed" label={true} /> Nothing waits on you.</p>
 {:else}
   <ul>

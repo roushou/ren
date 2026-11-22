@@ -8,6 +8,7 @@ import {
   Sessions,
   type ApprovalAsk,
   type ApprovalId,
+  type Read,
   type RunClient,
   type RunSnapshot,
   type SessionBody,
@@ -57,6 +58,9 @@ export interface WorkGroup {
   items: WorkItem[];
 }
 
+/** A list the board reads beside the projects. */
+export type BoardList = 'work' | 'runs' | 'sessions' | 'clients';
+
 /** The projects and the work under them, as the Projects view shows them. */
 export class ProjectBoard {
   readonly projects: readonly Project[];
@@ -69,6 +73,9 @@ export class ProjectBoard {
   readonly only: string | null;
   /** Each client and its sign-in on the daemon's host. */
   readonly clients: readonly RunClient[];
+  /** The lists that failed to read: what waits on the operator is unknown
+   * there, not empty. */
+  readonly unread: readonly BoardList[];
 
   constructor(
     projects: readonly Project[],
@@ -77,7 +84,9 @@ export class ProjectBoard {
     sessions: readonly SessionBody[] = [],
     only: string | null = null,
     clients: readonly RunClient[] = [],
+    unread: readonly BoardList[] = [],
   ) {
+    this.unread = unread;
     this.projects = projects;
     this.work = work;
     this.live = live;
@@ -97,15 +106,30 @@ export class ProjectBoard {
   static read(
     read: {
       projects: readonly Project[];
-      work: readonly WorkItem[];
-      live: readonly RunSnapshot[];
-      sessions: readonly SessionBody[];
-      clients: readonly RunClient[];
+      work: Read<readonly WorkItem[]>;
+      live: Read<readonly RunSnapshot[]>;
+      sessions: Read<readonly SessionBody[]>;
+      clients: Read<readonly RunClient[]>;
     } | null,
   ): ProjectBoard {
-    return read
-      ? new ProjectBoard(read.projects, read.work, read.live, read.sessions, null, read.clients)
-      : new ProjectBoard([], []);
+    if (!read) return new ProjectBoard([], []);
+    const value = <T>(list: Read<readonly T[]>): readonly T[] =>
+      list.state === 'read' ? list.value : [];
+    const lists: readonly [BoardList, Read<readonly unknown[]>][] = [
+      ['work', read.work],
+      ['runs', read.live],
+      ['sessions', read.sessions],
+      ['clients', read.clients],
+    ];
+    return new ProjectBoard(
+      read.projects,
+      value(read.work),
+      value(read.live),
+      value(read.sessions),
+      null,
+      value(read.clients),
+      lists.filter(([, list]) => list.state === 'failed').map(([name]) => name),
+    );
   }
 
   /** Whether the layout's read of every project says no project is named

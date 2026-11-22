@@ -16,7 +16,9 @@ test('each route is its view, and an unknown one is Traffic', () => {
   assert.equal(Views.of('/monitor/traffic'), 'traffic');
   assert.equal(Views.of('/monitor/sessions/[id]'), 'recording');
   assert.equal(Views.of('/monitor/sessions/[id]/report'), 'report');
-  assert.equal(Views.of(null), 'traffic');
+  // A route the table does not name is no view, never another page's.
+  assert.equal(Views.of(null), null);
+  assert.equal(Views.of('/projects/[name]'), null);
 });
 
 test("a session's calls, its report, and its turns sit under Monitor's Sessions tab", () => {

@@ -372,3 +372,16 @@ test('a project is unknown only when the board read and has none by that name', 
   assert.equal(ProjectBoard.known(read, acme.name), acme);
   assert.equal(ProjectBoard.known(null, acme.name), null);
 });
+
+test('a list that failed to read is unread, not empty', () => {
+  const board = ProjectBoard.read({
+    projects: [],
+    work: { state: 'read', value: [] },
+    live: { state: 'failed', reason: 'down' },
+    sessions: { state: 'read', value: [] },
+    clients: { state: 'failed', reason: 'down' },
+  });
+  assert.deepEqual(board.unread, ['runs', 'clients']);
+  assert.equal(board.pending, false);
+  assert.deepEqual(ProjectBoard.read(null).unread, []);
+});

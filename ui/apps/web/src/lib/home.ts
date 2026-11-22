@@ -21,9 +21,13 @@ export interface UnderWay {
   href: string;
 }
 
+/** What happened: a session ended, or a work item landed or shipped. */
+export type OutcomeKind = 'ended' | 'landed' | 'shipped';
+
 /** Something that ended or moved on since the operator looked. */
 export interface Outcome {
   key: string;
+  kind: OutcomeKind;
   mark: Mark;
   /** What happened, for the glyph's label. */
   happened: string;
@@ -80,6 +84,7 @@ export class Home {
       return [
         {
           key: `session:${body.session}`,
+          kind: 'ended',
           mark: ended === 'idle' ? 'passed' : ended,
           happened: ended === 'idle' ? 'Ended' : 'Ended short',
           title: stored.first_prompt ?? 'A session',
@@ -91,13 +96,16 @@ export class Home {
     });
     const work = board.work.flatMap((item): Outcome[] => {
       if (item.updated_at <= since) return [];
-      if (item.state !== 'landed' && item.state !== 'shipped') return [];
+      const kind: OutcomeKind | null =
+        item.state === 'landed' ? 'landed' : item.state === 'shipped' ? 'shipped' : null;
+      if (kind === null) return [];
       const home = board.homeOf(item);
       return [
         {
           key: `work:${item.id}`,
+          kind,
           mark: 'passed',
-          happened: item.state === 'landed' ? 'Landed on main' : 'Shipped',
+          happened: kind === 'landed' ? 'Landed on main' : 'Shipped',
           title: item.title,
           project: home,
           at: item.updated_at,
@@ -119,9 +127,9 @@ export class Home {
 
   static counts(outcomes: readonly Outcome[]): OutcomeCounts {
     return {
-      ended: outcomes.filter((one) => one.key.startsWith('session:')).length,
-      landed: outcomes.filter((one) => one.happened === 'Landed on main').length,
-      shipped: outcomes.filter((one) => one.happened === 'Shipped').length,
+      ended: outcomes.filter((one) => one.kind === 'ended').length,
+      landed: outcomes.filter((one) => one.kind === 'landed').length,
+      shipped: outcomes.filter((one) => one.kind === 'shipped').length,
       failed: outcomes.filter((one) => one.mark === 'failed' || one.mark === 'warning').length,
     };
   }

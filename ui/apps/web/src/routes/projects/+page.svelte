@@ -13,13 +13,11 @@
   import Toolbar from '#lib/Toolbar.svelte';
   import ApprovalModal from '#lib/ApprovalModal.svelte';
   import { ApprovalAnswers } from '#lib/approvals.svelte.ts';
-  import { ManagementApi } from '#lib/api.ts';
   import { ProjectBoard } from '#lib/projects.ts';
   import { Promotion, ReleasePage } from '#lib/release.ts';
   import { Sessions } from '#lib/runs.ts';
   import { Home } from '#lib/home.ts';
   import { Work } from '#lib/work.ts';
-  import { usagePoints } from '#lib/usage.ts';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import type { PageProps } from './$types';
 
@@ -37,26 +35,10 @@
     state === 'queued' ? 'queued' : state === 'sent' ? 'running' : 'passed';
   let now = $state(Date.now());
 
-  /** Each project's calls by hour over the last day, as a sparkline path. */
-  let sparks = $state<Record<string, { line: string; area: string }>>({});
+  const sparkRead = createArrival(() => data.sparks);
+  /** Each project's calls by hour over the last day. */
+  const sparks = $derived(sparkRead.snapshot?.value ?? new Map());
   onMount(() => {
-    const api = new ManagementApi();
-    const since = Date.now() - 86_400_000;
-    for (const project of board.active) {
-      api
-        .usage({ from_ms: since, project: project.name })
-        .then((usage) => {
-          const points = usagePoints(usage.hours, '24h', Date.now());
-          const top = Math.max(1, ...points.map((point) => point.calls));
-          const at = points.map(
-            (point, index) =>
-              `${((index / Math.max(1, points.length - 1)) * 96).toFixed(1)} ${(22 - (point.calls / top) * 20).toFixed(1)}`,
-          );
-          const line = `M ${at.join(' L ')}`;
-          sparks = { ...sparks, [project.name]: { line, area: `${line} L 96 24 L 0 24 Z` } };
-        })
-        .catch(() => {});
-    }
     const ticking = setInterval(() => (now = Date.now()), 30_000);
     return () => clearInterval(ticking);
   });
@@ -186,10 +168,10 @@
               y1="23.5"
               x2="96"
               y2="23.5"
-            />{#if sparks[project.name]}<path
+            />{#if sparks.get(project.name)}{@const spark = sparks.get(project.name)}<path
                 class="spark-area"
-                d={sparks[project.name]?.area}
-              /><path class="spark-line" d={sparks[project.name]?.line} />{/if}</svg
+                d={spark.area}
+              /><path class="spark-line" d={spark.line} />{/if}</svg
           >
           <span class="muted mono right"
             >{glance.active ? Sessions.age(glance.active, now) : '—'}</span

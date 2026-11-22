@@ -74,9 +74,9 @@ export class Views {
     { place: 'system', href: '/system/packages', label: 'System' },
   ];
 
-  /** The view a SvelteKit route id is; an unknown route is Traffic, the
-   * workbench's own view. */
-  static of(route: string | null): View {
+  /** The view a SvelteKit route id is; null for a route that is no view
+   * (an error, or a route this table does not name). */
+  static of(route: string | null): View | null {
     switch (route) {
       case '/':
         return 'home';
@@ -110,8 +110,10 @@ export class Views {
         return 'github';
       case '/system/recorder':
         return 'recorder';
-      default:
+      case '/monitor/traffic':
         return 'traffic';
+      default:
+        return null;
     }
   }
 

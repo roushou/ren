@@ -13,7 +13,8 @@
   import { Views } from './view.ts';
 
   let { scope }: { scope?: Snippet } = $props();
-  const title = $derived(page.error ? 'Page unavailable' : Views.title(Views.of(page.route.id)));
+  const view = $derived(Views.of(page.route.id));
+  const title = $derived(page.error ? 'Page unavailable' : view ? Views.title(view) : 'Ren');
 
   /** When the scope does not fit on one line it folds behind a button: by
    * measurement here, and on a phone by its width in CSS. */

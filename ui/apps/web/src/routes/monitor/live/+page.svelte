@@ -56,16 +56,17 @@
     return () => clearInterval(timer);
   });
 
+  /** The time the board and band are built at: on `Board.tickMs`, not every
+   * second, so the wall is not rebuilt from every call each tick. */
+  const builtAt = $derived(
+    current ? Math.max(Math.floor(now / Board.tickMs) * Board.tickMs, current.read) : now,
+  );
+  /** The time elapsed labels read: every second, never before the read. */
+  const labelAt = $derived(Math.max(now, current?.read ?? now));
   const view = $derived(LivePlace.parse(page.url.searchParams));
   const band = $derived(
     current
-      ? new Band(
-          current.recordings,
-          current.recent,
-          Math.max(now, current.read),
-          view.by,
-          current.complete,
-        )
+      ? new Band(current.recordings, current.recent, builtAt, view.by, current.complete)
       : null,
   );
   /** The series the wall is narrowed to: the band's, or the bare key while it draws nothing. */
@@ -84,7 +85,7 @@
           recordings: current.recordings,
           calls: current.calls,
           turns: current.turns,
-          now: Math.max(now, current.read),
+          now: builtAt,
           windowMs: LivePlace.windows[current.window].ms,
           focus: view.focus,
           pins: view.pins,
@@ -583,7 +584,7 @@
             ><i></i>{#if item.recording}<b>{short(item.recording.native_id)}</b>{/if}<span
               >{item.text}</span
             >{#if item.detail}<span class="muted">{item.detail}</span>{/if}{#if !item.pinned}<span
-                class="live-now-age">{ago(item, board.now)}</span
+                class="live-now-age">{ago(item, labelAt)}</span
               >{/if}</a
           >
         {:else}
@@ -741,7 +742,7 @@
                 {#if !streamed?.reply && (tile.turnId || unread.call.state === 'open')}
                   {@const thinking = unread.call.state === 'open' && !!streamed?.thinking}
                   <p class="live-sep live" class:open={unread.call.state === 'open'} class:thinking>
-                    call {unread.index} · {unreadLabel(unread, board.now, thinking)}
+                    call {unread.index} · {unreadLabel(unread, labelAt, thinking)}
                   </p>
                 {/if}
                 {#if streamed}
