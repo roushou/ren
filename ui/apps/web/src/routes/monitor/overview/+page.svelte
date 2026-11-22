@@ -157,7 +157,7 @@
           <section class="ov-panel" aria-labelledby="attention-title" aria-busy={pending}>
             <header class="ov-heading">
               <h2 id="attention-title">Needs attention</h2>
-              <span class="muted mono">last 24 h · worst first</span>
+              <span class="muted mono">last 24 h</span>
             </header>
             {#if pending}
               {#each { length: OUTLINE_ROWS }, row (row)}

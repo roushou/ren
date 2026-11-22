@@ -163,7 +163,6 @@
       <section class="part" aria-labelledby="needs-title">
         <header>
           <h2 id="needs-title" class="cap">Needs you · {needs}</h2>
-          <span class="muted mono">everywhere · worst first</span>
         </header>
         <div class="scroll cards">
           {#each board.approvals as waiting (`${waiting.session}:${waiting.approval}`)}
@@ -290,7 +289,6 @@
       <section class="part" aria-labelledby="underway-title">
         <header>
           <h2 id="underway-title" class="cap">Under way · {underWay.length}</h2>
-          <span class="muted mono">what each agent is doing now</span>
         </header>
         <div class="scroll">
           {#each underWay as row (row.session)}
