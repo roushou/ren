@@ -126,6 +126,7 @@
   /** Nothing recorded in the last day: the page leads with how to connect a client. */
   const firstRun = $derived(!!current && current.usage.totals.calls === 0 && !board?.tiles.length);
   const OUTLINE_ROWS = 4;
+  const DAY_FIGURES = ['Calls', 'Failure rate', 'Tokens in', 'Read from cache'];
 </script>
 
 <Toolbar>
@@ -136,11 +137,6 @@
           >{when(current.now - 24 * 3_600_000)} – {when(current.now)}</span
         >{/if}
     </span>
-    {#if totals}<span class="meta ov-sum"
-        >{num(totals.calls)} calls · {num(totals.errors)} failed · {Shares.percent(
-          totals.calls ? totals.errors / totals.calls : null,
-        )}</span
-      >{/if}
   {/snippet}
 </Toolbar>
 <div class="overview">
@@ -156,6 +152,22 @@
       <ConnectClient layout="box" gatewayOrigin={page.data.gatewayUrl} />
     </section>
   {:else}
+    <div class="ov-day">
+      <Figures label="The last 24 hours against the day before">
+        {#if pending}
+          {#each DAY_FIGURES as label (label)}
+            <Figure {label}><Skeleton size="figure" width="5em" /></Figure>
+          {/each}
+        {:else}
+          {#each changes as change (change.label)}
+            {#snippet delta()}<span class:bad={change.worse}>{change.delta}</span>{/snippet}
+            <Figure label={change.label} sub={change.delta ? delta : undefined}
+              >{change.value}</Figure
+            >
+          {/each}
+        {/if}
+      </Figures>
+    </div>
     <div class="ov-grid">
       <div class="ov-column">
         <section class="ov-block" aria-labelledby="providers-title" aria-busy={pending}>
@@ -255,11 +267,11 @@
                       : 'info'}
                   label={true}
                 />
-                <span class="ov-failure-name"
+                <span class="ov-failure-name" class:wide={!group.models}
                   ><span class="title">{group.name}</span><span class="meta">×{group.count}</span
                   ></span
                 >
-                <span class="meta ellipsis">{group.models}</span>
+                {#if group.models}<span class="meta ellipsis">{group.models}</span>{/if}
                 <svg
                   class="ov-ticks"
                   viewBox="0 0 100 10"
@@ -290,12 +302,12 @@
             <a class="meta ov-link" href="/monitor/live">Live →</a>
           </header>
           <div class="ov-now">
-            <Figures label="Now">
+            <Figures label="Now" size="small">
               <Figure label="In flight">{board ? num(board.inFlight) : '—'}</Figure>
-              <Figure label="Sessions active"
+              <Figure label="Sessions"
                 >{board ? num(board.tiles.length + board.overflow) : '—'}</Figure
               >
-              <Figure label="Since last call"
+              <Figure label="Last call"
                 >{lastCall ? Elapsed.span(Math.max(0, now - lastCall)) : '—'}</Figure
               >
             </Figures>
@@ -320,7 +332,7 @@
         </section>
 
         {#if secrets.length}
-          <section class="ov-block flush" aria-labelledby="secrets-title">
+          <section class="ov-block flush grow" aria-labelledby="secrets-title">
             <header class="ov-head pad">
               <h2 id="secrets-title" class="cap">
                 Secrets seen · {Failures.count(current?.exposures ?? [])}
@@ -346,19 +358,6 @@
             </ul>
           </section>
         {/if}
-
-        <section class="ov-block grow" aria-labelledby="compare-title" aria-busy={pending}>
-          <header class="ov-head">
-            <h2 id="compare-title" class="cap">Against the day before</h2>
-          </header>
-          {#each changes as change (change.label)}
-            <div class="ov-change">
-              <span>{change.label}</span>
-              <span class="num">{change.value}</span>
-              <span class="meta num" class:bad={change.worse}>{change.delta ?? '—'}</span>
-            </div>
-          {/each}
-        </section>
       </div>
     </div>
   {/if}
@@ -366,7 +365,9 @@
 
 <style>
   .overview {
+    display: flex;
     flex: 1;
+    flex-direction: column;
     min-height: 0;
     overflow: auto;
     background: var(--canvas);
@@ -375,9 +376,6 @@
     display: inline-flex;
     align-items: baseline;
     gap: 12px;
-  }
-  .ov-sum {
-    margin-left: 16px;
   }
   .cap.strong {
     color: var(--ink);
@@ -388,11 +386,14 @@
   .bad {
     color: var(--error);
   }
+  .ov-day {
+    border-bottom: 1px solid var(--line);
+  }
   .ov-grid {
     display: grid;
+    flex: 1 0 auto;
     grid-template-columns: minmax(0, 1fr) 360px;
     gap: 1px;
-    min-height: 100%;
     background: var(--line);
   }
   .ov-column {
@@ -409,7 +410,8 @@
   .ov-column:not(.side) .ov-block {
     padding: 12px 0 6px;
   }
-  .grow {
+  .grow,
+  .side > :last-child {
     flex: 1;
   }
   .ov-head {
@@ -490,6 +492,9 @@
     border-top: 1px solid var(--line-subtle);
     color: inherit;
   }
+  .ov-failure-name.wide {
+    grid-column: span 2;
+  }
   .ov-failure-name {
     display: flex;
     align-items: baseline;
@@ -563,14 +568,6 @@
     padding: 0 16px;
     border-top: 1px solid var(--line-subtle);
     color: inherit;
-  }
-  .ov-change {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto 64px;
-    gap: 8px;
-    align-items: center;
-    height: 28px;
-    border-bottom: 1px solid var(--line-subtle);
   }
   .ov-first {
     max-width: 640px;

@@ -9,6 +9,7 @@
   import Glyph from '#lib/Glyph.svelte';
   import Figures from '#lib/Figures.svelte';
   import Figure from '#lib/Figure.svelte';
+  import PullBar from '#lib/PullBar.svelte';
 
   import { PullChips } from '#lib/release.ts';
   import { GitHubWatches, type GitHubData, type PullGroup } from '#lib/github.ts';
@@ -87,22 +88,7 @@
             />
             <span>{row.project}</span>
             <span class="mono meta">{row.repository ?? 'not watched'}</span>
-            <svg viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true">
-              <rect class="track" width="100" height="6" />
-              {#if row.pulls.length}
-                {#each GitHubWatches.groups as standing, index (standing)}
-                  {@const before = GitHubWatches.groups
-                    .slice(0, index)
-                    .reduce((sum, one) => sum + row.groups[one], 0)}
-                  <rect
-                    class="part {standing}"
-                    x={(before / row.pulls.length) * 100}
-                    width={(row.groups[standing] / row.pulls.length) * 100}
-                    height="6"
-                  />
-                {/each}
-              {/if}
-            </svg>
+            <PullBar {row} />
             <span class="num mono"
               >{row.state === 'seen' || row.pulls.length ? row.pulls.length : '—'}</span
             >
@@ -225,36 +211,23 @@
   a.pull:hover {
     background: var(--row-hover);
   }
-  .repo svg {
-    width: 100%;
-    height: 8px;
-  }
-  .track {
-    fill: var(--surface-inset);
-  }
   .part.ready {
-    fill: var(--success);
     background: var(--success);
   }
   .part.review {
-    fill: var(--warning);
     background: var(--warning);
   }
   .part.failing {
-    fill: var(--error);
     background: var(--error);
   }
   .part.running {
-    fill: var(--live);
     background: var(--live);
   }
   .part.held {
-    fill: color-mix(in srgb, var(--warning) 50%, transparent);
     background: color-mix(in srgb, var(--warning) 50%, transparent);
   }
   .part.draft,
   .part.unknown {
-    fill: var(--muted);
     background: var(--muted);
   }
   .key {
