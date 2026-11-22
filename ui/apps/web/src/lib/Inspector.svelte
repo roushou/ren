@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Allowances } from './allowance.ts';
   import BodyInspector from './BodyInspector.svelte';
   import Glyph from './Glyph.svelte';
   import { CallTimeline } from './timeline.ts';
@@ -44,7 +45,7 @@
   const api = new ManagementApi();
   let detail = $state<CallDetail | null>(null);
   let detailError = $state('');
-  let section = $state<'overview' | 'request' | 'response' | 'metadata'>('response');
+  let section = $state<'overview' | 'request' | 'response' | 'metadata'>('overview');
   // An open snapshot never replaces a finished one, whichever arrived last.
   const current = $derived(
     detail?.call.id === call.id && (detail.call.state !== 'open' || call.state === 'open')
@@ -55,6 +56,8 @@
   const inspection = $derived(attempts.at(-1)?.inspection ?? null);
   /** The limit headers the final attempt's response head carried. */
   const limitHeaders = $derived(attempts.at(-1)?.limit_headers ?? []);
+  /** What the limit headers say is left, each limit as a bar. */
+  const allowances = $derived(Allowances.all(limitHeaders));
   const workbench = getWorkbench();
   const usage = $derived(current.usage ?? inspection?.usage ?? null);
   const split = $derived(CallTimeline.tokens({ ...current, usage }));
@@ -273,7 +276,6 @@
       <section class="detail-section">
         <div class="section-heading">
           <h3>Attempts <span class="count-pill">{num(attempts.length)}</span></h3>
-          <span class="subtle-label">Upstream tries</span>
         </div>
         {#if attempts.length}<div class="attempts">
             {#each attemptBars as bar (bar.attempt.id)}
@@ -307,8 +309,23 @@
       {#if limitHeaders.length}<section class="detail-section">
           <div class="section-heading">
             <h3>Limit headers <span class="count-pill">{num(limitHeaders.length)}</span></h3>
-            <span class="subtle-label">As the provider sent them</span>
           </div>
+          {#if allowances.length}
+            <div class="allowances">
+              {#each allowances as allowance (allowance.name)}
+                <span class="allowance-name">{allowance.name}</span>
+                <svg viewBox="0 0 100 1" preserveAspectRatio="none" aria-hidden="true"
+                  ><rect class="track" width="100" height="1" /><rect
+                    class="left"
+                    class:low={allowance.left < 0.2}
+                    width={allowance.left * 100}
+                    height="1"
+                  /></svg
+                >
+                <span class="mono allowance-text">{allowance.text}</span>
+              {/each}
+            </div>
+          {/if}
           <dl class="detail-list">
             {#each limitHeaders as header, index (index)}<div>
                 <dt class="mono">{header.name}</dt>
@@ -503,6 +520,35 @@
 </aside>
 
 <style>
+  .allowances {
+    display: grid;
+    grid-template-columns: 110px minmax(0, 1fr) auto;
+    column-gap: 10px;
+    row-gap: 6px;
+    align-items: center;
+    margin-bottom: 10px;
+    font-size: 12px;
+  }
+  .allowances svg {
+    width: 100%;
+    height: 6px;
+  }
+  .allowances .track {
+    fill: var(--surface-inset);
+  }
+  .allowances .left {
+    fill: var(--success);
+  }
+  .allowances .left.low {
+    fill: var(--warning);
+  }
+  .allowance-name::first-letter {
+    text-transform: uppercase;
+  }
+  .allowance-text {
+    color: var(--muted);
+    font-size: 11px;
+  }
   .call-title {
     display: flex;
     align-items: center;

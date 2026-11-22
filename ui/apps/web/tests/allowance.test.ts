@@ -14,7 +14,7 @@ test("a subscription's windows: the fuller one says it", () => {
         ['anthropic-ratelimit-unified-7d-utilization', '0.18'],
       ]),
     ),
-    { left: 0.5800000000000001, text: '42% used · 5 h' },
+    { name: '5 h window', left: 0.5800000000000001, text: '42% used · 5 h' },
   );
 });
 
@@ -42,7 +42,7 @@ test("an API key's remaining requests and tokens: the scarcer one says it", () =
         ['x-ratelimit-remaining-tokens', '2100000'],
       ]),
     ),
-    { left: 0.076, text: '38 / 500 requests' },
+    { name: 'requests', left: 0.076, text: '38 / 500 requests' },
   );
   assert.equal(
     Allowances.read(
@@ -52,6 +52,21 @@ test("an API key's remaining requests and tokens: the scarcer one says it", () =
       ]),
     )?.text,
     '100k / 400k input tokens',
+  );
+});
+
+test('every limit, for the call inspector', () => {
+  assert.deepEqual(
+    Allowances.all(
+      headers([
+        ['anthropic-ratelimit-unified-5h-utilization', '0.5'],
+        ['anthropic-ratelimit-unified-7d-utilization', '0.25'],
+      ]),
+    ).map((each) => [each.name, each.left]),
+    [
+      ['5 h window', 0.5],
+      ['7 d window', 0.75],
+    ],
   );
 });
 

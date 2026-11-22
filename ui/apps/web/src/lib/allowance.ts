@@ -4,8 +4,10 @@
 // tokens. The tightest one says it. Pure; tested in tests/allowance.test.ts.
 import type { LimitHeader } from './api.ts';
 
-/** What is left of the tightest limit. */
+/** What is left of one limit. */
 export interface Allowance {
+  /** What it limits: `5 h window`, `requests`, `input tokens`. */
+  name: string;
   /** Left, 0–1. */
   left: number;
   text: string;
@@ -14,6 +16,14 @@ export interface Allowance {
 export class Allowances {
   /** The tightest limit the headers state; null when they state none. */
   static read(headers: readonly LimitHeader[]): Allowance | null {
+    return Allowances.all(headers).reduce<Allowance | null>(
+      (tightest, each) => (!tightest || each.left < tightest.left ? each : tightest),
+      null,
+    );
+  }
+
+  /** Every limit the headers state, in the order they came. */
+  static all(headers: readonly LimitHeader[]): Allowance[] {
     const values = new Map<string, string>();
     for (const header of headers)
       if (header.value !== null) values.set(header.name.toLowerCase(), header.value.trim());
@@ -55,18 +65,17 @@ export class Allowances {
     for (const [unit, { remaining, limit }] of counts)
       if (remaining !== undefined && limit)
         found.push({
+          name: unit.replace('-', ' '),
           left: Math.min(1, Math.max(0, remaining / limit)),
           text: `${Allowances.amount(remaining)} / ${Allowances.amount(limit)} ${unit.replace('-', ' ')}`,
         });
-    return found.reduce<Allowance | null>(
-      (tightest, each) => (!tightest || each.left < tightest.left ? each : tightest),
-      null,
-    );
+    return found;
   }
 
   static window(used: number, span: string | null): Allowance {
     const share = Math.min(1, Math.max(0, used));
     return {
+      name: span ? `${span} window` : 'window',
       left: 1 - share,
       text: `${Math.round(share * 100)}% used${span ? ` · ${span}` : ''}`,
     };

@@ -913,7 +913,7 @@
     padding-right: 0;
   }
   .calls-table .col-call {
-    width: 24%;
+    width: 32%;
   }
   .calls-table .col-model {
     width: 16%;
@@ -1005,6 +1005,18 @@
   }
   .col-call {
     overflow: hidden;
+    white-space: nowrap;
+  }
+  /* One line a call: its ID, quiet, then the session it belongs to. */
+  .col-call > .row-link {
+    margin-right: 8px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .col-call > .recording-line {
+    display: inline-flex;
+    max-width: calc(100% - 76px);
+    vertical-align: middle;
   }
   .col-call .chip {
     margin-left: 6px;

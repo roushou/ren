@@ -8,7 +8,7 @@
   import { goto } from '$app/navigation';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
-  import { clock, providerName, short } from '#lib/api.ts';
+  import { clock, num, providerName, short } from '#lib/api.ts';
   import { compactOrDash, span } from '#lib/display.ts';
   import { unrecognised, type Stored } from '#lib/decode.ts';
   import type { EffectKind, Excerpt } from '#lib/api.ts';
@@ -230,14 +230,11 @@
       : '';
 
   const recordingHref = (id: string) => `/monitor/sessions/${encodeURIComponent(id)}`;
-  const percent = (share: number | null) => (share === null ? '—' : `${Math.round(share * 100)}%`);
   const harnessClass = (tile: Tile) => `harness-${tile.harness ?? 'unknown'}`;
-  /** The tile's facts line: model, cached share, output. The context is in the header. */
-  function facts(tile: Tile): string {
-    const parts = [tile.model ?? 'model —'];
-    if (tile.cached !== null) parts.push(`${percent(tile.cached)} cached`);
-    if (tile.output !== null) parts.push(`out ${compactOrDash(tile.output)}`);
-    return parts.join(' · ');
+  /** What a card is called: its client, and the folder it works in when known. */
+  function cardTitle(tile: Tile): string {
+    const client = Board.clientName(tile.harness);
+    return tile.workdir ? `${client} · ${Board.folder(tile.workdir)}` : client;
   }
   /** Output tokens a series made over the band's span. */
   const seriesTotal = (series: BandSeries) =>
@@ -647,16 +644,15 @@
             class:highlighted={highlighted === tile.recording.id || inHoveredSeries(tile)}
           >
             <header class="live-tile-head">
-              <a class="live-open" href={recordingHref(tile.recording.id)} title="Open the session"
-                >{@render identity(tile)}<span class="live-open-hint"
-                  ><Icon name="arrow" size={11} /></span
-                ></a
+              <Glyph mark={chip.mark} label={chip.label} />
+              <a
+                class="live-open"
+                href={recordingHref(tile.recording.id)}
+                title="{Board.clientName(tile.harness)} → {providerName(
+                  tile.recording.provider,
+                )} · {short(tile.recording.native_id)}"
+                ><span class="live-title">{cardTitle(tile)}</span></a
               >
-              {#if tile.turnCalls}<span
-                  class="mono muted live-seq"
-                  title="Model calls the current turn has made since its prompt"
-                  >· call {tile.turnCalls}</span
-                >{/if}
               {#if tile.open > 1}<span
                   class="mono live-open-count"
                   title="Model calls in flight at once: a subagent or a side request beside the main one"
@@ -667,11 +663,7 @@
                   title="Pinned: stays on the wall while the session is active"
                   ><Icon name="pin" size={12} /></span
                 >{/if}
-              <span
-                class="mono muted end"
-                title="Context the newest call carried; provider-reported"
-                >ctx {compactOrDash(tile.context)}</span
-              >
+              <span class="mono muted end live-state-word" title={chip.title}>{chip.label}</span>
               <div class="live-actions">
                 {#if tile.turnId}<a
                     class="icon-button"
@@ -778,35 +770,13 @@
                 </p>
               {/if}
             </div>
-            {#if tile.tally}
-              <div class="live-tally mono" title="What the turn did, as the client reported it">
-                {#if tile.workdir}<span class="live-workdir" title={tile.workdir}
-                    >{Board.folder(tile.workdir)}</span
-                  >{/if}
-                <span class="tally" title="Files read"
-                  ><Icon name="file" size={11} />{tile.tally.read}</span
-                >
-                <span class="tally" title="Files written"
-                  ><Icon name="pencil" size={11} />{tile.tally.wrote}</span
-                >
-                <span class="tally" title="Commands run"
-                  ><Icon name="terminal" size={11} />{tile.tally.ran}</span
-                >
-                {#if tile.tally.failed}<span class="tally"
-                    ><Glyph mark="failed" label="{tile.tally.failed} failed" />{tile.tally
-                      .failed}</span
-                  >{/if}
-              </div>
-            {/if}
             <footer class="live-tile-foot mono">
-              <div class="live-foot-state">
-                <span class="live-state {chip.tone} state-{chip.mark}" title={chip.title}
-                  ><Glyph mark={chip.mark} label={chip.label} /></span
-                >
-              </div>
-              <div class="live-foot-facts" title="Provider-reported tokens of the newest call">
-                {facts(tile)}
-              </div>
+              {@render lane(tile)}
+              <span class="live-foot-facts" title="Provider-reported tokens of the newest call"
+                >{tile.context === null ? '' : `${compactOrDash(tile.context)} ctx · `}{num(
+                  tile.recording.call_count,
+                )} calls</span
+              >
             </footer>
           </article>
         {/each}
@@ -1449,24 +1419,6 @@
   .live-io.reported.error {
     border-left-color: var(--error);
   }
-  .live-tally {
-    display: flex;
-    gap: 10px;
-    padding: 4px 12px;
-    overflow: hidden;
-    border-top: 1px solid var(--line);
-    color: var(--muted);
-    font-size: 11px;
-    white-space: nowrap;
-  }
-  .live-workdir {
-    overflow: hidden;
-    color: var(--ink);
-    text-overflow: ellipsis;
-  }
-  .live-tally .error {
-    color: var(--error);
-  }
   /*
    * A card's actions sit over the right of its header, shown while the card
    * is hovered or holds focus; always shown when expanded, or without hover.
@@ -1515,16 +1467,6 @@
   .live-pinned {
     display: inline-flex;
     flex: none;
-  }
-  .live-open-hint {
-    display: inline-flex;
-    flex: none;
-    color: var(--muted);
-    opacity: 0;
-  }
-  .live-open:hover .live-open-hint,
-  .live-open:focus-visible .live-open-hint {
-    opacity: 1;
   }
   /* The expanded card covers four slots and reads top down, scrolling. */
   .live-tile.focused {
@@ -1606,26 +1548,45 @@
     color: var(--muted);
   }
   .live-tile-foot {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 6px 12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 10px;
+    align-items: center;
+    padding: 6px 12px 8px;
     border-top: 1px solid var(--line);
     color: var(--muted);
     font-size: 11px;
   }
-  .live-foot-state {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
   .live-foot-facts {
+    white-space: nowrap;
+  }
+  .live-title {
     overflow: hidden;
-    color: var(--muted);
-    font-size: 10.5px;
-    opacity: 0.7;
+    font-weight: 500;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .live-state-word {
+    flex: none;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  /* A card reads top down: what was asked, then the newest lines, each reply cut short. */
+  .live-tile-body:not(.full) {
+    justify-content: flex-start;
+  }
+  .live-tile-body:not(.full) .live-sent {
+    flex: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .live-tile-body:not(.full) > .live-step-reply {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
   }
   .live-state {
     overflow: hidden;
