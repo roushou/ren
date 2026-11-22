@@ -531,6 +531,7 @@
   </header>
   {#if commanding}<CommandPalette
       projects={board.active}
+      here={inProject}
       sources={{
         promotable: board.toPromote.flatMap((project) =>
           project.factory === 'ren' && project.release?.canary

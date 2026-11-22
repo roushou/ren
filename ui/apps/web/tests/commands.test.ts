@@ -20,7 +20,7 @@ test('typing narrows by every word, label or place, and offers a search last', (
   const release = Commands.match(all, 'web rel');
   assert.deepEqual(
     release.map((c) => c.href),
-    ['/projects/acme-web/release', '/search?q=web%20rel'],
+    ['/projects/acme-web/release', '/search?q=web+rel'],
   );
   const search = Commands.match(all, 'TRAFFIC');
   assert.equal(search[0]?.href, '/traffic', 'case does not matter');
@@ -50,4 +50,40 @@ test('actions come first: a session in each project, a canary to promote; work i
     Commands.match(all, 'prom').map((c) => c.kind),
     ['act', 'search'],
   );
+});
+
+test('inside a project, the palette keeps its own commands and those of none', () => {
+  const all = Commands.all(projects);
+  const here = Commands.match(all, '', 'acme-web');
+  assert.ok(here.some((c) => c.href === '/projects/acme-web/release'));
+  assert.ok(!here.some((c) => c.project === 'acme-api'), 'another project is left out');
+  assert.ok(
+    here.some((c) => c.href === '/traffic'),
+    'places of no project stay',
+  );
+  // A search from inside a project searches it.
+  assert.equal(
+    Commands.match(all, 'retry', 'acme-web').at(-1)?.href,
+    '/search?q=retry&project=acme-web',
+  );
+});
+
+test('the palette groups by kind in its order, and marks the matched letters', () => {
+  const all = Commands.all(projects, {
+    promotable: [],
+    work: [{ title: 'Promo banner', project: 'acme-web', href: '/projects/acme-web/work/w1' }],
+  });
+  assert.deepEqual(
+    Commands.groups(Commands.match(all, 'banner')).map((group) => group.label),
+    ['Work items', 'Search'],
+  );
+  assert.deepEqual(
+    Commands.groups(Commands.match(all, 'web')).map((group) => group.label),
+    ['Actions', 'Work items', 'Go to', 'Search'],
+  );
+  assert.deepEqual(Commands.marks('Promo banner', 'prom'), [
+    { text: 'Prom', match: true },
+    { text: 'o banner', match: false },
+  ]);
+  assert.deepEqual(Commands.marks('Release', ''), [{ text: 'Release', match: false }]);
 });
