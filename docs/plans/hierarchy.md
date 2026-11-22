@@ -161,10 +161,10 @@ Records outside the tree stay, and each says why it is outside:
    | Place    | Pages                                                                                                                                  |
    | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
    | Projects | `/projects`; a project's Sessions (`/projects/{name}/sessions[/{session}]`) and Release; a work item; Scratch (`/scratch[/{session}]`) |
-   | Monitor  | Overview, Live, Traffic, Sessions (`/monitor/sessions[/{recording}[/report]]`), Search, Usage                                          |
-   | System   | Packages, GitHub, Recorder                                                                                                             |
+   | Monitor  | its own page, the overview (`/monitor`); Live, Traffic, Sessions (`/monitor/sessions[/{recording}[/report]]`), Search, Usage           |
+   | System   | its own page, the host's summary (`/system`); Packages, GitHub, Recorder                                                               |
 
-   Inside a place the bar holds only its name and its pages. Pending
+   Inside a place the bar holds its name, which opens the place's own page, and its pages. Pending
    sits in Projects alone, and System's warnings reach Home's list.
 
    Approvals are among what is pending: when this UI drives sessions, it

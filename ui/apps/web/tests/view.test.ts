@@ -12,7 +12,7 @@ test('each route is its view, and an unknown one is Traffic', () => {
   assert.equal(Views.of('/projects/[name]/sessions/[[session]]'), 'sessions');
   assert.equal(Views.of('/projects/[name]/release'), 'release');
   assert.equal(Views.of('/scratch/[[session]]'), 'scratch');
-  assert.equal(Views.of('/monitor/overview'), 'overview');
+  assert.equal(Views.of('/monitor'), 'overview');
   assert.equal(Views.of('/monitor/traffic'), 'traffic');
   assert.equal(Views.of('/monitor/sessions/[id]'), 'recording');
   assert.equal(Views.of('/monitor/sessions/[id]/report'), 'report');
@@ -43,11 +43,13 @@ test('three places hold every page, each page in exactly one', () => {
     for (const page of Views.pages(place.place, 'acme-web')) {
       assert.equal(Views.place(page.tab), place.place, page.tab);
     }
-    // Each place opens where its name leads: Projects on its list, the others
-    // on their first page.
-    assert.equal(
-      Views.of(place.href),
-      place.place === 'projects' ? 'projects' : Views.pages(place.place)[0]?.tab,
+    // A place's name opens its own page, which none of its tabs is.
+    assert.equal(Views.of(place.href), Views.landing(place.place));
+    assert.ok(
+      Views.pages(place.place, 'acme-web').every(
+        (page) => Views.of(page.href) !== Views.landing(place.place),
+      ),
+      place.place,
     );
   }
   assert.equal(Views.place(Views.tab('report')), 'monitor');

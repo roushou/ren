@@ -44,6 +44,7 @@ export interface Indicator {
 
 /** One retention limit, and how much of it is used. */
 export interface Gauge {
+  key: 'storage' | 'calls' | 'history';
   label: string;
   used: string;
   limit: string;
@@ -114,7 +115,7 @@ export class RecorderReport {
 
   /** Storage, when it is close enough to its limit to need a look. */
   get crowded(): Gauge | null {
-    const storage = this.gauges.find((gauge) => gauge.label === 'Storage');
+    const storage = this.gauges.find((gauge) => gauge.key === 'storage');
     return storage?.share != null && storage.share > RecorderReport.CROWDED ? storage : null;
   }
 
@@ -338,6 +339,7 @@ export class RecorderReport {
       on && value !== null && limit ? value / limit : null;
     const gauges: Gauge[] = [
       {
+        key: 'storage',
         label: 'Storage',
         used: used === null ? '—' : bytes(used),
         limit: on && policy ? bytes(policy.max_storage_bytes) : 'no limit',
@@ -345,6 +347,7 @@ export class RecorderReport {
         binding: false,
       },
       {
+        key: 'calls',
         label: 'Calls',
         used: storage ? num(storage.calls) : '—',
         limit: on && policy ? num(policy.max_calls) : 'no limit',
@@ -352,6 +355,7 @@ export class RecorderReport {
         binding: false,
       },
       {
+        key: 'history',
         label: 'History',
         used: age === null ? '—' : Elapsed.span(age),
         limit: on && policy ? Elapsed.span(policy.max_age_seconds * 1000) : 'no limit',

@@ -13,6 +13,7 @@
     mark = null,
     tone = null,
     title,
+    href,
     children,
     sub,
   }: {
@@ -22,18 +23,20 @@
     tone?: 'warning' | 'error' | null;
     /** What the value counts, on hover. */
     title?: string;
+    /** The page it leads to, when it leads somewhere. */
+    href?: string;
     children: Snippet;
     sub?: Snippet;
   } = $props();
 </script>
 
-<div class="figure {tone ?? ''}" {title}>
+<svelte:element this={href ? 'a' : 'div'} class="figure {tone ?? ''}" {title} {href}>
   <span class="cap">{label}</span>
   <span class="figure-value mono"
     >{#if mark}<Glyph {mark} />{/if}{@render children()}</span
   >
   {#if sub}<span class="meta">{@render sub()}</span>{/if}
-</div>
+</svelte:element>
 
 <style>
   .figure {
@@ -43,6 +46,12 @@
     min-width: 0;
     padding: 12px 16px;
     background: var(--figure-surface, var(--surface));
+  }
+  a.figure {
+    color: inherit;
+  }
+  a.figure:hover {
+    background: var(--surface-hover);
   }
   .figure-value {
     display: flex;

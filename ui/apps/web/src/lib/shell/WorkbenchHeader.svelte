@@ -126,9 +126,9 @@
     {:else}
       <a
         class="place-name"
-        class:active={view === 'projects'}
+        class:active={view === Views.landing(where)}
         href={here.href}
-        aria-current={view === 'projects' ? 'page' : undefined}>{here.label}</a
+        aria-current={view === Views.landing(where) ? 'page' : undefined}>{here.label}</a
       >
     {/if}
     {#if where === 'projects' && (inProject || view === 'scratch')}

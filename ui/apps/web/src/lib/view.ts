@@ -33,7 +33,8 @@ export type View =
   | 'packages'
   | 'github'
   | 'release'
-  | 'recorder';
+  | 'recorder'
+  | 'system';
 
 /** A page of a place, or of a project: a session's calls, report and
  * turns sit under Monitor's Sessions (`recordings`: the gateway's sessions,
@@ -52,7 +53,8 @@ export type Tab =
   | 'packages'
   | 'github'
   | 'usage'
-  | 'recorder';
+  | 'recorder'
+  | 'system';
 
 /** Where a view sits: Home, or one of the three places. */
 export type Place = 'home' | 'projects' | 'monitor' | 'system';
@@ -79,8 +81,8 @@ export class Views {
     label: string;
   }[] = [
     { place: 'projects', href: '/projects', label: 'Projects' },
-    { place: 'monitor', href: '/monitor/overview', label: 'Monitor' },
-    { place: 'system', href: '/system/packages', label: 'System' },
+    { place: 'monitor', href: '/monitor', label: 'Monitor' },
+    { place: 'system', href: '/system', label: 'System' },
   ];
 
   /** The view a SvelteKit route id is; null for a route that is no view
@@ -99,7 +101,7 @@ export class Views {
         return 'release';
       case '/scratch/[[session]]':
         return 'scratch';
-      case '/monitor/overview':
+      case '/monitor':
         return 'overview';
       case '/monitor/live':
         return 'live';
@@ -119,6 +121,8 @@ export class Views {
         return 'github';
       case '/system/recorder':
         return 'recorder';
+      case '/system':
+        return 'system';
       case '/monitor/traffic':
         return 'traffic';
       default:
@@ -148,9 +152,29 @@ export class Views {
       case 'github':
       case 'release':
       case 'recorder':
+      case 'system':
         return view;
       default: {
         const never: never = view;
+        return never;
+      }
+    }
+  }
+
+  /** A place's own page, which its name in the bar opens: its summary, never
+   * one of its tabs. */
+  static landing(place: Place): View {
+    switch (place) {
+      case 'home':
+        return 'home';
+      case 'projects':
+        return 'projects';
+      case 'monitor':
+        return 'overview';
+      case 'system':
+        return 'system';
+      default: {
+        const never: never = place;
         return never;
       }
     }
@@ -176,6 +200,7 @@ export class Views {
       case 'packages':
       case 'github':
       case 'recorder':
+      case 'system':
         return 'system';
       default: {
         const never: never = tab;
@@ -201,7 +226,6 @@ export class Views {
       }
       case 'monitor':
         return [
-          { tab: 'overview', href: '/monitor/overview', label: 'Overview' },
           { tab: 'live', href: '/monitor/live', label: 'Live' },
           { tab: 'traffic', href: '/monitor/traffic', label: 'Traffic' },
           { tab: 'recordings', href: '/monitor/sessions', label: 'Sessions' },
@@ -240,6 +264,7 @@ export class Views {
       case 'github':
       case 'usage':
       case 'recorder':
+      case 'system':
         return false;
       default: {
         const never: never = tab;
@@ -314,6 +339,8 @@ export class Views {
         return 'Release';
       case 'recorder':
         return 'Recorder & storage';
+      case 'system':
+        return 'System';
       default: {
         const never: never = view;
         return never;

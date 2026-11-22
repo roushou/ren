@@ -243,7 +243,7 @@
     for (const route of [
       '/',
       '/projects',
-      '/monitor/overview',
+      '/monitor',
       '/monitor/live',
       '/monitor/traffic',
       '/monitor/sessions',

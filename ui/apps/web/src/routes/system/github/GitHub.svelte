@@ -11,9 +11,8 @@
   import Figure from '#lib/Figure.svelte';
 
   import { PullChips } from '#lib/release.ts';
-  import { GitHubWatches, type PullGroup } from '#lib/github.ts';
+  import { GitHubWatches, type GitHubData, type PullGroup } from '#lib/github.ts';
   import type { Mark } from '#lib/marks.ts';
-  import type { GitHubData } from './+page.ts';
 
   let { data }: { data: GitHubData } = $props();
   const rows = $derived(GitHubWatches.rows(data.watches));

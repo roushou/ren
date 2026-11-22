@@ -37,11 +37,11 @@ place's pages (`lib/view.ts`).
     commit previews, and the work shipped and waiting.
   - **A work item** (`/projects/<name>/work/<id>`): its way to production,
     its marks, session, pull requests, and the page evidence it carries.
-- **Monitor:**
-  - **Overview** (`/monitor/overview`): each provider over the last day
-    (calls, failures, failure rate by hour, the allowance its newest limit
-    headers report, its last failure), failures by provider and ending,
-    what is live, secrets seen, and the day against the one before.
+- **Monitor** (`/monitor`, its name in the bar): each provider over the last day
+  (calls, failures, failure rate by hour, the allowance its newest limit
+  headers report, its last failure), failures by provider and ending,
+  what is live, secrets seen, and the day against the one before.
+  Its pages:
   - **Live** (`/monitor/live`): output per second by client, provider, or
     model; a Now strip of what just happened; a 3 × 2 wall of the busiest
     sessions, each card its current turn (pin with `?pin=`, expand with
@@ -58,7 +58,9 @@ place's pages (`lib/view.ts`).
     and tool input and output, grouped by session.
   - **Usage** (`/monitor/usage`): calls, failed work calls (bookkeeping
     apart), and tokens by hour or day, by model, session, and user.
-- **System:**
+- **System** (`/system`, its name in the bar): recording's losses, errors and
+  limits, the packages to update or missing and clients signed out, and the
+  GitHub watches, each leading to its page. Its pages:
   - **Packages** (`/system/packages`): what Ren installs for its agents,
     by generation, with install, remove, restore, and clean-up, and each
     client's sign-in.

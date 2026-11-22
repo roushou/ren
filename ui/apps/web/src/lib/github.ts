@@ -11,6 +11,12 @@ import { PullChips, PullWatch } from './release.ts';
  * blocked). */
 export type PullGroup = 'ready' | 'review' | 'held' | 'failing' | 'running' | 'draft' | 'unknown';
 
+/** Each current project's GitHub watch; null where its pulls did not read. */
+export interface GitHubData {
+  watches: { project: string; watch: Pulls | null }[];
+  failed: string | null;
+}
+
 /** One project's watch. */
 export interface WatchRow {
   project: string;
