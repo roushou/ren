@@ -35,8 +35,10 @@ pub enum Page {
     Search,
     /// The newest run's session, with its conversation.
     Sessions,
-    /// The tools Ren installs for its agents.
-    Tools,
+    /// How the machine stands: recording, packages, GitHub.
+    System,
+    /// The packages Ren installs for its agents.
+    Packages,
 }
 
 /// The project, and its newest run and the newest recording, which some
@@ -44,14 +46,14 @@ pub enum Page {
 #[derive(Debug, Default)]
 struct Newest {
     recording: Option<String>,
-    /// The project's newest run.
-    run: Option<String>,
+    /// The session of the project's newest run.
+    session: Option<String>,
     /// The project the pages under one show, by name.
     project: Option<String>,
 }
 
 impl Page {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Desk,
         Self::Projects,
         Self::Release,
@@ -63,7 +65,8 @@ impl Page {
         Self::Usage,
         Self::Search,
         Self::Sessions,
-        Self::Tools,
+        Self::System,
+        Self::Packages,
     ];
 
     pub fn name(self) -> &'static str {
@@ -79,13 +82,14 @@ impl Page {
             Self::Usage => "usage",
             Self::Search => "search",
             Self::Sessions => "sessions",
-            Self::Tools => "tools",
+            Self::System => "system",
+            Self::Packages => "packages",
         }
     }
 
     /// The page's path: the newest recording for `Recording`; the project's
-    /// pages for `Release` and `Sessions` (its newest
-    /// run's session open, if any). None when there is no such recording or
+    /// pages for `Release` and `Sessions` (its newest run's session open, if
+    /// any). None when there is no such recording or
     /// project, except Sessions, which is then Scratch.
     fn path(self, newest: &Newest) -> Option<String> {
         let project = newest
@@ -96,7 +100,7 @@ impl Page {
             Self::Desk => Some("/".into()),
             Self::Projects => Some("/projects".into()),
             Self::Release => project.map(|base| format!("{base}/release")),
-            Self::Overview => Some("/monitor/overview".into()),
+            Self::Overview => Some("/monitor".into()),
             Self::Live => Some("/monitor/live".into()),
             Self::Traffic => Some("/monitor/traffic".into()),
             Self::Recordings => Some("/monitor/sessions".into()),
@@ -106,12 +110,13 @@ impl Page {
                 .map(|id| format!("/monitor/sessions/{id}")),
             Self::Usage => Some("/monitor/usage".into()),
             Self::Search => Some("/monitor/search?q=retry".into()),
-            Self::Sessions => Some(match (project, newest.run.as_deref()) {
-                (Some(base), Some(run)) => format!("{base}/sessions?run={run}"),
+            Self::Sessions => Some(match (project, newest.session.as_deref()) {
+                (Some(base), Some(session)) => format!("{base}/sessions/{session}"),
                 (Some(base), None) => format!("{base}/sessions"),
                 (None, Some(_) | None) => "/scratch".into(),
             }),
-            Self::Tools => Some("/system/tools".into()),
+            Self::System => Some("/system".into()),
+            Self::Packages => Some("/system/packages".into()),
         }
     }
 }
@@ -215,8 +220,13 @@ impl Camera {
     /// The newest item's id in a listing of the gateway's API, such as
     /// `recordings` or `runs`, with `query` after its limit.
     fn newest(&self, listing: &str, query: &str) -> Option<String> {
+        self.newest_field(listing, query, "id")
+    }
+
+    /// A field of the newest item in a listing, as [`Self::newest`] reads it.
+    fn newest_field(&self, listing: &str, query: &str, field: &str) -> Option<String> {
         let answer = self.read(&format!("/api/{listing}?limit=1{query}"))?;
-        answer[listing][0]["id"].as_str().map(str::to_owned)
+        answer[listing][0][field].as_str().map(str::to_owned)
     }
 
     /// The project the pages under one show: Ren's, else the first not
@@ -254,12 +264,12 @@ impl Camera {
     pub fn shoot(&self, pages: &[Page], (width, height): (u16, u16)) -> Result<Shots, DevError> {
         fs::create_dir_all(&self.out).map_err(FileError::at(&self.out))?;
         let project = self.project();
-        let run = project
-            .as_deref()
-            .and_then(|name| self.newest("runs", &format!("&project={name}")));
+        let session = project.as_deref().and_then(|name| {
+            self.newest_field("runs", &format!("&project={name}"), "operator_session")
+        });
         let newest = Newest {
             recording: self.newest("recordings", ""),
-            run,
+            session,
             project,
         };
         let mut shots = Shots::default();
@@ -317,7 +327,7 @@ mod tests {
         let none = Newest::default();
         let some = Newest {
             recording: Some("s1".into()),
-            run: Some("r1".into()),
+            session: Some("r1".into()),
             project: Some("ren".into()),
         };
         let no_run = Newest {
@@ -338,7 +348,7 @@ mod tests {
                     assert_eq!(page.path(&none).as_deref(), Some("/scratch"));
                     assert_eq!(
                         page.path(&some).as_deref(),
-                        Some("/projects/ren/sessions?run=r1")
+                        Some("/projects/ren/sessions/r1")
                     );
                     assert_eq!(
                         page.path(&no_run).as_deref(),
@@ -353,7 +363,8 @@ mod tests {
                 | Page::Recordings
                 | Page::Usage
                 | Page::Search
-                | Page::Tools => assert!(page.path(&none).is_some_and(|p| p.starts_with('/'))),
+                | Page::System
+                | Page::Packages => assert!(page.path(&none).is_some_and(|p| p.starts_with('/'))),
             }
         }
     }
