@@ -367,7 +367,6 @@ pre {
   flex: none;
   align-items: center;
   gap: 7px;
-  margin-right: 4px;
   padding: 0 12px;
   border: 0;
   border-right: 1px solid var(--line);
@@ -2882,6 +2881,8 @@ td.zero {
 }
 .redline-toggle {
   display: flex;
+  /* The same room before its divider as between the bar's other controls. */
+  margin-left: 8px;
   align-items: center;
   gap: 5px;
   padding: 0 10px;
