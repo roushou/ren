@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { Views } from '../src/lib/view.ts';
 
 test('each route is its view, and an unknown one is Traffic', () => {
-  assert.equal(Views.of('/'), 'projects');
+  assert.equal(Views.of('/'), 'desk');
+  assert.equal(Views.of('/projects'), 'projects');
+  // The desk sits under the wordmark, within Projects, on no row of pages.
+  assert.equal(Views.destination(Views.tab('desk')), 'projects');
+  assert.ok(!Views.pages('projects').some((page) => page.tab === 'desk'));
   assert.equal(Views.of('/projects/[name]/work/[id]'), 'work');
   assert.equal(Views.of('/projects/[name]/sessions'), 'sessions');
   assert.equal(Views.of('/projects/[name]/release'), 'release');

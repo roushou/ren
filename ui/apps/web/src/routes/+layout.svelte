@@ -296,6 +296,7 @@
   onMount(() => {
     for (const route of [
       '/',
+      '/projects',
       '/overview',
       '/live',
       '/traffic',
@@ -335,9 +336,11 @@
     <a
       class="brand"
       class:marked
+      class:active={view === 'desk'}
       href="/"
-      aria-label={marked ? `Ren projects, ${marked.tag} gateway` : 'Ren projects'}
-      title={marked?.what}
+      aria-current={view === 'desk' ? 'page' : undefined}
+      aria-label={marked ? `Your desk, ${marked.tag} gateway` : 'Your desk'}
+      title={marked?.what ?? 'Your desk: what needs you, what is moving'}
       ><span class="flaps" aria-hidden="true"
         ><span class="flap">R</span><span class="flap">E</span><span class="flap">N</span
         >{#if marked}<span class="instance-badge">{marked.tag}</span>{/if}</span
@@ -369,7 +372,7 @@
                 >
               </li>
             {/each}
-            <li class="all"><a href="/">All projects</a></li>
+            <li class="all"><a href="/projects">All projects</a></li>
           </ul>
         </Popover>
       {:else if destination !== 'projects'}
@@ -392,7 +395,7 @@
         >
       {/each}
       {#if destination !== 'projects'}
-        <a class="back" href={lastProject ? ProjectBoard.href(lastProject) : '/'}
+        <a class="back" href={lastProject ? ProjectBoard.href(lastProject) : '/projects'}
           ><span aria-hidden="true">←</span>{lastProject ?? 'Projects'}</a
         >
       {/if}

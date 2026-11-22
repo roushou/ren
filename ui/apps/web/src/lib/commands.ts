@@ -94,7 +94,8 @@ export class Commands {
           ]
         : [],
     );
-    return [...actions, ...places, ...own, ...work];
+    const desk: Command = { kind: 'go', label: 'Desk', detail: 'Ren', href: '/', project: null };
+    return [...actions, desk, ...places, ...own, ...work];
   }
 
   /**

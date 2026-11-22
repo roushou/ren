@@ -3,7 +3,9 @@
  * (docs/plans/hierarchy.md), and its title. Pure, so the layout's choices
  * are tested without a browser.
  *
- * Three destinations hold every view: Projects (the factory: each
+ * The desk (`/`, under the wordmark) is where the operator lands: what
+ * needs them, what is moving, what happened since they looked. Three
+ * destinations hold every other view: Projects (the factory: each
  * project, with its work, sessions, and release under it, and Scratch for
  * sessions that work for none), Inspect (everything recorded), and
  * Host (this machine). The header names the three; under it, the current
@@ -12,6 +14,7 @@
 
 /** A view of the workbench, one per page. */
 export type View =
+  | 'desk'
   | 'projects'
   | 'work'
   | 'scratch'
@@ -32,6 +35,7 @@ export type View =
 /** A page of a destination, or of a project: a recording's report and
  * turns sit under Recordings. */
 export type Tab =
+  | 'desk'
   | 'projects'
   | 'scratch'
   | 'sessions'
@@ -62,7 +66,7 @@ export class Views {
     href: string;
     label: string;
   }[] = [
-    { destination: 'projects', href: '/', label: 'Projects' },
+    { destination: 'projects', href: '/projects', label: 'Projects' },
     { destination: 'inspect', href: '/overview', label: 'Inspect' },
     { destination: 'host', href: '/tools', label: 'Host' },
   ];
@@ -72,6 +76,8 @@ export class Views {
   static of(route: string | null): View {
     switch (route) {
       case '/':
+        return 'desk';
+      case '/projects':
         return 'projects';
       case '/projects/[name]/work/[id]':
         return 'work';
@@ -115,6 +121,7 @@ export class Views {
         return 'recordings';
       case 'work':
         return 'release';
+      case 'desk':
       case 'projects':
       case 'scratch':
       case 'overview':
@@ -138,6 +145,7 @@ export class Views {
   /** The destination `tab` belongs to. */
   static destination(tab: Tab): Destination {
     switch (tab) {
+      case 'desk':
       case 'projects':
       case 'scratch':
       case 'sessions':
@@ -173,7 +181,7 @@ export class Views {
           ];
         }
         return [
-          { tab: 'projects', href: '/', label: 'Projects' },
+          { tab: 'projects', href: '/projects', label: 'Projects' },
           { tab: 'scratch', href: '/scratch', label: 'Scratch' },
         ];
       }
@@ -208,6 +216,7 @@ export class Views {
       case 'live':
       case 'search':
         return true;
+      case 'desk':
       case 'projects':
       case 'scratch':
       case 'sessions':
@@ -233,6 +242,8 @@ export class Views {
   /** What the toolbar and the document title call `view`. */
   static title(view: View): string {
     switch (view) {
+      case 'desk':
+        return 'Desk';
       case 'projects':
         return 'Projects';
       case 'work':

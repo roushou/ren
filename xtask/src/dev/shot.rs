@@ -20,7 +20,9 @@ use std::{
 /// A page of the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Page {
-    /// The factory's home: every project, and what is pending.
+    /// The desk: what needs the operator, what is under way, what happened.
+    Desk,
+    /// Every project at a glance.
     Projects,
     Release,
     Overview,
@@ -49,7 +51,8 @@ struct Newest {
 }
 
 impl Page {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
+        Self::Desk,
         Self::Projects,
         Self::Release,
         Self::Overview,
@@ -65,6 +68,7 @@ impl Page {
 
     pub fn name(self) -> &'static str {
         match self {
+            Self::Desk => "desk",
             Self::Projects => "projects",
             Self::Release => "release",
             Self::Overview => "overview",
@@ -89,7 +93,8 @@ impl Page {
             .as_deref()
             .map(|name| format!("/projects/{name}"));
         match self {
-            Self::Projects => Some("/".into()),
+            Self::Desk => Some("/".into()),
+            Self::Projects => Some("/projects".into()),
             Self::Release => project.map(|base| format!("{base}/release")),
             Self::Overview => Some("/overview".into()),
             Self::Live => Some("/live".into()),
@@ -340,7 +345,8 @@ mod tests {
                         Some("/projects/ren/sessions")
                     );
                 }
-                Page::Projects
+                Page::Desk
+                | Page::Projects
                 | Page::Overview
                 | Page::Live
                 | Page::Traffic

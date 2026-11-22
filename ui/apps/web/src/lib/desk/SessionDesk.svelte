@@ -1146,10 +1146,16 @@
   });
 
   onMount(() => {
-    // Arriving from ⌘K's New session: open the new-session form at once.
+    // Arriving from ⌘K's New session, or the desk's prompt: open a new
+    // session at once, with the desk's prompt waiting in its composer.
     if (data.runsControl && page.url.searchParams.get('new') === '1') {
       starting = true;
-      void newDraft();
+      const prompt = page.url.searchParams.get('prompt');
+      void newDraft().then(() => {
+        if (!prompt || !chosen) return;
+        drafts.set(chosen, prompt);
+        void tick().then(() => composer?.focus());
+      });
     }
     const ticking = setInterval(() => (now = Date.now()), 30_000);
     // The server read them for the first render; only what it could not

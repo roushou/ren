@@ -7,5 +7,5 @@
 <Toolbar />
 <div class="empty-state route-error">
   <h2>{page.error?.message ?? 'Unable to open this page'}</h2>
-  <a class="button" href="/">Return to Projects</a>
+  <a class="button" href="/projects">Return to Projects</a>
 </div>

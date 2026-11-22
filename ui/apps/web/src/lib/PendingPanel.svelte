@@ -8,69 +8,16 @@
 -->
 <script lang="ts">
   import Glyph from '#lib/Glyph.svelte';
-  import Modal from '#lib/layer/Modal.svelte';
-  import { toasts } from '#lib/layer/toasts.svelte.ts';
-  import { invalidateAll } from '$app/navigation';
-  import { ProjectBoard, type Approval } from '#lib/projects.ts';
-  import {
-    decisions,
-    RunCommandError,
-    Runs,
-    RunsClient,
-    Sessions,
-    type Decision,
-  } from '#lib/runs.ts';
+  import ApprovalModal from '#lib/ApprovalModal.svelte';
+  import { ApprovalAnswers } from '#lib/approvals.svelte.ts';
+  import { ProjectBoard } from '#lib/projects.ts';
+  import { Runs, Sessions } from '#lib/runs.ts';
   import { Work } from '#lib/work.ts';
   import { harnessLabel } from '#lib/activity.ts';
 
   let { board }: { board: ProjectBoard } = $props();
-  const runs = new RunsClient();
-  /** The approval under review in the modal; null when none is. */
-  let reviewing = $state<Approval | null>(null);
-  /** Whether an answer is on its way, and what went wrong with the last. */
-  let answering = $state(false);
-  let failed = $state<string | null>(null);
-  /** The modal's answers, the primary one (Allow) last. */
-  const answers = decisions.toReversed();
-
-  function review(waiting: Approval) {
-    failed = null;
-    reviewing = waiting;
-  }
-
-  async function answer(waiting: Approval, decision: Decision) {
-    answering = true;
-    failed = null;
-    try {
-      await runs.toSession(waiting.session, {
-        kind: 'answer',
-        approval: waiting.approval,
-        decision,
-      });
-      const said = Runs.decision(decision);
-      const asked = Runs.ask(waiting.ask);
-      toasts.show({
-        mark: said.mark,
-        text: asked.detail ?? asked.action,
-        form: asked.detail ? 'code' : 'words',
-        detail: [said.done, waiting.project].filter((part) => part !== null).join(' · '),
-        link: {
-          label: 'Open session',
-          href: Sessions.deskHref(waiting.project, { session: waiting.session }),
-        },
-      });
-      reviewing = null;
-      await invalidateAll();
-    } catch (failure) {
-      failed = failure instanceof RunCommandError ? failure.message : 'The answer did not go.';
-    } finally {
-      answering = false;
-    }
-  }
-
-  /** Where an approval comes from: its project, and its session's prompt. */
-  const origin = (waiting: Approval) =>
-    [waiting.project ?? 'No project', waiting.prompt].filter((part) => part !== null).join(' · ');
+  const answers = new ApprovalAnswers();
+  const origin = ApprovalAnswers.origin;
 </script>
 
 <header class="head">
@@ -96,7 +43,9 @@
           <!-- Questions are answered in their session. -->
           <a class="button primary small" href={desk}>Answer</a>
         {:else}
-          <button class="button primary small" onclick={() => review(waiting)}>Review…</button>
+          <button class="button primary small" onclick={() => answers.review(waiting)}
+            >Review…</button
+          >
         {/if}
       </li>
     {/each}
@@ -151,63 +100,9 @@
     {/each}
   </ul>
 {/if}
-{#if reviewing}
-  {@const waiting = reviewing}
-  {@const said = Runs.ask(waiting.ask)}
-  <Modal
-    title={Runs.question(waiting.ask, harnessLabel(waiting.harness))}
-    eyebrow="Approval · {origin(waiting)}"
-    onclose={() => (reviewing = null)}
-  >
-    {#if said.detail}<pre class="detail mono">{said.detail}</pre>{/if}
-    {#if waiting.ask.kind === 'command' && waiting.ask.cwd}<span class="muted mono"
-        >runs in {waiting.ask.cwd}</span
-      >{/if}
-    {#if said.reason}<p class="reason">{said.reason}</p>{/if}
-    {#if failed}<p class="error quiet" role="alert">{failed}</p>{/if}
-    {#snippet actions()}
-      {#each answers as decision (decision)}
-        {@const words = Runs.decision(decision)}
-        <button
-          class="button small"
-          class:primary={decision === 'accept'}
-          disabled={answering}
-          title={words.hint}
-          onclick={() => void answer(waiting, decision)}>{words.label}</button
-        >
-        {#if decision === 'decline'}<kbd class="esc" title="Escape closes without answering"
-            >esc</kbd
-          >{/if}
-      {/each}
-    {/snippet}
-  </Modal>
-{/if}
+<ApprovalModal {answers} />
 
 <style>
-  .detail {
-    margin: 0;
-    padding: 10px 12px;
-    overflow: auto;
-    border: 1px solid var(--line);
-    background: var(--surface-inset);
-    font-size: 12px;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .reason {
-    margin: 0;
-  }
-  .esc {
-    align-self: center;
-    margin-right: auto;
-    padding: 0 4px;
-    border: 1px solid var(--control-border);
-    border-bottom-width: 2px;
-    border-radius: 2px;
-    color: var(--muted);
-    font-family: var(--mono, monospace);
-    font-size: 10px;
-  }
   .head {
     display: flex;
     align-items: baseline;
@@ -272,8 +167,5 @@
   }
   .muted {
     color: var(--muted);
-  }
-  .error {
-    color: var(--error);
   }
 </style>

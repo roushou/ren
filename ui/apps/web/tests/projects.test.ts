@@ -322,3 +322,25 @@ test('a canary that passed where Ren promotes offers Promote… from its toast',
     emphasis: 'primary',
   });
 });
+
+test('a project at a glance: waiting on you first, then a failed canary, then running', () => {
+  const release = (decision: string) =>
+    ({ decision, policy: 'manual', canary: { commit: 'c', checks: [] }, behind: 1 }) as never;
+  const glance = (overrides: Partial<Project>) =>
+    new ProjectBoard([project('acme', overrides)], []).glance(project('acme', overrides));
+  assert.deepEqual(
+    [glance({ running: 2 }).mark, glance({ running: 2 }).action],
+    ['responding', null],
+  );
+  assert.deepEqual(
+    [
+      glance({ release: release('failed'), running: 1 }).mark,
+      glance({ release: release('failed') }).action,
+    ],
+    ['failed', { kind: 'release' }],
+  );
+  assert.deepEqual(glance({ release: release('awaiting_operator'), factory: 'ren' }).action, {
+    kind: 'promote',
+  });
+  assert.equal(glance({}).active, null);
+});

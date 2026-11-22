@@ -16,6 +16,7 @@ import {
 import { Work, type WorkItem } from './work.ts';
 import type { Said } from './layer/toasts.svelte.ts';
 import { SignIns } from './signIn.ts';
+import type { Mark } from './marks.ts';
 
 /** An approval a running session waits on, with the project it works for. */
 export interface Approval {
@@ -28,6 +29,17 @@ export interface Approval {
   project: string | null;
   /** The first line of the session's first prompt, to know it by. */
   prompt: string | null;
+}
+
+/** A project at a glance, as its row on Projects shows it. */
+export interface ProjectGlance {
+  /** Its state's glyph, and the words for it. */
+  mark: Mark;
+  state: string;
+  /** The one thing to do about it, worst first; null when nothing is. */
+  action: { kind: 'review'; approval: Approval } | { kind: 'promote' } | { kind: 'release' } | null;
+  /** When one of its sessions last started or ended a run; null for none. */
+  active: number | null;
 }
 
 /** A queued work item's project, by name; null when none holds it. */
@@ -217,6 +229,41 @@ export class ProjectBoard {
   /** A project's canary by its build: a newer one passing is news again. */
   static #canaryKey(project: Project): string {
     return `${project.id}:${project.release?.canary?.commit ?? ''}`;
+  }
+
+  /** `project` at a glance: waiting on the operator first, then a failed
+   * canary, then running, else idle; its one action; when it was last
+   * active. */
+  glance(project: Project): ProjectGlance {
+    const approval = this.approvals.find((waiting) => waiting.project === project.name) ?? null;
+    const release = project.release;
+    const failed = release?.decision === 'failed' || release?.decision === 'promotion_failed';
+    const promotable = release?.decision === 'awaiting_operator';
+    const [mark, state]: [Mark, string] = approval
+      ? ['yours', 'Waits for you']
+      : failed
+        ? ['failed', 'Canary failed']
+        : project.running
+          ? ['responding', 'Running']
+          : promotable
+            ? ['yours', 'Ready to promote']
+            : ['idle', 'Idle'];
+    const action: ProjectGlance['action'] = approval
+      ? { kind: 'review', approval }
+      : promotable && project.factory === 'ren'
+        ? { kind: 'promote' }
+        : promotable || failed
+          ? { kind: 'release' }
+          : null;
+    const times = this.sessions.flatMap((body) =>
+      body.stored?.project === project.id
+        ? body.stored.runs.flatMap((run) => [
+            run.started_at,
+            ...(run.ended_at ? [run.ended_at] : []),
+          ])
+        : [],
+    );
+    return { mark, state, action, active: times.length ? Math.max(...times) : null };
   }
 
   /** Whether anything waits on the operator. */

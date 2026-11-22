@@ -286,7 +286,13 @@ pre {
   align-items: center;
   gap: 8px;
   border-right: 1px solid var(--line);
+  border-top: 2px solid transparent;
   font-family: 'SFMono-Regular', Consolas, monospace;
+}
+/* The wordmark leads to the desk, and says so while you are there. */
+.brand.active {
+  border-top-color: var(--accent);
+  background: var(--canvas);
 }
 /* The wordmark: three split-flap tiles, cut through by the header's own colour. */
 .flaps {
