@@ -1,5 +1,4 @@
 import { createContext } from 'svelte';
-import type { CallView } from './api.ts';
 import { SvelteMap } from 'svelte/reactivity';
 import type { CallId } from './api.ts';
 import { LiveFollow, type LiveState } from './live.ts';
@@ -10,8 +9,6 @@ export interface ToolbarControls {
   refresh(): void;
   /** A refresh or a navigation is under way. */
   loading(): boolean;
-  /** Why the shown data may be out of date; empty when it is not. */
-  problem(): string;
 }
 
 export class Workbench {
@@ -24,9 +21,6 @@ export class Workbench {
   live = $state<LiveState>(LiveFollow.initial);
   /** Streaming calls' replies so far, from the live feed; never stored. */
   readonly streamed = new SvelteMap<CallId, CallProgress>();
-  selected = $state<CallView | undefined>();
-  callCount = $state(0);
-  activeCount = $state(0);
   /**
    * What the toolbar offers from the layout: refreshing, whether a refresh
    * or navigation is under way, and why the shown data may be out of date.

@@ -9,13 +9,12 @@
   import PendingPanel from '#lib/PendingPanel.svelte';
   import { ProjectBoard } from '#lib/projects.ts';
   import { onMount, untrack } from 'svelte';
-  import { beforeNavigate, goto, preloadCode, refreshAll } from '$app/navigation';
+  import { beforeNavigate, preloadCode, refreshAll } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import { createSettled, createSnapshot } from '#lib/snapshot.svelte.ts';
   import { Workbench, setWorkbench } from '#lib/workbench.svelte.ts';
   import { LiveConnection } from '#lib/live.svelte.ts';
-  import { num, short, clock } from '#lib/api.ts';
-  import { captureState } from '#lib/display.ts';
+  import { clock } from '#lib/api.ts';
   import type { SnapshotError } from '#lib/snapshots.ts';
   import Icon, { type IconName } from '#lib/Icon.svelte';
   import ThemeControl from '#lib/ThemeControl.svelte';
@@ -24,7 +23,6 @@
   import { addressView } from '#lib/address.svelte.ts';
   import { GatewayPlace, type Network } from '#lib/place.ts';
   import { RecorderReport } from '#lib/recorder.ts';
-  import { ReleaseLine } from '#lib/release.ts';
   import { PageEvidence, Work } from '#lib/work.ts';
   import CopyButton from '#lib/CopyButton.svelte';
   import RedlineLayer from 'redline/RedlineLayer.svelte';
@@ -32,8 +30,8 @@
   import { RedlineDesk } from 'redline/desk';
   import { Recipients } from '#lib/briefing.svelte.ts';
   import { Views } from '#lib/view.ts';
+  import { BottomEdge } from '#lib/edge.ts';
   import { Arrival } from '#lib/arrival.ts';
-  import type { RecordingsData } from '#lib/loaders.ts';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
   let { data, children }: LayoutProps = $props();
@@ -99,11 +97,6 @@
     }
   });
   const storage = $derived(gateway.current.value?.storage);
-  /** Where the release stands, once the factory has run against this gateway. */
-  const release = $derived.by(() => {
-    const view = gateway.current.value?.release;
-    return view ? ReleaseLine.of(view) : null;
-  });
   /** The tab row, which scrolls sideways on a phone. */
   let tabs = $state<HTMLElement>();
   // Keep the current view's tab in sight when the row is narrower than its tabs.
@@ -214,10 +207,6 @@
     page.data.turn,
     page.data.search,
   ]);
-  const recordingCount = $derived(
-    reads.of<RecordingsData>(page.data.recordings)?.value?.recordings.length ?? 0,
-  );
-  const selected = $derived(workbench.selected);
   const pageTitle = $derived(page.error ? 'Page unavailable' : Views.title(view));
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   // The header names where the gateway runs, not its address.
@@ -249,6 +238,25 @@
   const error = $derived(refreshError || failure?.message || '');
   const incompatible = $derived(failure?.kind === 'incompatible');
   const updated = $derived(gateway.current.updated);
+  /** Recorder notices the operator dismissed this visit, by their words. */
+  let dismissed = $state<string[]>([]);
+  /** Whether every strip shows, not just the worst. */
+  let edgeOpen = $state(false);
+  const strips = $derived(
+    BottomEdge.strips({
+      failure: error ? (incompatible ? 'incompatible' : 'unreachable') : null,
+      readAt: updated ?? null,
+      recorder: !health
+        ? null
+        : degraded
+          ? 'the recorder logged errors'
+          : capture?.kind === 'lost'
+            ? RecorderReport.lossText(capture)
+            : null,
+      dismissed: new Set(dismissed),
+      readOnly: !page.data.runsControl,
+    }),
+  );
   async function reload() {
     // A navigation in flight loads fresh data itself.
     if (navigating.to) return;
@@ -276,7 +284,6 @@
   workbench.controls = {
     refresh: () => void refresh(),
     loading: () => loading,
-    problem: () => error,
   };
   // The views' code is small and static: fetch it once up front, so switching
   // views waits only for data (which hovering a tab also starts).
@@ -447,6 +454,22 @@
         <p><Icon name="shield" size={12} /> Each client keeps its own sign-in; Ren forwards it.</p>
       </div>
     {/if}
+    <!-- Redline: mark what's wrong on this page for an agent to fix. A
+         tool, so it sits with the bar's tools, not over the page. -->
+    {#if page.data.runsControl}<button
+        class="redline-toggle"
+        class:on={redline.open}
+        data-redline
+        aria-pressed={redline.open}
+        aria-label={redline.marks.length ? `Redline: ${redline.marks.length} marks` : 'Redline'}
+        onpointerenter={() => recipients.prepare()}
+        onfocus={() => recipients.prepare()}
+        onclick={() => redline.toggle()}
+        title="Redline: mark what's wrong on this page for an agent to fix (m)"
+        ><Icon name="pencil" size={13} />{#if redline.marks.length}<span class="redline-count mono"
+            >{redline.marks.length}</span
+          >{/if}</button
+      >{/if}
     <ThemeControl />
   </header>
   {#if commanding}<CommandPalette
@@ -481,75 +504,49 @@
     {@render children()}
   </main>
   <Toasts />
-  <footer class="statusline" class:redlining={redline.open} aria-label="Gateway status">
-    <!-- Driving sessions is the normal case and goes unsaid; a UI without
-         the control token says why it cannot start or steer one. -->
-    {#if !page.data.runsControl}<span
-        class="read-only"
-        title="This UI only reads: give it the control token to start and steer sessions"
-        >READ ONLY</span
-      >{/if}
-    <span
-      class="connection-state"
-      title={error ||
-        'Last successful management API snapshot; does not establish upstream availability.'}
-      ><Glyph mark={error ? 'failed' : updated ? 'passed' : 'waiting'} />{error
-        ? incompatible
-          ? 'API version mismatch'
-          : 'Snapshot failed'
-        : updated
-          ? 'API reachable'
-          : 'Connecting…'}</span
-    >
-    <button
-      class="recorder-status"
-      class:warning={loss || degraded}
-      onclick={() => goto('/system/recorder')}
-      title="Recorder counters since startup; open diagnostics"
-      ><Icon name={loss || degraded ? 'alert' : 'storage'} size={13} />{!health
-        ? 'Recorder unknown'
-        : degraded
-          ? 'Recorder errors recorded'
-          : capture?.kind === 'lost'
-            ? RecorderReport.lossText(capture)
-            : 'No capture loss recorded'}</button
-    >
-    {#if release}<span
-        class="release-status"
-        class:warning={release.tone === 'warning'}
-        class:error={release.tone === 'bad'}
-        title={release.detail}>{release.text}</span
-      >{/if}
-    <span class="status-context mono"
-      >{selected && (view === 'traffic' || view === 'recording')
-        ? `${short(selected.id)} · ${captureState(selected, gateway.current.value?.storage.capture?.body_limit_bytes ?? null).toLowerCase()}`
-        : view === 'recorder'
-          ? `${num(storage?.usage.calls)} calls retained`
-          : view === 'recordings'
-            ? `${recordingCount}${recordingCount === 100 ? '+' : ''} recordings loaded`
-            : view === 'traffic' || view === 'recording'
-              ? `${workbench.callCount} calls on page · ${workbench.activeCount} in progress`
-              : `${num(storage?.usage.calls)} calls retained`}</span
-    >
-    <span
-      class="snapshot-time mono"
-      title={updated ? new Date(updated).toLocaleString() : undefined}
-      >{loading ? 'Refreshing…' : updated ? `Snapshot ${clock(updated)}` : 'No snapshot'}</span
-    >
-    {#if page.data.runsControl}<button
-        class="redline-toggle"
-        class:on={redline.open}
-        data-redline
-        aria-pressed={redline.open}
-        onpointerenter={() => recipients.prepare()}
-        onfocus={() => recipients.prepare()}
-        onclick={() => redline.toggle()}
-        title="Mark what's wrong on this page for an agent to fix (m)"
-        ><Icon name="pencil" size={12} />Redline{#if redline.marks.length}<span
-            class="redline-count">{redline.marks.length}</span
-          >{/if}</button
-      >{/if}
-  </footer>
+  <!-- The bottom edge: silent while everything is well; one strip when
+       something is not, the worst first. -->
+  <div class="edge">
+    {#each edgeOpen ? strips : strips.slice(0, 1) as strip, place (strip.kind)}
+      {@const tone = BottomEdge.tone(strip)}
+      <div class="strip {tone}" role={tone === 'bad' ? 'alert' : 'status'}>
+        {#if strip.kind === 'unreachable'}<Glyph mark="failed" /><span
+            ><b>Ren isn't answering.</b>
+            {strip.readAt
+              ? `Showing what was read at ${clock(strip.readAt)}.`
+              : 'Nothing has been read yet.'}</span
+          ><span class="strip-acts"
+            >{#if loading}<span class="muted mono">retrying…</span>{/if}<button
+              class="button small"
+              disabled={loading}
+              onclick={() => void refresh()}>Retry now</button
+            ></span
+          >
+        {:else if strip.kind === 'incompatible'}<Glyph mark="failed" /><span
+            ><b>This UI and Ren speak different API versions.</b> One was updated without the other.</span
+          ><span class="strip-acts"
+            ><button class="button small" onclick={() => location.reload()}>Reload</button></span
+          >
+        {:else if strip.kind === 'recorder'}<Glyph mark="warning" /><span
+            ><b>Recording:</b> {strip.said}</span
+          ><span class="strip-acts"
+            ><button class="button small" onclick={() => (dismissed = [...dismissed, strip.said])}
+              >Dismiss</button
+            ><a class="button small" href="/system/recorder">Recorder →</a></span
+          >
+        {:else}<Glyph mark="idle" /><span
+            ><b>Read only.</b> This UI can't start or steer sessions.</span
+          ><span class="strip-acts muted">give it the control token to drive them</span>
+        {/if}
+        {#if place === 0 && strips.length > 1}<button
+            class="strip-more mono"
+            aria-expanded={edgeOpen}
+            onclick={() => (edgeOpen = !edgeOpen)}
+            >{edgeOpen ? 'fewer' : `+${strips.length - 1}`}</button
+          >{/if}
+      </div>
+    {/each}
+  </div>
   {#if page.data.runsControl}<RedlineLayer desk={redline} />{#if redline.open}<BriefingPanel
         desk={redline}
         {recipients}

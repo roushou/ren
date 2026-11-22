@@ -1,7 +1,7 @@
 <!--
   The bar under the header: what the view looks at and the controls that
-  change it (its scope), then live updates and refresh, then any notice that
-  the shown data may be out of date. Each page renders its own, first in its
+  change it (its scope), then live updates and refresh. That the shown data
+  may be out of date is the bottom edge's to say. Each page renders its own, first in its
   markup, so the server draws it complete with the page instead of the
   layout drawing it before the page has said what goes in it.
 -->
@@ -17,7 +17,6 @@
   const controls = workbench.controls;
   const title = $derived(page.error ? 'Page unavailable' : Views.title(Views.of(page.route.id)));
   const loading = $derived(controls?.loading() ?? false);
-  const problem = $derived(controls?.problem() ?? '');
 
   /** When the scope does not fit on one line it folds behind a button: by
    * measurement here, and on a phone by its width in CSS. */
@@ -94,9 +93,3 @@
     >
   </div>
 </div>
-{#if problem}<div class="notice danger" role="alert">
-    <Icon name="alert" size={14} /><span>{problem} Displayed data may be out of date.</span><button
-      class="text-button"
-      onclick={() => controls?.refresh()}>Retry</button
-    >
-  </div>{/if}

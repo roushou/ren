@@ -10,7 +10,6 @@ import {
   statusBadge,
   duration,
   elapsed,
-  captureState,
   modelState,
   transportState,
   streamChip,
@@ -111,14 +110,6 @@ test('duration remains unknown for open calls and formats observed time', () => 
   assert.equal(elapsed(null), '—');
   assert.equal(elapsed(duration(finished({ ended_at: 1250 as CallView['started_at'] }))), '250 ms');
   assert.equal(elapsed(duration(finished({ ended_at: 4600 as CallView['started_at'] }))), '3.60 s');
-});
-
-test('capture labels remain independent of model and transport outcomes', () => {
-  const completed = finished({ outcome: 'completed', terminal: 'interrupted' });
-  assert.equal(captureState({ ...completed, capture_complete: false }), 'Partial capture');
-  assert.equal(captureState(completed), 'Complete capture');
-  assert.equal(captureState(callFixture()), 'Recording');
-  assert.equal(captureState(callFixture(callId(1), { state: 'recovered' })), 'Interrupted capture');
 });
 
 test('attempt endings name the recorded cause and phase, and nothing when absent', () => {
@@ -320,7 +311,6 @@ test('a body cut at the capture limit is trimmed by design; any other cut is par
     [captureChip(trimmed, limit).label, captureChip(trimmed, limit).tone],
     ['Trimmed at limit', 'neutral'],
   );
-  assert.equal(captureState(trimmed, limit), 'Trimmed at the capture limit');
   // Without the limit (storage not read yet) it cannot be told apart, so it stays partial.
   assert.equal(captureChip(trimmed, null).tone, 'warning');
   // Bytes missing short of the limit are loss.

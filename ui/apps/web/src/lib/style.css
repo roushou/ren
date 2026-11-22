@@ -1581,58 +1581,6 @@ tr.selected .row-link {
 tr.call-row {
   cursor: pointer;
 }
-.statusline {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  flex-shrink: 0;
-  border-top: 1px solid var(--control-border);
-  background: var(--surface);
-  min-height: 29px;
-  font:
-    11px 'SFMono-Regular',
-    Consolas,
-    monospace;
-}
-.statusline > span,
-.statusline > button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
-}
-.statusline .read-only {
-  color: var(--on-accent);
-  background: var(--accent);
-  font-size: 10px;
-  font-weight: 600;
-}
-.statusline .connection-state {
-  white-space: nowrap;
-}
-.statusline .recorder-status:hover {
-  background: var(--surface-hover);
-}
-/* How far production is behind main, and the canary's verdict. */
-.statusline .release-status {
-  white-space: nowrap;
-  color: var(--muted);
-}
-.statusline .release-status.warning {
-  color: var(--warning);
-}
-.statusline .release-status.error {
-  color: var(--error);
-}
-.status-context {
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-.snapshot-time {
-  color: var(--muted);
-  margin-left: auto;
-  white-space: nowrap;
-}
 .theme-control {
   display: flex;
   align-items: center;
@@ -1763,17 +1711,6 @@ tr.call-row {
   .inspector-footer small {
     display: none;
   }
-  .statusline > span,
-  .statusline > button {
-    padding: 5px 7px;
-    font-size: 10px;
-  }
-  .status-context {
-    max-width: 100%;
-  }
-  .snapshot-time {
-    margin-left: 0;
-  }
   .table-footer {
     align-items: start;
   }
@@ -1785,8 +1722,7 @@ tr.call-row {
   .button,
   .detail-tabs button,
   .row-link,
-  .segmented button,
-  .recorder-status {
+  .segmented button {
     min-height: 36px;
   }
   input,
@@ -2900,25 +2836,77 @@ td.zero {
   background: var(--harness);
 }
 
-/* Redline: the status line's toggle. */
-.statusline.redlining {
-  border-top-color: var(--redline);
+/* The bottom edge: nothing while everything is well; one strip when
+   something is not, worst first. */
+.edge {
+  flex-shrink: 0;
 }
-.statusline .redline-toggle {
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 4px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12.5px;
+}
+.strip b {
+  font-weight: 600;
+}
+.strip.bad {
+  border-top-color: color-mix(in srgb, var(--error) 55%, var(--line));
+  background: color-mix(in srgb, var(--error) 12%, var(--canvas));
+}
+.strip.warning {
+  border-top-color: color-mix(in srgb, var(--warning) 55%, var(--line));
+  background: color-mix(in srgb, var(--warning) 12%, var(--canvas));
+}
+.strip-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 11.5px;
+}
+.strip-more {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.strip-more:hover {
+  color: var(--ink);
+}
+.redline-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
   border: 0;
   border-left: 1px solid var(--line);
   background: none;
-  color: var(--ink);
-  font: inherit;
+  color: var(--muted);
   cursor: pointer;
 }
-.statusline .redline-toggle:hover {
+.redline-toggle:hover {
   background: var(--surface-hover);
+  color: var(--ink);
 }
-.statusline .redline-toggle.on {
+.redline-toggle.on {
   background: var(--redline);
   color: var(--on-redline);
 }
 .redline-count {
+  padding: 0 5px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10.5px;
   font-weight: 700;
+}
+.redline-toggle.on .redline-count {
+  background: var(--on-redline);
+  color: var(--redline);
 }

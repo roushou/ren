@@ -615,24 +615,6 @@ export function elapsed(ms: number | null) {
 export const date = (ms: number) =>
   new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' });
 
-export function captureState(call: CallView, bodyLimit: number | null = null): string {
-  // Open calls are still recording; completeness is final only once they end.
-  const life = lifecycle(call.state);
-  switch (life) {
-    case 'open':
-      return 'Recording';
-    case 'recovered':
-      return 'Interrupted capture';
-    case 'finished':
-      if (trimmedAtLimit(call, bodyLimit)) return 'Trimmed at the capture limit';
-      return call.capture_complete ? 'Complete capture' : 'Partial capture';
-    case 'unknown':
-      return 'Capture unknown';
-    default:
-      return assertNever(life);
-  }
-}
-
 /** `0.1.0 (00a590295015)`, as `ren --version` and `ren doctor` show it. */
 /** A build as text; `—` before health has loaded. */
 export function buildLabel(build: Build | null): string {

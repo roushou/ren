@@ -2,7 +2,7 @@
   import Glyph from '#lib/Glyph.svelte';
   import SlideOver from '#lib/layer/SlideOver.svelte';
   import Toolbar from './Toolbar.svelte';
-  import { onDestroy, untrack } from 'svelte';
+  import { untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { goto } from '$app/navigation';
   import { page, navigating } from '$app/state';
@@ -141,16 +141,6 @@
   const selectionError = $derived(
     linkedCall !== null && !selected && offPage.kind === 'failed' ? offPage.message : '',
   );
-  $effect(() => {
-    workbench.selected = selected;
-    workbench.callCount = calls.length;
-    workbench.activeCount = calls.filter(isActive).length;
-  });
-  onDestroy(() => {
-    workbench.selected = undefined;
-    workbench.callCount = 0;
-    workbench.activeCount = 0;
-  });
   /** The page's longest finished call: each row's duration bar is its share. */
   const longest = $derived(Math.max(0, ...calls.map((call) => duration(call) ?? 0)));
   /** When the page was read: an open call runs to it on the timeline. */
