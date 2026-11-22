@@ -41,7 +41,9 @@
   } from './traffic.ts';
   import { LiveFollow } from './live.ts';
   import Icon from './Icon.svelte';
-  import RecordingActions from './RecordingActions.svelte';
+  import SessionHead from './SessionHead.svelte';
+  import TurnPanel from './TurnPanel.svelte';
+  import { ManagementApi, type TurnId, type TurnMetrics } from './api.ts';
   import Inspector from './Inspector.svelte';
   import CallOverview from './CallOverview.svelte';
   import ContextChart from './ContextChart.svelte';
@@ -63,6 +65,39 @@
     desk?: string | null;
   } = $props();
   const workbench = getWorkbench();
+  /** A session's turns: each one's prompt, and the report's figures for it. */
+  let turnInfo = $state.raw<{
+    recording: RecordingId;
+    prompts: Map<TurnId, string>;
+    metrics: Map<TurnId, TurnMetrics>;
+  } | null>(null);
+  $effect(() => {
+    // Read again as the page refreshes; a read that lands after another
+    // session opened is dropped. Not aborted: live refreshes come faster
+    // than a slow read finishes.
+    void workbench.refreshed;
+    const target = recordingId;
+    if (!target) return;
+    const api = new ManagementApi();
+    void Promise.all([
+      api.turns(target, 100).catch(() => null),
+      api.report(target).catch(() => null),
+    ]).then(([listed, report]) => {
+      if (recordingId !== target) return;
+      turnInfo = {
+        recording: target,
+        prompts: new Map(
+          (listed?.turns ?? []).flatMap((turn) =>
+            turn.prompt ? [[turn.turn, turn.prompt.text.trim().split('\n')[0] ?? '']] : [],
+          ),
+        ),
+        metrics: new Map((report?.turns ?? []).map((turn) => [turn.turn, turn])),
+      };
+    });
+  });
+  const turns = $derived(turnInfo && turnInfo.recording === recordingId ? turnInfo : null);
+  /** The turn open beside the calls. */
+  let turnOpen = $state<TurnId | null>(null);
   // The scope bar shows the narrowing controls, or the recording itself.
   const arrival = createArrival(() => snapshot);
   const shown = $derived(arrival.current);
@@ -361,91 +396,52 @@
 {/snippet}
 
 {#snippet scope()}
-  {#if recordingId}
-    <div class="scope-group scope-identity">
-      {#if recording}<span class="scope-recording"
-          ><RecordingName {recording} detail={details.get(recording.id)} /></span
-        ><small class="mono muted" title={`Ren's own ID for this recording: ${recording.id}`}
-          >{short(recording.native_id)}</small
-        >{:else}<strong class="mono">{short(recordingId)}</strong>{/if}
-    </div>
-    {#if recording}<div class="scope-group scope-figures">
-        <span><b class="mono">{num(recording.call_count)}</b> calls</span>
-        <span><b class="mono">{num(recording.turn_count)}</b> turns</span>
-        <span class:error-count={!!recording.error_count}
-          ><b class="mono">{num(recording.error_count)}</b> errors</span
-        >
-        <span
-          title="Provider reported; input includes cached context. Not subscription allowance or charges."
-          ><b class="mono">{compactOrDash(recording.tokens.input)}</b>
-          in ·
-          <b class="mono">{compactOrDash(recording.tokens.output)}</b> out</span
-        >
-      </div>{/if}
-    <div class="scope-group end">
-      {#if page.data.runsControl}<RecordingActions
-          recording={recordingId}
-          shelf={recording ? recording.archived_at !== null : null}
-        />{/if}
-      {#if desk}<a class="text-button" href={desk}>Open in desk <Icon name="arrow" size={12} /></a
-        >{/if}<a
-        class="text-button"
-        href={`/monitor/sessions/${encodeURIComponent(recordingId)}/report`}
-        >Turns and report <Icon name="arrow" size={12} /></a
-      ><a class="text-button" href={`/monitor/traffic?recording=${encodeURIComponent(recordingId)}`}
-        >Narrow in Traffic <Icon name="arrow" size={12} /></a
-      ><a class="text-button" href="/monitor/sessions"
-        >All sessions <Icon name="arrow" size={12} /></a
-      >
-    </div>
-  {:else}
-    <div class="scope-group">
-      <Segmented
-        label="Client"
-        options={clientOptions}
-        value={applied.get('client') ?? ''}
-        onchange={(client) => pick((f) => (f.client = client))}
-      />
-    </div>
-    <div class="scope-group">
-      <Select
-        label="Session"
-        size="compact"
-        options={recordingOptions}
-        value={applied.get('recording') ?? ''}
-        placeholder={recordingName(applied.get('recording') ?? '')}
-        onchange={(recording) => pick((f) => (f.recording = recording))}
-      />
-    </div>
-    <div class="scope-group">
-      <Segmented
-        label="Time"
-        options={sinceOptions}
-        value={applied.get('since') ?? (applied.get('from_ms') ? 'range' : '')}
-        onchange={(since) =>
-          pick((f) => {
-            f.since = since;
-            f.from = '';
-            f.until = '';
-          })}
-      />
-    </div>
-    <div class="scope-group end">
-      <label
-        class="toggle-control model-only"
-        title="Hide token counts, model listings, and WebSocket handshakes"
-        ><input
-          type="checkbox"
-          checked={(applied.get('kind') ?? 'model') === 'model'}
-          onchange={(e) => pick((f) => (f.kind = e.currentTarget.checked ? 'model' : 'all'))}
-        /><span class="switch"></span><span
-          >Model calls only{#if hidden}<span class="muted hidden-count"
-              >{hidden >= 100 ? '100+' : hidden} hidden</span
-            >{/if}</span
-        ></label
-      >
-    </div>
-  {/if}
+  <div class="scope-group">
+    <Segmented
+      label="Client"
+      options={clientOptions}
+      value={applied.get('client') ?? ''}
+      onchange={(client) => pick((f) => (f.client = client))}
+    />
+  </div>
+  <div class="scope-group">
+    <Select
+      label="Session"
+      size="compact"
+      options={recordingOptions}
+      value={applied.get('recording') ?? ''}
+      placeholder={recordingName(applied.get('recording') ?? '')}
+      onchange={(recording) => pick((f) => (f.recording = recording))}
+    />
+  </div>
+  <div class="scope-group">
+    <Segmented
+      label="Time"
+      options={sinceOptions}
+      value={applied.get('since') ?? (applied.get('from_ms') ? 'range' : '')}
+      onchange={(since) =>
+        pick((f) => {
+          f.since = since;
+          f.from = '';
+          f.until = '';
+        })}
+    />
+  </div>
+  <div class="scope-group end">
+    <label
+      class="toggle-control model-only"
+      title="Hide token counts, model listings, and WebSocket handshakes"
+      ><input
+        type="checkbox"
+        checked={(applied.get('kind') ?? 'model') === 'model'}
+        onchange={(e) => pick((f) => (f.kind = e.currentTarget.checked ? 'model' : 'all'))}
+      /><span class="switch"></span><span
+        >Model calls only{#if hidden}<span class="muted hidden-count"
+            >{hidden >= 100 ? '100+' : hidden} hidden</span
+          >{/if}</span
+      ></label
+    >
+  </div>
 {/snippet}
 
 <svelte:window onkeydown={keydown} />
@@ -455,9 +451,17 @@
       onclick={closeInspector}>Dismiss</button
     >
   </div>{/if}
-<Toolbar {scope} />
+<Toolbar scope={recordingId ? undefined : scope} />
 <div class="traffic-workspace">
   <section class="panel list-panel traffic-panel" aria-label="Recorded calls">
+    {#if recordingId}<SessionHead
+        {recordingId}
+        {recording}
+        detail={details.get(recordingId) ?? null}
+        {desk}
+        view="calls"
+        now={Math.max(readAt, Date.now())}
+      />{/if}
     {#if !recordingId}
       <div class="request-tabs" aria-label="Quick filters">
         <button
@@ -656,20 +660,24 @@
             {@render callHead()}
             {#each groups as group (group.id)}
               <tbody>
-                {#if recordingId}<tr class="turn-row"
+                {#if recordingId}{@const turn = group.turn}{@const prompt = turn
+                    ? turns?.prompts.get(turn)
+                    : null}<tr class="turn-row" class:open={turn !== null && turnOpen === turn}
                     ><th colspan={callColumns.length}
-                      ><span class="turn-label mono">{group.label}</span><span class="muted"
-                        >{group.rows.length} call{group.rows.length === 1
-                          ? ''
-                          : 's'}{#if group.rows.some((call) => CallTimeline.mark(call).mark === 'failed')}{' '}·{' '}<Glyph
-                            mark="failed"
-                            label={true}
-                          />{/if}</span
-                      >{#if group.turn}<a
-                          class="text-button turn-link"
-                          href={`/monitor/turns/${encodeURIComponent(group.turn)}`}
-                          >What this turn did <Icon name="arrow" size={12} /></a
-                        >{/if}</th
+                      >{#if turn}<button
+                          class="turn-label"
+                          onclick={() => (turnOpen = turnOpen === turn ? null : turn)}
+                          aria-expanded={turnOpen === turn}
+                          title="This turn's details">{prompt || group.label}</button
+                        >{:else}<span class="turn-label">{group.label}</span
+                        >{/if}{#if group.rows.some((call) => CallTimeline.mark(call).mark === 'failed')}<Glyph
+                          mark="failed"
+                          label={true}
+                        />{/if}<span class="muted mono"
+                        >{group.rows.length} call{group.rows.length === 1 ? '' : 's'} · {clock(
+                          group.rows[0]?.started_at ?? 0,
+                        )}</span
+                      ></th
                     ></tr
                   >{/if}
                 {#each group.rows as c, index (c.id)}{@const said =
@@ -853,6 +861,16 @@
     >{/if}
 </div>
 
+{#if recordingId && turnOpen}
+  <SlideOver label="Turn details" size="wide" pin="turn" onclose={() => (turnOpen = null)}>
+    <TurnPanel
+      turn={turnOpen}
+      metrics={turns?.metrics.get(turnOpen) ?? null}
+      report={`/monitor/sessions/${encodeURIComponent(recordingId)}/report`}
+    />
+  </SlideOver>
+{/if}
+
 <style>
   .calls-table {
     table-layout: fixed;
@@ -932,16 +950,28 @@
     vertical-align: middle;
   }
   .turn-label {
+    max-width: 70%;
     margin-right: 10px;
-    font-weight: 600;
+    overflow: hidden;
+    font-size: 12.5px;
+    font-weight: 500;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  button.turn-label {
+    display: inline-block;
+    text-align: left;
+  }
+  button.turn-label:hover {
+    color: var(--accent);
+  }
+  .turn-row.open th {
+    background: var(--row-selected);
   }
   .turn-row .muted {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .turn-link {
     float: right;
+    color: var(--muted);
+    font-size: 11px;
   }
   .col-time small {
     display: block;
