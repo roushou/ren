@@ -9,6 +9,7 @@ use crate::file::{FileError, FileMode};
 use crate::progress::Progress;
 use crate::{
     daemon::{Busy, Ending, RunPolicy, Runs, StillBusy},
+    daemon_container::DaemonContainer,
     invocation::{Echo, Invocation, InvocationError},
     pod::Pod,
     tailscale::{TailscaleCli, TailscaleError},
@@ -129,18 +130,30 @@ pub struct Slot {
     places_dir: PathBuf,
     /// Where its scratch runs get their folders.
     scratch_dir: PathBuf,
-    /// Where its runs' hosts run.
-    hold: SlotHold,
+    /// What of it runs in containers.
+    contain: Contain,
+    /// The operator's Podman API socket, which a daemon in a container
+    /// starts its runs' containers through.
+    podman_socket: Option<PathBuf>,
+    /// The host's environment, which a daemon in a container is given
+    /// its home and SSH agent from.
+    env: HostEnv,
 }
 
-/// Where the dev slot's runs' hosts run: in systemd units, as the installed
-/// service holds them by default, or in containers that see only what each
-/// run works on (`[runs] hold = "container"`).
+/// What of the dev slot runs in containers (docs/plans/self-build.md,
+/// phase 11).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
-pub enum SlotHold {
+pub enum Contain {
+    /// Nothing: its daemon on the host, its runs held in systemd units, as
+    /// the installed service holds them by default.
     #[default]
-    Unit,
-    Container,
+    None,
+    /// Its runs: each in a container that sees only what it works on
+    /// (`[runs] hold = "container"`); its daemon on the host.
+    Runs,
+    /// Its daemon too, in a container of its own, starting its runs'
+    /// containers through the Podman API socket.
+    All,
 }
 
 impl Slot {
@@ -188,14 +201,18 @@ impl Slot {
             work_dir: share.join("work"),
             places_dir: share.join("config"),
             scratch_dir: share.join("scratch"),
-            hold: SlotHold::Unit,
+            contain: Contain::None,
+            podman_socket: env
+                .absolute_path("XDG_RUNTIME_DIR")
+                .map(|runtime| runtime.join("podman/podman.sock")),
+            env: env.clone(),
         })
     }
 
-    /// The slot, its runs' hosts run as `hold` says.
+    /// The slot, with what `contain` says in containers.
     #[must_use]
-    pub fn holding(mut self, hold: SlotHold) -> Self {
-        self.hold = hold;
+    pub fn containing(mut self, contain: Contain) -> Self {
+        self.contain = contain;
         self
     }
 
@@ -266,19 +283,23 @@ impl Slot {
                 places: vec![self.places_dir.clone()],
                 scratch: Some(self.scratch_dir.clone()),
                 // Held, so a restart of the slot leaves its runs going.
-                hold: match self.hold {
-                    SlotHold::Unit => RunHold::Auto,
-                    SlotHold::Container => RunHold::Container,
+                hold: match self.contain {
+                    Contain::None => RunHold::Auto,
+                    Contain::Runs | Contain::All => RunHold::Container,
                 },
                 worktree_env: Default::default(),
-                container: match self.hold {
-                    SlotHold::Unit => RunContainerOptions::default(),
+                container: match self.contain {
+                    Contain::None => RunContainerOptions::default(),
                     // The host's programs; the fake agent, which is this
                     // slot's xtask and keeps its state in the slot's data.
-                    SlotHold::Container => RunContainerOptions {
+                    Contain::Runs | Contain::All => RunContainerOptions {
                         image: Some(Pod::image()),
                         read_only: vec!["/usr".into(), self.bin_dir.clone()],
                         read_write: vec![self.data_dir.clone()],
+                        podman_socket: match self.contain {
+                            Contain::All => self.podman_socket.clone(),
+                            Contain::None | Contain::Runs => None,
+                        },
                     },
                 },
             },
@@ -555,9 +576,16 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
 
     fn start_core(&self, wait: RunWait) -> Result<(), DevError> {
         self.build()?;
-        match self.hold {
-            SlotHold::Unit => {}
-            SlotHold::Container => Pod::ensure_image(&self.repo)?,
+        match self.contain {
+            Contain::None => {}
+            Contain::Runs => Pod::ensure_image(&self.repo)?,
+            Contain::All => {
+                Pod::ensure_image(&self.repo)?;
+                // The socket its daemon starts runs' containers through.
+                Invocation::new("systemctl")
+                    .args(["--user", "enable", "--now", "podman.socket"])
+                    .run()?;
+            }
         }
         self.write_config()?;
         let ending = self.settle_runs(wait)?;
@@ -583,27 +611,56 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
         )?;
         Self::wait_for(Self::PROVIDER, "/anthropic/v1/models")?;
         Progress(&format!("Starting the dev daemon on {}", Self::DAEMON)).show();
-        Unit::Daemon.start(
-            None,
-            &[&ren],
-            &[
-                "--config".into(),
-                self.config.display().to_string(),
-                "serve".into(),
-            ],
-            &[
-                (Self::OPERATOR_KEY_ENV, Self::OPERATOR_KEY.into()),
-                (Self::GITHUB_TOKEN_ENV, Self::GITHUB_TOKEN.into()),
-                // Runs start the fake agent as `codex`, never a real client.
-                (
-                    "PATH",
-                    format!(
-                        "{}:/usr/local/bin:/usr/bin:/bin",
-                        self.agent_dir().display()
-                    ),
+        let vars = vec![
+            (
+                Self::OPERATOR_KEY_ENV.to_owned(),
+                Self::OPERATOR_KEY.to_owned(),
+            ),
+            (
+                Self::GITHUB_TOKEN_ENV.to_owned(),
+                Self::GITHUB_TOKEN.to_owned(),
+            ),
+            // Runs start the fake agent as `codex`, never a real client.
+            (
+                "PATH".to_owned(),
+                format!(
+                    "{}:/usr/local/bin:/usr/bin:/bin",
+                    self.agent_dir().display()
                 ),
-            ],
-        )?;
+            ),
+        ];
+        match self.contain {
+            Contain::None | Contain::Runs => {
+                let vars: Vec<(&str, String)> = vars
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.clone()))
+                    .collect();
+                Unit::Daemon.start(
+                    None,
+                    &[&ren],
+                    &[
+                        "--config".into(),
+                        self.config.display().to_string(),
+                        "serve".into(),
+                    ],
+                    &vars,
+                )?;
+            }
+            Contain::All => {
+                let config = self.config()?;
+                let container = DaemonContainer::new(
+                    "dev",
+                    Pod::image(),
+                    &ren,
+                    (&self.config, &config),
+                    &self.data_dir,
+                    &self.env,
+                    vars,
+                )?;
+                Progress(&format!("In container {}", container.name())).show();
+                Unit::Daemon.start(None, &[Path::new("podman")], &container.run_args(), &[])?;
+            }
+        }
         Self::wait_for(Self::DAEMON, "/health")?;
         self.register_projects();
         ending.remind();

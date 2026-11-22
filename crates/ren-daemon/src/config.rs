@@ -325,6 +325,11 @@ pub struct RunContainerOptions {
     pub read_only: Vec<PathBuf>,
     /// Seen and written: caches runs share (`~/.cargo`).
     pub read_write: Vec<PathBuf>,
+    /// The operator's Podman API socket, for a daemon that itself runs in a
+    /// container: run containers are started through it. Without one, a
+    /// daemon on the host starts them with `podman` from a systemd scope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub podman_socket: Option<PathBuf>,
 }
 
 /// Whether a run's client process outlives the daemon that started it.
@@ -411,8 +416,13 @@ impl RunContainerOptions {
                     .map(|path| Mount::read_write(anchored(path))),
             )
             .collect();
+        let reach = match &self.podman_socket {
+            Some(socket) => crate::host::PodmanReach::Socket(anchored(socket)),
+            None => crate::host::PodmanReach::Scope,
+        };
         Ok(crate::host::RunContainers::new(
             image,
+            reach,
             home.clone(),
             shared,
             env.absolute_path("SSH_AUTH_SOCK"),
@@ -448,6 +458,7 @@ impl RunsOptions {
                 .chain(&self.scratch)
                 .chain(&self.container.read_only)
                 .chain(&self.container.read_write)
+                .chain(&self.container.podman_socket)
                 .all(anchored)
         {
             Ok(())
@@ -1020,11 +1031,12 @@ mod tests {
         else {
             panic!("runs are held in containers");
         };
-        use crate::host::{Mount, RunContainers};
+        use crate::host::{Mount, PodmanReach, RunContainers};
         assert_eq!(
             containers,
             RunContainers::new(
                 "localhost/ren-instance:abc".into(),
+                PodmanReach::Scope,
                 "/home/op".into(),
                 vec![
                     Mount::read_only("/usr"),

@@ -25,7 +25,7 @@ use provider::{FakeProvider, ProviderError};
 use ren_harness::host::HostEnv;
 use seed::{Scenario, SeedError, Seeder};
 use shot::{Camera, Page};
-use slot::{Preview, RunWait, Slot, SlotHold};
+use slot::{Contain, Preview, RunWait, Slot};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use traffic::{Pace, SettingsError, Traffic, TrafficError};
@@ -114,10 +114,10 @@ struct UpArgs {
     /// Keep the preview on this host's loopback; do not touch Tailscale.
     #[arg(long, requires = "ui")]
     local: bool,
-    /// Where the slot's runs' hosts run: systemd units, or containers that
-    /// see only what each run works on.
-    #[arg(long, value_enum, default_value = "unit")]
-    hold: SlotHold,
+    /// What runs in containers: nothing, the slot's runs, or its daemon
+    /// too.
+    #[arg(long, value_enum, default_value = "none")]
+    contain: Contain,
     #[command(flatten)]
     tailnet: TailnetArgs,
 }
@@ -218,6 +218,8 @@ struct ProviderArgs {
 pub enum DevError {
     #[error(transparent)]
     Provider(#[from] ProviderError),
+    #[error(transparent)]
+    DaemonContainer(#[from] crate::daemon_container::DaemonContainerError),
     #[error("{0} is not set")]
     MissingEnv(&'static str),
     #[error(transparent)]
@@ -272,7 +274,7 @@ impl Dev {
                 }
             },
             DevAction::Up(args) => {
-                let slot = Slot::new(env)?.holding(args.hold);
+                let slot = Slot::new(env)?.containing(args.contain);
                 let wait = RunWait {
                     policy: if args.drain_runs {
                         RunPolicy::Drain

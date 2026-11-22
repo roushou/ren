@@ -52,11 +52,29 @@ impl Mount {
     }
 }
 
-/// How run hosts start in containers: the image, and what every run's
-/// container sees besides what the run itself needs (`[runs.container]`).
+/// How the daemon reaches Podman to start a run's container, and so what
+/// watches the container until its host exits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PodmanReach {
+    /// `podman` here, from a transient systemd scope of the run's own
+    /// (`ren-run-<run>.scope`): for a daemon on the host. The container's
+    /// monitor is a child of the `podman` that starts it, so in the
+    /// daemon's unit it would stop with the daemon, leaving the run going
+    /// with nothing to see its host exit and remove its container.
+    Scope,
+    /// The operator's Podman API socket: for a daemon in a container, which
+    /// has no systemd of its own. The API service starts and watches the
+    /// run's container, apart from the daemon's.
+    Socket(PathBuf),
+}
+
+/// How run hosts start in containers: the image, how Podman is reached,
+/// and what every run's container sees besides what the run itself needs
+/// (`[runs.container]`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunContainers {
     image: String,
+    reach: PodmanReach,
     /// The operator's home, the container's `HOME`.
     home: PathBuf,
     /// What every run sees: the host's programs and toolchains.
@@ -90,6 +108,7 @@ pub(super) struct RunNeeds {
 pub(super) struct RunContainer {
     name: String,
     image: String,
+    reach: PodmanReach,
     mounts: Vec<Mount>,
     env: Vec<(String, String)>,
     /// The `ren` it runs as its entrypoint: never the image's own, which a
@@ -102,12 +121,14 @@ pub(super) struct RunContainer {
 impl RunContainers {
     pub fn new(
         image: String,
+        reach: PodmanReach,
         home: PathBuf,
         shared: Vec<Mount>,
         ssh_agent: Option<PathBuf>,
     ) -> Self {
         Self {
             image,
+            reach,
             home,
             shared,
             ssh_agent,
@@ -143,6 +164,7 @@ impl RunContainers {
         RunContainer {
             name: Self::name(run),
             image: self.image.clone(),
+            reach: self.reach.clone(),
             mounts,
             env,
             host: needs.host.clone(),
@@ -160,23 +182,38 @@ impl RunContainer {
         &self.name
     }
 
-    /// The `systemd-run` arguments that start it, from a transient scope
-    /// of its own named for the run (`ren-run-<run>.scope`). The
-    /// container's monitor is a child of the `podman` that starts it: in
-    /// the daemon's unit it would be stopped with the daemon, leaving the
-    /// run going with nothing to see it exit and remove its container.
-    pub(super) fn start_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "--user".to_owned(),
-            "--scope".to_owned(),
-            "--quiet".to_owned(),
-            "--collect".to_owned(),
-            format!("--unit={}", self.name),
-            "--".to_owned(),
-            "podman".to_owned(),
-        ];
-        args.extend(self.run_args());
-        args
+    /// Whether it is started through the API socket, by a daemon in a
+    /// container.
+    pub(super) fn through_socket(&self) -> bool {
+        match self.reach {
+            PodmanReach::Socket(_) => true,
+            PodmanReach::Scope => false,
+        }
+    }
+
+    /// The program that starts it, and its arguments, as Podman is
+    /// reached ([`PodmanReach`]).
+    pub(super) fn start(&self) -> (&'static str, Vec<String>) {
+        match &self.reach {
+            PodmanReach::Scope => {
+                let mut args = vec![
+                    "--user".to_owned(),
+                    "--scope".to_owned(),
+                    "--quiet".to_owned(),
+                    "--collect".to_owned(),
+                    format!("--unit={}", self.name),
+                    "--".to_owned(),
+                    "podman".to_owned(),
+                ];
+                args.extend(self.run_args());
+                ("systemd-run", args)
+            }
+            PodmanReach::Socket(socket) => {
+                let mut args = vec![format!("--url=unix://{}", socket.display())];
+                args.extend(self.run_args());
+                ("podman", args)
+            }
+        }
     }
 
     /// `podman` arguments that start it, detached and removed once its run
@@ -207,7 +244,7 @@ impl RunContainer {
 
 #[cfg(test)]
 mod tests {
-    use super::{Mount, RunContainers, RunNeeds};
+    use super::{Mount, PodmanReach, RunContainers, RunNeeds};
     use ren_recorder::id::RunId;
 
     fn needs() -> RunNeeds {
@@ -224,6 +261,7 @@ mod tests {
     fn containers(ssh_agent: Option<&str>) -> RunContainers {
         RunContainers::new(
             "localhost/ren-instance:abc".into(),
+            PodmanReach::Scope,
             "/home/op".into(),
             vec![
                 Mount::read_only("/usr"),
@@ -282,10 +320,11 @@ mod tests {
     }
 
     #[test]
-    fn its_monitor_lives_in_a_scope_of_its_own_not_the_daemons() {
+    fn from_the_host_its_monitor_lives_in_a_scope_of_its_own_not_the_daemons() {
         let run = RunId::restore(uuid::Uuid::nil());
         let container = containers(None).container(run, &needs());
-        let args = container.start_args();
+        let (program, args) = container.start();
+        assert_eq!(program, "systemd-run");
         let split = args.iter().position(|arg| arg == "--").unwrap();
         assert_eq!(
             &args[..split],
@@ -299,6 +338,18 @@ mod tests {
         );
         assert_eq!(args[split + 1], "podman");
         assert_eq!(&args[split + 2..], container.run_args());
+    }
+
+    #[test]
+    fn from_a_container_the_api_service_starts_and_watches_it() {
+        let run = RunId::restore(uuid::Uuid::nil());
+        let mut through_socket = containers(None);
+        through_socket.reach = PodmanReach::Socket("/run/user/1000/podman/podman.sock".into());
+        let container = through_socket.container(run, &needs());
+        let (program, args) = container.start();
+        assert_eq!(program, "podman");
+        assert_eq!(args[0], "--url=unix:///run/user/1000/podman/podman.sock");
+        assert_eq!(&args[1..], container.run_args());
     }
 
     #[test]

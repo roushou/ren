@@ -21,7 +21,7 @@ pub mod frame;
 mod link;
 mod serve;
 
-pub use container::{Access, Mount, RunContainers};
+pub use container::{Access, Mount, PodmanReach, RunContainers};
 pub use serve::RunHost;
 
 use container::RunNeeds;
@@ -150,6 +150,9 @@ impl HeldRuns {
     const SPOOL: &str = "spool";
     const EXIT: &str = "exit";
     const JOURNAL: &str = "journal";
+    /// The Podman client's settings, under the runs' folder, for a daemon
+    /// in a container.
+    const PODMAN_SETTINGS: &str = ".podman";
 
     /// Runs held under `root` (`<data>/runs`), their hosts started by
     /// `launcher` running `program`.
@@ -366,10 +369,18 @@ impl HeldRuns {
                     io::Error::other("a run host in a container was started without its needs")
                 })?;
                 let container = containers.container(run, needs);
-                let output = std::process::Command::new("systemd-run")
-                    .args(container.start_args())
-                    .stdin(std::process::Stdio::null())
-                    .output()?;
+                let (program, args) = container.start();
+                let mut podman = std::process::Command::new(program);
+                podman.args(args);
+                if container.through_socket() {
+                    // In a container, the home's folders are made for its
+                    // mounts and are not the operator's, which the Podman
+                    // client refuses: it keeps its settings here instead.
+                    let settings = self.root.join(Self::PODMAN_SETTINGS);
+                    Self::private_dir(&settings)?;
+                    podman.env("XDG_CONFIG_HOME", settings);
+                }
+                let output = podman.stdin(std::process::Stdio::null()).output()?;
                 if output.status.success() {
                     Ok(())
                 } else {
