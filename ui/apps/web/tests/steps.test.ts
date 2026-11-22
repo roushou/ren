@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { CommandIntent, Entry, ItemId } from '../src/lib/runs.ts';
+import type { RecordingId } from '../src/lib/api.ts';
 import { Steps, TurnLines, type Block, type Step } from '../src/lib/steps.ts';
 
 const WORK = '/work/acme';
@@ -250,4 +251,35 @@ test('a tool call is drawn with the verb its effect is', () => {
   assert.equal(Steps.act('delegate'), 'delegate');
   assert.equal(Steps.act(null), 'tool');
   assert.equal(Steps.ICONS[Steps.act('delegate')], 'spark');
+});
+
+test('a conversation’s steps in order, and where one sits among its turn’s', () => {
+  const turns = [
+    Steps.blocks([read('r1', 'a.rs'), said('Next.'), read('r2', 'b.rs')], WORK),
+    Steps.blocks([said('Again.'), command('c1', 'ls'), read('r3', 'c.rs')], WORK),
+  ];
+  assert.deepEqual(
+    Steps.all(turns).map((step) => step.entry.item),
+    ['r1', 'r2', 'c1', 'r3'],
+  );
+  assert.deepEqual(Steps.place(turns, id('r2')), { turn: 1, index: 2, of: 2 });
+  assert.deepEqual(Steps.place(turns, id('r3')), { turn: 2, index: 2, of: 2 });
+  assert.equal(Steps.place(turns, id('missing')), null);
+});
+
+test('the calls around steps: their recording, over the time they ran with a margin', () => {
+  const recording = '0190f3a0-0000-7000-8000-0000000000dd' as RecordingId;
+  const step = (span: { from: number; to: number } | null) =>
+    ({ span, took: null }) as unknown as Step;
+  assert.equal(
+    Steps.calls(recording, [
+      step({ from: 100_000, to: 110_000 }),
+      step({ from: 90_000, to: 95_000 }),
+    ]),
+    `/monitor/traffic?recording=${recording}&from_ms=60000&until_ms=140000`,
+  );
+  // Without a known time, the whole recording.
+  assert.equal(Steps.calls(recording, [step(null)]), `/monitor/traffic?recording=${recording}`);
+  assert.equal(Steps.calls(null, [step(null)]), null);
+  assert.equal(Steps.calls(recording, []), null);
 });

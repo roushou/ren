@@ -7,7 +7,7 @@
 // DOM, no fetches.
 
 import type { IconName } from './Icon.svelte';
-import type { EffectKind } from './api.ts';
+import type { EffectKind, RecordingId } from './api.ts';
 import { Board } from './board.ts';
 import { assertNever } from './decode.ts';
 import type { Stored } from './decode.ts';
@@ -48,6 +48,14 @@ export interface Step {
 export type Block =
   | { kind: 'entry'; entry: Exclude<Entry, StepEntry> }
   | { kind: 'steps'; key: string; steps: Step[]; state: GroupState };
+
+/** Where a step sits in a conversation: its turn's number, and its place
+ * among the turn's steps, of how many; each counted from 1. */
+export interface StepPlace {
+  turn: number;
+  index: number;
+  of: number;
+}
 
 export class Steps {
   /** Each verb's icon, wherever a step or a tool call is drawn. */
@@ -132,6 +140,43 @@ export class Steps {
       from: Math.min(...spans.map((span) => span.from)) as ItemSpan['from'],
       to: Math.max(...spans.map((span) => span.to)) as ItemSpan['to'],
     };
+  }
+
+  /** Every step of a conversation's turns, in order. */
+  static all(turns: readonly (readonly Block[])[]): Step[] {
+    return turns.flatMap((blocks) => Steps.#of(blocks));
+  }
+
+  /** Where the step of `item` sits among `turns`; null when none is it. */
+  static place(turns: readonly (readonly Block[])[], item: ItemId): StepPlace | null {
+    for (const [index, blocks] of turns.entries()) {
+      const steps = Steps.#of(blocks);
+      const at = steps.findIndex((step) => step.entry.item === item);
+      if (at !== -1) return { turn: index + 1, index: at + 1, of: steps.length };
+    }
+    return null;
+  }
+
+  /** Traffic narrowed to the calls around `steps`: the session's
+   * `recording`, over the time they ran with a margin for the model calls
+   * that asked for them and read their results; null without a recording
+   * or steps. */
+  static calls(recording: RecordingId | null, steps: readonly Step[]): string | null {
+    if (!recording || !steps.length) return null;
+    const window = Steps.window(steps);
+    const query = new URLSearchParams({ recording });
+    if (window) {
+      query.set('from_ms', String(window.from - Steps.CALL_MARGIN_MS));
+      query.set('until_ms', String(window.to + Steps.CALL_MARGIN_MS));
+    }
+    return `/monitor/traffic?${query}`;
+  }
+
+  /** How far before and after its steps a model call still counts as theirs. */
+  static readonly CALL_MARGIN_MS = 30_000;
+
+  static #of(blocks: readonly Block[]): Step[] {
+    return blocks.flatMap((block) => (block.kind === 'steps' ? block.steps : []));
   }
 
   /** How long `steps` took together, counting those whose time is known;

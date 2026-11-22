@@ -1149,3 +1149,21 @@ test('an approval asks its question by its client and what it asks for', () => {
     ['Allow once', 'Allow for this session', 'Decline', 'Decline and stop'],
   );
 });
+
+test('a failed command says the refusal, an unreachable server, or the error', () => {
+  const refused = new RunCommandError(409, null);
+  assert.equal(RunCommandError.say(refused), refused.message);
+  assert.equal(
+    RunCommandError.say(new TypeError('fetch failed')),
+    'Cannot reach the Ren UI server.',
+  );
+  assert.equal(RunCommandError.say(new Error('Gone.')), 'Gone.');
+  assert.equal(RunCommandError.say('nope'), 'Something went wrong.');
+});
+
+test('only a lost or given-up runs feed is worth a word', () => {
+  assert.deepEqual(
+    (['opening', 'open', 'reconnecting', 'closed'] as const).map((feed) => Runs.feedNote(feed)),
+    ['', '', 'updates reconnecting', 'updates stopped'],
+  );
+});

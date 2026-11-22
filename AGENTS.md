@@ -685,8 +685,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Markdown.svelte` from `ui/packages/markdown` draws Markdown, and
   `src/lib/server/runsStart.ts` makes the session desk's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the
-  page renders as it will stay. The desk (`src/lib/desk/SessionDesk.svelte`)
-  is one component held by a project's Sessions page
+  page renders as it will stay. The desk (`src/lib/desk/SessionDesk.svelte`,
+  composing `DeskFeed` (`feed.svelte.ts`: the feeds, lists and transcripts),
+  `ComposerState` (`composer.svelte.ts`), `SessionActions`
+  (`actions.svelte.ts`), and the header, conversation, ruler and composer
+  components beside them) is held by a project's Sessions page
   (`src/routes/projects/[name]/sessions/[[session]]`) and by Scratch
   (`src/routes/scratch/[[session]]`), each with its scope (`SessionScope`: a
   project's sessions, or those of no project). `src/lib/view.ts` is the

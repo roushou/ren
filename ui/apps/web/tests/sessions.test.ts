@@ -300,3 +300,10 @@ test('a session Ren drives is found by the recording its calls went under', asyn
   // A session of no project known opens in Scratch.
   assert.equal(Sessions.desks(bodies, []).get(recording as never), `/scratch/${sessionA}`);
 });
+
+test('a session’s title is the first line of what it was asked, else of its first prompt', () => {
+  assert.equal(Sessions.title('  Fix the build \nand the tests', 'Other'), 'Fix the build');
+  assert.equal(Sessions.title(null, 'Read the logs\nthen say'), 'Read the logs');
+  assert.equal(Sessions.title(null, null), null);
+  assert.equal(Sessions.title('   \nsecond line', null), null);
+});

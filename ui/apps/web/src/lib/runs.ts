@@ -1024,6 +1024,14 @@ export class RunCommandError extends Error {
     this.status = status;
     this.code = code;
   }
+
+  /** What a failed run command, or a read, says to the operator: the
+   * refusal, that the UI server cannot be reached, or the error's own words. */
+  static say(error: unknown): string {
+    if (error instanceof RunCommandError) return error.message;
+    if (error instanceof TypeError) return 'Cannot reach the Ren UI server.';
+    return error instanceof Error ? error.message : 'Something went wrong.';
+  }
 }
 
 /** The clients the daemon can drive, in the order a draft offers them:
@@ -1708,7 +1716,27 @@ export interface PhaseMark {
   mark: Mark;
 }
 
+/** A desk's runs feed: opening for the first time, open, lost and being
+ * reopened by the browser, or given up on. */
+export type RunsFeed = 'opening' | 'open' | 'reconnecting' | 'closed';
+
 export class Runs {
+  /** What the header says of the runs feed: only a lost or given-up feed is
+   * worth a word; the first opening is not a reconnect. */
+  static feedNote(feed: RunsFeed): string {
+    switch (feed) {
+      case 'opening':
+      case 'open':
+        return '';
+      case 'reconnecting':
+        return 'updates reconnecting';
+      case 'closed':
+        return 'updates stopped';
+      default:
+        return assertNever(feed);
+    }
+  }
+
   /** A conversation's turns: each starts at its prompt. */
   static turns(entries: readonly Entry[]): Entry[][] {
     const turns: Entry[][] = [];
@@ -2230,6 +2258,13 @@ export type SessionScope =
   { kind: 'project'; project: DeskProject } | { kind: 'scratch'; projects: readonly DeskProject[] };
 
 export class Sessions {
+  /** A session's title: the first line of what it was asked, as stored,
+   * else of its first prompt read here; null when neither says anything. */
+  static title(asked: string | null, firstPrompt: string | null): string | null {
+    const text = asked ?? firstPrompt;
+    return text ? text.split('\n')[0]!.trim() || null : null;
+  }
+
   /**
    * The project among `projects` that `body` works for: as stored, else
    * (for a moment after it is made) by its folder, the project's
