@@ -75,7 +75,6 @@
   const listing = $derived(loaded.kind === 'ready' ? loaded.listing : null);
   let filter = $state(ToolFilters.ALL);
   const groups = $derived(listing ? ToolGroups.of(listing, filter) : []);
-  const narrow = (only: Only) => (filter = { ...filter, only: filter.only === only ? null : only });
   const changes = $derived(listing ? plan.changes(listing) : []);
   const chosen = $derived(listing?.packages.find((p) => p.id === selected) ?? null);
 
@@ -165,6 +164,20 @@
   }
 
   const tally = $derived(listing ? Supplies.tally(listing) : null);
+  /** The packages each figure names. */
+  const updates = $derived(
+    listing?.packages.filter((pkg) => RowActions.of(pkg)?.kind === 'update').map((pkg) => pkg.id) ??
+      [],
+  );
+  const missing = $derived(
+    listing?.packages.filter((pkg) => Supplies.tone(pkg) === 'missing').map((pkg) => pkg.id) ?? [],
+  );
+  /** The generation before the current one, to restore. */
+  const previous = $derived(
+    listing?.generations
+      .filter((generation) => generation.generation < listing.generation)
+      .toSorted((a, b) => b.generation - a.generation)[0] ?? null,
+  );
   const effects = $derived(listing ? plan.effects(listing) : []);
   const staged = $derived(new Map(effects.map((effect) => [effect.id, effect])));
   const short = (sha: string) => `${sha.slice(0, 12)}…`;
@@ -209,51 +222,11 @@
 </script>
 
 {#snippet scope()}
-  {#if listing && tally}
-    <div class="scope-group tally" aria-label="Tools">
-      <label class="search-input search">
-        <Icon name="search" size={12} />
-        <input
-          type="search"
-          placeholder="Filter"
-          aria-label="Filter tools"
-          value={filter.query}
-          oninput={(event) => (filter = { ...filter, query: event.currentTarget.value })}
-        />
-      </label>
-      {#snippet narrowing(only: Only, count: number, word: string, tone: string)}
-        <button
-          class="chip filter {tone}"
-          class:active={filter.only === only}
-          aria-pressed={filter.only === only}
-          onclick={() => narrow(only)}><Glyph mark={ONLY_MARKS[only]} />{count} {word}</button
-        >
-      {/snippet}
-      {@render narrowing('managed', tally.managed, 'managed', 'success')}
-      {@render narrowing('system', tally.system, 'system', '')}
-      {#if tally.missing > 0}{@render narrowing('missing', tally.missing, 'missing', 'error')}{/if}
-      {#if tally.updates > 0}{@render narrowing(
-          'updates',
-          tally.updates,
-          tally.updates === 1 ? 'update' : 'updates',
-          'live',
-        )}{/if}
-      {#if signedOut.length > 0}
-        <button
-          class="chip filter warning"
-          title="Show the first client that is signed out"
-          onclick={() => (selected = signedOut[0]?.id ?? selected)}
-          ><Icon name="lock" size={10} />{signedOut.length} signed out</button
-        >
-      {/if}
-      {#if listing.platform}
-        <span class="chip mono">{Platforms.label(listing.platform)}</span>
-      {:else}
-        <span class="chip warning" title="Ren installs on Linux x64, Linux arm64, and macOS arm64"
-          >no installs on this platform</span
-        >
-      {/if}
-    </div>
+  {#if listing}
+    <span class="meta mono"
+      >{listing.platform ? Platforms.label(listing.platform) : 'no installs on this platform'} · generation
+      {listing.generation}{#if listing.bin}{' '}· {listing.bin}{/if}</span
+    >
   {/if}
 {/snippet}
 
@@ -310,144 +283,259 @@
   {:else if listing}
     <!-- The newest generations, as columns beside the packages. -->
     {@const history = new ToolHistory(listing)}
-    <section class="tools-main" aria-label="Packages">
-      <table class="tools-table">
-        <colgroup>
-          <col class="c-name" />
-          <col class="c-version" />
-          <col />
-          {#each history.generations as generation (generation.generation)}<col
-              class="c-gen"
-            />{/each}
-          <col class="c-action" />
-        </colgroup>
-        <thead>
-          <tr>
-            <th>Package</th>
-            <th>Version</th>
-            <th>Where runs find it</th>
-            {#each history.generations as generation (generation.generation)}
-              <th class="gen-head" class:current={generation.state === 'current'}
-                ><span class="mono">#{generation.generation}</span
-                >{#if generation.state === 'current'}<Glyph
-                    mark="passed"
-                    label={stateLabel(generation.state)}
-                  />{:else if generation.state === 'in_use'}<Glyph
-                    mark="responding"
-                    label="In use by runs"
-                  />{/if}{#if generation.state !== 'current' && listing.platform}<button
-                    class="icon-button restore"
-                    title="Restore generation {generation.generation}…"
-                    aria-label="Restore generation {generation.generation}"
-                    disabled={applying.kind === 'applying'}
-                    onclick={() =>
-                      (confirming = { kind: 'restore', generation: generation.generation })}
-                    ><Icon name="refresh" size={11} /></button
-                  >{/if}</th
+    <div class="tools-body">
+      <div class="tools-left">
+        {#if tally}
+          <section class="figures" aria-label="Tools at a glance">
+            <div>
+              <span class="cap">Managed</span>
+              <span class="figure"
+                ><Glyph mark="passed" />{tally.managed}<span class="meta"
+                  >in gen {listing.generation}</span
+                ></span
               >
-            {/each}
-            <th></th>
-          </tr>
-        </thead>
-        {#each groups as group (group.kind)}
-          <tbody>
-            <tr class="tools-group">
-              <th colspan={4 + history.generations.length} scope="rowgroup"
-                >{group.title} <span class="count">{group.packages.length}</span></th
+            </div>
+            <div>
+              <span class="cap">Updates</span>
+              <span class="figure"
+                >{#if updates.length}<Glyph mark="warning" />{/if}{updates.length}<span class="meta"
+                  >{updates.join(' · ')}</span
+                ></span
               >
-            </tr>
-            {#each group.packages as pkg (pkg.id)}
-              {@const label = action(pkg)}
-              {@const supply = Supplies.of(pkg)}
-              {@const change = staged.get(pkg.id)}
-              <tr
-                class="tools-row"
-                class:selected={selected === pkg.id}
-                class:staged={change !== undefined}
-                onclick={() => (selected = pkg.id)}
+            </div>
+            <div>
+              <span class="cap">Missing</span>
+              <span class="figure"
+                >{#if missing.length}<Glyph mark="failed" />{/if}{missing.length}<span class="meta"
+                  >{missing.join(' · ')}</span
+                ></span
               >
-                <td class="mono name"
-                  >{@render dot(pkg)}{pkg.id}{#if pkg.origin === 'operator'}<span
-                      class="chip tag"
-                      title="Added in the daemon’s configuration">custom</span
-                    >{:else if pkg.origin === null}<span
-                      class="chip warning tag"
-                      title="No longer in the daemon’s configuration">removed</span
-                    >{/if}</td
-                >
-                <td class="mono"
-                  >{#if change}<s class="muted">{change.from ?? '—'}</s><span class="arrow">→</span
-                    ><span class="to {change.toKind}">{change.to ?? '—'}</span
-                    >{:else if supply.kind === 'managed'}{supply.version}{:else if supply.kind === 'system'}{#if supply.system.version}{supply
-                        .system.version}{:else}<span
-                        class="unknown"
-                        title={supply.system.unread ?? ''}>?</span
-                      >{/if}{:else}<span class="muted">—</span>{/if}</td
-                >
-                <td class="source"
-                  >{#if supply.kind === 'managed'}{#if supply.shadows}<span
-                        class="mono muted path shadowed"
-                        title="Runs find Ren’s first">{supply.shadows.path}</span
-                      >{/if}{:else if supply.kind === 'system'}<span class="mono muted path"
-                      >{supply.system.path}</span
-                    >{:else if pkg.needed_by.length > 0}<span
-                      class="muted"
-                      title="Needed by {pkg.needed_by.map(harnessLabel).join(', ')}"
-                      >{pkg.needed_by.map(harnessLabel).join(', ')}</span
-                    >{/if}{#if clientOf(pkg)}{@const shown = SignIns.chip(
-                      clientOf(pkg)?.sign_in ?? { kind: 'not_checked' },
-                    )}{#if shown}<span
-                        class="chip sign-in {shown.tone}"
-                        title="Sign-in on this host, as the client says"
-                        >{#if shown.tone === 'warning'}<Icon
-                            name="lock"
-                            size={10}
-                          />{/if}{shown.text}</span
-                      >{/if}{/if}</td
-                >
-                {#each history.generations as generation, index (generation.generation)}
-                  {@const held = history.version(pkg.id, index)}
-                  <td
-                    class="mono gen"
-                    class:changed={history.changed(pkg.id, index)}
-                    title={history.changed(pkg.id, index)
-                      ? 'Changed in this generation'
-                      : undefined}>{held ?? '—'}</td
+            </div>
+            <div>
+              <span class="cap">System</span>
+              <span class="figure">{tally.system}<span class="meta">found on PATH</span></span>
+            </div>
+            <div class="generation-actions">
+              {#if previous}<button
+                  class="button small"
+                  disabled={applying.kind === 'applying'}
+                  onclick={() =>
+                    (confirming = { kind: 'restore', generation: previous.generation })}
+                  >Restore gen {previous.generation}</button
+                >{/if}
+              <button class="button small" onclick={collect}>Clean up</button>
+              {#if collecting}<span class="meta">{collecting}</span>{/if}
+            </div>
+          </section>
+          <div class="filters">
+            <label class="search-input search">
+              <Icon name="search" size={12} />
+              <input
+                type="search"
+                placeholder="Filter"
+                aria-label="Filter tools"
+                value={filter.query}
+                oninput={(event) => (filter = { ...filter, query: event.currentTarget.value })}
+              />
+            </label>
+            {#snippet narrowing(only: Only | null, count: number, word: string, tone: string)}
+              <button
+                class="chip filter {tone}"
+                class:active={filter.only === only}
+                aria-pressed={filter.only === only}
+                onclick={() => (filter = { ...filter, only })}
+                >{#if only}<Glyph mark={ONLY_MARKS[only]} />{/if}{count}
+                {word}</button
+              >
+            {/snippet}
+            {@render narrowing(null, listing.packages.length, 'all', '')}
+            {@render narrowing('managed', tally.managed, 'managed', 'success')}
+            {@render narrowing('system', tally.system, 'system', '')}
+            {#if tally.missing > 0}{@render narrowing(
+                'missing',
+                tally.missing,
+                'missing',
+                'error',
+              )}{/if}
+            {#if tally.updates > 0}{@render narrowing(
+                'updates',
+                tally.updates,
+                tally.updates === 1 ? 'update' : 'updates',
+                'live',
+              )}{/if}
+            {#if signedOut.length > 0}
+              <button
+                class="chip filter warning"
+                onclick={() => (selected = signedOut[0]?.id ?? selected)}
+                ><Icon name="lock" size={10} />{signedOut.length} signed out</button
+              >
+            {/if}
+          </div>
+        {/if}
+        <section class="tools-main" aria-label="Packages">
+          <table class="tools-table">
+            <colgroup>
+              <col class="c-name" />
+              <col class="c-origin" />
+              <col class="c-version" />
+              <col />
+              <col class="c-needed" />
+              {#each history.generations as generation (generation.generation)}<col
+                  class="c-gen"
+                />{/each}
+              <col class="c-action" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Package</th>
+                <th>Origin</th>
+                <th>Version</th>
+                <th>Path</th>
+                <th>Needed by</th>
+                {#each history.generations as generation (generation.generation)}
+                  <th class="gen-head" class:current={generation.state === 'current'}
+                    ><span class="mono">#{generation.generation}</span
+                    >{#if generation.state === 'current'}<Glyph
+                        mark="passed"
+                        label={stateLabel(generation.state)}
+                      />{:else if generation.state === 'in_use'}<Glyph
+                        mark="responding"
+                        label="In use by runs"
+                      />{/if}{#if generation.state !== 'current' && listing.platform}<button
+                        class="icon-button restore"
+                        title="Restore generation {generation.generation}…"
+                        aria-label="Restore generation {generation.generation}"
+                        disabled={applying.kind === 'applying'}
+                        onclick={() =>
+                          (confirming = { kind: 'restore', generation: generation.generation })}
+                        ><Icon name="refresh" size={11} /></button
+                      >{/if}</th
                   >
                 {/each}
-                <td class="end">
-                  {#if label && listing.platform}
-                    <button
-                      class="button small"
-                      class:chosen={change !== undefined}
-                      onclick={(event) => {
-                        event.stopPropagation();
-                        plan = plan.toggle(pkg);
-                      }}>{label}</button
-                    >
-                  {/if}
-                </td>
+                <th></th>
               </tr>
+            </thead>
+            {#each groups as group (group.kind)}
+              <tbody>
+                <tr class="tools-group">
+                  <th colspan={6 + history.generations.length} scope="rowgroup"
+                    >{group.title} <span class="count">{group.packages.length}</span></th
+                  >
+                </tr>
+                {#each group.packages as pkg (pkg.id)}
+                  {@const label = action(pkg)}
+                  {@const supply = Supplies.of(pkg)}
+                  {@const change = staged.get(pkg.id)}
+                  <tr
+                    class="tools-row"
+                    class:selected={selected === pkg.id}
+                    class:staged={change !== undefined}
+                    onclick={() => (selected = pkg.id)}
+                  >
+                    <td class="mono name"
+                      >{@render dot(pkg)}{pkg.id}{#if pkg.program !== pkg.id}<span
+                          class="muted alias">{pkg.program}</span
+                        >{/if}</td
+                    >
+                    <td class="mono muted"
+                      >{pkg.origin === 'operator'
+                        ? 'operator'
+                        : pkg.origin === null
+                          ? 'removed'
+                          : pkg.origin}</td
+                    >
+                    <td class="mono"
+                      >{#if change}<s class="muted">{change.from ?? '—'}</s><span class="arrow"
+                          >→</span
+                        ><span class="to {change.toKind}">{change.to ?? '—'}</span
+                        >{:else if supply.kind === 'managed'}{supply.version}{:else if supply.kind === 'system'}{#if supply.system.version}{supply
+                            .system.version}{:else}<span
+                            class="unknown"
+                            title={supply.system.unread ?? ''}>?</span
+                          >{/if}{:else}<span class="muted">—</span>{/if}</td
+                    >
+                    <td class="mono muted path"
+                      >{#if supply.kind === 'system'}{supply.system
+                          .path}{:else if supply.kind === 'managed' && supply.shadows}<span
+                          class="shadowed"
+                          title="Runs find Ren’s first">{supply.shadows.path}</span
+                        >{:else if Supplies.tone(pkg) === 'missing'}not found{:else}—{/if}</td
+                    >
+                    <td class="needed"
+                      >{#each pkg.needed_by as harness (harness)}<span class="chip tag mono"
+                          >{harnessLabel(harness).toLowerCase()}</span
+                        >{/each}</td
+                    >
+                    {#each history.generations as generation, index (generation.generation)}
+                      {@const held = history.version(pkg.id, index)}
+                      <td
+                        class="mono gen"
+                        class:changed={history.changed(pkg.id, index)}
+                        title={history.changed(pkg.id, index)
+                          ? 'Changed in this generation'
+                          : undefined}>{held ?? '—'}</td
+                      >
+                    {/each}
+                    <td class="end">
+                      {#if label && listing.platform}
+                        <button
+                          class="button small"
+                          class:chosen={change !== undefined}
+                          onclick={(event) => {
+                            event.stopPropagation();
+                            plan = plan.toggle(pkg);
+                          }}>{label}</button
+                        >
+                      {/if}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            {:else}
+              <tbody>
+                <tr
+                  ><td colspan={6 + history.generations.length} class="muted">No tool matches.</td
+                  ></tr
+                >
+              </tbody>
             {/each}
-          </tbody>
-        {:else}
-          <tbody>
-            <tr><td colspan={4 + history.generations.length} class="muted">No tool matches.</td></tr
-            >
-          </tbody>
-        {/each}
-      </table>
-      {#if listing.generations.length > 0}
-        <div class="collect">
-          <span class="muted"
-            >{listing.generations.length} generation{listing.generations.length === 1 ? '' : 's'}
-            kept · the newest {history.generations.length} shown above</span
-          >
-          <button class="button small" onclick={collect}>Clean up</button>
-          {#if collecting}<span class="muted">{collecting}</span>{/if}
-        </div>
+          </table>
+        </section>
+      </div>
+      {#if clients.length}
+        <aside class="clients" aria-labelledby="clients-title">
+          <h2 id="clients-title" class="cap">Clients · sign-in</h2>
+          {#each clients as entry (entry.harness)}
+            {@const harness = Runs.drivable(entry.harness)}
+            {@const shown = SignIns.chip(entry.sign_in)}
+            <div class="client">
+              <Glyph
+                mark={SignIns.signedOut(entry.sign_in)
+                  ? 'warning'
+                  : entry.sign_in.kind === 'signed_in'
+                    ? 'passed'
+                    : 'unknown'}
+                label={shown?.text ?? 'Not read yet'}
+              />
+              <span>{harnessLabel(entry.harness)}</span>
+              {#if harness}
+                {#if SignIns.signedOut(entry.sign_in) && entry.sign_in_methods.length > 0}
+                  <button class="button small" onclick={() => (signingIn = harness)}>Sign in</button
+                  >
+                {:else}
+                  <button
+                    class="button small"
+                    disabled={checking === harness}
+                    onclick={() => void check(harness)}
+                    >{checking === harness ? 'Checking…' : 'Check again'}</button
+                  >
+                {/if}
+              {/if}
+            </div>
+          {/each}
+        </aside>
       {/if}
-    </section>
+    </div>
     {#if chosen}
       {@const supply = Supplies.of(chosen)}
       {@const entry = clientOf(chosen)}
@@ -671,6 +759,124 @@
   .c-action {
     width: 128px;
   }
+  .c-origin {
+    width: 90px;
+  }
+  .c-needed {
+    width: 190px;
+  }
+  .alias {
+    margin-left: 6px;
+    font-size: 11px;
+  }
+  .needed {
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .needed .chip + .chip {
+    margin-left: 3px;
+  }
+  .path {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .meta {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .cap {
+    margin: 0;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .tools-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    min-height: 0;
+    height: 100%;
+  }
+  .tools-left {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+  .figures {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+    gap: 1px;
+    border-bottom: 1px solid var(--line);
+    background: var(--line);
+  }
+  .figures > div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding: 10px 16px;
+    background: var(--surface);
+  }
+  .figure {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 22px;
+  }
+  .figure .meta {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .generation-actions {
+    flex-direction: row !important;
+    align-items: center;
+    gap: 6px !important;
+  }
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .filters .search {
+    width: 220px;
+  }
+  .clients {
+    min-height: 0;
+    overflow: auto;
+    padding: 12px 16px;
+    border-left: 1px solid var(--line);
+  }
+  .clients .cap {
+    margin-bottom: 8px;
+  }
+  .client {
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    min-height: 32px;
+  }
+  @media (max-width: 1100px) {
+    .tools-body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .clients {
+      border-top: 1px solid var(--line);
+      border-left: 0;
+    }
+    .figures {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
   td,
   th {
     text-align: left;
@@ -868,11 +1074,5 @@
   dd {
     margin: 0;
     overflow-wrap: anywhere;
-  }
-  .collect {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 8px;
   }
 </style>
