@@ -34,7 +34,7 @@ test('a recording, its report, and its turns sit under the Recordings tab', () =
 test('three places hold every page, each page in exactly one', () => {
   assert.deepEqual(
     Views.places.map((place) => place.label),
-    ['Work', 'Monitor', 'System'],
+    ['Projects', 'Monitor', 'System'],
   );
   const pages = Views.places.flatMap((place) => Views.pages(place.place, 'acme-web'));
   assert.equal(new Set(pages.map((page) => page.tab)).size, pages.length);
@@ -42,23 +42,23 @@ test('three places hold every page, each page in exactly one', () => {
     for (const page of Views.pages(place.place, 'acme-web')) {
       assert.equal(Views.place(page.tab), place.place, page.tab);
     }
-    // Each place opens where its name leads: Work on Projects, the others
+    // Each place opens where its name leads: Projects on its list, the others
     // on their first page.
     assert.equal(
       Views.of(place.href),
-      place.place === 'work' ? 'projects' : Views.pages(place.place)[0]?.tab,
+      place.place === 'projects' ? 'projects' : Views.pages(place.place)[0]?.tab,
     );
   }
   assert.equal(Views.place(Views.tab('turn')), 'monitor');
   assert.equal(Views.place(Views.tab('usage')), 'monitor');
-  assert.equal(Views.place(Views.tab('work')), 'work');
+  assert.equal(Views.place(Views.tab('work')), 'projects');
   assert.equal(Views.place('recorder'), 'system');
 });
 
-test("Work's own home has no pages; inside a project, the row holds the project's", () => {
-  assert.deepEqual(Views.pages('work'), []);
+test("the Projects list has no pages; inside a project, the row holds the project's", () => {
+  assert.deepEqual(Views.pages('projects'), []);
   assert.deepEqual(
-    Views.pages('work', 'acme web').map((page) => [page.tab, page.href]),
+    Views.pages('projects', 'acme web').map((page) => [page.tab, page.href]),
     [
       ['sessions', '/projects/acme%20web/sessions'],
       ['release', '/projects/acme%20web/release'],

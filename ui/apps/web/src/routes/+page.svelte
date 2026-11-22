@@ -1,6 +1,6 @@
 <!--
   Home (`/`): where the operator lands. A prompt to start something; what
-  needs them anywhere (Work's decisions and System's warnings), one card
+  needs them anywhere (projects' decisions and System's warnings), one card
   each with what they need to decide; what each agent is doing now; and
   what ended or moved on since they last looked.
   Each part scrolls within its own height, so a long list never pushes

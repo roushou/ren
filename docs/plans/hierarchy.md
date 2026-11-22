@@ -178,12 +178,12 @@ Records outside the tree stay, and each says why it is outside:
    Since the redesign, Home (`/`, the wordmark) is where the operator
    lands: what needs them anywhere, what each agent is doing, and what
    happened since they looked. Its bar leads to three places that never
-   show each other: **Work** (Projects, then a project's Sessions and
+   show each other: **Projects** (the list, then a project's Sessions and
    Release, and Scratch), **Monitor** (Inspect renamed: Overview, Live,
    Traffic, Recordings, Search, and Usage, which moves from Host), and
    **System** (Host renamed: Tools and Recorder). Inside a place the bar
    holds only its name and its pages (`Views.place`, `Views.pages`);
-   Pending sits in Work alone, and System's warnings reach Home's list.
+   Pending sits in Projects alone, and System's warnings reach Home's list.
    Monitor's pages live under `/monitor/…` and System's under
    `/system/…`; an old address is redirected to its page there
    (`Views.moved`, in the server hook).

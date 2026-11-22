@@ -5,7 +5,7 @@
  *
  * Home (`/`, under the wordmark) is where the operator lands: what needs
  * them, what is moving, what happened since they looked, everywhere. Three
- * places hold every other view, and never show each other: Work (each
+ * places hold every other view, and never show each other: Projects (each
  * project, with its work, sessions, and release under it, and Scratch for
  * sessions that work for none), Monitor (what agents and models did), and
  * System (the machine Ren runs on). Home's bar names the three; inside one,
@@ -51,7 +51,7 @@ export type Tab =
   | 'recorder';
 
 /** Where a view sits: Home, or one of the three places. */
-export type Place = 'home' | 'work' | 'monitor' | 'system';
+export type Place = 'home' | 'projects' | 'monitor' | 'system';
 
 /** A place's page, as its row of links shows it. */
 export interface PageLink {
@@ -67,7 +67,7 @@ export class Views {
     href: string;
     label: string;
   }[] = [
-    { place: 'work', href: '/projects', label: 'Work' },
+    { place: 'projects', href: '/projects', label: 'Projects' },
     { place: 'monitor', href: '/monitor/overview', label: 'Monitor' },
     { place: 'system', href: '/system/tools', label: 'System' },
   ];
@@ -173,7 +173,7 @@ export class Views {
       case 'scratch':
       case 'sessions':
       case 'release':
-        return 'work';
+        return 'projects';
       case 'overview':
       case 'live':
       case 'traffic':
@@ -192,13 +192,13 @@ export class Views {
   }
 
   /** A place's pages, in the order its bar shows them; inside the project
-   * named `project`, the project's own. Home and Work's own home
-   * (Projects) have none: the place's name leads there. */
+   * named `project`, the project's own. Home and the Projects list
+   * have none: the place's name leads there. */
   static pages(place: Place, project: string | null = null): readonly PageLink[] {
     switch (place) {
       case 'home':
         return [];
-      case 'work': {
+      case 'projects': {
         if (project === null) return [];
         const base = `/projects/${encodeURIComponent(project)}`;
         return [

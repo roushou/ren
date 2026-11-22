@@ -362,7 +362,7 @@
             >{/if}</a
         >
       {/if}
-      {#if where === 'work' && (inProject || view === 'scratch')}
+      {#if where === 'projects' && (inProject || view === 'scratch')}
         <button class="project-pick" popovertarget="project-picker" title="Switch project"
           ><Icon name="branch" size={13} /><strong>{inProject ?? 'Scratch'}</strong><Icon
             name="chevron"
@@ -413,7 +413,7 @@
     <button class="command-open" onclick={() => (commanding = true)}
       ><Icon name="search" size={13} /><span>Go to anything</span><kbd>⌘K</kbd></button
     >
-    {#if where === 'work'}
+    {#if where === 'projects'}
       <button
         class="pending-open"
         class:waiting={board.waiting > 0}

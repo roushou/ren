@@ -65,7 +65,7 @@ export class Commands {
       })),
     ]);
     const own = projects.flatMap((project) =>
-      Views.pages('work', project.name).map((link): Command => ({
+      Views.pages('projects', project.name).map((link): Command => ({
         kind: 'go',
         label: link.label,
         detail: project.name,

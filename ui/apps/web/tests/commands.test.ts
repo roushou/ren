@@ -13,7 +13,7 @@ test('the palette offers every page, then each project’s own', () => {
   assert.ok(hrefs.includes('/projects/acme-api/release'));
   assert.equal(new Set(hrefs).size, hrefs.length, 'no page is offered twice');
   assert.equal(all.find((c) => c.href === '/monitor/traffic')?.detail, 'Monitor');
-  assert.equal(all.find((c) => c.href === '/projects')?.label, 'Work');
+  assert.equal(all.find((c) => c.href === '/projects')?.label, 'Projects');
   assert.equal(all.find((c) => c.href === '/projects/acme-web/sessions')?.detail, 'acme-web');
 });
 
