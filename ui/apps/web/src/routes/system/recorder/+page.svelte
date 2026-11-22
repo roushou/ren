@@ -2,10 +2,8 @@
   import Toolbar from '#lib/Toolbar.svelte';
   import { createArrival, createSnapshot } from '#lib/snapshot.svelte.ts';
   import { num, bytes, type FileUsage } from '#lib/api.ts';
-  import { assertNever } from '#lib/decode.ts';
   import { buildLabel, SEPARATOR } from '#lib/display.ts';
   import { RecorderReport } from '#lib/recorder.ts';
-  import Icon from '#lib/Icon.svelte';
   import { Marks } from '#lib/marks.ts';
   import Glyph from '#lib/Glyph.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
@@ -43,8 +41,6 @@
   );
   /** The limits' gauges, labelled, for their outline. */
   const gaugeOutline = $derived(RecorderReport.gauges(null, policy ?? null, null, Date.now()));
-  /** Rows the loss-and-errors outline shows. */
-  const NOTE_ROWS = 2;
   const verdict = $derived(report?.verdict ?? null);
   /** The share of a queue limit in use, for its meter. */
   const share = (used: number, capacity: number) =>
@@ -52,88 +48,12 @@
   const free = (file: FileUsage) => file.freelist_count * file.page_size;
   const ratio = (numerator: number, denominator: number) =>
     denominator > 0 ? `${(numerator / denominator).toFixed(2)}×` : '—';
-  type Unit = 'count' | 'bytes' | 'ms' | 'text';
-  type Counter = { label: string; value: number | string | undefined; unit: Unit };
-  function format(counter: Counter) {
-    if (counter.value === undefined) return '—';
-    switch (counter.unit) {
-      case 'bytes':
-        return typeof counter.value === 'number' ? bytes(counter.value) : counter.value;
-      case 'ms':
-        return typeof counter.value === 'number' ? `${num(counter.value)} ms` : counter.value;
-      case 'count':
-        return typeof counter.value === 'number' ? num(counter.value) : counter.value;
-      case 'text':
-        return String(counter.value);
-      default:
-        return assertNever(counter.unit);
-    }
-  }
-  const counterGroups = $derived<{ title: string; counters: Counter[] }[]>([
-    {
-      title: 'Commits',
-      counters: [
-        { label: 'Commits', value: recorder?.commits, unit: 'count' },
-        { label: 'Last commit latency', value: recorder?.last_commit_ms, unit: 'ms' },
-        { label: 'Slowest commit', value: recorder?.max_commit_ms, unit: 'ms' },
-        { label: 'Recorder lag', value: recorder?.lag_ms, unit: 'ms' },
-        { label: 'Calls recovered at startup', value: recorder?.recovered_calls, unit: 'count' },
-      ],
-    },
-    {
-      title: 'Retention activity',
-      counters: [
-        { label: 'Pruned calls', value: recorder?.pruned_calls, unit: 'count' },
-        { label: 'Pruned chunks', value: recorder?.pruned_chunks, unit: 'count' },
-      ],
-    },
-    {
-      title: 'Writes since startup',
-      counters: [
-        { label: 'Referenced bytes', value: recorder?.dedup.referenced_bytes, unit: 'bytes' },
-        { label: 'New chunk bytes', value: recorder?.dedup.new_bytes, unit: 'bytes' },
-        { label: 'Compressed bytes', value: recorder?.dedup.compressed_bytes, unit: 'bytes' },
-      ],
-    },
-  ]);
-  const diskCounters = $derived<Counter[]>([
-    {
-      label: 'Metadata · live',
-      value: usage && RecorderReport.live(usage.disk.metadata),
-      unit: 'bytes',
-    },
-    { label: 'Metadata · free pages', value: usage && free(usage.disk.metadata), unit: 'bytes' },
-    { label: 'Blobs · live', value: usage && RecorderReport.live(usage.disk.blobs), unit: 'bytes' },
-    { label: 'Blobs · free pages', value: usage && free(usage.disk.blobs), unit: 'bytes' },
-    {
-      label: 'Calls with derived activity',
-      value: usage?.digested_calls ?? undefined,
-      unit: 'count',
-    },
-    { label: 'Chunks', value: usage?.chunks, unit: 'count' },
-    { label: 'Referenced body bytes', value: usage?.referenced_bytes, unit: 'bytes' },
-    { label: 'Unique chunk bytes', value: usage?.unique_bytes, unit: 'bytes' },
-    { label: 'Compressed chunk bytes', value: usage?.compressed_bytes, unit: 'bytes' },
-    {
-      label: 'Deduplication ratio',
-      value: usage && ratio(usage.referenced_bytes, usage.unique_bytes),
-      unit: 'text',
-    },
-    {
-      label: 'Compression ratio',
-      value: usage && ratio(usage.unique_bytes, usage.compressed_bytes),
-      unit: 'text',
-    },
-  ]);
 </script>
-
-{#snippet value(counter: Counter)}
-  {#if pending}<Skeleton width="5em" />{:else}{format(counter)}{/if}
-{/snippet}
 
 {#snippet scope()}
   <div class="scope-group">
-    <span class="muted">Daemon build {buildLabel(gateway.current.value?.health.build ?? null)}</span
+    <span class="meta"
+      >daemon build {buildLabel(gateway.current.value?.health.build ?? null)} · counters since start</span
     >
   </div>
 {/snippet}
@@ -205,34 +125,54 @@
     </section>
   {/if}
   <div class="storage-grid">
-    <section class="recorder-panel" aria-labelledby="retention-title">
-      <header class="panel-heading">
-        <div>
-          <h2 id="retention-title">Retention policy</h2>
-          <p>Configured at gateway startup</p>
-        </div>
-        <span class="badge" class:success={policy?.enabled}>
-          {policy?.enabled ? 'Enabled' : policy ? 'Disabled' : 'Loading'}
-        </span>
-      </header>
-      <dl class="settings-list">
-        <div>
-          <dt>History window <span>Measured from call start</span></dt>
-          <dd>{policy ? `${num(policy.max_age_seconds / 86400)} days` : '—'}</dd>
-        </div>
-        <div>
-          <dt>Call limit <span>Maximum retained calls</span></dt>
-          <dd>{num(policy?.max_calls)}</dd>
-        </div>
-        <div>
-          <dt>
-            Storage budget <span>Live pages of the metadata and blob files (search included)</span>
-          </dt>
-          <dd>{policy ? bytes(policy.max_storage_bytes) : '—'}</dd>
-        </div>
-      </dl>
-      <section class="counter-group" aria-label="Disk usage" aria-busy={pending}>
-        <h3>Disk usage</h3>
+    <div class="rec-column">
+      <section class="rec-block" aria-labelledby="body-title" aria-busy={pending}>
+        <header class="rec-head">
+          <h2 id="body-title" class="cap">What a body becomes on disk</h2>
+          {#if usage}<span class="meta">{num(usage.chunks)} chunks</span>{/if}
+        </header>
+        {#if usage}
+          {@const steps = [
+            {
+              label: 'Referenced body bytes',
+              bytes: usage.referenced_bytes,
+              note: '',
+              tone: 'referenced',
+            },
+            {
+              label: 'Unique chunk bytes',
+              bytes: usage.unique_bytes,
+              note: `deduplication ${ratio(usage.referenced_bytes, usage.unique_bytes)}`,
+              tone: 'unique',
+            },
+            {
+              label: 'Compressed chunk bytes',
+              bytes: usage.compressed_bytes,
+              note: `compression ${ratio(usage.unique_bytes, usage.compressed_bytes)}`,
+              tone: 'compressed',
+            },
+          ]}
+          <div class="funnel">
+            {#each steps as step (step.label)}
+              <span class="funnel-label">{step.label}</span>
+              <svg viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"
+                ><rect class="funnel-track" width="100" height="10" /><rect
+                  class="funnel-bar {step.tone}"
+                  width={(step.bytes / Math.max(1, usage.referenced_bytes)) * 100}
+                  height="10"
+                /></svg
+              >
+              <span class="mono value">{bytes(step.bytes)}</span>
+              {#if step.note}<span></span><span class="meta">{step.note}</span><span></span>{/if}
+            {/each}
+            <span></span><span class="meta ok"
+              >{ratio(usage.referenced_bytes, usage.compressed_bytes)} smaller than what clients sent</span
+            ><span></span>
+          </div>
+        {:else}<Skeleton width="100%" />{/if}
+      </section>
+
+      <section class="rec-block" aria-labelledby="disk-title" aria-busy={pending}>
         {#if usage}
           {@const parts = [
             {
@@ -240,147 +180,182 @@
               label: 'Metadata · live',
               bytes: RecorderReport.live(usage.disk.metadata),
             },
-            { key: 'meta-free', label: 'Metadata · free', bytes: free(usage.disk.metadata) },
+            { key: 'meta-free', label: 'Metadata · free pages', bytes: free(usage.disk.metadata) },
             {
               key: 'blob-live',
               label: 'Blobs · live',
               bytes: RecorderReport.live(usage.disk.blobs),
             },
-            { key: 'blob-free', label: 'Blobs · free', bytes: free(usage.disk.blobs) },
+            { key: 'blob-free', label: 'Blobs · free pages', bytes: free(usage.disk.blobs) },
           ]}
           {@const whole = Math.max(
             1,
             parts.reduce((sum, part) => sum + part.bytes, 0),
           )}
-          <svg class="disk-bar" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"
+          <header class="rec-head">
+            <h2 id="disk-title" class="cap">Disk usage · {bytes(whole)}</h2>
+          </header>
+          <svg class="disk-bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"
             >{#each parts as part, index (part.key)}<rect
                 class="disk-{part.key}"
                 x={(parts.slice(0, index).reduce((sum, one) => sum + one.bytes, 0) / whole) * 100}
                 width={(part.bytes / whole) * 100}
-                height="8"><title>{part.label}: {bytes(part.bytes)}</title></rect
+                height="10"><title>{part.label}: {bytes(part.bytes)}</title></rect
               >{/each}</svg
           >
-          <p class="disk-key muted">
-            {#each parts as part (part.key)}<span
-                ><span class="swatch disk-{part.key}"></span>{part.label}</span
-              >{/each}
-          </p>
-          <div class="funnel" aria-label="What a body becomes on disk">
-            {#each [{ label: 'Referenced', bytes: usage.referenced_bytes }, { label: 'Unique chunks', bytes: usage.unique_bytes }, { label: 'Compressed', bytes: usage.compressed_bytes }] as step, index (step.label)}
-              <span class="funnel-label">{step.label}</span>
-              <svg viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"
-                ><rect
-                  class="funnel-bar"
-                  width={(step.bytes / Math.max(1, usage.referenced_bytes)) * 100}
-                  height="8"
-                /></svg
-              >
-              <span class="mono">{bytes(step.bytes)}</span>
-              <span class="muted mono"
-                >{index === 1
-                  ? `dedup ${ratio(usage.referenced_bytes, usage.unique_bytes)}`
-                  : index === 2
-                    ? `zstd ${ratio(usage.unique_bytes, usage.compressed_bytes)}`
-                    : ''}</span
-              >
+          <div class="disk-key">
+            {#each parts as part (part.key)}
+              <div>
+                <span class="meta"><span class="swatch disk-{part.key}"></span>{part.label}</span>
+                <span class="mono">{bytes(part.bytes)}</span>
+              </div>
             {/each}
           </div>
+        {:else}
+          <header class="rec-head"><h2 id="disk-title" class="cap">Disk usage</h2></header>
+          <Skeleton width="100%" />
         {/if}
-        <dl class="health-list">
-          {#each diskCounters as counter (counter.label)}
-            <div>
-              <dt>{counter.label}</dt>
-              <dd class:zero={counter.value === 0}>{@render value(counter)}</dd>
-            </div>
-          {/each}
-        </dl>
       </section>
-      <footer class="panel-note">
-        <Icon name="info" size={14} />
-        <div>
-          <p>
-            Oldest finished calls are removed first. Open calls can temporarily exceed these limits.
-          </p>
-          <p>
-            Live usage counts in-use database pages; free pages are reused. Deduplication compares
-            referenced body bytes with unique chunk bytes.
-          </p>
+
+      <section class="rec-block grow" aria-labelledby="retention-title">
+        <header class="rec-head">
+          <h2 id="retention-title" class="cap">Retention policy</h2>
+          {#if policy}<Glyph
+              mark={policy.enabled ? 'passed' : 'idle'}
+              label={policy.enabled ? 'Enabled' : 'Disabled'}
+            />{/if}
+        </header>
+        <div class="policy">
+          <div>
+            <span class="meta">History window</span>
+            <span class="mono">{policy ? `${num(policy.max_age_seconds / 86400)} days` : '—'}</span>
+            <span class="meta">from call start</span>
+          </div>
+          <div>
+            <span class="meta">Call limit</span>
+            <span class="mono">{num(policy?.max_calls)}</span>
+            <span class="meta">retained calls</span>
+          </div>
+          <div>
+            <span class="meta">Storage limit</span>
+            <span class="mono">{policy ? bytes(policy.max_storage_bytes) : '—'}</span>
+            <span class="meta">on disk</span>
+          </div>
         </div>
-      </footer>
-    </section>
-    <section class="recorder-panel" aria-labelledby="health-title">
-      <header class="panel-heading">
-        <div>
-          <h2 id="health-title">Recorder health</h2>
-          <p>Counters since gateway startup</p>
+        <div class="pruned">
+          <div>
+            <span class="meta">Pruned calls</span><span class="mono"
+              >{num(recorder?.pruned_calls)}</span
+            >
+          </div>
+          <div>
+            <span class="meta">Pruned chunks</span><span class="mono"
+              >{num(recorder?.pruned_chunks)}</span
+            >
+          </div>
+          <div>
+            <span class="meta">Calls with derived activity</span><span class="mono"
+              >{num(usage?.digested_calls ?? undefined)}{#if usage}{' '}<span class="meta"
+                  >of {num(usage.calls)}</span
+                >{/if}</span
+            >
+          </div>
         </div>
-      </header>
-      {#if pending}
-        <section class="counter-group" aria-label="Queue" aria-busy="true">
-          <h3>Queue</h3>
-          <dl class="health-list">
-            {#each ['Records', 'Bytes'] as label (label)}
-              <div class="rec-queue">
-                <dt>{label}</dt>
-                <svg
-                  class="rec-meter"
-                  viewBox="0 0 100 6"
-                  preserveAspectRatio="none"
-                  aria-hidden="true"><rect class="track" x="0" y="0" width="100" height="6" /></svg
-                >
-                <dd><Skeleton width="7em" /></dd>
-              </div>
-            {/each}
-          </dl>
-        </section>
-        <section class="counter-group" aria-label="Loss and errors" aria-busy="true">
-          <h3>Loss and errors</h3>
-          {#each { length: NOTE_ROWS }, row (row)}
-            <div class="rec-note">
-              <i></i>
-              <div>
-                <strong><Skeleton width={['10em', '13em'][row % 2]} /></strong>
-                <small><Skeleton width={['20em', '16em'][row % 2]} /></small>
-              </div>
-              <span class="mono"><Skeleton width="2em" /></span>
+      </section>
+    </div>
+
+    <div class="rec-column side">
+      <section class="rec-block" aria-labelledby="queue-title" aria-busy={pending}>
+        <header class="rec-head">
+          <h2 id="queue-title" class="cap">Recorder health · queue</h2>
+        </header>
+        {#if recorder}
+          {#each [{ label: 'Records', used: recorder.queue.items, capacity: recorder.queue.capacity, text: `${num(recorder.queue.items)} / ${num(recorder.queue.capacity)}` }, { label: 'Bytes', used: recorder.queue.bytes, capacity: recorder.queue.byte_capacity, text: `${bytes(recorder.queue.bytes)} / ${bytes(recorder.queue.byte_capacity)}` }] as meter (meter.label)}
+            <div class="queue">
+              <span>{meter.label}</span><span class="mono">{meter.text}</span>
+              <svg
+                class="rec-meter"
+                viewBox="0 0 100 6"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+                ><rect class="track" x="0" y="0" width="100" height="6" /><rect
+                  class="fill"
+                  class:high={share(meter.used, meter.capacity) >= 0.9}
+                  class:mid={share(meter.used, meter.capacity) >= 0.7 &&
+                    share(meter.used, meter.capacity) < 0.9}
+                  x="0"
+                  y="0"
+                  height="6"
+                  width={Math.max(0.5, share(meter.used, meter.capacity) * 100)}
+                /></svg
+              >
             </div>
           {/each}
-        </section>
-      {:else if recorder}
-        <section class="counter-group" aria-label="Queue">
-          <h3>Queue</h3>
-          <dl class="health-list">
-            {#each [{ label: 'Records', used: recorder.queue.items, capacity: recorder.queue.capacity, text: `${num(recorder.queue.items)} / ${num(recorder.queue.capacity)}` }, { label: 'Bytes', used: recorder.queue.bytes, capacity: recorder.queue.byte_capacity, text: `${bytes(recorder.queue.bytes)} / ${bytes(recorder.queue.byte_capacity)}` }] as meter (meter.label)}
-              <div class="rec-queue">
-                <dt>{meter.label}</dt>
-                <svg
-                  class="rec-meter"
-                  viewBox="0 0 100 6"
-                  preserveAspectRatio="none"
-                  aria-hidden="true"
-                  ><rect class="track" x="0" y="0" width="100" height="6" /><rect
-                    class="fill"
-                    class:high={share(meter.used, meter.capacity) >= 0.9}
-                    class:mid={share(meter.used, meter.capacity) >= 0.7 &&
-                      share(meter.used, meter.capacity) < 0.9}
-                    x="0"
-                    y="0"
-                    height="6"
-                    width={share(meter.used, meter.capacity) * 100}
-                  /></svg
-                >
-                <dd>{meter.text}</dd>
-              </div>
-            {/each}
+        {:else}<Skeleton width="100%" />{/if}
+      </section>
+
+      <section class="rec-block" aria-labelledby="commits-title" aria-busy={pending}>
+        <header class="rec-head">
+          <h2 id="commits-title" class="cap">
+            Commits{#if recorder}{' · '}{num(recorder.commits)}{/if} · commit time
+          </h2>
+        </header>
+        {#if recorder}
+          {@const scale = Math.max(250, recorder.max_commit_ms)}
+          <svg
+            class="commit-scale"
+            viewBox="0 0 100 10"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+            ><rect class="track" y="4" width="100" height="2" /><rect
+              class="tick last"
+              x={(recorder.last_commit_ms / scale) * 100 - 0.4}
+              width="0.8"
+              height="10"
+            /><rect
+              class="tick slowest"
+              x={Math.min(99.2, (recorder.max_commit_ms / scale) * 100 - 0.4)}
+              width="0.8"
+              height="10"
+            /></svg
+          >
+          <div class="scale-axis meta">
+            <span>0</span><span>{Math.round(scale / 2)} ms</span><span>{scale} ms</span>
+          </div>
+          <dl class="rows">
+            <div>
+              <dt>Last commit</dt>
+              <dd class="mono">{num(recorder.last_commit_ms)} ms</dd>
+            </div>
+            <div>
+              <dt>Slowest commit</dt>
+              <dd class="mono">{num(recorder.max_commit_ms)} ms</dd>
+            </div>
+            <div>
+              <dt>Recorder lag</dt>
+              <dd class="mono">{num(recorder.lag_ms)} ms</dd>
+            </div>
+            <div>
+              <dt>Calls recovered at startup</dt>
+              <dd class="mono">
+                {num(recorder.recovered_calls)}
+              </dd>
+            </div>
           </dl>
-        </section>
-      {/if}
-      {#if report}
-        <section class="counter-group" aria-label="Loss and errors">
-          <h3>Loss and errors</h3>
+        {:else}<Skeleton width="100%" />{/if}
+      </section>
+
+      <section class="rec-block grow" aria-labelledby="loss-title" aria-busy={pending}>
+        <header class="rec-head">
+          <h2 id="loss-title" class="cap">Loss and errors</h2>
+          {#if report && !report.notes.some((note) => note.severity !== 'neutral')}<Glyph
+              mark="passed"
+              label="Nothing lost or failed"
+            />{/if}
+        </header>
+        {#if report}
           {#each report.notes as note (note.label)}
             <div class="rec-note {note.severity}">
-              <i></i>
               <div>
                 <strong>{note.label}</strong>
                 <small>{note.detail}</small>
@@ -388,44 +363,19 @@
               <span class="mono">{note.value}</span>
             </div>
           {/each}
-          {#if report.quiet.length}
-            <details class="rec-quiet">
-              <summary
-                ><Glyph mark="passed" />
-                {report.notes.some((note) => note.severity !== 'neutral')
-                  ? `${report.quiet.length} other counters at 0`
-                  : `Nothing lost or failed since startup · ${report.quiet.length} counters at 0`}</summary
-              >
-              <ul>
-                {#each report.quiet as label (label)}<li>
-                    <span>{label}</span><span class="mono">0</span>
-                  </li>{/each}
-              </ul>
-            </details>
-          {/if}
-        </section>
-      {/if}
-      {#each counterGroups as group (group.title)}
-        <section class="counter-group" aria-label={group.title} aria-busy={pending}>
-          <h3>{group.title}</h3>
-          <dl class="health-list">
-            {#each group.counters as counter (counter.label)}
-              <div>
-                <dt>{counter.label}</dt>
-                <dd class:zero={counter.value === 0}>
-                  {@render value(counter)}
-                </dd>
-              </div>
-            {/each}
+          <dl class="rows">
+            {#each report.quiet as label (label)}<div>
+                <dt>{label}</dt>
+                <dd class="mono">0</dd>
+              </div>{/each}
           </dl>
-        </section>
-      {/each}
-    </section>
+        {:else}<Skeleton width="100%" />{/if}
+      </section>
+    </div>
   </div>
 </div>
 
 <style>
-  /* Edge to edge like the other views: no margin, no outer frame. */
   .recorder-console {
     width: 100%;
     border-bottom: 1px solid var(--control-border);
@@ -471,44 +421,10 @@
     fill: color-mix(in srgb, var(--accent) 35%, transparent);
     background: color-mix(in srgb, var(--accent) 35%, transparent);
   }
-  .disk-key {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 12px;
-    margin: 0 0 10px;
-    padding: 0 12px;
-    font-size: 11px;
-  }
-  .disk-key > span {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-  }
   .swatch {
     width: 8px;
     height: 8px;
   }
-  .funnel {
-    display: grid;
-    grid-template-columns: 100px minmax(0, 1fr) 72px 88px;
-    align-items: center;
-    gap: 5px 10px;
-    margin-bottom: 10px;
-    padding: 0 12px;
-    font-size: 11.5px;
-  }
-  .funnel svg {
-    width: 100%;
-    height: 8px;
-    background: var(--surface-inset);
-  }
-  .funnel-bar {
-    fill: var(--success);
-  }
-  .funnel .mono {
-    text-align: right;
-  }
-  /* The verdict: how recording stands, edged by the worst counter. */
   .rec-verdict {
     padding: 10px 16px 10px 18px;
     border-bottom: 1px solid var(--control-border);
@@ -587,166 +503,180 @@
   .rec-meter .fill.high {
     fill: var(--error);
   }
-  .rec-queue {
-    grid-template-columns: 70px minmax(0, 1fr) auto !important;
-    align-items: center !important;
-  }
-  /* Loss and errors: only what is not zero gets a row, with what it means. */
-  .rec-note {
-    display: grid;
-    grid-template-columns: 4px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 0 12px;
-    padding-right: 12px;
-    border-bottom: 1px solid var(--line-subtle);
-  }
-  .rec-note > i {
-    align-self: stretch;
-    background: var(--line);
-  }
-  .rec-note.error > i {
-    background: var(--error);
-  }
-  .rec-note.warning > i {
-    background: var(--warning);
-  }
-  .rec-note > div {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    padding: 7px 0;
-  }
   .rec-note strong {
     font-weight: 500;
   }
   .rec-note.error strong,
-  .rec-note.error .mono {
-    color: var(--error);
-  }
-  .rec-note.warning strong,
-  .rec-note.warning .mono {
-    color: var(--warning);
-  }
   .rec-note small {
     color: var(--muted);
     font-size: 11px;
   }
-  .rec-quiet summary {
-    display: flex;
-    align-items: center;
-    padding: 8px 12px;
-    color: var(--muted);
-    font-size: 12px;
-    cursor: pointer;
-  }
-  .rec-quiet summary:hover {
-    color: var(--ink);
-  }
-  .rec-quiet ul {
+  .cap {
     margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-  .rec-quiet li {
-    display: flex;
-    justify-content: space-between;
-    padding: 6px 12px 6px 26px;
-    border-top: 1px solid var(--line-subtle);
     color: var(--muted);
-    font-size: 12px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .meta {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .meta.ok {
+    color: var(--success);
   }
   .storage-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr) 420px;
+    gap: 1px;
+    background: var(--line);
   }
-  .recorder-panel {
+  .rec-column {
     display: flex;
     flex-direction: column;
+    gap: 1px;
     min-width: 0;
   }
-  .recorder-panel + .recorder-panel {
-    border-left: 1px solid var(--control-border);
-  }
-  .panel-heading {
-    display: flex;
-    align-items: start;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 12px;
+  .rec-block {
+    padding: 12px 16px 14px;
     background: var(--surface);
-    border-bottom: 1px solid var(--control-border);
   }
-  .panel-heading p {
-    margin-top: 2px;
-    color: var(--muted);
-    font-size: 11px;
+  .rec-block.grow {
+    flex: 1;
   }
-  .settings-list > div,
-  .health-list > div {
+  .rec-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .funnel {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr) 90px;
+    column-gap: 14px;
+    row-gap: 4px;
+    align-items: center;
+  }
+  .funnel svg {
+    width: 100%;
+    height: 22px;
+  }
+  .funnel-label {
+    font-size: 12.5px;
+  }
+  .funnel .value {
+    text-align: right;
+  }
+  .funnel-track {
+    fill: var(--surface-inset);
+  }
+  .funnel-bar.referenced {
+    fill: var(--input-fresh);
+  }
+  .funnel-bar.unique {
+    fill: var(--cache-read);
+  }
+  .funnel-bar.compressed {
+    fill: var(--accent);
+  }
+  .disk-key {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+  }
+  .disk-key > div {
+    display: flex;
+    flex-direction: column;
+  }
+  .disk-key .mono {
+    font-size: 14px;
+  }
+  .policy {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 1px solid var(--line);
+  }
+  .policy > div {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 12px;
+  }
+  .policy > div + div {
+    border-left: 1px solid var(--line);
+  }
+  .policy .mono,
+  .pruned .mono {
+    font-size: 14px;
+  }
+  .pruned {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .pruned > div {
+    display: flex;
+    flex-direction: column;
+  }
+  .queue {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 16px;
-    align-items: baseline;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--line-subtle);
+    row-gap: 4px;
+    margin-bottom: 10px;
+    font-size: 12.5px;
   }
-  .settings-list > div {
-    padding-block: 12px;
+  .queue .rec-meter {
+    grid-column: 1 / -1;
   }
-  .settings-list dt span {
-    display: block;
-    margin-top: 2px;
-    font-size: 11px;
-    color: var(--muted);
+  .commit-scale {
+    width: 100%;
+    height: 14px;
   }
-  .counter-group h3 {
-    margin: 0;
-    padding: 5px 12px;
-    font-size: 10px;
-    font-weight: 500;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--muted);
-    background: var(--surface-subtle);
-    border-bottom: 1px solid var(--line);
+  .commit-scale .track {
+    fill: var(--line);
   }
-  .counter-group + .counter-group {
-    border-top: 1px solid var(--line);
+  .commit-scale .tick.last {
+    fill: var(--ink);
   }
-  .health-list > div:last-child {
-    border-bottom: 0;
+  .commit-scale .tick.slowest {
+    fill: var(--warning);
   }
-  .panel-note {
+  .scale-axis {
     display: flex;
-    gap: 8px;
-    padding: 12px;
-    margin-top: auto;
-    border-top: 1px solid var(--line);
-    background: var(--surface-subtle);
-    color: var(--muted);
-    font-size: 11px;
+    justify-content: space-between;
+    margin-bottom: 8px;
   }
-  .panel-note :global(svg) {
-    flex-shrink: 0;
-    margin-top: 2px;
+  .rows > div {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    font-size: 12.5px;
   }
-  .panel-note p + p {
-    margin-top: 6px;
+  .rows dt {
+    color: var(--ink);
   }
-  @media (max-width: 720px) {
+  .rec-note {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+  }
+  .rec-note > div {
+    display: flex;
+    flex-direction: column;
+  }
+  @media (max-width: 1100px) {
     .storage-grid {
       grid-template-columns: minmax(0, 1fr);
     }
-    .recorder-panel + .recorder-panel {
-      border-left: 0;
-      border-top: 1px solid var(--control-border);
-    }
-    .rec-gauges {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .panel-note {
-      margin-top: 0;
-      border-top: 0;
+    .funnel {
+      grid-template-columns: 140px minmax(0, 1fr) 80px;
     }
   }
 </style>
