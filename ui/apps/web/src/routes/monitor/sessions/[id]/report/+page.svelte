@@ -64,7 +64,6 @@
       detail={current?.detail ?? null}
       {desk}
       view="report"
-      now={Date.now()}
     />
     {#if !report && !pending}
       <div class="empty-state">

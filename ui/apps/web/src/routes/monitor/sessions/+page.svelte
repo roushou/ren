@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { Now } from '#lib/now.svelte.ts';
   import { Clock, Elapsed } from '#lib/time.ts';
   import Toolbar from '#lib/Toolbar.svelte';
-  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { num, short, providerName, providerMark } from '#lib/api.ts';
@@ -42,11 +42,8 @@
   const recordings = $derived(current?.recordings ?? []);
   let query = $state('');
   // Relative times tick between refreshes.
-  let now = $state(Date.now());
-  onMount(() => {
-    const timer = setInterval(() => (now = Date.now()), 15_000);
-    return () => clearInterval(timer);
-  });
+  const clock = new Now(15_000);
+  const now = $derived(clock.current);
   const list = $derived(
     new RecordingList({
       recordings,

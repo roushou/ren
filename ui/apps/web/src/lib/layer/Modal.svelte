@@ -6,7 +6,8 @@
   one.
 -->
 <script lang="ts">
-  import { untrack, type Snippet } from 'svelte';
+  import type { Snippet } from 'svelte';
+  import { Dialogs } from './dialog.ts';
 
   let {
     title,
@@ -27,22 +28,16 @@
     actions: Snippet;
   } = $props();
 
-  let dialog = $state<HTMLDialogElement>();
-  $effect(() => {
-    untrack(() => {
-      dialog?.showModal();
-      // The browser would focus the first answer, and Enter would give it
-      // unread: the dialog takes focus, so every answer is a choice.
-      dialog?.focus();
-    });
-  });
+  const id = $props.id();
 </script>
 
+<!-- The browser would focus the first answer, and Enter would give it
+     unread: the dialog takes focus, so every answer is a choice. -->
 <dialog
-  bind:this={dialog}
+  {@attach Dialogs.modal((self) => self)}
   class="modal"
   tabindex="-1"
-  aria-labelledby="modal-title"
+  aria-labelledby="{id}-title"
   oncancel={(event) => {
     event.preventDefault();
     onclose();
@@ -50,7 +45,7 @@
 >
   <header>
     {#if eyebrow}<span class="eyebrow">{eyebrow}</span>{/if}
-    <h2 id="modal-title">{title}</h2>
+    <h2 id="{id}-title">{title}</h2>
   </header>
   <div class="body">{@render children()}</div>
   <footer>{@render actions()}</footer>

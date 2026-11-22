@@ -29,6 +29,8 @@
   let card = $state<HTMLElement>();
   let open = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // A card that leaves the page takes its pending show or hide with it.
+  $effect(() => () => clearTimeout(timer));
 
   function show() {
     if (!anchor || !card || open) return;

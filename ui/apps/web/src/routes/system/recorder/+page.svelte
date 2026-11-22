@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Now } from '#lib/now.svelte.ts';
   import Toolbar from '#lib/Toolbar.svelte';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { num, bytes, type FileUsage } from '#lib/api.ts';
@@ -29,6 +30,8 @@
       ? undefined
       : (snapshot?.value?.metrics.storage ?? gateway.snapshot?.value?.storage.usage),
   );
+  /** History's age moves with the clock. */
+  const clock = new Now(60_000);
   const report = $derived(
     recorder
       ? new RecorderReport(
@@ -36,12 +39,12 @@
           usage ?? null,
           policy ?? null,
           snapshot?.value?.oldest ?? null,
-          Date.now(),
+          clock.current,
         )
       : null,
   );
   /** The limits' gauges, labelled, for their outline. */
-  const gaugeOutline = $derived(RecorderReport.gauges(null, policy ?? null, null, Date.now()));
+  const gaugeOutline = $derived(RecorderReport.gauges(null, policy ?? null, null, clock.current));
   const verdict = $derived(report?.verdict ?? null);
   /** A capacity's meter: its own colour while fine, else how it stands. */
   const fullnessTone = (share: number): MeterTone => {

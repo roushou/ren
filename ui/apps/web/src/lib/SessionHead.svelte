@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Now } from './now.svelte.ts';
   import { Clock, Elapsed } from './time.ts';
   /*
     A session's head in Monitor, over its calls and over its report: where
@@ -19,7 +20,6 @@
     detail,
     desk = null,
     view,
-    now,
   }: {
     recordingId: RecordingId;
     recording: RecordingView | undefined;
@@ -27,10 +27,11 @@
     /** Where it opens on its desk, when Ren drives it. */
     desk?: string | null;
     view: 'calls' | 'report';
-    now: number;
   } = $props();
 
   const base = $derived(`/monitor/sessions/${encodeURIComponent(recordingId)}`);
+  const clock = new Now(30_000);
+  const now = $derived(clock.current);
   /** Seen this recently, the session reads as going on now. */
   const RECENT = 2 * 60_000;
   const title = $derived(

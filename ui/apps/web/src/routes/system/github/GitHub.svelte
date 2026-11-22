@@ -3,6 +3,7 @@
   they stand and GitHub's newest answer, then the pull requests themselves.
 -->
 <script lang="ts">
+  import { Now } from '#lib/now.svelte.ts';
   import { Elapsed } from '#lib/time.ts';
   import Toolbar from '#lib/Toolbar.svelte';
   import Glyph from '#lib/Glyph.svelte';
@@ -21,7 +22,8 @@
   const watched = $derived(rows.filter((row) => row.state !== 'off'));
   let only = $state<PullGroup | null>(null);
   const shown = $derived(only ? pulls.filter((row) => row.group === only) : pulls);
-  const now = Date.now();
+  const clock = new Now(15_000);
+  const now = $derived(clock.current);
 
   const labels: Record<PullGroup, string> = {
     ready: 'Ready to merge',

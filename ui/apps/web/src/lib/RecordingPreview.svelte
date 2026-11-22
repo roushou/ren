@@ -33,7 +33,7 @@
     | { state: 'reading' }
     | { state: 'read'; report: RecordingReport }
     | { state: 'failed'; reason: string };
-  let read = $state<Read>({ state: 'reading' });
+  let read = $state.raw<Read>({ state: 'reading' });
   $effect(() => {
     const id = recording.id;
     read = { state: 'reading' };

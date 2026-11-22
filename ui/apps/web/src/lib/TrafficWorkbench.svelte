@@ -7,7 +7,7 @@
   import { untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { goto } from '$app/navigation';
-  import { page, navigating } from '$app/state';
+  import { page } from '$app/state';
   import { getWorkbench } from './workbench.svelte.ts';
   import { createArrival } from './snapshot.svelte.ts';
   import { Arrival, type Arriving } from './arrival.ts';
@@ -99,12 +99,18 @@
     });
   });
   const turns = $derived(turnInfo && turnInfo.recording === recordingId ? turnInfo : null);
-  /** The turn open beside the calls; a link to a turn opens it (`?turn=`). */
-  let turnOpen = $state<TurnId | null>(null);
-  $effect(() => {
-    const asked = TurnId.parse(page.url.searchParams.get('turn') ?? '');
-    if (asked) untrack(() => (turnOpen = asked));
-  });
+  /** The turn open beside the calls, as the address names it (`?turn=`). */
+  const turnOpen = $derived(
+    TurnId.parse((page.shallow?.url ?? page.url).searchParams.get('turn') ?? ''),
+  );
+  /** Open `turn` beside the calls, or close it: the address follows, so Back
+   * and a reload show the same, and nothing is read again. */
+  function openTurn(turn: TurnId | null) {
+    const url = new URL((page.shallow?.url ?? page.url).href);
+    if (turn) url.searchParams.set('turn', turn);
+    else url.searchParams.delete('turn');
+    void goto(url, { shallow: true, replaceState: true });
+  }
   // The scope bar shows the narrowing controls, or the recording itself.
   const arrival = createArrival(() => snapshot);
   const shown = $derived(arrival.current);
@@ -136,7 +142,7 @@
   const liveStatus = $derived(
     LiveFollow.summary(workbench.live, updated ? `Updated ${Clock.second(updated)}` : null),
   );
-  const loading = $derived(workbench.manual || !!navigating.to);
+  const loading = $derived(workbench.loading);
   /** The daemon's per-body capture limit, to tell a trimmed body from lost bytes. */
   const bodyLimit = $derived(
     Arrival.value<GatewayData>(page.data.gateway)?.storage.capture?.body_limit_bytes ?? null,
@@ -161,15 +167,12 @@
   const linkedCall = $derived(page.url.searchParams.get('call'));
   // A clicked row is selected at once; the URL catches up a moment later.
   let pending = $state<CallId | null>(null);
-  $effect(() => {
-    if (pending !== null && linkedCall === pending) pending = null;
-  });
   /** The call open beside the list: only one the operator picked. */
   const selectedId = $derived(pending ?? (linkedCall !== null ? CallId.parse(linkedCall) : null));
   let observed = $state<CallView | undefined>();
   // A linked call that is not on this page is read on its own; the listing
   // never reloads for a selection.
-  let offPage = $state<OffPageSelection>({ kind: 'none' });
+  let offPage = $state.raw<OffPageSelection>({ kind: 'none' });
   $effect(() => {
     const raw = linkedCall;
     const listed = calls;
@@ -424,7 +427,6 @@
         detail={details.get(recordingId) ?? null}
         {desk}
         view="calls"
-        now={Math.max(readAt, Date.now())}
       />{/if}
     {#if !recordingId && !outlined && calls.length}<CallOverview
         {calls}
@@ -644,7 +646,7 @@
                     ><th colspan={callColumns.length}
                       >{#if turn}<button
                           class="turn-label"
-                          onclick={() => (turnOpen = turnOpen === turn ? null : turn)}
+                          onclick={() => openTurn(turnOpen === turn ? null : turn)}
                           aria-expanded={turnOpen === turn}
                           title="This turn's details">{prompt || group.label}</button
                         >{:else}<span class="turn-label">{group.label}</span
@@ -836,7 +838,7 @@
 </div>
 
 {#if recordingId && turnOpen}
-  <SlideOver label="Turn details" size="wide" pin="turn" onclose={() => (turnOpen = null)}>
+  <SlideOver label="Turn details" size="wide" pin="turn" onclose={() => openTurn(null)}>
     <TurnPanel
       turn={turnOpen}
       metrics={turns?.metrics.get(turnOpen) ?? null}

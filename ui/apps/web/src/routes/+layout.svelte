@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Now } from '#lib/now.svelte.ts';
   import { Clock } from '#lib/time.ts';
   import Glyph from '#lib/Glyph.svelte';
   import { Marks } from '#lib/marks.ts';
@@ -159,6 +160,7 @@
     const to = navigating.to ?? page;
     return to.route.id?.startsWith('/projects/[name]') ? (to.params?.name ?? null) : null;
   });
+  const clock = new Now(60_000);
   /** How recording stands on this host, for System's mark on Home. */
   const hostReport = $derived(
     health
@@ -167,7 +169,7 @@
           storage?.usage ?? null,
           storage?.policy ?? null,
           null,
-          Date.now(),
+          clock.current,
         )
       : null,
   );
@@ -229,7 +231,7 @@
   const capture = $derived(health ? RecorderReport.capture(health.recorder) : null);
   const loss = $derived(capture?.kind === 'lost');
   const degraded = $derived(!!health && (health.status !== 'ok' || capture?.kind === 'failing'));
-  const loading = $derived(workbench.manual || !!navigating.to);
+  const loading = $derived(workbench.loading);
   let refreshError = $state('');
   const failure = $derived<SnapshotError | null>(
     gateway.snapshot?.error ??
@@ -275,11 +277,10 @@
       refreshError = 'Unable to refresh this view.';
     }
   }
-  let live = $state<LiveConnection>();
   async function refresh() {
     workbench.manual = true;
     try {
-      await (live ? live.refresh() : reload());
+      await (workbench.connection ? workbench.connection.refresh() : reload());
     } finally {
       workbench.manual = false;
     }
@@ -304,19 +305,20 @@
       void preloadCode(route);
   });
   onMount(() => {
-    live = new LiveConnection({
+    const connection = new LiveConnection({
       refresh: reload,
       reload,
       progress: (update) => workbench.stream(update),
     });
-    return () => live?.destroy();
+    workbench.connection = connection;
+    return () => {
+      workbench.connection = null;
+      connection.destroy();
+    };
   });
   $effect(() => {
     // Follow the live feed only while automatic updates are on.
-    live?.dispatch({ kind: workbench.automatic ? 'enable' : 'disable' });
-  });
-  $effect(() => {
-    if (live) workbench.live = live.state;
+    workbench.connection?.dispatch({ kind: workbench.automatic ? 'enable' : 'disable' });
   });
 </script>
 

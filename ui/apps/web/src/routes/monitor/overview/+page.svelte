@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Now } from '#lib/now.svelte.ts';
   import { Elapsed } from '#lib/time.ts';
   /*
     Overview: is model traffic healthy, and what went wrong in the last day.
@@ -9,7 +10,6 @@
     edge's.
   */
   import Toolbar from '#lib/Toolbar.svelte';
-  import { onMount } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { page } from '$app/state';
   import { createArrival } from '#lib/snapshot.svelte.ts';
@@ -38,11 +38,8 @@
   const current = $derived(overview?.value ?? null);
 
   // Elapsed times tick between refreshes.
-  let now = $state(Date.now());
-  onMount(() => {
-    const timer = setInterval(() => (now = Date.now()), 1000);
-    return () => clearInterval(timer);
-  });
+  const clock = new Now(1000);
+  const now = $derived(clock.current);
 
   const live = $derived(current?.live ?? null);
   const board = $derived(

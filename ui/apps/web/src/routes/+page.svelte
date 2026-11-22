@@ -7,6 +7,7 @@
   the others away.
 -->
 <script lang="ts">
+  import { Now } from '#lib/now.svelte.ts';
   import { Clock, Elapsed } from '#lib/time.ts';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -46,7 +47,7 @@
           read.storage?.usage ?? null,
           read.storage?.policy ?? null,
           null,
-          Date.now(),
+          now,
         ).crowded
       : null;
   });
@@ -54,7 +55,8 @@
   /** When the operator last marked what happened as seen: kept in this
    * browser, a day ago at first. It moves only when they say so. */
   const SEEN = 'ren.home.seen';
-  let now = $state(Date.now());
+  const clock = new Now(30_000);
+  const now = $derived(clock.current);
   let seen = $state(Date.now() - 86_400_000);
   let spent = $state<UsageCounts | null>(null);
   function readSpent(since: number) {
@@ -71,8 +73,6 @@
       // Storage refused: a day ago stands.
     }
     readSpent(seen);
-    const ticking = setInterval(() => (now = Date.now()), 30_000);
-    return () => clearInterval(ticking);
   });
   /** Everything up to now is seen: the list starts again from here. */
   function markSeen() {

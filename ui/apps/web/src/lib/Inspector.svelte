@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Now } from './now.svelte.ts';
   import { Clock, Elapsed } from './time.ts';
   import ChipTag from './ChipTag.svelte';
   import Meter from './Meter.svelte';
@@ -49,7 +50,7 @@
     Arrival.value<GatewayData>(page.data.gateway)?.storage.capture?.body_limit_bytes ?? null,
   );
   const api = new ManagementApi();
-  let detail = $state<CallDetail | null>(null);
+  let detail = $state.raw<CallDetail | null>(null);
   let detailError = $state('');
   let section = $state<'overview' | 'request' | 'response' | 'metadata'>('overview');
   // An open snapshot never replaces a finished one, whichever arrived last.
@@ -68,9 +69,10 @@
   const usage = $derived(current.usage ?? inspection?.usage ?? null);
   const split = $derived(CallTimeline.tokens({ ...current, usage }));
   const said = $derived(CallTimeline.mark(current));
-  /** Attempts across the call's span; an open call's runs to the last read. */
+  /** Attempts across the call's span; an open call's runs to now. */
+  const clock = new Now(1000);
   const attemptBars = $derived(
-    CallTimeline.attempts(current, attempts, (void workbench.refreshed, Date.now())),
+    CallTimeline.attempts(current, attempts, current.ended_at ?? clock.current),
   );
   const tokens = $derived(tokenSummary(usage));
   // Reload detail after every page refresh (live or manual), which is when the

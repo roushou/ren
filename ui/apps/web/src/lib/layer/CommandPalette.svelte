@@ -7,7 +7,7 @@
   opens beside, Escape closes.
 -->
 <script lang="ts">
-  import { tick, untrack } from 'svelte';
+  import { Dialogs } from './dialog.ts';
   import { goto } from '$app/navigation';
   import Icon, { type IconName } from '#lib/Icon.svelte';
   import { ManagementApi } from '#lib/api.ts';
@@ -44,9 +44,7 @@
   const REST = 200;
 
   let dialog = $state<HTMLDialogElement>();
-  let input = $state<HTMLInputElement>();
   let query = $state('');
-  let chosen = $state(0);
   /** Whether Tab widened it from the project to every project. */
   let everywhere = $state(false);
   const scope = $derived(everywhere ? null : here);
@@ -57,19 +55,10 @@
   const groups = $derived(Commands.groups([...Commands.match(all, query, scope), ...calls]));
   /** The commands in the order the list shows them, for ↑ ↓ and Enter. */
   const shown = $derived(groups.flatMap((group) => group.commands));
+  /** The row ↑ ↓ and the pointer choose; a new query or scope starts again
+   * at the top. */
+  let chosen = $derived.by(() => (void query, void scope, 0));
 
-  $effect(() => {
-    untrack(() => {
-      dialog?.showModal();
-      void tick().then(() => input?.focus());
-    });
-  });
-  $effect(() => {
-    // A new query or scope starts again at the top.
-    void query;
-    void scope;
-    chosen = 0;
-  });
   $effect(() => {
     const words = query.trim();
     const project = scope;
@@ -131,6 +120,7 @@
 
 <dialog
   bind:this={dialog}
+  {@attach Dialogs.modal((self) => self.querySelector('input'))}
   class="palette"
   aria-label="Go to anything or run a command"
   oncancel={(event) => {
@@ -144,7 +134,6 @@
   <label class="field">
     <Icon name="search" size={14} />
     <input
-      bind:this={input}
       bind:value={query}
       onkeydown={key}
       placeholder="Do something, or find a page, a work item, a call"
@@ -165,6 +154,9 @@
         <span class="cap">{group.label}</span>
         {#each group.commands as command, place (`${command.href}#${place}`)}
           {@const index = shown.indexOf(command)}
+          <!-- The search field owns the keyboard (↑ ↓ Enter); a row is chosen
+               by pointer. -->
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
           <div
             id="palette-{index}"
             class="row"
@@ -175,7 +167,6 @@
             aria-selected={index === chosen}
             onmousemove={() => (chosen = index)}
             onclick={(event) => go(command, event.metaKey || event.ctrlKey)}
-            onkeydown={() => {}}
           >
             <Icon name={ICONS[command.kind]} size={12} />
             <span class="label" class:mono={command.kind === 'call'}

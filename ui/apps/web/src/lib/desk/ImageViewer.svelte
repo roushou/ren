@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { Dialogs } from '../layer/dialog.ts';
   import Icon from '#lib/Icon.svelte';
   import { Gallery, type Viewable } from '#lib/attachments.ts';
 
@@ -25,10 +26,6 @@
   let index = $state(untrack(() => Math.min(Math.max(start, 0), images.length - 1)));
   const shown = $derived(images[index]);
 
-  $effect(() => {
-    untrack(() => dialog?.showModal());
-  });
-
   function close() {
     dialog?.close();
     onclose();
@@ -41,6 +38,7 @@
 
 <dialog
   bind:this={dialog}
+  {@attach Dialogs.modal()}
   class="viewer"
   aria-label={shown?.read.name}
   oncancel={(event) => {

@@ -6,8 +6,8 @@
   active, and the one thing to do about it. A row opens the project.
 -->
 <script lang="ts">
+  import { Now } from '#lib/now.svelte.ts';
   import { Elapsed } from '#lib/time.ts';
-  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import Glyph from '#lib/Glyph.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
@@ -33,15 +33,12 @@
   /** A work item's glyph: queued, in a session, or landed. */
   const workMark = (state: string) =>
     state === 'queued' ? 'queued' : state === 'sent' ? 'running' : 'passed';
-  let now = $state(Date.now());
+  const clock = new Now(30_000);
+  const now = $derived(clock.current);
 
   const sparkRead = createArrival(() => data.sparks);
   /** Each project's calls by hour over the last day. */
   const sparks = $derived(sparkRead.snapshot?.value ?? new Map());
-  onMount(() => {
-    const ticking = setInterval(() => (now = Date.now()), 30_000);
-    return () => clearInterval(ticking);
-  });
 
   /** A click on a project's row opens it, unless it was on one of the
    * row's own links or buttons. */

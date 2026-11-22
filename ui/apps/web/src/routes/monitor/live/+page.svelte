@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { Now } from '#lib/now.svelte.ts';
   import { Clock, Elapsed } from '#lib/time.ts';
   import Toolbar from '#lib/Toolbar.svelte';
-  import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
   import { prefersReducedMotion } from 'svelte/motion';
   import { page } from '$app/state';
@@ -50,11 +50,8 @@
   const current = $derived(snapshot?.value ?? null);
 
   // Elapsed times tick between refreshes.
-  let now = $state(Date.now());
-  onMount(() => {
-    const timer = setInterval(() => (now = Date.now()), 1000);
-    return () => clearInterval(timer);
-  });
+  const clock = new Now(1000);
+  const now = $derived(clock.current);
 
   /** The time the board and band are built at: on `Board.tickMs`, not every
    * second, so the wall is not rebuilt from every call each tick. */

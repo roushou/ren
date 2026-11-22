@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Now } from '#lib/now.svelte.ts';
   import { Elapsed } from '#lib/time.ts';
   import Toolbar from '#lib/Toolbar.svelte';
   import Glyph from '#lib/Glyph.svelte';
@@ -234,7 +235,8 @@
     { prompt: '57%', reply: ['85%', '90%', '68%', '40%'] },
   ] as const;
   /** Now, for how long ago runs started; moves every half minute. */
-  let now = $state(Date.now());
+  const clock = new Now(30_000);
+  const now = $derived(clock.current);
   let busy = $state(false);
   let notice = $state<string | null>(null);
   let conversation = $state<HTMLElement>();
@@ -457,7 +459,7 @@
   }
 
   /** The client and settings last chosen here: a new session starts with them. */
-  let remembered = $state<Remembered>(untrack(() => Memory.parse(data.remembered)));
+  let remembered = $state.raw<Remembered>(untrack(() => Memory.parse(data.remembered)));
 
   function remember(next: Remembered) {
     remembered = next;
@@ -593,8 +595,9 @@
       blocks.flatMap((block) => (block.kind === 'steps' ? block.steps : [])),
     ),
   );
-  /** The step open beside the transcript, by its item. */
-  let inspecting = $state<ItemId | null>(null);
+  /** The step open beside the transcript, by its item; another session
+   * closes it. */
+  let inspecting = $derived.by((): ItemId | null => (void chosen, null));
   const inspected = $derived(
     inspecting === null ? null : (allSteps.find((step) => step.entry.item === inspecting) ?? null),
   );
@@ -611,15 +614,10 @@
   });
   /** Traffic narrowed to the calls around the open step. */
   const inspectedCalls = $derived(inspected ? callsAround([inspected]) : null);
-  /** The steps picked to act on together, by item. */
-  const picked = new SvelteSet<ItemId>();
+  /** The steps picked to act on together, by item; another session starts
+   * with none. */
+  const picked = $derived.by(() => (void chosen, new SvelteSet<ItemId>()));
   const pickedSteps = $derived(allSteps.filter((step) => picked.has(step.entry.item)));
-  $effect(() => {
-    // Another session closes the step that was open, and drops the picks.
-    void chosen;
-    inspecting = null;
-    untrack(() => picked.clear());
-  });
   async function copyPicked() {
     try {
       await navigator.clipboard.writeText(Steps.text(pickedSteps));
@@ -792,9 +790,10 @@
   );
   let commandsNote = $state<string | null>(null);
   /** The newest file search's answer, with what it searched for. */
-  let found = $state<{ session: SessionId; query: string; files: FileMatch[] } | null>(null);
+  let found = $state.raw<{ session: SessionId; query: string; files: FileMatch[] } | null>(null);
   let filesNote = $state<string | null>(null);
-  let active = $state(0);
+  /** The entry ↑ ↓ choose; a new list starts at its best one. */
+  let active = $derived.by(() => (void entries, 0));
   const menuId = 'composer-offers';
 
   $effect(() => {
@@ -882,11 +881,6 @@
       }));
     }
     return [];
-  });
-  $effect(() => {
-    // A new list starts at its best entry.
-    void entries;
-    active = 0;
   });
 
   /** Write the chosen entry in place of the word that asked for it. */
@@ -1180,7 +1174,6 @@
         void tick().then(() => composer?.focus());
       });
     }
-    const ticking = setInterval(() => (now = Date.now()), 30_000);
     // The server read them for the first render; only what it could not
     // read is asked for again. Live runs are read once the feed opens.
     if (initial?.places.state !== 'read') void readProjects();
@@ -1188,7 +1181,7 @@
     if (initial?.sessions.state !== 'read' || initial.archivedSessions.state !== 'read')
       void readSessions();
     if (!initial) void readLive();
-    if (!data.runsControl) return () => clearInterval(ticking);
+    if (!data.runsControl) return;
     const source = new EventSource('/control/runs/events');
     source.addEventListener('open', () => {
       feed = 'open';
@@ -1239,7 +1232,6 @@
     return () => {
       source.close();
       sessionFeed.close();
-      clearInterval(ticking);
     };
   });
 
