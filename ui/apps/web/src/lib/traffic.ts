@@ -1,5 +1,5 @@
 import { Clock } from './time.ts';
-import { harnesses, type CallId, type CallView } from './api.ts';
+import { harnesses, title, type CallId, type CallView, type Provider } from './api.ts';
 import { harnessLabel } from './activity.ts';
 import { changed, picked, type Query } from './query.ts';
 import type { RawCallQuery } from './wire/RawCallQuery.ts';
@@ -88,6 +88,37 @@ export interface Filters {
   from: string;
   until: string;
 }
+export const Filters = {
+  /** `filters` without the narrowing `filter` applies; an unknown one changes nothing. */
+  without(filters: Filters, filter: AppliedFilter): Filters {
+    if (filter.type === 'unknown') return filters;
+    const key = filter.key;
+    switch (key) {
+      case 'from_ms':
+        return { ...filters, from: '' };
+      case 'until_ms':
+        return { ...filters, until: '' };
+      case 'has_tools':
+        return { ...filters, has_tools: false };
+      case 'kind':
+        return { ...filters, kind: 'model' };
+      case 'q':
+      case 'recording':
+      case 'client':
+      case 'user':
+      case 'since':
+      case 'provider':
+      case 'model':
+      case 'tool':
+      case 'status':
+        return { ...filters, [key]: '' };
+      default: {
+        const never: never = key;
+        return never;
+      }
+    }
+  },
+};
 export const emptyFilters = (): Filters => ({
   q: '',
   recording: '',
@@ -116,6 +147,133 @@ export const TEXT_FILTERS = [
   'status',
 ] as const;
 export type TextFilter = (typeof TEXT_FILTERS)[number];
+
+/** A call's state, as the listing's `status=` filter names it. */
+export type StatusChoice = 'active' | 'finished' | 'errors' | 'interrupted';
+/** The provider picker's choices; the empty value is every provider. */
+export const providerChoices: readonly { value: Provider | ''; label: string }[] = [
+  { value: '', label: 'All providers' },
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'codex', label: 'Codex' },
+  { value: 'deepseek', label: 'DeepSeek' },
+];
+/** The status picker's choices; the empty value is every status. */
+export const statusChoices: readonly { value: StatusChoice | ''; label: string }[] = [
+  { value: '', label: 'All statuses' },
+  { value: 'active', label: 'In progress' },
+  { value: 'finished', label: 'Finished' },
+  { value: 'errors', label: 'Errors' },
+  { value: 'interrupted', label: 'Interrupted / cancelled' },
+];
+
+/** A narrowing the listing's URL applies, named by its query parameter. */
+export type FilterKey = TextFilter | 'kind' | 'has_tools' | 'from_ms' | 'until_ms';
+const FILTER_KEYS: readonly FilterKey[] = [
+  ...TEXT_FILTERS,
+  'kind',
+  'has_tools',
+  'from_ms',
+  'until_ms',
+];
+export const FilterKey = {
+  /** The filter a query parameter names, or null for one this view does not know. */
+  parse(raw: string): FilterKey | null {
+    return FILTER_KEYS.find((key) => key === raw) ?? null;
+  },
+};
+
+/** What naming an applied filter needs from the page. */
+export interface FilterContext {
+  /** A session as the operator recognises it, from its recording ID. */
+  session(id: string): string;
+}
+
+/** One parameter of the applied query: a filter this view knows, or one kept as it came. */
+export type AppliedFilter =
+  | { type: 'filter'; key: FilterKey; value: string }
+  | { type: 'unknown'; key: string; value: string };
+export const AppliedFilter = {
+  /** Every parameter of `params`, in its order. */
+  list(params: URLSearchParams): AppliedFilter[] {
+    return [...params.entries()].map(([raw, value]): AppliedFilter => {
+      const key = FilterKey.parse(raw);
+      return key ? { type: 'filter', key, value } : { type: 'unknown', key: raw, value };
+    });
+  },
+  /** How a chip names the filter. */
+  label(filter: AppliedFilter, context: FilterContext): string {
+    if (filter.type === 'unknown') return `${title(filter.key)}: ${filter.value}`;
+    const { key, value } = filter;
+    switch (key) {
+      case 'q':
+        return `Search: ${value}`;
+      case 'recording':
+        return `Session: ${context.session(value)}`;
+      case 'user':
+        return `User: ${value}`;
+      case 'client':
+        return `Client: ${clientChoices.find((item) => item.client === value)?.label ?? value}`;
+      case 'since': {
+        const since = parseSince(value);
+        return sinceChoices.find((item) => item.since === since)?.title ?? `Since: ${value}`;
+      }
+      case 'kind':
+        return parseKind(value) === 'other' ? 'Bookkeeping calls only' : 'All call kinds';
+      case 'from_ms':
+      case 'until_ms':
+        return `${key === 'from_ms' ? 'From' : 'Until'}: ${new Date(Number(value)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+      case 'has_tools':
+        return 'Has tool calls';
+      case 'provider':
+      case 'model':
+      case 'tool':
+      case 'status':
+        return `${title(key)}: ${value}`;
+      default: {
+        const never: never = key;
+        return never;
+      }
+    }
+  },
+};
+
+/** The quick narrowings above the listing: by status, or to calls that asked for tools. */
+export type QuickFilter = 'all' | 'active' | 'errors' | 'tools';
+export const QuickFilter = {
+  /** Whether the applied `filters` are what `quick` narrows to. */
+  chosen(quick: QuickFilter, filters: Filters): boolean {
+    switch (quick) {
+      case 'all':
+        return !filters.status && !filters.has_tools;
+      case 'active':
+      case 'errors':
+        return filters.status === quick;
+      case 'tools':
+        return filters.has_tools;
+      default: {
+        const never: never = quick;
+        return never;
+      }
+    }
+  },
+  /** `filters` narrowed to `quick`: its status and tool narrowing replaced. */
+  apply(quick: QuickFilter, filters: Filters): Filters {
+    switch (quick) {
+      case 'all':
+        return { ...filters, status: '', has_tools: false };
+      case 'active':
+      case 'errors':
+        return { ...filters, status: quick, has_tools: false };
+      case 'tools':
+        return { ...filters, status: '', has_tools: true };
+      default: {
+        const never: never = quick;
+        return never;
+      }
+    }
+  },
+};
 
 export function trafficParams(filters: Filters): string {
   const params = new URLSearchParams();

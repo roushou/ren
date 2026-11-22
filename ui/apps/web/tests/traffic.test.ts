@@ -10,6 +10,12 @@ import {
   sinceStart,
   parseSince,
   filtersFromParams,
+  AppliedFilter,
+  FilterKey,
+  Filters,
+  QuickFilter,
+  providerChoices,
+  statusChoices,
 } from '../src/lib/traffic.ts';
 import { callFixture, finishedFixture, callId } from './fixtures.ts';
 
@@ -151,4 +157,102 @@ test('narrowing filters round-trip through the URL', () => {
   );
   // The default kind stays out of the URL.
   assert.equal(trafficParams(emptyFilters()), '');
+});
+
+test('applied filters parse their keys and keep the unknown ones', () => {
+  assert.equal(FilterKey.parse('has_tools'), 'has_tools');
+  assert.equal(FilterKey.parse('from_ms'), 'from_ms');
+  assert.equal(FilterKey.parse('q'), 'q');
+  assert.equal(FilterKey.parse('call'), null);
+  assert.deepEqual(AppliedFilter.list(new URLSearchParams('q=a&odd_key=1')), [
+    { type: 'filter', key: 'q', value: 'a' },
+    { type: 'unknown', key: 'odd_key', value: '1' },
+  ]);
+});
+
+test('applied filters name themselves for their chips', () => {
+  const context = { session: (id: string) => `session ${id}` };
+  const label = (search: string) =>
+    AppliedFilter.list(new URLSearchParams(search)).map((filter) =>
+      AppliedFilter.label(filter, context),
+    );
+  assert.deepEqual(
+    label(
+      'q=abc&recording=r1&user=ana&client=nonsense&since=1h&since=year&kind=other&kind=all&has_tools=true&provider=openai&tool_name=x',
+    ),
+    [
+      'Search: abc',
+      'Session: session r1',
+      'User: ana',
+      'Client: nonsense',
+      'Last hour',
+      'Since: year',
+      'Bookkeeping calls only',
+      'All call kinds',
+      'Has tool calls',
+      'provider: openai',
+      'tool name: x',
+    ],
+  );
+  const [from, until] = label('from_ms=0&until_ms=0');
+  assert.ok(from.startsWith('From: '));
+  assert.ok(until.startsWith('Until: '));
+});
+
+test('removing a filter clears only its own field', () => {
+  const filters = {
+    ...emptyFilters(),
+    q: 'a',
+    user: 'ana',
+    kind: 'all' as const,
+    has_tools: true,
+    from: '2026-11-03T10:00',
+    until: '2026-11-03T11:00',
+  };
+  const without = (search: string) =>
+    Filters.without(filters, AppliedFilter.list(new URLSearchParams(search))[0]);
+  assert.deepEqual(without('q=a'), { ...filters, q: '' });
+  assert.deepEqual(without('user=ana'), { ...filters, user: '' });
+  assert.deepEqual(without('kind=all'), { ...filters, kind: 'model' });
+  assert.deepEqual(without('has_tools=true'), { ...filters, has_tools: false });
+  assert.deepEqual(without('from_ms=1'), { ...filters, from: '' });
+  assert.deepEqual(without('until_ms=1'), { ...filters, until: '' });
+  // An unknown parameter changes nothing: applying the draft drops it from the URL.
+  assert.deepEqual(without('odd=1'), filters);
+});
+
+test('quick filters replace the status and tool narrowing, and know when they apply', () => {
+  const base = { ...emptyFilters(), q: 'kept', status: 'finished', has_tools: true };
+  assert.deepEqual(QuickFilter.apply('all', base), { ...base, status: '', has_tools: false });
+  assert.deepEqual(QuickFilter.apply('errors', base), {
+    ...base,
+    status: 'errors',
+    has_tools: false,
+  });
+  assert.deepEqual(QuickFilter.apply('tools', base), { ...base, status: '', has_tools: true });
+  for (const quick of ['all', 'active', 'errors', 'tools'] as const)
+    assert.ok(QuickFilter.chosen(quick, QuickFilter.apply(quick, base)));
+  assert.ok(!QuickFilter.chosen('all', base));
+  // Errors and tool requests can both apply at once.
+  const both = { ...emptyFilters(), status: 'errors', has_tools: true };
+  assert.ok(QuickFilter.chosen('errors', both) && QuickFilter.chosen('tools', both));
+});
+
+test('provider and status choices round-trip through the URL', () => {
+  for (const choices of [providerChoices, statusChoices]) {
+    assert.equal(choices[0].value, '');
+    assert.equal(new Set(choices.map((choice) => choice.value)).size, choices.length);
+  }
+  for (const { value } of providerChoices)
+    assert.equal(
+      filtersFromParams(new URLSearchParams(trafficParams({ ...emptyFilters(), provider: value })))
+        .provider,
+      value,
+    );
+  for (const { value } of statusChoices)
+    assert.equal(
+      filtersFromParams(new URLSearchParams(trafficParams({ ...emptyFilters(), status: value })))
+        .status,
+      value,
+    );
 });
