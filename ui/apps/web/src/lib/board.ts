@@ -184,8 +184,8 @@ export interface BoardInput {
 export class Board {
   /** The lanes show this much recent time: a few agent loops. */
   static readonly laneMs = 2 * 60_000;
-  /** The wall is a fixed 4 × 2; more recordings than this go to an overflow count. */
-  static readonly maxTiles = 8;
+  /** The wall is a fixed 3 × 2; more recordings than this go to an overflow count. */
+  static readonly maxTiles = 6;
   /** Waiting this long for a response head is worth a look. */
   static readonly slowHeadMs = 30_000;
   /** An expanded card covers four slots, leaving this many beside it. */
