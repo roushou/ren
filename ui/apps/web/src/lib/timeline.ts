@@ -1,7 +1,5 @@
 // The Traffic page's overview of the calls it lists: each recording as a
-// lane with a bar per call from its start to its end, and the figures above
-// the list (how many, how many failed, how long they took, how many are
-// still open). Read from the listed page of calls alone, so it says what
+// lane with a bar per call from its start to its end. Read from the listed page of calls alone, so it says what
 // that page holds, not the whole time range. Pure: no DOM, no clock.
 
 import type { AttemptView, CallView, RecordingId } from './api.ts';
@@ -30,20 +28,6 @@ export interface Lane {
   bars: LaneBar[];
   /** Whether a call of it is still open. */
   live: boolean;
-}
-
-/** The figures over the list. */
-export interface Figures {
-  calls: number;
-  /** Calls a minute over the window; null for a window under a second. */
-  perMinute: number | null;
-  failed: number;
-  /** The median and 95th percentile of finished calls' durations, in ms. */
-  p50: number | null;
-  p95: number | null;
-  open: number;
-  /** Quota probes and other calls the client made for itself. */
-  probes: number;
 }
 
 /** One upstream try of a call, placed across the call's span. */
@@ -94,20 +78,18 @@ export class CallTimeline {
   readonly lanes: Lane[];
   /** Recordings with calls in the window past the lanes drawn. */
   readonly folded: number;
-  readonly figures: Figures;
 
-  private constructor(from: number, to: number, lanes: Lane[], folded: number, figures: Figures) {
+  private constructor(from: number, to: number, lanes: Lane[], folded: number) {
     this.from = from;
     this.to = to;
     this.lanes = lanes;
     this.folded = folded;
-    this.figures = figures;
   }
 
   /** `calls` over the window from the first's start to the last's end, or
    * to `now` while one is open. */
   static of(calls: readonly CallView[], now: number): CallTimeline {
-    if (!calls.length) return new CallTimeline(now, now, [], 0, CallTimeline.#figures([], 0));
+    if (!calls.length) return new CallTimeline(now, now, [], 0);
     const from = Math.min(...calls.map((call) => call.started_at));
     const to = Math.max(...calls.map((call) => call.ended_at ?? now));
     const span = Math.max(1, to - from);
@@ -140,13 +122,7 @@ export class CallTimeline {
           };
         }),
     }));
-    return new CallTimeline(
-      from,
-      to,
-      lanes,
-      Math.max(0, busiest.length - LANES),
-      CallTimeline.#figures(calls, span),
-    );
+    return new CallTimeline(from, to, lanes, Math.max(0, busiest.length - LANES));
   }
 
   /** How `call` stands: open, ended well, failed, or past knowing. A call
@@ -276,22 +252,5 @@ export class CallTimeline {
       else bands.push({ turn, from: index, to: index + 1 });
     });
     return { peak, bars, bands };
-  }
-
-  static #figures(calls: readonly CallView[], span: number): Figures {
-    const durations = calls
-      .flatMap((call) => (call.ended_at === null ? [] : [call.ended_at - call.started_at]))
-      .toSorted((a, b) => a - b);
-    const at = (share: number) =>
-      durations.length ? durations[Math.floor(share * (durations.length - 1))]! : null;
-    return {
-      calls: calls.length,
-      perMinute: span >= 1000 ? calls.length / (span / 60_000) : null,
-      failed: calls.filter((call) => CallTimeline.mark(call).mark === 'failed').length,
-      p50: at(0.5),
-      p95: at(0.95),
-      open: calls.filter((call) => call.ended_at === null).length,
-      probes: calls.filter(bookkeeping).length,
-    };
   }
 }

@@ -398,24 +398,6 @@
 {#snippet scope()}
   <div class="scope-group">
     <Segmented
-      label="Client"
-      options={clientOptions}
-      value={applied.get('client') ?? ''}
-      onchange={(client) => pick((f) => (f.client = client))}
-    />
-  </div>
-  <div class="scope-group">
-    <Select
-      label="Session"
-      size="compact"
-      options={recordingOptions}
-      value={applied.get('recording') ?? ''}
-      placeholder={recordingName(applied.get('recording') ?? '')}
-      onchange={(recording) => pick((f) => (f.recording = recording))}
-    />
-  </div>
-  <div class="scope-group">
-    <Segmented
       label="Time"
       options={sinceOptions}
       value={applied.get('since') ?? (applied.get('from_ms') ? 'range' : '')}
@@ -426,21 +408,6 @@
           f.until = '';
         })}
     />
-  </div>
-  <div class="scope-group end">
-    <label
-      class="toggle-control model-only"
-      title="Hide token counts, model listings, and WebSocket handshakes"
-      ><input
-        type="checkbox"
-        checked={(applied.get('kind') ?? 'model') === 'model'}
-        onchange={(e) => pick((f) => (f.kind = e.currentTarget.checked ? 'model' : 'all'))}
-      /><span class="switch"></span><span
-        >Model calls only{#if hidden}<span class="muted hidden-count"
-            >{hidden >= 100 ? '100+' : hidden} hidden</span
-          >{/if}</span
-      ></label
-    >
   </div>
 {/snippet}
 
@@ -462,30 +429,18 @@
         view="calls"
         now={Math.max(readAt, Date.now())}
       />{/if}
+    {#if !recordingId && !outlined && calls.length}<CallOverview
+        {calls}
+        now={readAt}
+        name={(id) =>
+          details.get(id)?.prompt?.text.trim().split('\n')[0] ||
+          short(recordingsById.get(id)?.native_id ?? id)}
+        selected={selectedId}
+        onrecording={(recording) => pick((f) => (f.recording = recording))}
+        href={callHref}
+        oncall={selectCall}
+      />{/if}
     {#if !recordingId}
-      <div class="request-tabs" aria-label="Quick filters">
-        <button
-          class:active={!applied.get('status') && !applied.get('has_tools')}
-          aria-pressed={!applied.get('status') && !applied.get('has_tools')}
-          onclick={() => quickFilter('')}>All calls</button
-        >
-        <button
-          class:active={applied.get('status') === 'active'}
-          aria-pressed={applied.get('status') === 'active'}
-          onclick={() => quickFilter('active')}><Glyph mark="responding" /> In progress</button
-        >
-        <button
-          class:active={applied.get('status') === 'errors'}
-          aria-pressed={applied.get('status') === 'errors'}
-          onclick={() => quickFilter('errors')}>Errors</button
-        >
-        <button
-          class:active={applied.get('has_tools') === 'true'}
-          aria-pressed={applied.get('has_tools') === 'true'}
-          onclick={() => quickFilter('', true)}>Tool requests</button
-        >
-        <span class="table-update" role="status">{liveStatus}</span>
-      </div>
       <form
         onsubmit={(e) => {
           e.preventDefault();
@@ -493,36 +448,91 @@
         }}
         aria-label="Traffic filters"
       >
-        <div class="filter-toolbar">
-          <label class="search-input main-search"
-            ><Icon name="search" /><input
-              bind:this={searchInput}
-              aria-label="Search traffic"
-              placeholder="Search call ID, model, or tool…"
-              maxlength="128"
-              bind:value={filters.q}
-            /><kbd>/</kbd></label
-          ><Select
-            label="Provider"
-            class="provider-select"
-            options={providerOptions}
-            bind:value={filters.provider}
-            onchange={applyFilters}
-          /><button
-            class="button"
-            type="button"
-            class:chosen={moreFilters}
-            aria-expanded={moreFilters}
-            aria-controls="advanced-filters"
-            onclick={() => (moreFilters = !moreFilters)}
-            ><Icon name="filter" size={14} /> Filters {#if filterCount}<span class="count-pill"
-                >{filterCount}</span
-              >{/if}</button
-          ><button class="button primary" type="submit"
-            >Search <Icon name="arrow" size={14} /></button
-          >
+        <div class="traffic-bar">
+          <div class="request-tabs" aria-label="Quick filters">
+            <button
+              class:active={!applied.get('status') && !applied.get('has_tools')}
+              aria-pressed={!applied.get('status') && !applied.get('has_tools')}
+              onclick={() => quickFilter('')}>All calls</button
+            >
+            <button
+              class:active={applied.get('status') === 'active'}
+              aria-pressed={applied.get('status') === 'active'}
+              onclick={() => quickFilter('active')}><Glyph mark="responding" /> In progress</button
+            >
+            <button
+              class:active={applied.get('status') === 'errors'}
+              aria-pressed={applied.get('status') === 'errors'}
+              onclick={() => quickFilter('errors')}>Errors</button
+            >
+            <button
+              class:active={applied.get('has_tools') === 'true'}
+              aria-pressed={applied.get('has_tools') === 'true'}
+              onclick={() => quickFilter('', true)}>Tool requests</button
+            >
+            <span class="table-update" role="status">{liveStatus}</span>
+          </div>
+          <div class="filter-toolbar">
+            <label class="search-input main-search"
+              ><Icon name="search" /><input
+                bind:this={searchInput}
+                aria-label="Search traffic"
+                placeholder="Search call ID, model, or tool…"
+                maxlength="128"
+                bind:value={filters.q}
+              /><kbd>/</kbd></label
+            ><button
+              class="button"
+              type="button"
+              class:chosen={moreFilters}
+              aria-expanded={moreFilters}
+              aria-controls="advanced-filters"
+              onclick={() => (moreFilters = !moreFilters)}
+              ><Icon name="filter" size={14} /> Filters {#if filterCount}<span class="count-pill"
+                  >{filterCount}</span
+                >{/if}</button
+            >
+          </div>
         </div>
         {#if moreFilters}<div class="advanced-filters" id="advanced-filters">
+            <div class="filter-field wide">
+              <span aria-hidden="true">Client</span><Segmented
+                label="Client"
+                options={clientOptions}
+                value={applied.get('client') ?? ''}
+                onchange={(client) => pick((f) => (f.client = client))}
+              />
+            </div>
+            <div class="filter-field">
+              <span aria-hidden="true">Session</span><Select
+                label="Session"
+                options={recordingOptions}
+                value={applied.get('recording') ?? ''}
+                placeholder={recordingName(applied.get('recording') ?? '')}
+                onchange={(recording) => pick((f) => (f.recording = recording))}
+              />
+            </div>
+            <div class="filter-field">
+              <span aria-hidden="true">Provider</span><Select
+                label="Provider"
+                options={providerOptions}
+                bind:value={filters.provider}
+                onchange={applyFilters}
+              />
+            </div>
+            <label
+              class="toggle-control model-only"
+              title="Hide token counts, model listings, and WebSocket handshakes"
+              ><input
+                type="checkbox"
+                checked={(applied.get('kind') ?? 'model') === 'model'}
+                onchange={(e) => pick((f) => (f.kind = e.currentTarget.checked ? 'model' : 'all'))}
+              /><span class="switch"></span><span
+                >Model calls only{#if hidden}<span class="muted hidden-count"
+                    >{hidden >= 100 ? '100+' : hidden} hidden</span
+                  >{/if}</span
+              ></label
+            >
             <label
               >User<input
                 placeholder="Named user id…"
@@ -582,17 +592,6 @@
     {#if recordingId && !outlined && calls.length}<ContextChart
         {calls}
         selected={selectedId}
-        href={callHref}
-        oncall={selectCall}
-      />{/if}
-    {#if !recordingId && !outlined && calls.length}<CallOverview
-        {calls}
-        now={readAt}
-        name={(id) =>
-          details.get(id)?.prompt?.text.trim().split('\n')[0] ||
-          short(recordingsById.get(id)?.native_id ?? id)}
-        selected={selectedId}
-        onrecording={(recording) => pick((f) => (f.recording = recording))}
         href={callHref}
         oncall={selectCall}
       />{/if}
@@ -872,6 +871,33 @@
 {/if}
 
 <style>
+  .traffic-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .traffic-bar .request-tabs {
+    border: 0;
+    padding: 0;
+  }
+  .traffic-bar .filter-toolbar {
+    flex: 1;
+    min-width: 280px;
+    padding: 0;
+    border: 0;
+  }
+  .filter-field.wide {
+    grid-column: 1 / -1;
+  }
+  .advanced-filters .model-only {
+    align-self: end;
+    justify-self: start;
+    gap: 8px;
+    height: 30px;
+  }
   .calls-table {
     table-layout: fixed;
   }

@@ -6,11 +6,9 @@ import { callFixture, callId, finishedFixture } from './fixtures.ts';
 
 const ms = (value: number) => value as UnixMillis;
 
-test('an empty page draws no lanes and counts nothing', () => {
+test('an empty page draws no lanes', () => {
   const timeline = CallTimeline.of([], 5_000);
   assert.deepEqual(timeline.lanes, []);
-  assert.equal(timeline.figures.calls, 0);
-  assert.equal(timeline.figures.p50, null);
 });
 
 test('calls lie on their recording’s lane, placed from start to end across the window', () => {
@@ -63,15 +61,6 @@ test('calls lie on their recording’s lane, placed from start to end across the
       ],
     ],
   );
-  assert.deepEqual(timeline.figures, {
-    calls: 4,
-    perMinute: 2.4,
-    failed: 1,
-    p50: 10_000,
-    p95: 10_000,
-    open: 1,
-    probes: 0,
-  });
 });
 
 test('past six recordings the quietest are counted, not drawn; a short call still shows', () => {

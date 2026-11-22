@@ -1,15 +1,13 @@
 <!--
   Above Traffic's list: the listed calls as lanes, one per recording, each
-  call a bar from its start to its end (`CallTimeline`), and the figures
-  that say how the page went. A lane's name narrows the list to its
+  call a bar from its start to its end (`CallTimeline`). A lane's name narrows the list to its
   recording; a bar opens its call. It reads the listed page only, and says
   so.
 -->
 <script lang="ts">
   import Glyph from '#lib/Glyph.svelte';
-  import { clock, num, type CallId, type RecordingId } from '#lib/api.ts';
+  import { clock, type CallId, type RecordingId } from '#lib/api.ts';
   import { CallTimeline } from '#lib/timeline.ts';
-  import { Steps } from '#lib/steps.ts';
   import type { CallView } from '#lib/api.ts';
 
   let {
@@ -35,19 +33,16 @@
   } = $props();
 
   const timeline = $derived(CallTimeline.of(calls, now));
-  const figures = $derived(timeline.figures);
   /** Five ticks across the window. */
   const ticks = $derived(
     [0, 0.25, 0.5, 0.75, 1].map((share) => timeline.from + share * (timeline.to - timeline.from)),
   );
-  const time = (ms: number | null) => (ms === null ? '—' : Steps.time(ms));
 </script>
 
 <section class="overview" aria-label="The listed calls over time">
   <div class="lanes">
     <div class="lanes-head">
       <span class="cap">Calls by session</span>
-      <span class="muted">this page · a bar is one call, start to end</span>
     </div>
     {#each timeline.lanes as lane (lane.recording ?? '')}
       <div class="lane">
@@ -84,43 +79,13 @@
       {#each ticks as tick, index (index)}<span>{clock(tick)}</span>{/each}
     </div>
   </div>
-  <dl class="figures">
-    <div>
-      <dt class="cap">Calls</dt>
-      <dd class="mono big">{num(figures.calls)}</dd>
-      <dd class="muted">
-        {figures.perMinute === null ? '—' : `${figures.perMinute.toFixed(1)} / min`}
-      </dd>
-    </div>
-    <div>
-      <dt class="cap">Failed</dt>
-      <dd class="mono big">
-        {#if figures.failed}<Glyph mark="failed" label={true} />{/if}{num(figures.failed)}
-      </dd>
-      <dd class="muted">
-        {figures.calls ? `${((figures.failed / figures.calls) * 100).toFixed(1)}%` : '—'}
-      </dd>
-    </div>
-    <div>
-      <dt class="cap">Duration p50</dt>
-      <dd class="mono big">{time(figures.p50)}</dd>
-      <dd class="muted">p95 {time(figures.p95)}</dd>
-    </div>
-    <div>
-      <dt class="cap">Open</dt>
-      <dd class="mono big">
-        {#if figures.open}<Glyph mark="responding" label={true} />{/if}{num(figures.open)}
-      </dd>
-      <dd class="muted">{figures.probes} quota probe{figures.probes === 1 ? '' : 's'}</dd>
-    </div>
-  </dl>
 </section>
 
 <style>
   .overview {
     flex: none;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-columns: minmax(0, 1fr);
     border-bottom: 1px solid var(--line);
     background: var(--surface);
     font-size: 12px;
@@ -217,53 +182,6 @@
     justify-content: space-between;
     margin-left: 272px;
     font-size: 10.5px;
-  }
-  .figures {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    margin: 0;
-    border-left: 1px solid var(--line);
-  }
-  .figures {
-    align-content: start;
-  }
-  .figures > div {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--line);
-  }
-  .figures > div:nth-child(odd) {
-    border-right: 1px solid var(--line);
-  }
-  .figures > div:nth-child(n + 3) {
-    border-bottom: 0;
-  }
-  dd {
-    margin: 0;
-    font-size: 11px;
-  }
-  dd.big {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--ink);
-    font-size: 18px;
-  }
-  @media (max-width: 960px) {
-    .overview {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .figures {
-      grid-template-columns: repeat(4, 1fr);
-      border-top: 1px solid var(--line);
-      border-left: 0;
-    }
-    .figures > div {
-      border-right: 1px solid var(--line);
-      border-bottom: 0;
-    }
   }
   @media (max-width: 760px) {
     .lanes {
