@@ -12,6 +12,8 @@
  * the bar holds only that place's pages, or inside a project, the
  * project's.
  */
+import type { Environment } from './api.ts';
+import { unrecognised, type Stored } from './decode.ts';
 
 /** A view of the workbench, one per page. */
 export type View =
@@ -60,6 +62,13 @@ export interface PageLink {
   tab: Tab;
   href: string;
   label: string;
+}
+
+/** The tag beside the wordmark of an instance that is not production, and
+ * what that instance is. */
+export interface InstanceBadge {
+  tag: string;
+  what: string;
 }
 
 export class Views {
@@ -244,6 +253,28 @@ export class Views {
     return project && Views.scoped(link.tab)
       ? `${link.href}?${new URLSearchParams({ project })}`
       : link.href;
+  }
+
+  /** The wordmark's tag for an instance that is not production: the gateway
+   * says what kind of instance it is; the UI only shows it. Production, and a
+   * kind this UI does not know, carry none. */
+  static instanceBadge(environment: Stored<Environment>): InstanceBadge | null {
+    switch (environment) {
+      case 'production':
+        return null;
+      case 'development':
+        return { tag: 'dev', what: 'A development gateway, not the installed service' };
+      case 'canary':
+        return { tag: 'canary', what: "The canary: main's tip on a copy of production's history" };
+      case 'preview':
+        return {
+          tag: 'preview',
+          what: "A preview: one worktree's branch on a copy of production's history",
+        };
+      default:
+        unrecognised(environment);
+        return null;
+    }
   }
 
   /** What the toolbar and the document title call `view`. */

@@ -53,6 +53,30 @@ export interface Gauge {
   binding: boolean;
 }
 
+/** One step of what a request or response body becomes on disk, with the
+ * ratio it saves on the step before it. */
+export interface BodyStep {
+  label: string;
+  bytes: number;
+  note: { label: string; ratio: string } | null;
+  tone: 'referenced' | 'unique' | 'compressed';
+}
+
+/** One part of the database files' bytes on disk. */
+export interface DiskPart {
+  key: 'meta-live' | 'meta-free' | 'blob-live' | 'blob-free';
+  label: string;
+  bytes: number;
+}
+
+/** One of the recorder queue's two limits, and how much of it is used. */
+export interface QueueMeter {
+  label: string;
+  /** Used over capacity, 0–1 and past it; 0 for no capacity. */
+  share: number;
+  text: string;
+}
+
 export class RecorderReport {
   readonly health: CaptureHealth;
   /** Non-zero loss, error, and by-design counters, worst first. */
@@ -345,8 +369,103 @@ export class RecorderReport {
     return gauges.map((gauge) => ({ ...gauge, binding: gauge === nearest }));
   }
 
+  /** A capacity's meter: its own colour while fine, else how it stands. */
+  static meterTone(share: number): 'chart' | 'warning' | 'error' {
+    const fullness = RecorderReport.fullness(share);
+    switch (fullness) {
+      case 'fine':
+        return 'chart';
+      case 'warning':
+      case 'error':
+        return fullness;
+      default:
+        return assertNever(fullness);
+    }
+  }
+
   /** A database file's in-use bytes: its pages less the free ones. */
   static live(file: FileUsage): number {
     return Math.max(0, file.page_count - file.freelist_count) * file.page_size;
+  }
+
+  /** A database file's free pages, in bytes: room it holds and does not use. */
+  static free(file: FileUsage): number {
+    return file.freelist_count * file.page_size;
+  }
+
+  /** How many times `numerator` is `denominator` (`3.20×`); `—` over nothing. */
+  static ratio(numerator: number, denominator: number): string {
+    return denominator > 0 ? `${(numerator / denominator).toFixed(2)}×` : '—';
+  }
+
+  /** What bodies become on disk: the bytes calls reference, the distinct
+   * chunks they dedupe to, and those chunks compressed. */
+  static bodySteps(storage: StorageView): BodyStep[] {
+    return [
+      {
+        label: 'Referenced body bytes',
+        bytes: storage.referenced_bytes,
+        note: null,
+        tone: 'referenced',
+      },
+      {
+        label: 'Unique chunk bytes',
+        bytes: storage.unique_bytes,
+        note: {
+          label: 'Deduplication',
+          ratio: RecorderReport.ratio(storage.referenced_bytes, storage.unique_bytes),
+        },
+        tone: 'unique',
+      },
+      {
+        label: 'Compressed chunk bytes',
+        bytes: storage.compressed_bytes,
+        note: {
+          label: 'Compression',
+          ratio: RecorderReport.ratio(storage.unique_bytes, storage.compressed_bytes),
+        },
+        tone: 'compressed',
+      },
+    ];
+  }
+
+  /** The database files' bytes on disk: each file's live and free pages. */
+  static diskParts(storage: StorageView): DiskPart[] {
+    return [
+      {
+        key: 'meta-live',
+        label: 'Metadata · live',
+        bytes: RecorderReport.live(storage.disk.metadata),
+      },
+      {
+        key: 'meta-free',
+        label: 'Metadata · free pages',
+        bytes: RecorderReport.free(storage.disk.metadata),
+      },
+      { key: 'blob-live', label: 'Blobs · live', bytes: RecorderReport.live(storage.disk.blobs) },
+      {
+        key: 'blob-free',
+        label: 'Blobs · free pages',
+        bytes: RecorderReport.free(storage.disk.blobs),
+      },
+    ];
+  }
+
+  /** The recorder queue against its record and byte limits. */
+  static queueMeters(recorder: RecorderMetrics): QueueMeter[] {
+    const share = (used: number, capacity: number) => (capacity > 0 ? used / capacity : 0);
+    const queue = recorder.queue;
+    return [
+      {
+        label: 'Records',
+        share: share(queue.items, queue.capacity),
+        text: `${num(queue.items)} / ${num(queue.capacity)}`,
+      },
+      {
+        label: 'Bytes',
+        share: share(queue.bytes, queue.byte_capacity),
+        text: `${bytes(queue.bytes)} / ${bytes(queue.byte_capacity)}`,
+      },
+    ];
   }
 }

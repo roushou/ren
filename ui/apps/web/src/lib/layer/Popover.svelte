@@ -19,8 +19,9 @@
   }: {
     id: string;
     label: string;
-    /** 360px, or 460px for rows with actions. */
-    width?: 'narrow' | 'wide';
+    /** 360px, 460px for rows with actions, or 560px for a panel of
+     * commands. */
+    width?: 'narrow' | 'wide' | 'broad';
     /** Which edge it shares with its trigger: the right for a trigger on
      * the bar's right, the left for one on its left. */
     align?: 'left' | 'right';
@@ -69,5 +70,8 @@
   }
   .wide {
     width: min(460px, calc(100vw - 16px));
+  }
+  .broad {
+    width: min(560px, calc(100vw - 16px));
   }
 </style>

@@ -80,3 +80,12 @@ test('only the pages that read a project carry it between them', () => {
   assert.ok(Views.scoped('search'));
   assert.equal(Views.scoped('usage'), false);
 });
+
+test('an instance that is not production carries a tag beside the wordmark', () => {
+  assert.equal(Views.instanceBadge('production'), null);
+  assert.equal(Views.instanceBadge('development')?.tag, 'dev');
+  assert.equal(Views.instanceBadge('canary')?.tag, 'canary');
+  assert.equal(Views.instanceBadge('preview')?.tag, 'preview');
+  // A kind this UI does not know is shown as production is: untagged.
+  assert.equal(Views.instanceBadge('staging' as never), null);
+});

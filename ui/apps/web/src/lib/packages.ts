@@ -65,6 +65,61 @@ export interface InstalledPackage {
   dir: string;
 }
 
+export class InstalledPackages {
+  /** An install's SHA-256 as the details pane shows it: its first twelve
+   * digits, the whole on hover. */
+  static shortSha(installed: InstalledPackage): string {
+    return `${installed.sha256.slice(0, 12)}…`;
+  }
+}
+
+export class Origins {
+  /** Which catalog names a package, as its row says it: `removed` for an
+   * install the catalog no longer names. */
+  static label(origin: Stored<Origin> | null): string {
+    if (origin === null) return 'removed';
+    switch (origin) {
+      case 'builtin':
+      case 'operator':
+        return origin;
+      default:
+        return unrecognised(origin);
+    }
+  }
+}
+
+export class GenerationStates {
+  /** A generation's state as its column head says it: nothing for an idle one. */
+  static label(state: Stored<GenerationState>): string {
+    switch (state) {
+      case 'current':
+        return 'current';
+      case 'in_use':
+        return 'in use';
+      case 'idle':
+        return '';
+      default:
+        return unrecognised(state);
+    }
+  }
+}
+
+export class ChangeKinds {
+  /** The sign a confirmed change carries: added, removed, or brought up. */
+  static sign(kind: ChangeKind): string {
+    switch (kind) {
+      case 'add':
+        return '+';
+      case 'remove':
+        return '−';
+      case 'replace':
+        return '↑';
+      default:
+        return assertNever(kind);
+    }
+  }
+}
+
 export interface SystemProgram {
   path: string;
   /** The version it reported, when the daemon could read one. */
@@ -411,7 +466,30 @@ export class RowActions {
         return assertNever(standing);
     }
   }
+
+  /** The words on `pkg`'s button under `plan`: `Undo` once staged, the change
+   * it stages otherwise; `null` for a package Ren does not install. */
+  static label(pkg: Package, plan: PackagePlan): string | null {
+    const row = RowActions.of(pkg);
+    if (row === null) return null;
+    if (plan.staged(pkg)) return 'Undo';
+    switch (row.kind) {
+      case 'install':
+        return `Install ${row.version}`;
+      case 'update':
+        return `Update ${row.version}`;
+      case 'remove':
+        return 'Remove';
+      default:
+        return assertNever(row);
+    }
+  }
 }
+
+/** Whether a change is on its way; how it ended is a toast. */
+export type Applying = { kind: 'idle' } | { kind: 'applying' };
+/** The change the operator is asked to confirm, if any. */
+export type Confirming = { kind: 'apply' } | { kind: 'restore'; generation: Generation } | null;
 
 /** A staged change as runs see it: the version they use before and after. */
 export interface Effect {
@@ -642,6 +720,11 @@ export class PackagesError extends Error {
     this.code = code;
   }
 
+  /** What a failed packages request says to the operator, whatever it threw. */
+  static say(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
   /** The daemon's message where it explains more; otherwise the code's
    * words, said for packages where the proxy's refusals read otherwise. */
   static describe(status: number, code: Stored<Refusal> | null, message: string | null): string {
@@ -748,6 +831,15 @@ export class PackageHistory {
     );
     const before = newest[max];
     this.#before = before ? (this.#versions.get(before.generation) ?? null) : null;
+  }
+
+  /** The newest generation older than the current one: what Restore brings back. */
+  static previous(listing: PackageListing): GenerationView | null {
+    return (
+      listing.generations
+        .filter((generation) => generation.generation < listing.generation)
+        .toSorted((a, b) => b.generation - a.generation)[0] ?? null
+    );
   }
 
   /** The release of `pkg` that generation `index` (0 the newest) held. */

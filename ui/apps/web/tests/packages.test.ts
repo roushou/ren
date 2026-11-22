@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ChangeKinds,
+  GenerationStates,
+  InstalledPackages,
+  Origins,
   PackageHistory,
   Platforms,
   RowActions,
@@ -400,4 +404,56 @@ test('the history sets the newest generations side by side, marking where a pack
   assert.equal(history.changed('rg' as never, 0), false);
   assert.equal(history.changed('rg' as never, 1), true);
   assert.equal(history.version('fd' as never, 1), null);
+});
+
+test('a row button names its change, and Undo once staged', async () => {
+  const read = await listing();
+  assert.deepEqual(
+    read.packages.map((p) => RowActions.label(p, PackagePlan.EMPTY)),
+    [null, 'Update 26.13.1', 'Remove', 'Install 10.5.2', null, null, 'Remove'],
+  );
+  const [, node, , fd] = read.packages;
+  assert.ok(node && fd);
+  const plan = PackagePlan.EMPTY.toggle(node);
+  assert.equal(RowActions.label(node, plan), 'Undo');
+  assert.equal(RowActions.label(fd, plan), 'Install 10.5.2');
+});
+
+test('origins, generation states and change kinds read as the view words them', async () => {
+  const read = await listing();
+  assert.deepEqual(
+    read.packages.map((p) => Origins.label(p.origin)),
+    ['builtin', 'builtin', 'builtin', 'builtin', 'builtin', 'operator', 'removed'],
+  );
+  assert.equal(Origins.label('vendor' as never), 'vendor');
+  assert.deepEqual(
+    (['current', 'in_use', 'idle', 'retired'] as never[]).map((s) => GenerationStates.label(s)),
+    ['current', 'in use', '', 'retired'],
+  );
+  assert.deepEqual(
+    (['add', 'remove', 'replace'] as const).map((k) => ChangeKinds.sign(k)),
+    ['+', '−', '↑'],
+  );
+});
+
+test('an install hash shows its first twelve digits', async () => {
+  const read = await listing();
+  const installed = read.packages[1]?.installed;
+  assert.ok(installed);
+  assert.equal(InstalledPackages.shortSha(installed), `${'ab'.repeat(6)}…`);
+});
+
+test('restore offers the newest generation older than the current one', async () => {
+  const read = await listing();
+  assert.equal(PackageHistory.previous(read)?.generation, 2);
+  assert.equal(PackageHistory.previous({ ...read, generations: [] }), null);
+});
+
+test('a failed request says its message, whatever it threw', () => {
+  assert.equal(
+    PackagesError.say(new PackagesError(409, null, null)),
+    'The request was refused (409).',
+  );
+  assert.equal(PackagesError.say(new Error('offline')), 'offline');
+  assert.equal(PackagesError.say('gone'), 'gone');
 });
