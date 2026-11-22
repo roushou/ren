@@ -279,33 +279,22 @@ pre {
 }
 .workbench-header {
   display: flex;
-  min-height: 40px;
+  min-height: 44px;
   align-items: stretch;
-  background: var(--sidebar);
+  background: var(--surface);
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
-/* A wordmark of an instance that is not production (dev, canary): framed,
-   with its tag on the frame. */
-.brand.marked .wordmark {
-  position: relative;
-  outline: 2px solid var(--warning);
-  outline-offset: 2px;
-}
+/* An instance that is not production (dev, canary) says so beside the wordmark. */
 .instance-badge {
-  position: absolute;
-  right: -9px;
-  bottom: -11px;
-  padding: 0 3px;
+  padding: 0 4px;
   background: var(--warning);
-  color: var(--surface);
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 12px;
+  color: var(--on-accent);
+  font: 700 9px/13px var(--mono);
   letter-spacing: 0.04em;
 }
 .brand {
-  padding: 0 13px;
+  padding: 0 14px;
   display: flex;
   align-items: center;
   gap: 8px;

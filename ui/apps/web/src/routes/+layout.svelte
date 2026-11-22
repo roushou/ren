@@ -341,9 +341,10 @@
       aria-current={view === 'home' ? 'page' : undefined}
       aria-label={marked ? `Home, ${marked.tag} gateway` : 'Home'}
       title={marked?.what ?? 'Home: what needs you, what is moving, what happened'}
-      ><span class="wordmark" aria-hidden="true"
-        >REN{#if marked}<span class="instance-badge">{marked.tag}</span>{/if}</span
-      ></a
+      ><span class="wordmark" aria-hidden="true">REN</span>{#if marked}<span
+          class="instance-badge"
+          aria-hidden="true">{marked.tag}</span
+        >{/if}</a
     >
     <nav class="workbench-context" aria-label="Where you are" bind:this={tabs}>
       {#if here === null}
