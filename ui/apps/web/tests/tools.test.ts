@@ -224,12 +224,12 @@ test('changes and collections post their bodies; refusals read as sentences', as
   assert.equal(changed.outcome, 'activated');
   await api.rollBack(2 as never);
   assert.deepEqual(seen, [
-    'POST /control/tools/change {"add":["fd"],"remove":[]}',
-    'POST /control/tools/rollback {"generation":2}',
+    'POST /control/packages/change {"add":["fd"],"remove":[]}',
+    'POST /control/packages/rollback {"generation":2}',
   ]);
 
   const refused = new ToolsApi(
-    respond(422, { error: 'tools_refused', message: 'fd is not installed by Ren' }),
+    respond(422, { error: 'packages_refused', message: 'fd is not installed by Ren' }),
   );
   await assert.rejects(refused.change(new ToolPlan([], ['fd' as never])), (error: unknown) => {
     assert.ok(error instanceof ToolsError);
@@ -238,7 +238,7 @@ test('changes and collections post their bodies; refusals read as sentences', as
   });
   assert.equal(
     ToolsError.describe(404, 'runs_off', null),
-    'Set REN_CONTROL_TOKEN_FILE on the UI server to manage tools here.',
+    'Set REN_CONTROL_TOKEN_FILE on the UI server to manage packages here.',
   );
   assert.equal(ToolsError.describe(418, null, null), 'The request was refused (418).');
 });

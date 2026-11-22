@@ -71,8 +71,8 @@ pub struct ManagementSetup {
     /// Agent runs, when run roots are configured; the run routes answer
     /// `runs_disabled` without it.
     pub runs: Option<ren_supervisor::Supervisor>,
-    /// The host's tools; the tools routes answer `tools_disabled` without.
-    pub tools: Option<std::sync::Arc<dyn crate::tools::Toolbox>>,
+    /// The host's packages; the packages routes answer `packages_disabled` without.
+    pub packages: Option<std::sync::Arc<dyn crate::packages::Packages>>,
     /// Where the factory writes the release, which `/api/release` reports.
     pub release: ReleaseFolder,
     /// What the daemon's poller last saw of each watched GitHub repository.

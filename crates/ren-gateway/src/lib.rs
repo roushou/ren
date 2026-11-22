@@ -50,12 +50,12 @@ pub mod github;
 pub mod lifecycle;
 mod limits;
 pub mod operator;
+pub mod packages;
 pub mod policy;
 #[cfg(test)]
 mod purity;
 pub mod reply;
 mod timeout;
-pub mod tools;
 pub mod user;
 
 pub use api::{
@@ -195,7 +195,7 @@ impl<U: Upstream> Gateway<U> {
             .merge(control.router(
                 reader,
                 management.runs,
-                management.tools,
+                management.packages,
                 release,
                 feeds_end,
             ))

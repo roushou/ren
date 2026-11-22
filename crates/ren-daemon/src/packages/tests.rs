@@ -1,17 +1,17 @@
-//! The tool store against built archives and a fake download; it needs
+//! The package store against built archives and a fake download; it needs
 //! symbolic links, so it runs on Unix.
 #![cfg(unix)]
 
 use super::{
-    ToolStore, ToolStoreError,
+    PackageStore, PackageStoreError,
     fetch::{ByteLimit, Fetch},
 };
 use ren_depot::{
     Depot,
     job::{Failure, HostFailure, JobState, Stage},
     package::{Kind, Package, PackageId},
+    package_set::{Edit, Generation, PackageSet, Plan},
     source::{ArchiveFormat, Artifact, ArtifactUrl, Platform, Release, Sha256, Source},
-    toolset::{Edit, Generation, Plan, Toolset},
 };
 use sha2::Digest as _;
 use std::{
@@ -43,7 +43,7 @@ impl Fetch for FakeFetch {
 /// thread is starting still holds the file open ("text file busy").
 #[expect(
     clippy::disallowed_methods,
-    reason = "the test runs a program the tool store installed"
+    reason = "the test runs a program the package store installed"
 )]
 fn run(program: impl AsRef<Path>) -> std::process::Output {
     for _ in 0..100 {
@@ -118,9 +118,9 @@ fn jq(source: Source) -> Depot {
     )])
 }
 
-fn plan(toolset: &Toolset, depot: &Depot, ids: &[PackageId]) -> Plan {
+fn plan(set: &PackageSet, depot: &Depot, ids: &[PackageId]) -> Plan {
     let wanted: BTreeSet<PackageId> = ids.iter().cloned().collect();
-    toolset.plan(depot, Platform::LinuxX64, &wanted).unwrap()
+    set.plan(depot, Platform::LinuxX64, &wanted).unwrap()
 }
 
 #[tokio::test]
@@ -128,7 +128,7 @@ async fn installs_a_verified_release_and_activates_it_as_a_generation() {
     let dir = tempfile::tempdir().unwrap();
     let bytes = tarball("1.7.1", |_| {});
     let (url, source) = release("1.7.1", ArchiveFormat::TarGz, &bytes, "jq-1.7.1/bin/jq");
-    let store = ToolStore::new(dir.path(), FakeFetch([(url, bytes)].into()));
+    let store = PackageStore::new(dir.path(), FakeFetch([(url, bytes)].into()));
     let depot = jq(source);
 
     let current = store.current().unwrap();
@@ -157,8 +157,8 @@ async fn a_download_with_another_digest_is_refused_and_leaves_nothing() {
     let bytes = tarball("1.7.1", |_| {});
     let (url, source) = release("1.7.1", ArchiveFormat::TarGz, &bytes, "jq-1.7.1/bin/jq");
     let tampered = tarball("6.6.6", |_| {});
-    let store = ToolStore::new(dir.path(), FakeFetch([(url, tampered.clone())].into()));
-    let plan = plan(&Toolset::empty(), &jq(source), &[PackageId::JQ]);
+    let store = PackageStore::new(dir.path(), FakeFetch([(url, tampered.clone())].into()));
+    let plan = plan(&PackageSet::empty(), &jq(source), &[PackageId::JQ]);
     let ended = store.install_plan(&plan).await;
     assert_eq!(
         ended[0].1,
@@ -173,7 +173,7 @@ async fn a_download_with_another_digest_is_refused_and_leaves_nothing() {
     assert!(!dir.path().join("store").exists());
     assert!(matches!(
         store.activate(plan),
-        Err(ToolStoreError::NotInstalled(id)) if id == PackageId::JQ
+        Err(PackageStoreError::NotInstalled(id)) if id == PackageId::JQ
     ));
 }
 
@@ -200,9 +200,9 @@ async fn archives_that_reach_outside_their_folder_are_refused() {
     for bytes in escapes {
         let dir = tempfile::tempdir().unwrap();
         let (url, source) = release("1.7.1", ArchiveFormat::TarGz, &bytes, "jq-1.7.1/bin/jq");
-        let store = ToolStore::new(dir.path(), FakeFetch([(url, bytes)].into()));
+        let store = PackageStore::new(dir.path(), FakeFetch([(url, bytes)].into()));
         let ended = store
-            .install_plan(&plan(&Toolset::empty(), &jq(source), &[PackageId::JQ]))
+            .install_plan(&plan(&PackageSet::empty(), &jq(source), &[PackageId::JQ]))
             .await;
         assert_eq!(
             ended[0].1,
@@ -238,8 +238,8 @@ async fn installs_zip_and_bare_releases_and_names_a_missing_program() {
     ] {
         let dir = tempfile::tempdir().unwrap();
         let (url, source) = release("1.8.0", format, &bytes, program_at);
-        let store = ToolStore::new(dir.path(), FakeFetch([(url, bytes)].into()));
-        let plan = plan(&Toolset::empty(), &jq(source), &[PackageId::JQ]);
+        let store = PackageStore::new(dir.path(), FakeFetch([(url, bytes)].into()));
+        let plan = plan(&PackageSet::empty(), &jq(source), &[PackageId::JQ]);
         let ended = store.install_plan(&plan).await;
         let Some(said) = said else {
             assert_eq!(
@@ -265,12 +265,12 @@ async fn collection_keeps_what_live_generations_hold() {
     let new = tarball("1.8.0", |_| {});
     let (old_url, old_source) = release("1.7.1", ArchiveFormat::TarGz, &old, "jq-1.7.1/bin/jq");
     let (new_url, new_source) = release("1.8.0", ArchiveFormat::TarGz, &new, "jq-1.8.0/bin/jq");
-    let store = ToolStore::new(
+    let store = PackageStore::new(
         dir.path(),
         FakeFetch([(old_url, old), (new_url, new)].into()),
     );
 
-    let first = plan(&Toolset::empty(), &jq(old_source), &[PackageId::JQ]);
+    let first = plan(&PackageSet::empty(), &jq(old_source), &[PackageId::JQ]);
     store.install_plan(&first).await;
     let one = store.activate(first).unwrap();
     let second = plan(&one, &jq(new_source), &[PackageId::JQ]);
@@ -308,15 +308,15 @@ async fn a_stale_plan_is_refused_at_activation() {
     let dir = tempfile::tempdir().unwrap();
     let bytes = tarball("1.7.1", |_| {});
     let (url, source) = release("1.7.1", ArchiveFormat::TarGz, &bytes, "jq-1.7.1/bin/jq");
-    let store = ToolStore::new(dir.path(), FakeFetch([(url, bytes)].into()));
+    let store = PackageStore::new(dir.path(), FakeFetch([(url, bytes)].into()));
     let depot = jq(source);
-    let first = plan(&Toolset::empty(), &depot, &[PackageId::JQ]);
-    let stale = plan(&Toolset::empty(), &depot, &[PackageId::JQ]);
+    let first = plan(&PackageSet::empty(), &depot, &[PackageId::JQ]);
+    let stale = plan(&PackageSet::empty(), &depot, &[PackageId::JQ]);
     store.install_plan(&first).await;
     store.activate(first).unwrap();
     assert!(matches!(
         store.activate(stale),
-        Err(ToolStoreError::Plan(_))
+        Err(PackageStoreError::Plan(_))
     ));
     assert_eq!(store.current().unwrap().generation().number(), 1);
 }
@@ -326,7 +326,7 @@ async fn a_change_installs_and_activates_under_the_store_lock() {
     let dir = tempfile::tempdir().unwrap();
     let bytes = tarball("1.7.1", |_| {});
     let (url, source) = release("1.7.1", ArchiveFormat::TarGz, &bytes, "jq-1.7.1/bin/jq");
-    let store = ToolStore::new(dir.path(), FakeFetch([(url, bytes)].into()));
+    let store = PackageStore::new(dir.path(), FakeFetch([(url, bytes)].into()));
     let depot = jq(source);
     let wanted = Edit {
         add: [PackageId::JQ].into(),
@@ -337,7 +337,7 @@ async fn a_change_installs_and_activates_under_the_store_lock() {
     let held = store.lock().unwrap();
     assert!(matches!(
         store.change(&depot, Platform::LinuxX64, &wanted).await,
-        Err(ToolStoreError::Busy)
+        Err(PackageStoreError::Busy)
     ));
     drop(held);
 
@@ -347,11 +347,11 @@ async fn a_change_installs_and_activates_under_the_store_lock() {
         .unwrap_or_else(|error| panic!("{error:?}"));
     assert!(matches!(
         &changed,
-        super::Changed::Activated { toolset, changes } if toolset.generation().number() == 1 && changes.len() == 1
+        super::Changed::Activated { set, changes } if set.generation().number() == 1 && changes.len() == 1
     ));
     assert!(matches!(
         store.change(&depot, Platform::LinuxX64, &wanted).await.unwrap(),
-        super::Changed::Unchanged(toolset) if toolset.generation().number() == 1
+        super::Changed::Unchanged(set) if set.generation().number() == 1
     ));
 }
 
@@ -361,7 +361,7 @@ async fn a_failed_install_leaves_the_current_generation() {
     let bytes = tarball("1.7.1", |_| {});
     let (_, source) = release("1.7.1", ArchiveFormat::TarGz, &bytes, "jq-1.7.1/bin/jq");
     // The server refuses the download.
-    let store = ToolStore::new(dir.path(), FakeFetch::default());
+    let store = PackageStore::new(dir.path(), FakeFetch::default());
     let changed = store
         .change(
             &jq(source),

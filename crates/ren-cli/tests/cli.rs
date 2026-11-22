@@ -732,7 +732,7 @@ async fn runs_through_a_gateway_send_the_control_requests() {
 }
 
 #[test]
-fn tools_lists_the_catalog_and_refuses_what_it_cannot_change_offline() {
+fn packages_lists_the_catalog_and_refuses_what_it_cannot_change_offline() {
     let temp = tempfile::tempdir().unwrap();
     let config = temp.path().join("ren.toml");
     std::fs::write(&config, "version = 1\n").unwrap();
@@ -743,7 +743,7 @@ fn tools_lists_the_catalog_and_refuses_what_it_cannot_change_offline() {
             config.to_str().unwrap(),
             "--data-dir",
             data.to_str().unwrap(),
-            "tools",
+            "packages",
         ];
         all.extend(args);
         cli(&all)
@@ -791,25 +791,25 @@ fn tools_lists_the_catalog_and_refuses_what_it_cannot_change_offline() {
 /// Hands the store one program's bytes, whatever URL it asks for.
 struct OneProgram(Vec<u8>);
 
-impl ren_daemon::tools::fetch::Fetch for OneProgram {
+impl ren_daemon::packages::fetch::Fetch for OneProgram {
     async fn fetch(
         &self,
         _: &ren_depot::source::ArtifactUrl,
         into: &std::path::Path,
-        _: ren_daemon::tools::fetch::ByteLimit,
+        _: ren_daemon::packages::fetch::ByteLimit,
     ) -> Result<(), ren_depot::job::HostFailure> {
         std::fs::write(into, &self.0).map_err(|_| ren_depot::job::HostFailure::Filesystem)
     }
 }
 
 #[tokio::test]
-async fn project_steps_run_with_rens_toolset_and_refuse_tools_it_lacks() {
-    use ren_daemon::tools::{Changed, HostTools, ToolStore};
+async fn project_steps_run_with_rens_package_set_and_refuse_packages_it_lacks() {
+    use ren_daemon::packages::{Changed, HostPrograms, PackageStore};
     use ren_depot::{
         Depot,
         package::{Kind, Package},
+        package_set::Edit,
         source::{ArchiveFormat, Artifact, Release, Sha256, Source},
-        toolset::Edit,
     };
     use sha2::Digest as _;
 
@@ -817,30 +817,30 @@ async fn project_steps_run_with_rens_toolset_and_refuse_tools_it_lacks() {
     let config = temp.path().join("ren.toml");
     std::fs::write(&config, "version = 1\n").unwrap();
     let data = temp.path().join("state");
-    // A toolset holding acme-tool, a program found nowhere else.
-    let program = b"#!/bin/sh\necho acme-tool ran\n".to_vec();
-    let platform = HostTools::platform().unwrap();
+    // A package set holding acme-lint, a program found nowhere else.
+    let program = b"#!/bin/sh\necho acme-lint ran\n".to_vec();
+    let platform = HostPrograms::platform().unwrap();
     let depot = Depot::of(vec![
         Package::new(
-            "acme-tool".parse().unwrap(),
+            "acme-lint".parse().unwrap(),
             Kind::Utility,
-            "acme-tool".parse().unwrap(),
+            "acme-lint".parse().unwrap(),
             Source::Release(Release {
                 version: "0.3.0".parse().unwrap(),
                 artifacts: vec![Artifact {
                     platform,
-                    url: "https://example.test/acme-tool".parse().unwrap(),
+                    url: "https://example.test/acme-lint".parse().unwrap(),
                     sha256: Sha256::from_bytes(sha2::Sha256::digest(&program).into()),
                     format: ArchiveFormat::Bare,
-                    program_at: "acme-tool".parse().unwrap(),
+                    program_at: "acme-lint".parse().unwrap(),
                 }],
             }),
         )
         .operator(),
     ]);
-    let store = ToolStore::new(data.join(ToolStore::FOLDER), OneProgram(program));
+    let store = PackageStore::new(data.join(PackageStore::FOLDER), OneProgram(program));
     let edit = Edit {
-        add: ["acme-tool".parse().unwrap()].into(),
+        add: ["acme-lint".parse().unwrap()].into(),
         remove: Default::default(),
     };
     assert!(matches!(
@@ -850,10 +850,10 @@ async fn project_steps_run_with_rens_toolset_and_refuse_tools_it_lacks() {
 
     let project = temp.path().join("acme");
     std::fs::create_dir_all(project.join(".ren")).unwrap();
-    let check = |tools: &str| {
+    let check = |packages: &str| {
         std::fs::write(
             project.join(".ren/project.toml"),
-            format!("tools = [{tools}]\n[[check]]\nname = \"tool\"\nrun = [\"acme-tool\"]\n"),
+            format!("packages = [{packages}]\n[[check]]\nname = \"lint\"\nrun = [\"acme-lint\"]\n"),
         )
         .unwrap();
         Command::new(env!("CARGO_BIN_EXE_ren"))
@@ -873,25 +873,25 @@ async fn project_steps_run_with_rens_toolset_and_refuse_tools_it_lacks() {
             .unwrap()
     };
 
-    let output = check("\"acme-tool\"");
+    let output = check("\"acme-lint\"");
     success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("==> Tools: generation 1 (acme-tool 0.3.0)"),
+        stdout.contains("==> Packages: generation 1 (acme-lint 0.3.0)"),
         "{stdout}"
     );
-    assert!(stdout.contains("acme-tool ran"), "{stdout}");
+    assert!(stdout.contains("acme-lint ran"), "{stdout}");
     assert!(stdout.contains("Every check passed."), "{stdout}");
 
-    // A tool Ren installs but has not, and one it does not know, are
+    // A package Ren installs but has not, and one it does not know, are
     // refused before any step runs, each with what to do.
-    let output = check("\"acme-tool\", \"bun\", \"acme-none\"");
+    let output = check("\"acme-lint\", \"bun\", \"acme-none\"");
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("bun is not in Ren's toolset: run `ren tools install bun`"),
+        stderr.contains("bun is not in Ren's package set: run `ren packages install bun`"),
         "{stderr}"
     );
     assert!(stderr.contains("no package is named acme-none"), "{stderr}");
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("acme-tool ran"));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("acme-lint ran"));
 }

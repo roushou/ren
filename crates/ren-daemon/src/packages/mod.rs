@@ -1,5 +1,5 @@
-//! The tool store on disk: carrying out the depot's install jobs and
-//! switching toolset generations. Under its root:
+//! The package store on disk: carrying out the depot's install jobs and
+//! switching package set generations. Under its root:
 //!
 //! ```text
 //! store/<id>/<version>-<digest>/   one immutable install each
@@ -9,6 +9,11 @@
 //! current -> generations/<n>       switched by one rename
 //! ```
 //!
+//! The folder (`tools`) and each generation's `toolset.json` keep the names
+//! they were first written with: runs started before an upgrade have the
+//! folder on their search path, and stores already on disk are read as
+//! they are.
+//!
 //! Every change is a rename of a finished folder or link, so a crash leaves
 //! either the old state or the new one, plus leftovers that the next install
 //! or collection removes. One daemon owns its store.
@@ -16,10 +21,10 @@
 mod archive;
 pub mod fetch;
 mod host;
-mod toolbox;
+mod manager;
 
-pub use host::HostTools;
-pub use toolbox::HostToolbox;
+pub use host::HostPrograms;
+pub use manager::HostPackages;
 
 use archive::Download;
 use fetch::{ByteLimit, Fetch};
@@ -27,8 +32,8 @@ use ren_depot::{
     Depot,
     job::{HostFailure, InstallJob, JobAction, JobEvent, JobState},
     package::PackageId,
+    package_set::{Change, Edit, Generation, Install, PackageSet, Plan, PlanError},
     source::{Artifact, Platform, RelativePath, Sha256},
-    toolset::{Change, Edit, Generation, Install, Plan, PlanError, Toolset},
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
@@ -38,9 +43,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Why the tool store could not do what was asked.
+/// Why the package store could not do what was asked.
 #[derive(Debug, thiserror::Error)]
-pub enum ToolStoreError {
+pub enum PackageStoreError {
     #[error("cannot {action}")]
     Io {
         action: &'static str,
@@ -53,15 +58,15 @@ pub enum ToolStoreError {
     NotInstalled(PackageId),
     #[error(transparent)]
     Plan(#[from] PlanError),
-    #[error("toolsets need symbolic links, which this platform lacks")]
+    #[error("package sets need symbolic links, which this platform lacks")]
     Unsupported,
-    #[error("another change to the tool store is in progress")]
+    #[error("another change to the package store is in progress")]
     Busy,
     #[error("generation {0} is not kept")]
     NoGeneration(Generation),
 }
 
-impl ToolStoreError {
+impl PackageStoreError {
     fn io(action: &'static str) -> impl FnOnce(io::Error) -> Self {
         move |source| Self::Io { action, source }
     }
@@ -69,25 +74,25 @@ impl ToolStoreError {
 
 /// `generations/<n>/toolset.json`.
 #[derive(Debug, Serialize, Deserialize)]
-struct StoredToolset {
+struct StoredPackageSet {
     generation: Generation,
     installs: Vec<Install>,
 }
 
-/// How a change to the toolset ended.
+/// How a change to the package set ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
 pub enum Changed {
     /// The current generation already held what was wanted.
-    Unchanged(Toolset),
+    Unchanged(PackageSet),
     /// Every install succeeded, and the next generation is current.
     Activated {
-        toolset: Toolset,
+        set: PackageSet,
         changes: Vec<Change>,
     },
     /// An install did not succeed; the current generation stays.
     Failed {
-        current: Toolset,
+        current: PackageSet,
         jobs: Vec<(Install, JobState)>,
     },
 }
@@ -99,12 +104,12 @@ struct WriteLock(#[expect(dead_code, reason = "held for its lock")] fs::File);
 
 impl WriteLock {
     /// Whether `file`'s lock was free and is now this process's.
-    fn taken(file: &fs::File) -> Result<bool, ToolStoreError> {
+    fn taken(file: &fs::File) -> Result<bool, PackageStoreError> {
         match file.try_lock() {
             Ok(()) => Ok(true),
             Err(fs::TryLockError::WouldBlock) => Ok(false),
             Err(fs::TryLockError::Error(error)) => {
-                Err(ToolStoreError::io("lock the tool store")(error))
+                Err(PackageStoreError::io("lock the package store")(error))
             }
         }
     }
@@ -117,14 +122,14 @@ pub struct Collected {
     pub installs: Vec<RelativePath>,
 }
 
-/// The installs and toolset generations under one folder.
+/// The installs and package set generations under one folder.
 #[derive(Debug, Clone)]
-pub struct ToolStore<F> {
+pub struct PackageStore<F> {
     root: PathBuf,
     fetch: F,
 }
 
-impl ToolStore<()> {
+impl PackageStore<()> {
     /// The folder under the data directory the store lives in.
     pub const FOLDER: &str = "tools";
 
@@ -138,7 +143,7 @@ impl ToolStore<()> {
     }
 }
 
-impl<F> ToolStore<F> {
+impl<F> PackageStore<F> {
     fn installed_at(&self, dir: &RelativePath) -> PathBuf {
         dir.parts()
             .fold(self.root.join("store"), |path, part| path.join(part))
@@ -159,31 +164,31 @@ impl<F> ToolStore<F> {
     }
 
     /// The current generation; generation 0, empty, before any.
-    pub fn current(&self) -> Result<Toolset, ToolStoreError> {
+    pub fn current(&self) -> Result<PackageSet, PackageStoreError> {
         match fs::read_link(self.root.join("current")) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Toolset::empty()),
-            Err(error) => Err(ToolStoreError::io("read the current generation")(error)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(PackageSet::empty()),
+            Err(error) => Err(PackageStoreError::io("read the current generation")(error)),
             Ok(target) => {
                 let generation = target
                     .file_name()
                     .and_then(|name| name.to_str())
                     .and_then(|name| name.parse().ok())
-                    .ok_or(ToolStoreError::Corrupt(Generation::NONE))?;
+                    .ok_or(PackageStoreError::Corrupt(Generation::NONE))?;
                 self.generation(generation)
             }
         }
     }
 
     /// A generation as it was activated.
-    pub fn generation(&self, generation: Generation) -> Result<Toolset, ToolStoreError> {
+    pub fn generation(&self, generation: Generation) -> Result<PackageSet, PackageStoreError> {
         let text = fs::read(self.generation_dir(generation).join("toolset.json"))
-            .map_err(|_| ToolStoreError::Corrupt(generation))?;
-        let stored: StoredToolset =
-            serde_json::from_slice(&text).map_err(|_| ToolStoreError::Corrupt(generation))?;
+            .map_err(|_| PackageStoreError::Corrupt(generation))?;
+        let stored: StoredPackageSet =
+            serde_json::from_slice(&text).map_err(|_| PackageStoreError::Corrupt(generation))?;
         if stored.generation != generation {
-            return Err(ToolStoreError::Corrupt(generation));
+            return Err(PackageStoreError::Corrupt(generation));
         }
-        Ok(Toolset::restore(stored.generation, stored.installs))
+        Ok(PackageSet::restore(stored.generation, stored.installs))
     }
 
     const LOCK_TRIES: u32 = 100;
@@ -191,7 +196,7 @@ impl<F> ToolStore<F> {
 
     /// The store's write lock, or `Busy` when another writer holds it. It
     /// waits on the calling thread: for blocking code only.
-    fn lock(&self) -> Result<WriteLock, ToolStoreError> {
+    fn lock(&self) -> Result<WriteLock, PackageStoreError> {
         let file = self.lock_file()?;
         for _ in 0..Self::LOCK_TRIES {
             if WriteLock::taken(&file)? {
@@ -199,12 +204,12 @@ impl<F> ToolStore<F> {
             }
             std::thread::sleep(Self::LOCK_WAIT);
         }
-        Err(ToolStoreError::Busy)
+        Err(PackageStoreError::Busy)
     }
 
     /// The write lock, as `lock` takes it, waiting without holding a
     /// runtime thread.
-    async fn lock_waiting(&self) -> Result<WriteLock, ToolStoreError> {
+    async fn lock_waiting(&self) -> Result<WriteLock, PackageStoreError> {
         let file = self.lock_file()?;
         for _ in 0..Self::LOCK_TRIES {
             if WriteLock::taken(&file)? {
@@ -212,51 +217,51 @@ impl<F> ToolStore<F> {
             }
             tokio::time::sleep(Self::LOCK_WAIT).await;
         }
-        Err(ToolStoreError::Busy)
+        Err(PackageStoreError::Busy)
     }
 
     /// The lock file. A process started at the same moment can hold a
     /// copy of a just closed lock until it runs its program, so a held
     /// lock is tried again for a second before it counts as another
     /// writer's.
-    fn lock_file(&self) -> Result<fs::File, ToolStoreError> {
-        fs::create_dir_all(&self.root).map_err(ToolStoreError::io("make the tool store"))?;
+    fn lock_file(&self) -> Result<fs::File, PackageStoreError> {
+        fs::create_dir_all(&self.root).map_err(PackageStoreError::io("make the package store"))?;
         fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
             .open(self.root.join(".lock"))
-            .map_err(ToolStoreError::io("open the tool store's lock"))
+            .map_err(PackageStoreError::io("open the package store's lock"))
     }
 
     /// Every generation kept, newest first. One that cannot be read is
     /// left out.
-    pub fn generations(&self) -> Result<Vec<Toolset>, ToolStoreError> {
-        let mut generations: Vec<Toolset> = Self::entries(&self.root.join("generations"))?
+    pub fn generations(&self) -> Result<Vec<PackageSet>, PackageStoreError> {
+        let mut generations: Vec<PackageSet> = Self::entries(&self.root.join("generations"))?
             .into_iter()
             .filter_map(|(name, _)| name.parse::<Generation>().ok())
             .filter_map(|generation| self.generation(generation).ok())
             .collect();
-        generations.sort_by_key(|toolset| std::cmp::Reverse(toolset.generation()));
+        generations.sort_by_key(|set| std::cmp::Reverse(set.generation()));
         Ok(generations)
     }
 
-    /// Make `plan`'s toolset the current generation. Every install it adds
+    /// Make `plan`'s package set the current generation. Every install it adds
     /// must be in the store; a plan made from an older generation is
     /// refused.
     #[cfg(test)]
-    pub(crate) fn activate(&self, plan: Plan) -> Result<Toolset, ToolStoreError> {
+    pub(crate) fn activate(&self, plan: Plan) -> Result<PackageSet, PackageStoreError> {
         let _lock = self.lock()?;
         self.activate_locked(plan)
     }
 
-    fn activate_locked(&self, plan: Plan) -> Result<Toolset, ToolStoreError> {
+    fn activate_locked(&self, plan: Plan) -> Result<PackageSet, PackageStoreError> {
         if let Some((missing, _)) = plan
             .fetches()
             .iter()
             .find(|(install, _)| !self.has(install))
         {
-            return Err(ToolStoreError::NotInstalled(missing.package.clone()));
+            return Err(PackageStoreError::NotInstalled(missing.package.clone()));
         }
         let current = self.current()?;
         let next = plan.apply(&current)?;
@@ -268,7 +273,8 @@ impl<F> ToolStore<F> {
         for leftover in [&partial, &dir] {
             let _ = fs::remove_dir_all(leftover);
         }
-        fs::create_dir_all(partial.join("bin")).map_err(ToolStoreError::io("make a generation"))?;
+        fs::create_dir_all(partial.join("bin"))
+            .map_err(PackageStoreError::io("make a generation"))?;
         for link in next.links() {
             let target = link
                 .target
@@ -278,17 +284,17 @@ impl<F> ToolStore<F> {
                 });
             Self::link(&target, &partial.join("bin").join(link.name.as_str()))?;
         }
-        let stored = StoredToolset {
+        let stored = StoredPackageSet {
             generation: next.generation(),
             installs: next.installs().cloned().collect(),
         };
-        let json = serde_json::to_vec_pretty(&stored).map_err(|error| ToolStoreError::Io {
+        let json = serde_json::to_vec_pretty(&stored).map_err(|error| PackageStoreError::Io {
             action: "write a generation",
             source: io::Error::other(error),
         })?;
         fs::write(partial.join("toolset.json"), json)
-            .map_err(ToolStoreError::io("write a generation"))?;
-        fs::rename(&partial, &dir).map_err(ToolStoreError::io("make a generation"))?;
+            .map_err(PackageStoreError::io("write a generation"))?;
+        fs::rename(&partial, &dir).map_err(PackageStoreError::io("make a generation"))?;
         let switching = self.root.join(".current.partial");
         let _ = fs::remove_file(&switching);
         Self::link(
@@ -296,13 +302,13 @@ impl<F> ToolStore<F> {
             &switching,
         )?;
         fs::rename(&switching, self.root.join("current"))
-            .map_err(ToolStoreError::io("switch the current generation"))?;
+            .map_err(PackageStoreError::io("switch the current generation"))?;
         Ok(next)
     }
 
     /// Remove every generation except the current one and those in `live`
     /// (generations runs still use), and every install none of them holds.
-    pub fn collect(&self, live: &[Generation]) -> Result<Collected, ToolStoreError> {
+    pub fn collect(&self, live: &[Generation]) -> Result<Collected, PackageStoreError> {
         let _lock = self.lock()?;
         let current = self.current()?;
         let mut kept = vec![current.clone()];
@@ -311,8 +317,8 @@ impl<F> ToolStore<F> {
                 kept.push(self.generation(*generation)?);
             }
         }
-        let keep: BTreeSet<Generation> = kept.iter().map(Toolset::generation).collect();
-        let retained = Toolset::retained(&kept.iter().collect::<Vec<_>>());
+        let keep: BTreeSet<Generation> = kept.iter().map(PackageSet::generation).collect();
+        let retained = PackageSet::retained(&kept.iter().collect::<Vec<_>>());
         let mut collected = Collected::default();
 
         for (name, path) in Self::entries(&self.root.join("generations"))? {
@@ -321,7 +327,7 @@ impl<F> ToolStore<F> {
                 Ok(generation) => collected.generations.push(generation),
                 Err(_) => {}
             }
-            fs::remove_dir_all(path).map_err(ToolStoreError::io("remove a generation"))?;
+            fs::remove_dir_all(path).map_err(PackageStoreError::io("remove a generation"))?;
         }
         for (package, package_dir) in Self::entries(&self.root.join("store"))? {
             for (version, path) in Self::entries(&package_dir)? {
@@ -329,7 +335,7 @@ impl<F> ToolStore<F> {
                 if dir.as_ref().is_some_and(|dir| retained.contains(dir)) {
                     continue;
                 }
-                fs::remove_dir_all(&path).map_err(ToolStoreError::io("remove an install"))?;
+                fs::remove_dir_all(&path).map_err(PackageStoreError::io("remove an install"))?;
                 collected.installs.extend(dir);
             }
             // Only succeeds once the package has no installs left.
@@ -341,14 +347,14 @@ impl<F> ToolStore<F> {
     }
 
     /// The entries of `dir` by name; none when it does not exist.
-    fn entries(dir: &Path) -> Result<Vec<(String, PathBuf)>, ToolStoreError> {
+    fn entries(dir: &Path) -> Result<Vec<(String, PathBuf)>, PackageStoreError> {
         let read = match fs::read_dir(dir) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            other => other.map_err(ToolStoreError::io("list the tool store"))?,
+            other => other.map_err(PackageStoreError::io("list the package store"))?,
         };
         let mut entries = Vec::new();
         for entry in read {
-            let entry = entry.map_err(ToolStoreError::io("list the tool store"))?;
+            let entry = entry.map_err(PackageStoreError::io("list the package store"))?;
             let name = entry.file_name().to_string_lossy().into_owned();
             entries.push((name, entry.path()));
         }
@@ -356,17 +362,17 @@ impl<F> ToolStore<F> {
     }
 
     #[cfg(unix)]
-    fn link(target: &Path, at: &Path) -> Result<(), ToolStoreError> {
-        std::os::unix::fs::symlink(target, at).map_err(ToolStoreError::io("make a link"))
+    fn link(target: &Path, at: &Path) -> Result<(), PackageStoreError> {
+        std::os::unix::fs::symlink(target, at).map_err(PackageStoreError::io("make a link"))
     }
 
     #[cfg(not(unix))]
-    fn link(_target: &Path, _at: &Path) -> Result<(), ToolStoreError> {
-        Err(ToolStoreError::Unsupported)
+    fn link(_target: &Path, _at: &Path) -> Result<(), PackageStoreError> {
+        Err(PackageStoreError::Unsupported)
     }
 }
 
-impl<F: Fetch> ToolStore<F> {
+impl<F: Fetch> PackageStore<F> {
     /// The most a release's download may be.
     pub const DOWNLOAD_LIMIT: ByteLimit = ByteLimit::new(512 * 1024 * 1024);
 
@@ -386,7 +392,7 @@ impl<F: Fetch> ToolStore<F> {
         depot: &Depot,
         platform: Platform,
         edit: &Edit,
-    ) -> Result<Changed, ToolStoreError> {
+    ) -> Result<Changed, PackageStoreError> {
         let _lock = self.lock_waiting().await?;
         let current = self.current()?;
         let wanted = current.wanted_after(edit)?;
@@ -399,30 +405,30 @@ impl<F: Fetch> ToolStore<F> {
             return Ok(Changed::Failed { current, jobs });
         }
         let changes = plan.changes().to_vec();
-        let toolset = self.activate_locked(plan)?;
-        Ok(Changed::Activated { toolset, changes })
+        let set = self.activate_locked(plan)?;
+        Ok(Changed::Activated { set, changes })
     }
 
     /// Make the next generation hold exactly what `generation` held, from
     /// installs still in the store; nothing is downloaded. The store is
     /// locked throughout.
-    pub fn roll_back(&self, generation: Generation) -> Result<Changed, ToolStoreError> {
+    pub fn roll_back(&self, generation: Generation) -> Result<Changed, PackageStoreError> {
         let _lock = self.lock()?;
         let current = self.current()?;
         if generation == Generation::NONE || !self.generation_dir(generation).is_dir() {
-            return Err(ToolStoreError::NoGeneration(generation));
+            return Err(PackageStoreError::NoGeneration(generation));
         }
         let older = self.generation(generation)?;
         if let Some(missing) = older.installs().find(|install| !self.has(install)) {
-            return Err(ToolStoreError::NotInstalled(missing.package.clone()));
+            return Err(PackageStoreError::NotInstalled(missing.package.clone()));
         }
         let plan = current.back_to(&older);
         if plan.is_empty() {
             return Ok(Changed::Unchanged(current));
         }
         let changes = plan.changes().to_vec();
-        let toolset = self.activate_locked(plan)?;
-        Ok(Changed::Activated { toolset, changes })
+        let set = self.activate_locked(plan)?;
+        Ok(Changed::Activated { set, changes })
     }
 
     /// Install every release `plan` adds that the store lacks, one at a

@@ -36,8 +36,8 @@ archived_at: number | null,
  */
 model: string | null, effort: string | null, approvals: string | null, 
 /**
- * The toolset generation on its search path: 0 when Ren had installed
- * none; `None` when unknown: the tool store was unreadable, or the store
+ * The package set generation on its search path: 0 when Ren had installed
+ * none; `None` when unknown: the package store was unreadable, or the store
  * holds none for the run.
  */
 toolset: number | null, };

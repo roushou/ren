@@ -1,5 +1,5 @@
-//! `/control/v1/tools` end to end: the daemon's toolbox behind the control
-//! API, over a tool store in a temporary folder, a catalog of one test
+//! `/control/v1/packages` end to end: the daemon's packages behind the control
+//! API, over a package store in a temporary folder, a catalog of one test
 //! release, and downloads served from memory. No network.
 #![allow(
     clippy::unwrap_used,
@@ -12,8 +12,8 @@
 mod support;
 
 use axum::Router;
-use ren_daemon::tools::{
-    HostToolbox, HostTools, ToolStore,
+use ren_daemon::packages::{
+    HostPackages, HostPrograms, PackageStore,
     fetch::{ByteLimit, Fetch},
 };
 use ren_depot::{
@@ -66,8 +66,8 @@ async fn gateway(dir: &Path) -> (TestGateway, support::Mock) {
     gateway_with(dir, "data", Jq::Configured).await
 }
 
-/// A gateway with its storage in `dir/data`, over the tool store in
-/// `dir/tools`.
+/// A gateway with its storage in `dir/data`, over the package store in
+/// `dir/packages`.
 async fn gateway_with(dir: &Path, data: &str, jq: Jq) -> (TestGateway, support::Mock) {
     let bytes = tarball();
     let jq = match jq {
@@ -98,18 +98,18 @@ async fn gateway_with(dir: &Path, data: &str, jq: Jq) -> (TestGateway, support::
         Source::System,
     );
     let depot = Depot::of(jq.into_iter().chain([codex]).collect());
-    let toolbox = HostToolbox::new(
-        ToolStore::new(dir.join("tools"), MemoryFetch(bytes)),
+    let packages = HostPackages::new(
+        PackageStore::new(dir.join("packages"), MemoryFetch(bytes)),
         depot,
-        HostTools::new(Vec::new()),
+        HostPrograms::new(Vec::new()),
         Some(Platform::LinuxX64),
         None,
     );
     let upstream = mock(Router::new()).await;
-    let gateway = TestGateway::with_tools(
+    let gateway = TestGateway::with_packages(
         &support::config(&upstream),
         &dir.join(data),
-        Arc::new(toolbox),
+        Arc::new(packages),
     )
     .await;
     (gateway, upstream)
@@ -147,7 +147,7 @@ async fn lists_installs_removes_and_collects_through_the_control_api() {
     std::fs::create_dir_all(dir.path().join("data")).unwrap();
     let (gateway, _upstream) = gateway(dir.path()).await;
 
-    let (status, listing) = call(&gateway, "GET", "/control/v1/tools", None).await;
+    let (status, listing) = call(&gateway, "GET", "/control/v1/packages", None).await;
     assert_eq!(status, 200, "{listing}");
     assert_eq!(listing["api_version"], 1);
     assert_eq!(listing["platform"], "linux_x64");
@@ -160,7 +160,7 @@ async fn lists_installs_removes_and_collects_through_the_control_api() {
     let (status, changed) = call(
         &gateway,
         "POST",
-        "/control/v1/tools/change",
+        "/control/v1/packages/change",
         Some(json!({"add": ["jq"]})),
     )
     .await;
@@ -171,7 +171,7 @@ async fn lists_installs_removes_and_collects_through_the_control_api() {
         changed["changes"],
         json!([{"change": "add", "package": "jq", "from": null, "to": "1.8.2"}])
     );
-    let (_, listing) = call(&gateway, "GET", "/control/v1/tools", None).await;
+    let (_, listing) = call(&gateway, "GET", "/control/v1/packages", None).await;
     assert_eq!(listing["packages"][0]["installed"]["version"], "1.8.2");
     assert_eq!(
         listing["generations"],
@@ -190,15 +190,16 @@ async fn lists_installs_removes_and_collects_through_the_control_api() {
             "jq is both added and removed",
         ),
     ] {
-        let (status, body) = call(&gateway, "POST", "/control/v1/tools/change", Some(edit)).await;
+        let (status, body) =
+            call(&gateway, "POST", "/control/v1/packages/change", Some(edit)).await;
         assert_eq!(status, 422, "{body}");
-        assert_eq!(body["error"], "tools_refused");
+        assert_eq!(body["error"], "packages_refused");
         assert_eq!(body["message"], message);
     }
     let (status, body) = call(
         &gateway,
         "POST",
-        "/control/v1/tools/change",
+        "/control/v1/packages/change",
         Some(json!({"add": ["Bad Name"]})),
     )
     .await;
@@ -207,7 +208,7 @@ async fn lists_installs_removes_and_collects_through_the_control_api() {
     let (status, changed) = call(
         &gateway,
         "POST",
-        "/control/v1/tools/change",
+        "/control/v1/packages/change",
         Some(json!({"remove": ["jq"]})),
     )
     .await;
@@ -218,7 +219,7 @@ async fn lists_installs_removes_and_collects_through_the_control_api() {
     let (status, back) = call(
         &gateway,
         "POST",
-        "/control/v1/tools/rollback",
+        "/control/v1/packages/rollback",
         Some(json!({"generation": 1})),
     )
     .await;
@@ -232,7 +233,7 @@ async fn lists_installs_removes_and_collects_through_the_control_api() {
     let (_, again) = call(
         &gateway,
         "POST",
-        "/control/v1/tools/rollback",
+        "/control/v1/packages/rollback",
         Some(json!({"generation": 1})),
     )
     .await;
@@ -240,37 +241,37 @@ async fn lists_installs_removes_and_collects_through_the_control_api() {
     let (status, body) = call(
         &gateway,
         "POST",
-        "/control/v1/tools/rollback",
+        "/control/v1/packages/rollback",
         Some(json!({"generation": 9})),
     )
     .await;
     assert_eq!(
         (status, &body["error"]),
-        (404, &json!("tools_no_generation"))
+        (404, &json!("packages_no_generation"))
     );
 
     // Collection keeps the current generation's jq and removes 1 and 2.
-    let (status, collected) = call(&gateway, "POST", "/control/v1/tools/gc", None).await;
+    let (status, collected) = call(&gateway, "POST", "/control/v1/packages/gc", None).await;
     assert_eq!(status, 200, "{collected}");
     assert_eq!(collected["generations"], json!([1, 2]));
     assert_eq!(collected["installs"], json!([]));
-    let (_, listing) = call(&gateway, "GET", "/control/v1/tools", None).await;
+    let (_, listing) = call(&gateway, "GET", "/control/v1/packages", None).await;
     assert_eq!(listing["generation"], 3);
     assert_eq!(listing["packages"][0]["program"], "jq");
     assert!(
         listing["bin"]
             .as_str()
             .unwrap()
-            .ends_with("tools/generations/3/bin")
+            .ends_with("packages/generations/3/bin")
     );
 }
 
 #[tokio::test]
-async fn tools_need_the_control_token_and_refuse_browsers() {
+async fn packages_need_the_control_token_and_refuse_browsers() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("data")).unwrap();
     let (gateway, _upstream) = gateway(dir.path()).await;
-    let url = format!("{}/control/v1/tools", gateway.base());
+    let url = format!("{}/control/v1/packages", gateway.base());
     let response = client().get(&url).send().await.unwrap();
     assert_eq!(response.status().as_u16(), 401);
     let response = client()
@@ -283,7 +284,7 @@ async fn tools_need_the_control_token_and_refuse_browsers() {
         .await
         .unwrap();
     assert_eq!(response.status().as_u16(), 403);
-    assert!(!dir.path().join("tools/current").exists());
+    assert!(!dir.path().join("packages/current").exists());
 }
 
 #[tokio::test]
@@ -292,12 +293,12 @@ async fn an_install_taken_out_of_the_catalog_is_listed_until_removed() {
     std::fs::create_dir_all(dir.path().join("data")).unwrap();
     {
         let (gateway, _upstream) = gateway(dir.path()).await;
-        let (_, listing) = call(&gateway, "GET", "/control/v1/tools", None).await;
+        let (_, listing) = call(&gateway, "GET", "/control/v1/packages", None).await;
         assert_eq!(listing["packages"][0]["origin"], "operator");
         let (status, changed) = call(
             &gateway,
             "POST",
-            "/control/v1/tools/change",
+            "/control/v1/packages/change",
             Some(json!({ "add": ["jq"] })),
         )
         .await;
@@ -305,7 +306,7 @@ async fn an_install_taken_out_of_the_catalog_is_listed_until_removed() {
     }
     std::fs::create_dir_all(dir.path().join("later")).unwrap();
     let (gateway, _upstream) = gateway_with(dir.path(), "later", Jq::TakenOut).await;
-    let (_, listing) = call(&gateway, "GET", "/control/v1/tools", None).await;
+    let (_, listing) = call(&gateway, "GET", "/control/v1/packages", None).await;
     let jq = listing["packages"]
         .as_array()
         .unwrap()
@@ -320,7 +321,7 @@ async fn an_install_taken_out_of_the_catalog_is_listed_until_removed() {
     let (status, unchanged) = call(
         &gateway,
         "POST",
-        "/control/v1/tools/change",
+        "/control/v1/packages/change",
         Some(json!({ "add": ["jq"] })),
     )
     .await;
@@ -328,13 +329,13 @@ async fn an_install_taken_out_of_the_catalog_is_listed_until_removed() {
     let (status, changed) = call(
         &gateway,
         "POST",
-        "/control/v1/tools/change",
+        "/control/v1/packages/change",
         Some(json!({ "remove": ["jq"] })),
     )
     .await;
     assert_eq!(status, 200, "{changed}");
     assert_eq!(changed["changes"][0]["change"], "remove");
-    let (_, listing) = call(&gateway, "GET", "/control/v1/tools", None).await;
+    let (_, listing) = call(&gateway, "GET", "/control/v1/packages", None).await;
     assert!(
         listing["packages"]
             .as_array()

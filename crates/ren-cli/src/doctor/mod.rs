@@ -9,10 +9,10 @@ use crate::client::GatewayChoice;
 use crate::style::{Styling, Tone};
 use gateway::GatewayProbe;
 pub use gateway::ProbeError;
-use ren_daemon::config::{Config, ToolsOptions};
-use ren_daemon::tools::HostTools;
+use ren_daemon::config::{Config, PackagesOptions};
+use ren_daemon::packages::HostPrograms;
 use ren_depot::{
-    Surveyed, ToolHost,
+    ProgramHost, Surveyed,
     package::{Kind, PackageId, Requirement},
     provision::{Fit, Provision},
     version::ObservedVersion,
@@ -70,8 +70,8 @@ pub enum CheckId {
     Subscription,
     #[strum(to_string = "storage permissions")]
     StoragePermissions,
-    #[strum(to_string = "tool catalog")]
-    ToolCatalog,
+    #[strum(to_string = "package catalog")]
+    PackageCatalog,
     #[strum(to_string = "build")]
     Build,
     #[strum(to_string = "gateway")]
@@ -272,7 +272,7 @@ impl Report {
                 Err(error) => report.add(CheckId::LocalStorage, Status::Failed, error.to_string()),
             }
         }
-        report.tools(&config.tools, &HostTools::new(env.search_path()));
+        report.packages(&config.packages, &HostPrograms::new(env.search_path()));
         let overrides = Self::credential_overrides(env);
         if !overrides.is_empty() {
             report.add(
@@ -380,11 +380,11 @@ impl Report {
     /// has it and which version it reported. A missing client is a warning;
     /// a missing runtime or utility is one only when a client found here
     /// needs it.
-    fn tools(&mut self, tools: &ToolsOptions, host: &impl ToolHost) {
-        let depot = match tools.depot() {
+    fn packages(&mut self, packages: &PackagesOptions, host: &impl ProgramHost) {
+        let depot = match packages.depot() {
             Ok(depot) => depot,
             Err(error) => {
-                self.add(CheckId::ToolCatalog, Status::Failed, error.to_string());
+                self.add(CheckId::PackageCatalog, Status::Failed, error.to_string());
                 return;
             }
         };

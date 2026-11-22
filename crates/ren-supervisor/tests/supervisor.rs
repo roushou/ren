@@ -9,7 +9,7 @@
     reason = "integration tests are a shell: helpers outside #[test] fail loudly, and scripted agents are spawned tasks"
 )]
 
-use ren_depot::toolset::Generation;
+use ren_depot::package_set::Generation;
 use ren_harness::{
     Harness,
     drive::{ApprovalId, Decision},
@@ -30,7 +30,7 @@ use ren_recorder::{
 use ren_store::{Reader, Store, query::PageLimit, view::RunView};
 use ren_supervisor::{
     AgentHost, AgentProcess, CommandError, FileQuery, FoundPath, KillSignal, KillSwitch, Look,
-    PathKind, ProcessExit, RunCommand, RunRefused, RunState, RunTools, RunUpdate, StartError,
+    PathKind, ProcessExit, RunCommand, RunPackages, RunRefused, RunState, RunUpdate, StartError,
     Supervisor, SupervisorOptions, Tenure, WalkLimits, Workdir,
 };
 use ren_supervisor::{PlaceGit, Scratch, Worktree};
@@ -77,8 +77,8 @@ struct FakeHost {
     script: Script,
     spawn_fails: bool,
     spawned: Arc<Mutex<Vec<Spawned>>>,
-    /// The tools each spawned agent was given, in order.
-    tools_given: Arc<Mutex<Vec<RunTools>>>,
+    /// The packages each spawned agent was given, in order.
+    packages_given: Arc<Mutex<Vec<RunPackages>>>,
     /// Folders made, scratch runs' marked as repositories.
     made: Arc<Mutex<Vec<(PathBuf, bool)>>>,
     /// Folders walked for a file search, in order.
@@ -266,7 +266,7 @@ impl FakeHost {
             script,
             spawn_fails: false,
             spawned: Arc::default(),
-            tools_given: Arc::default(),
+            packages_given: Arc::default(),
             made: Arc::default(),
             walked: Arc::default(),
             files: Arc::default(),
@@ -291,9 +291,9 @@ impl AgentHost for FakeHost {
         run: ren_recorder::id::RunId,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess> {
-        let agent = self.spawn(plan, workdir, tools)?;
+        let agent = self.spawn(plan, workdir, packages)?;
         let Some(holds) = &self.holds else {
             return Ok(agent);
         };
@@ -342,7 +342,7 @@ impl AgentHost for FakeHost {
     fn client_stamp(
         &self,
         program: &str,
-        _tools: &RunTools,
+        _packages: &RunPackages,
     ) -> Option<ren_supervisor::ClientStamp> {
         Some(ren_supervisor::ClientStamp::new(
             PathBuf::from("/bin").join(program),
@@ -374,7 +374,7 @@ impl AgentHost for FakeHost {
         folder: &Path,
         _data: &Path,
         branch: &str,
-        _tools: &RunTools,
+        _packages: &RunPackages,
     ) -> io::Result<()> {
         assert!(branch.starts_with("ren/"), "{branch}");
         self.worktrees
@@ -384,7 +384,7 @@ impl AgentHost for FakeHost {
         Ok(())
     }
 
-    fn remove_worktree(&self, worktree: &Worktree, _tools: &RunTools) -> io::Result<()> {
+    fn remove_worktree(&self, worktree: &Worktree, _packages: &RunPackages) -> io::Result<()> {
         let folder = worktree.folder();
         self.worktrees
             .lock()
@@ -441,7 +441,7 @@ impl AgentHost for FakeHost {
         Ok(())
     }
 
-    fn make_scratch(&self, dir: &Path, _tools: &RunTools) -> io::Result<Scratch> {
+    fn make_scratch(&self, dir: &Path, _packages: &RunPackages) -> io::Result<Scratch> {
         self.made.lock().unwrap().push((dir.to_path_buf(), true));
         Ok(Scratch::Repository)
     }
@@ -472,10 +472,10 @@ impl AgentHost for FakeHost {
         Ok(())
     }
 
-    fn tools(&self) -> RunTools {
-        RunTools::Toolset {
+    fn packages(&self) -> RunPackages {
+        RunPackages::PackageSet {
             generation: Generation::from(4),
-            bin: "/data/tools/generations/4/bin".into(),
+            bin: "/data/packages/generations/4/bin".into(),
         }
     }
 
@@ -483,12 +483,12 @@ impl AgentHost for FakeHost {
         &self,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess> {
         if self.spawn_fails {
             return Err(io::Error::from(io::ErrorKind::NotFound));
         }
-        self.tools_given.lock().unwrap().push(tools.clone());
+        self.packages_given.lock().unwrap().push(packages.clone());
         let command = plan.command(None, &[]);
         self.envs.lock().unwrap().push(
             command
@@ -555,7 +555,7 @@ impl AgentHost for FakeHost {
         &self,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess> {
         let command = plan.command(None, &[]);
         let login = command
@@ -563,7 +563,7 @@ impl AgentHost for FakeHost {
             .next()
             .is_some_and(|argument| argument == "login");
         if !login {
-            return self.spawn(plan, workdir, tools);
+            return self.spawn(plan, workdir, packages);
         }
         // Codex's `login status`, signed out; not counted as an agent.
         let (stdin, _agent_in) = tokio::io::duplex(1024);
@@ -585,9 +585,9 @@ impl AgentHost for FakeHost {
         &self,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess> {
-        self.spawn_with_stderr(plan, workdir, tools)
+        self.spawn_with_stderr(plan, workdir, packages)
     }
 
     fn open_local(
@@ -997,7 +997,7 @@ fn prompt() -> RunCommand {
 async fn runs_a_turn_through_an_approval_and_stops() {
     let host = FakeHost::new(Script::Codex);
     let spawned = host.spawned.clone();
-    let tools_given = host.tools_given.clone();
+    let packages_given = host.packages_given.clone();
     let supervised = supervise(host).await;
     let supervisor = &supervised.supervisor;
     let mut updates = supervisor.subscribe();
@@ -1017,9 +1017,9 @@ async fn runs_a_turn_through_an_approval_and_stops() {
     let (arguments, workdir) = spawned.lock().unwrap()[0].clone();
     assert_eq!(arguments[..3], ["app-server", "--listen", "stdio://"]);
     assert_eq!(workdir, PathBuf::from("/work/acme"));
-    // The run got the host's current toolset.
+    // The run got the host's current package set.
     assert_eq!(
-        tools_given.lock().unwrap()[0].generation(),
+        packages_given.lock().unwrap()[0].generation(),
         Some(Generation::from(4))
     );
     let waiting = state(

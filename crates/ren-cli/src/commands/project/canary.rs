@@ -10,7 +10,7 @@
 //! decides make the project's release, kept in `<data>/projects/<name>`.
 //! When the policy promotes, the contract's deploy step runs in the checked
 //! build; a deploy that fails is marked and not tried again on its own.
-//! A tool the contract names that cannot be had fails the build check.
+//! A package the contract names that cannot be had fails the build check.
 //! Each pass, and each promotion, closes the project's work items as Ren's
 //! canary closes Ren's: landed from `main`'s trailers, shipped by the build
 //! production runs.
@@ -232,7 +232,7 @@ impl ProjectFactory {
 
     /// The project's checks of the checked-out build: its build steps, its
     /// serve step up and answering, then each declared check against it.
-    /// A check that cannot run fails; steps that cannot be had (a tool
+    /// A check that cannot run fails; steps that cannot be had (a package
     /// the contract names is lacking) fail the build.
     async fn check(
         &self,

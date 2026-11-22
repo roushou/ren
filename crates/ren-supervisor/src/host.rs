@@ -10,7 +10,7 @@ use crate::{
     worktree::Worktree,
 };
 use futures_util::future::BoxFuture;
-use ren_depot::toolset::Generation;
+use ren_depot::package_set::Generation;
 use ren_harness::{launch::LaunchPlan, sign_in::LocalRedirect};
 use ren_recorder::id::RunId;
 use std::{
@@ -39,18 +39,18 @@ pub trait AgentHost: Send + Sync + 'static {
     /// Whether `program` is on the path a started process searches.
     fn finds(&self, program: &str) -> bool;
 
-    /// The installed client a process with `tools` would start as
+    /// The installed client a process with `packages` would start as
     /// `program`, as its file is now; `None` when it is not found.
-    fn client_stamp(&self, program: &str, tools: &RunTools) -> Option<ClientStamp>;
+    fn client_stamp(&self, program: &str, packages: &RunPackages) -> Option<ClientStamp>;
 
     /// Create `dir` and the folders above it, where they are missing.
     fn make_dir(&self, dir: &Path) -> io::Result<()>;
 
     /// Create `dir`, a new empty folder a scratch run works in, and make
-    /// it a git repository with the git on `tools`' search path, so what
+    /// it a git repository with the git on `packages`' search path, so what
     /// the run changes can be read as changes. A folder git could not
     /// make a repository is still made, and says why.
-    fn make_scratch(&self, dir: &Path, tools: &RunTools) -> io::Result<Scratch>;
+    fn make_scratch(&self, dir: &Path, packages: &RunPackages) -> io::Result<Scratch>;
 
     /// Write `bytes` to `incoming`, a new file, then move it to `target`,
     /// making the folders above each where they are missing: `target`
@@ -63,17 +63,17 @@ pub trait AgentHost: Send + Sync + 'static {
     /// Remove `dir` and everything in it; one already gone is not an error.
     fn remove_tree(&self, dir: &Path) -> io::Result<()>;
 
-    /// The toolset a process started now gets: the current generation of
-    /// the tools Ren installed here.
-    fn tools(&self) -> RunTools;
+    /// The package set a process started now gets: the current generation of
+    /// the packages Ren installed here.
+    fn packages(&self) -> RunPackages;
 
-    /// Start `plan` in `workdir`, with piped stdin and stdout, and `tools`'
+    /// Start `plan` in `workdir`, with piped stdin and stdout, and `packages`'
     /// folder first on its search path.
     fn spawn(
         &self,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess>;
 
     /// Start `run`'s client process, as [`Self::spawn`] does. A host that
@@ -85,10 +85,10 @@ pub trait AgentHost: Send + Sync + 'static {
         run: RunId,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess> {
         let _ = run;
-        self.spawn(plan, workdir, tools)
+        self.spawn(plan, workdir, packages)
     }
 
     /// The runs whose run hosts kept them going while no daemon ran, each
@@ -120,17 +120,17 @@ pub trait AgentHost: Send + Sync + 'static {
         folder: &Path,
         data: &Path,
         branch: &str,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<()> {
-        let _ = (repo, folder, data, branch, tools);
+        let _ = (repo, folder, data, branch, packages);
         Err(io::ErrorKind::Unsupported.into())
     }
 
     /// Remove `worktree`: stop its preview's units, then remove its
     /// worktree and its data folder, and its branch once merged. A worktree
     /// holding changes not committed is kept, and the error says so.
-    fn remove_worktree(&self, worktree: &Worktree, tools: &RunTools) -> io::Result<()> {
-        let _ = (worktree, tools);
+    fn remove_worktree(&self, worktree: &Worktree, packages: &RunPackages) -> io::Result<()> {
+        let _ = (worktree, packages);
         Err(io::ErrorKind::Unsupported.into())
     }
 
@@ -147,7 +147,7 @@ pub trait AgentHost: Send + Sync + 'static {
         &self,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess>;
 
     /// Start `plan`, a client's login that needs a terminal, on a
@@ -157,7 +157,7 @@ pub trait AgentHost: Send + Sync + 'static {
         &self,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess>;
 
     /// Do `work`, which reads or writes the filesystem or waits on a short
@@ -218,28 +218,28 @@ impl ClientStamp {
     }
 }
 
-/// The tools a process starts with, as the host read them when it started.
+/// The packages a process starts with, as the host read them when it started.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RunTools {
-    /// Ren has installed no tools here (generation 0): the process gets the
+pub enum RunPackages {
+    /// Ren has installed no packages here (generation 0): the process gets the
     /// host's search path alone.
     Empty,
     /// A generation, and its folder of programs.
-    Toolset {
+    PackageSet {
         generation: Generation,
         bin: PathBuf,
     },
-    /// The tool store could not be read: the process gets the host's search
+    /// The package store could not be read: the process gets the host's search
     /// path alone, and which generation it would have had is unknown.
     Unreadable,
 }
 
-impl RunTools {
+impl RunPackages {
     /// The generation to record; `None` when unknown.
     pub fn generation(&self) -> Option<Generation> {
         match self {
             Self::Empty => Some(Generation::NONE),
-            Self::Toolset { generation, .. } => Some(*generation),
+            Self::PackageSet { generation, .. } => Some(*generation),
             Self::Unreadable => None,
         }
     }
@@ -247,7 +247,7 @@ impl RunTools {
     /// The folder to put first on the search path, if any.
     pub fn bin(&self) -> Option<&Path> {
         match self {
-            Self::Toolset { bin, .. } => Some(bin),
+            Self::PackageSet { bin, .. } => Some(bin),
             Self::Empty | Self::Unreadable => None,
         }
     }

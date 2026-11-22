@@ -28,7 +28,7 @@ use crate::{
     SessionSnapshot, StartError, Warmup,
     client::Client,
     files::{FileMatch, FileQuery, FoundPath},
-    host::{AgentHost, KillSwitch, RunTools},
+    host::{AgentHost, KillSwitch, RunPackages},
     journal::{Entry, Start},
     place::Search,
     run::{ProcessExit, RunCommand, RunState},
@@ -475,7 +475,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         let journaled = opening.clone();
         let (codec, opening_lines) = Driver::open(harness, opening, &self.version, seed);
         let run = RunId::generate(self.ids.as_ref());
-        let tools = self.host.tools();
+        let packages = self.host.packages();
         // Every run is recorded: without room, it does not start.
         let tap = self
             .recorder
@@ -485,7 +485,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                 harness,
                 workdir.as_str().to_owned(),
                 settings.clone(),
-                tools.generation(),
+                packages.generation(),
             )
             .map_err(StartError::Unrecorded)?;
         serving.started(run);
@@ -496,7 +496,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             workdir: workdir.clone(),
             settings,
         };
-        let agent = match self.host.start_run(run, &plan, &workdir, &tools) {
+        let agent = match self.host.start_run(run, &plan, &workdir, &packages) {
             Ok(agent) => agent,
             Err(source) => {
                 let (process, effects) = Process::unstarted(serving);
@@ -527,7 +527,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         };
         let (process, effects) = Process::opening(serving, codec, opening_lines, first);
         let mut live = self.take_on(process, agent, 0, Lines::new(self.line_limit), served);
-        live.book = self.book_key(harness, &workdir, &tools);
+        live.book = self.book_key(harness, &workdir, &packages);
         live.tap = Some(tap);
         // The start goes into the journal before the client is sent a line.
         if let Some(holding) = live.held.as_mut() {
@@ -722,10 +722,10 @@ impl<H: AgentHost> SupervisorTask<H> {
         &self,
         harness: Harness,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> Option<CommandKey> {
         self.host
-            .client_stamp(harness.profile().program, tools)
+            .client_stamp(harness.profile().program, packages)
             .map(|stamp| CommandKey {
                 harness,
                 stamp,

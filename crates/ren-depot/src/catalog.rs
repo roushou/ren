@@ -35,7 +35,7 @@ struct CatalogFile {
 }
 
 /// One package as a catalog writes it: the built-in `catalog.toml`'s
-/// `[[package]]` tables, and the operator's `[[tools.package]]`.
+/// `[[package]]` tables, and the operator's `[[packages]]`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogEntry {
@@ -148,19 +148,20 @@ mod tests {
     use super::{Catalog, CatalogEntry, CatalogError};
     use crate::package::{Origin, PackageId};
 
-    /// Operator entries as `ren.toml`'s `[tools]` section writes them.
+    /// Operator entries, written in the built-in catalog's `[[package]]`
+    /// form.
     fn entries(text: &str) -> Vec<CatalogEntry> {
         #[derive(serde::Deserialize)]
-        struct Tools {
+        struct Entries {
             package: Vec<CatalogEntry>,
         }
-        toml::from_str::<Tools>(text).unwrap().package
+        toml::from_str::<Entries>(text).unwrap().package
     }
 
     const ACME: &str = "[[package]]\nid = \"acme-lint\"\nkind = \"utility\"\nprogram = \"acme-lint\"\n[package.release]\nversion = \"0.3.0\"\n[[package.release.artifact]]\nplatform = \"linux_x64\"\nurl = \"https://example.test/acme-lint.tar.gz\"\nsha256 = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\nformat = \"tar_gz\"\nprogram_at = \"acme-lint\"\n";
 
     #[test]
-    fn operator_entries_add_packages_and_replace_builtin_tools_in_place() {
+    fn operator_entries_add_packages_and_replace_builtin_ones_in_place() {
         let builtin = Catalog::read(include_str!("catalog.toml")).unwrap();
         let count = builtin.0.len();
         let node = "[[package]]\nid = \"node\"\nkind = \"runtime\"\nprogram = \"node\"\n";

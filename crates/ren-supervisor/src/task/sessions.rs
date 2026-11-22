@@ -156,7 +156,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         });
         if let Some(worktree) = worktree
             && let Err(error) = self
-                .off_task(move |host| host.remove_worktree(&worktree, &host.tools()))
+                .off_task(move |host| host.remove_worktree(&worktree, &host.packages()))
                 .await
         {
             tracing::warn!(%session, %error, "a deleted session's worktree was kept");
@@ -666,7 +666,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                 ));
                 let making = folder.clone();
                 let made = self
-                    .off_task(move |host| host.make_scratch(&making, &host.tools()))
+                    .off_task(move |host| host.make_scratch(&making, &host.packages()))
                     .await
                     .map_err(StartError::Scratch)?;
                 match made {
@@ -711,7 +711,7 @@ impl<H: AgentHost> SupervisorTask<H> {
                 let (folder, data) = (worktree.folder(), worktree.data());
                 let making = folder.clone();
                 self.off_task(move |host| {
-                    host.make_worktree(repo.as_path(), &making, &data, &branch, &host.tools())
+                    host.make_worktree(repo.as_path(), &making, &data, &branch, &host.packages())
                 })
                 .await
                 .map_err(StartError::Worktree)?;

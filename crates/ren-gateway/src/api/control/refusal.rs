@@ -117,14 +117,14 @@ pub enum ControlRefusal {
     RedirectElsewhere,
     RedirectIncomplete,
 
-    // Tools.
-    ToolsDisabled,
-    ToolsBusy,
-    ToolsNoGeneration,
-    ToolsCollected,
-    ToolsUnsupported,
-    ToolsRefused,
-    ToolsFailed,
+    // Packages.
+    PackagesDisabled,
+    PackagesBusy,
+    PackagesNoGeneration,
+    PackagesCollected,
+    PackagesUnsupported,
+    PackagesRefused,
+    PackagesFailed,
 
     // Work items.
     /// An order with no noted mark, too many marks, or text past its limit.
@@ -157,7 +157,7 @@ impl ControlRefusal {
             | Self::NoApprovals => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::CrossSite | Self::Forbidden => StatusCode::FORBIDDEN,
-            Self::NotFound | Self::NotRunning | Self::RunsDisabled | Self::ToolsNoGeneration => {
+            Self::NotFound | Self::NotRunning | Self::RunsDisabled | Self::PackagesNoGeneration => {
                 StatusCode::NOT_FOUND
             }
             Self::BackupRunning
@@ -189,8 +189,8 @@ impl ControlRefusal {
             | Self::RedirectNotAnAddress
             | Self::RedirectElsewhere
             | Self::RedirectIncomplete
-            | Self::ToolsBusy
-            | Self::ToolsCollected
+            | Self::PackagesBusy
+            | Self::PackagesCollected
             | Self::WorkState
             | Self::NotPromotable
             | Self::ProjectTaken
@@ -204,15 +204,15 @@ impl ControlRefusal {
             | Self::AttachmentUnrecognized
             | Self::AttachmentUnreadable
             | Self::AttachmentTooWide
-            | Self::ToolsRefused
+            | Self::PackagesRefused
             | Self::InvalidOrder
             | Self::InvalidProject => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Unrecordable
             | Self::BackupFailed
             | Self::Unreadable
             | Self::AttachmentStorage
-            | Self::ToolsFailed => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::ToolsUnsupported => StatusCode::NOT_IMPLEMENTED,
+            | Self::PackagesFailed => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::PackagesUnsupported => StatusCode::NOT_IMPLEMENTED,
             Self::SpawnFailed | Self::ModelsUnavailable | Self::CommandsUnavailable => {
                 StatusCode::BAD_GATEWAY
             }
@@ -223,7 +223,7 @@ impl ControlRefusal {
             | Self::NoWorktree
             | Self::WorktreesFull
             | Self::NoAttachments
-            | Self::ToolsDisabled => StatusCode::SERVICE_UNAVAILABLE,
+            | Self::PackagesDisabled => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 

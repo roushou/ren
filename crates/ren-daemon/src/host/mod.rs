@@ -7,7 +7,7 @@
 //! `SystemTime::now`, `Instant::now`, or `Uuid::new_v4`.
 //!
 //! Agent processes are started by [`ProcessHost`], in `process`. The
-//! depot's view of the host, `HostTools`, is with the tool store in `tools`.
+//! depot's view of the host, `HostPrograms`, is with the package store in `packages`.
 
 use ren_recorder::{
     id::IdSource,

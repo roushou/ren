@@ -120,11 +120,13 @@ test('starting, listing, places, models, answering, history edits, and the feed 
   await proxy.respond(post(`/control/history/recordings/${run}/archive`, {}));
   await proxy.respond(post(`/control/history/runs/${run}/delete`, {}));
   await proxy.respond(
-    new Request('http://ui.test/control/tools', { headers: { 'sec-fetch-site': 'same-origin' } }),
+    new Request('http://ui.test/control/packages', {
+      headers: { 'sec-fetch-site': 'same-origin' },
+    }),
   );
-  await proxy.respond(post('/control/tools/change', { add: ['jq'] }));
-  await proxy.respond(post('/control/tools/rollback', { generation: 1 }));
-  await proxy.respond(post('/control/tools/gc', {}));
+  await proxy.respond(post('/control/packages/change', { add: ['jq'] }));
+  await proxy.respond(post('/control/packages/rollback', { generation: 1 }));
+  await proxy.respond(post('/control/packages/gc', {}));
   const feed = await proxy.respond(new Request('http://ui.test/control/runs/events'));
   assert.equal(await feed.text(), ': connected\n\nevent: run\ndata: {}\n\n');
   assert.deepEqual(seen, [
@@ -145,10 +147,10 @@ test('starting, listing, places, models, answering, history edits, and the feed 
     `POST /control/v1/sessions/${run}/delete`,
     `POST /control/v1/history/recordings/${run}/archive`,
     `POST /control/v1/history/runs/${run}/delete`,
-    'GET /control/v1/tools',
-    'POST /control/v1/tools/change',
-    'POST /control/v1/tools/rollback',
-    'POST /control/v1/tools/gc',
+    'GET /control/v1/packages',
+    'POST /control/v1/packages/change',
+    'POST /control/v1/packages/rollback',
+    'POST /control/v1/packages/gc',
     'GET /control/v1/runs/events',
   ]);
 });
@@ -295,8 +297,8 @@ test('cross-site, non-JSON, unknown, and unlisted requests never reach the daemo
     [new Request('http://ui.test/control/runs/clients/claude_code/sign-in/token'), 404],
     [new Request(`http://ui.test/control/history/runs/${run}/delete`), 405],
     [post('/control/pause', {}), 404],
-    [post('/control/tools/install', {}), 404],
-    [new Request('http://ui.test/control/tools/change'), 405],
+    [post('/control/packages/install', {}), 404],
+    [new Request('http://ui.test/control/packages/change'), 405],
     [new Request(`http://ui.test/control/sessions/${run}/stop`), 405],
     [post(`/control/sessions/${run}/prompt`, { text: 'x'.repeat(300 * 1024) }), 413],
   ];

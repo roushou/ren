@@ -4,7 +4,7 @@
 //! and a preview as Ren's own do.
 //!
 //! ```toml
-//! tools = ["node"]
+//! packages = ["node"]
 //!
 //! [[build]]
 //! run = ["npm", "ci"]
@@ -32,8 +32,10 @@
 //! Deploying runs in a build the canary checked, when the operator's
 //! promotion policy says (`ren project canary`, `ren project promote`).
 //!
-//! `tools` names the packages of Ren's depot its steps need (`ren tools
-//! list`); every step runs with Ren's toolset first on its search path.
+//! `packages` names the packages of Ren's depot its steps need (`ren
+//! packages list`); every step runs with Ren's package set first on its
+//! search path. The key was `tools` before; a contract that still says
+//! `tools` is refused with its new name.
 //!
 //! Every command is an argv, never a shell line. Arguments and values may
 //! name the place a step runs for ([`Place`]): `{port}` (its first port),
@@ -57,7 +59,7 @@ use std::{
 /// How a project is built, served, checked, and quiesced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectContract {
-    tools: BTreeSet<PackageId>,
+    packages: BTreeSet<PackageId>,
     build: Vec<Step>,
     serve: Option<Serve>,
     checks: Vec<NamedCheck>,
@@ -125,12 +127,29 @@ pub enum ContractError {
     Template(#[from] TemplateError),
 }
 
+/// The `tools` key, renamed to `packages`: a contract that still has it
+/// is refused with the new name rather than read without it.
+#[derive(Default)]
+struct RenamedTools;
+
+impl<'de> Deserialize<'de> for RenamedTools {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "`tools` was renamed to `packages`",
+        ))
+    }
+}
+
 /// The file's own shape, read once and parsed into the contract.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ContractFile {
     #[serde(default)]
-    tools: BTreeSet<PackageId>,
+    packages: BTreeSet<PackageId>,
+    /// `packages`' old name, refused by its new one.
+    #[serde(default)]
+    #[expect(dead_code, reason = "present only to refuse the old key")]
+    tools: RenamedTools,
     #[serde(default)]
     build: Vec<StepFile>,
     serve: Option<ServeFile>,
@@ -223,7 +242,7 @@ impl ProjectContract {
             .map(|step| Step::read(step.run, step.env))
             .transpose()?;
         Ok(Self {
-            tools: file.tools,
+            packages: file.packages,
             build,
             serve,
             checks,
@@ -233,8 +252,8 @@ impl ProjectContract {
     }
 
     /// The depot's packages its steps need.
-    pub fn tools(&self) -> &BTreeSet<PackageId> {
-        &self.tools
+    pub fn packages(&self) -> &BTreeSet<PackageId> {
+        &self.packages
     }
 
     /// Its build steps, in order.
@@ -340,7 +359,7 @@ mod tests {
     use std::path::PathBuf;
 
     const CONTRACT: &str = r#"
-tools = ["node", "jq", "node"]
+packages = ["node", "jq", "node"]
 
 [[build]]
 run = ["npm", "ci"]
@@ -379,7 +398,7 @@ run = ["./deploy.sh", "{worktree}"]
         assert_eq!(contract.build().len(), 2);
         assert_eq!(
             contract
-                .tools()
+                .packages()
                 .iter()
                 .map(|id| id.as_str())
                 .collect::<Vec<_>>(),
@@ -417,7 +436,9 @@ run = ["./deploy.sh", "{worktree}"]
         );
         // A contract may declare as little as nothing.
         let empty = ProjectContract::read("").unwrap();
-        assert!(empty.serve().is_none() && empty.checks().is_empty() && empty.tools().is_empty());
+        assert!(
+            empty.serve().is_none() && empty.checks().is_empty() && empty.packages().is_empty()
+        );
     }
 
     #[test]
@@ -435,7 +456,8 @@ run = ["./deploy.sh", "{worktree}"]
                 "health",
             ),
             ("[[build]]\nrun = [\"x\", \"{home}\"]", "placeholder"),
-            ("tools = [\"Node 22\"]", "package"),
+            ("packages = [\"Node 22\"]", "package"),
+            ("tools = [\"node\"]", "renamed to `packages`"),
             (
                 "[[build]]\nrun = [\"x\"]\nenv = { \"1BAD\" = \"v\" }",
                 "invalid name",

@@ -1,7 +1,7 @@
 //! The depot's view of this host: programs on a search path, and their
 //! versions, read by running them briefly.
 
-use ren_depot::{ToolHost, package::ProgramName, source::Platform, version::ProbeFailure};
+use ren_depot::{ProgramHost, package::ProgramName, source::Platform, version::ProbeFailure};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -9,11 +9,11 @@ use std::process::Stdio;
 /// versions, read by running them briefly. The search path is passed in
 /// (from `HostEnv`), never read here.
 #[derive(Debug, Clone)]
-pub struct HostTools {
+pub struct HostPrograms {
     search_path: Vec<PathBuf>,
 }
 
-impl HostTools {
+impl HostPrograms {
     /// How often, and how many times, a probe checks whether its program
     /// has exited: 60 checks 50 ms apart, about three seconds in all.
     const POLL: std::time::Duration = std::time::Duration::from_millis(50);
@@ -25,7 +25,7 @@ impl HostTools {
         Self { search_path }
     }
 
-    /// The platform this binary was built for, if Ren installs tools there.
+    /// The platform this binary was built for, if Ren installs packages there.
     pub fn platform() -> Option<Platform> {
         Platform::of(std::env::consts::OS, std::env::consts::ARCH)
     }
@@ -57,7 +57,7 @@ impl HostTools {
     }
 }
 
-impl ToolHost for HostTools {
+impl ProgramHost for HostPrograms {
     fn locate(&self, program: &ProgramName) -> Option<PathBuf> {
         self.search_path.iter().find_map(|dir| {
             #[cfg(windows)]
@@ -100,10 +100,10 @@ impl ToolHost for HostTools {
 
 #[cfg(test)]
 mod tests {
-    use super::HostTools;
+    use super::HostPrograms;
 
     use ren_depot::{
-        Depot, ToolHost,
+        Depot, ProgramHost,
         package::PackageId,
         provision::{Found, Provision},
         version::{ObservedVersion, ProbeFailure},
@@ -120,16 +120,16 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn host_tools_find_executables_on_their_path_and_read_versions() {
+    fn host_programs_find_executables_on_their_path_and_read_versions() {
         let first = tempfile::tempdir().unwrap();
         let second = tempfile::tempdir().unwrap();
         // Not executable here, so the next folder's `node` is the one found.
         script(first.path(), "node", "echo v1.0.0", 0o644);
         let node = script(second.path(), "node", "echo v22.17.1", 0o755);
         script(second.path(), "jq", "exit 3", 0o755);
-        let tools = HostTools::new(vec![first.path().into(), second.path().into()]);
+        let host = HostPrograms::new(vec![first.path().into(), second.path().into()]);
         let depot = Depot::builtin().unwrap();
-        let provision = |id: PackageId| depot.provision(&tools, depot.package(&id).unwrap());
+        let provision = |id: PackageId| depot.provision(&host, depot.package(&id).unwrap());
         assert_eq!(
             provision(PackageId::NODE),
             Provision::System(Found {
@@ -152,9 +152,9 @@ mod tests {
     fn a_probe_that_does_not_answer_times_out() {
         let dir = tempfile::tempdir().unwrap();
         let slow = script(dir.path(), "slow", "exec sleep 30", 0o755);
-        let tools = HostTools::new(vec![dir.path().into()]);
+        let host = HostPrograms::new(vec![dir.path().into()]);
         assert_eq!(
-            tools.probe(&slow, &["--version"]),
+            host.probe(&slow, &["--version"]),
             Err(ProbeFailure::TimedOut)
         );
     }

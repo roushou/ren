@@ -22,7 +22,7 @@ use crate::{
     work::{WorkOrder, WorkPreview, WorkStateKind},
 };
 use bytes::Bytes;
-use ren_depot::toolset::Generation;
+use ren_depot::package_set::Generation;
 use ren_harness::{
     Harness, attachment::Attachment, attribution::Attribution, drive::DriveEvent,
     settings::RunSettings,
@@ -492,8 +492,8 @@ pub enum RunFact {
         workdir: String,
         /// The settings it started with; each left out is the client's own.
         settings: RunSettings,
-        /// The toolset generation on its search path: 0 when Ren had
-        /// installed none, `None` when the tool store could not be read.
+        /// The package set generation on its search path: 0 when Ren had
+        /// installed none, `None` when the package store could not be read.
         toolset: Option<Generation>,
     },
     /// The client opened its conversation, under its own thread id.
