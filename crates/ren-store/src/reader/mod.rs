@@ -20,7 +20,7 @@ use crate::{
     },
     writer::BlobAccess,
 };
-use ren_depot::toolset::Generation;
+use ren_depot::package_set::Generation;
 use ren_protocol::{
     direction::Direction,
     label::{Labeled, Stored},
@@ -259,10 +259,10 @@ impl Reader {
             .collect()
     }
 
-    /// The toolset generations runs without an end were started with:
+    /// The package set generations runs without an end were started with:
     /// generations a collection must keep. A run left by a daemon that
     /// stopped counts until the next startup marks it recovered.
-    pub async fn live_toolsets(&self) -> Result<Vec<Generation>, StoreError> {
+    pub async fn live_generations(&self) -> Result<Vec<Generation>, StoreError> {
         let numbers: Vec<i64> = sqlx::query_scalar(
             "SELECT DISTINCT toolset_generation FROM runs WHERE ended_at IS NULL AND toolset_generation IS NOT NULL ORDER BY toolset_generation",
         )

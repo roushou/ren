@@ -3,14 +3,14 @@
 //! filesystem and git work off its thread.
 
 use super::HeldRuns;
-use crate::tools::ToolStore;
-use ren_depot::toolset::Generation;
+use crate::packages::PackageStore;
+use ren_depot::package_set::Generation;
 use ren_git::{Git, GitError, Head, Repository};
 use ren_harness::{launch::LaunchPlan, pi::PiCache, sign_in::LocalRedirect};
 use ren_recorder::id::RunId;
 use ren_supervisor::{
     AgentHost, AgentProcess, ClientStamp, FoundPath, HeldRun, KillSwitch, Look, PathKind, PlaceGit,
-    ProcessExit, RunTools, Scratch, Tenure, Untracked, WalkLimits, Workdir, Worktree,
+    ProcessExit, RunPackages, Scratch, Tenure, Untracked, WalkLimits, Workdir, Worktree,
 };
 use std::io;
 use std::path::{Path, PathBuf};
@@ -23,20 +23,20 @@ use std::process::Stdio;
 #[derive(Debug, Clone)]
 pub struct ProcessHost {
     pi: Option<PiCache>,
-    /// The host's search path, which a toolset's folder goes before.
+    /// The host's search path, which a package set's folder goes before.
     search_path: Vec<PathBuf>,
-    tools: ToolStore<()>,
+    packages: PackageStore<()>,
     /// Where runs are held through run hosts; `None` starts every run
     /// bound to the daemon.
     held: Option<HeldRuns>,
 }
 
 impl ProcessHost {
-    pub fn new(pi: Option<PiCache>, search_path: Vec<PathBuf>, tools: ToolStore<()>) -> Self {
+    pub fn new(pi: Option<PiCache>, search_path: Vec<PathBuf>, packages: PackageStore<()>) -> Self {
         Self {
             pi,
             search_path,
-            tools,
+            packages,
             held: None,
         }
     }
@@ -47,8 +47,12 @@ impl ProcessHost {
         self
     }
 
-    /// `plan`'s command, its search path set when a toolset goes first.
-    fn command(&self, plan: &LaunchPlan, tools: &RunTools) -> io::Result<std::process::Command> {
+    /// `plan`'s command, its search path set when a package set goes first.
+    fn command(
+        &self,
+        plan: &LaunchPlan,
+        packages: &RunPackages,
+    ) -> io::Result<std::process::Command> {
         let extension = if plan.loads_pi_extension() {
             let cache = self.pi.as_ref().ok_or_else(|| {
                 io::Error::other("set XDG_CACHE_HOME or HOME for the Pi extension cache")
@@ -58,25 +62,25 @@ impl ProcessHost {
             None
         };
         let mut command = plan.command(extension.as_deref(), &[]);
-        if let Some(path) = self.search_path_with(tools)? {
+        if let Some(path) = self.search_path_with(packages)? {
             command.env("PATH", path);
         }
         Ok(command)
     }
 
-    /// The search path a process with `tools` gets: their folder, then the
+    /// The search path a process with `packages` gets: their folder, then the
     /// host's. `None` leaves the inherited one.
-    fn search_path_with(&self, tools: &RunTools) -> io::Result<Option<std::ffi::OsString>> {
-        tools
+    fn search_path_with(&self, packages: &RunPackages) -> io::Result<Option<std::ffi::OsString>> {
+        packages
             .bin()
-            .map(|_| std::env::join_paths(self.search_dirs(tools)).map_err(io::Error::other))
+            .map(|_| std::env::join_paths(self.search_dirs(packages)).map_err(io::Error::other))
             .transpose()
     }
 
-    /// The folders a process with `tools` searches for programs: their
+    /// The folders a process with `packages` searches for programs: their
     /// folder, then the host's.
-    fn search_dirs(&self, tools: &RunTools) -> Vec<PathBuf> {
-        tools
+    fn search_dirs(&self, packages: &RunPackages) -> Vec<PathBuf> {
+        packages
             .bin()
             .map(Path::to_path_buf)
             .into_iter()
@@ -330,11 +334,11 @@ impl AgentHost for ProcessHost {
         path.is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
     }
 
-    fn client_stamp(&self, program: &str, tools: &RunTools) -> Option<ClientStamp> {
-        // The program a process with these tools would start: the first on
+    fn client_stamp(&self, program: &str, packages: &RunPackages) -> Option<ClientStamp> {
+        // The program a process with these packages would start: the first on
         // its search path, read through its links.
         let found = self
-            .search_dirs(tools)
+            .search_dirs(packages)
             .into_iter()
             .map(|dir| dir.join(program))
             .find(|file| file.is_file())?;
@@ -381,10 +385,10 @@ impl AgentHost for ProcessHost {
         }
     }
 
-    fn make_scratch(&self, dir: &Path, tools: &RunTools) -> io::Result<Scratch> {
+    fn make_scratch(&self, dir: &Path, packages: &RunPackages) -> io::Result<Scratch> {
         std::fs::create_dir(dir)?;
         // Without git the folder still works; its changes are not tracked.
-        let Some(git) = Git::find(&self.search_dirs(tools)) else {
+        let Some(git) = Git::find(&self.search_dirs(packages)) else {
             return Ok(Scratch::Untracked(Untracked::NoGit));
         };
         Ok(match git.init(dir) {
@@ -410,9 +414,9 @@ impl AgentHost for ProcessHost {
         folder: &Path,
         data: &Path,
         branch: &str,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<()> {
-        let git = Git::find(&self.search_dirs(tools))
+        let git = Git::find(&self.search_dirs(packages))
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no git on the runs' path"))?;
         let branch = branch
             .parse::<ren_git::Branch>()
@@ -422,11 +426,11 @@ impl AgentHost for ProcessHost {
         std::fs::create_dir_all(data)
     }
 
-    fn remove_worktree(&self, worktree: &Worktree, tools: &RunTools) -> io::Result<()> {
+    fn remove_worktree(&self, worktree: &Worktree, packages: &RunPackages) -> io::Result<()> {
         Self::stop_preview(worktree);
         let (folder, data) = (worktree.folder(), worktree.data());
         let (folder, data) = (folder.as_path(), data.as_path());
-        let git = Git::find(&self.search_dirs(tools))
+        let git = Git::find(&self.search_dirs(packages))
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no git on the runs' path"))?;
         let branch = match Git::repository(folder) {
             Repository::At(Head::Branch(branch)) => branch.parse::<ren_git::Branch>().ok(),
@@ -447,16 +451,16 @@ impl AgentHost for ProcessHost {
         Ok(())
     }
 
-    fn tools(&self) -> RunTools {
-        match self.tools.current() {
-            Ok(toolset) if toolset.generation() == Generation::NONE => RunTools::Empty,
-            Ok(toolset) => RunTools::Toolset {
-                generation: toolset.generation(),
-                bin: self.tools.bin(toolset.generation()),
+    fn packages(&self) -> RunPackages {
+        match self.packages.current() {
+            Ok(set) if set.generation() == Generation::NONE => RunPackages::Empty,
+            Ok(set) => RunPackages::PackageSet {
+                generation: set.generation(),
+                bin: self.packages.bin(set.generation()),
             },
             Err(error) => {
-                tracing::warn!(%error, "cannot read the tool store; runs start without its tools");
-                RunTools::Unreadable
+                tracing::warn!(%error, "cannot read the package store; runs start without its packages");
+                RunPackages::Unreadable
             }
         }
     }
@@ -465,9 +469,9 @@ impl AgentHost for ProcessHost {
         &self,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess> {
-        let command = self.command(plan, tools)?;
+        let command = self.command(plan, packages)?;
         Self::start(command, workdir.as_path(), Stderr::Discarded)
     }
 
@@ -476,19 +480,19 @@ impl AgentHost for ProcessHost {
         run: RunId,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess> {
         let Some(held) = &self.held else {
-            return self.spawn(plan, workdir, tools);
+            return self.spawn(plan, workdir, packages);
         };
-        let mut command = self.command(plan, tools)?;
+        let mut command = self.command(plan, packages)?;
         command.current_dir(workdir.as_path());
         // A run host does not start with the daemon's environment: the
         // search path the daemon's own runs get is given to it.
         if command.get_envs().all(|(key, _)| key != "PATH") {
             command.env(
                 "PATH",
-                std::env::join_paths(self.search_dirs(tools)).map_err(io::Error::other)?,
+                std::env::join_paths(self.search_dirs(packages)).map_err(io::Error::other)?,
             );
         }
         held.start(run, &command)
@@ -516,7 +520,7 @@ impl AgentHost for ProcessHost {
         &self,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess> {
         if plan.loads_pi_extension() {
             return Err(io::Error::other(
@@ -524,7 +528,7 @@ impl AgentHost for ProcessHost {
             ));
         }
         let mut command = plan.command(None, &[]);
-        if let Some(path) = self.search_path_with(tools)? {
+        if let Some(path) = self.search_path_with(packages)? {
             command.env("PATH", path);
         }
         Self::start(command, workdir.as_path(), Stderr::WithStdout)
@@ -534,7 +538,7 @@ impl AgentHost for ProcessHost {
         &self,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess> {
         if plan.loads_pi_extension() {
             return Err(io::Error::other(
@@ -542,7 +546,7 @@ impl AgentHost for ProcessHost {
             ));
         }
         let mut command = plan.command(None, &[]);
-        if let Some(path) = self.search_path_with(tools)? {
+        if let Some(path) = self.search_path_with(packages)? {
             command.env("PATH", path);
         }
         #[cfg(unix)]
@@ -699,9 +703,9 @@ impl ProcessHost {
 #[cfg(test)]
 mod tests {
     use super::ProcessHost;
-    use crate::tools::ToolStore;
-    use ren_depot::{Depot, source::Platform, toolset::Toolset};
-    use ren_supervisor::RunTools;
+    use crate::packages::PackageStore;
+    use ren_depot::{Depot, package_set::PackageSet, source::Platform};
+    use ren_supervisor::RunPackages;
     use ren_supervisor::{AgentHost, FileListing, PathKind, WalkLimits};
 
     #[cfg(unix)]
@@ -715,16 +719,16 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn runs_get_the_current_toolset_first_on_their_path() {
+    fn runs_get_the_current_package_set_first_on_their_path() {
         let dir = tempfile::tempdir().unwrap();
-        let store = || ToolStore::without_downloads(dir.path().join("tools"));
+        let store = || PackageStore::without_downloads(dir.path().join("packages"));
         let host = ProcessHost::new(None, vec!["/usr/bin".into(), "/bin".into()], store());
         // Nothing installed: the inherited path is left alone.
-        assert_eq!(host.tools(), RunTools::Empty);
-        assert_eq!(host.search_path_with(&RunTools::Empty).unwrap(), None);
+        assert_eq!(host.packages(), RunPackages::Empty);
+        assert_eq!(host.search_path_with(&RunPackages::Empty).unwrap(), None);
 
         let depot = Depot::builtin().unwrap();
-        let empty = Toolset::empty();
+        let empty = PackageSet::empty();
         let plan = empty
             .plan(
                 &depot,
@@ -733,61 +737,61 @@ mod tests {
             )
             .unwrap();
         let one = store().activate(plan).unwrap();
-        let tools = host.tools();
-        let bin = dir.path().join("tools/generations/1/bin");
+        let packages = host.packages();
+        let bin = dir.path().join("packages/generations/1/bin");
         assert_eq!(
-            tools,
-            RunTools::Toolset {
+            packages,
+            RunPackages::PackageSet {
                 generation: one.generation(),
                 bin: bin.clone(),
             }
         );
         assert_eq!(
-            host.search_path_with(&tools).unwrap(),
+            host.search_path_with(&packages).unwrap(),
             Some(std::env::join_paths([bin, "/usr/bin".into(), "/bin".into()]).unwrap())
         );
 
         // A current link to a generation that is not there is unreadable,
-        // never taken for no tools.
-        std::fs::remove_file(dir.path().join("tools/current")).unwrap();
-        std::os::unix::fs::symlink("generations/9", dir.path().join("tools/current")).unwrap();
-        assert_eq!(host.tools(), RunTools::Unreadable);
-        assert_eq!(RunTools::Unreadable.generation(), None);
+        // never taken for no packages.
+        std::fs::remove_file(dir.path().join("packages/current")).unwrap();
+        std::os::unix::fs::symlink("generations/9", dir.path().join("packages/current")).unwrap();
+        assert_eq!(host.packages(), RunPackages::Unreadable);
+        assert_eq!(RunPackages::Unreadable.generation(), None);
     }
 
     #[cfg(unix)]
     #[test]
     fn a_scratch_folder_is_made_by_the_runs_own_git() {
-        use ren_depot::toolset::Generation;
+        use ren_depot::package_set::Generation;
         use ren_supervisor::{AgentHost, Scratch, Untracked};
         let dir = tempfile::tempdir().unwrap();
-        let (host_bin, tools_bin) = (dir.path().join("host"), dir.path().join("tools"));
-        for bin in [&host_bin, &tools_bin] {
+        let (host_bin, packages_bin) = (dir.path().join("host"), dir.path().join("packages"));
+        for bin in [&host_bin, &packages_bin] {
             std::fs::create_dir(bin).unwrap();
         }
-        // The host's git fails; the toolset's, first on the run's path, works.
+        // The host's git fails; the package set's, first on the run's path, works.
         script(&host_bin, "git", "exit 3", 0o755);
-        script(&tools_bin, "git", "exit 0", 0o755);
-        let store = ToolStore::without_downloads(dir.path().join("store"));
+        script(&packages_bin, "git", "exit 0", 0o755);
+        let store = PackageStore::without_downloads(dir.path().join("store"));
         let host = ProcessHost::new(None, vec![host_bin], store.clone());
-        let toolset = RunTools::Toolset {
+        let set = RunPackages::PackageSet {
             generation: Generation::NONE,
-            bin: tools_bin,
+            bin: packages_bin,
         };
         assert_eq!(
-            host.make_scratch(&dir.path().join("scratch-1"), &toolset)
+            host.make_scratch(&dir.path().join("scratch-1"), &set)
                 .unwrap(),
             Scratch::Repository
         );
         let without = ProcessHost::new(None, Vec::new(), store);
         let made = dir.path().join("scratch-2");
         assert_eq!(
-            without.make_scratch(&made, &RunTools::Empty).unwrap(),
+            without.make_scratch(&made, &RunPackages::Empty).unwrap(),
             Scratch::Untracked(Untracked::NoGit)
         );
         assert!(made.is_dir(), "the folder is made without git");
         // A folder already there is never reused.
-        assert!(without.make_scratch(&made, &RunTools::Empty).is_err());
+        assert!(without.make_scratch(&made, &RunPackages::Empty).is_err());
     }
 
     #[test]
@@ -811,7 +815,7 @@ mod tests {
         let host = ProcessHost::new(
             None,
             Vec::new(),
-            ToolStore::without_downloads(root.join("tools")),
+            PackageStore::without_downloads(root.join("packages")),
         );
         let mut found: Vec<(String, PathKind)> = host
             .files(root, FileListing::LIMITS)

@@ -62,7 +62,7 @@ mod upstream {
 
 #[test]
 fn every_label_is_pinned() {
-    use ren_gateway::{WebSocketMode, api, lifecycle::retry, operator, policy, reply, tools};
+    use ren_gateway::{WebSocketMode, api, lifecycle::retry, operator, packages, policy, reply};
     let table = table![
         api::HealthStatus,
         api::ErrorCode,
@@ -82,9 +82,9 @@ fn every_label_is_pinned() {
         operator::PauseState,
         WebSocketMode,
         instance::Environment,
-        tools::GenerationState,
-        tools::ChangeOutcome,
-        tools::ChangeKind,
+        packages::GenerationState,
+        packages::ChangeOutcome,
+        packages::ChangeKind,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

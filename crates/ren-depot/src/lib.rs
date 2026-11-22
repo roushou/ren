@@ -1,17 +1,17 @@
-//! The tools Ren's agents run with: the packages Ren knows (the clients it
+//! The packages Ren's agents run with: the packages Ren knows (the clients it
 //! drives, the runtimes they run on, and the utilities they use, built in
 //! or added by the operator), what each client requires, what a host
-//! provides for each, and how toolsets are planned and installed.
+//! provides for each, and how package sets are planned and installed.
 //!
 //! The primary type is [`Depot`]. It is sans-IO: it reaches the host only
-//! through the [`ToolHost`] port, which the daemon implements.
+//! through the [`ProgramHost`] port, which the daemon implements.
 
 mod catalog;
 pub mod job;
 pub mod package;
+pub mod package_set;
 pub mod provision;
 pub mod source;
-pub mod toolset;
 pub mod version;
 
 #[cfg(test)]
@@ -26,7 +26,7 @@ use version::{ObservedVersion, ProbeFailure};
 
 /// The host capability the depot needs: finding a program on the search
 /// path the host's agents inherit, and running it to read its version.
-pub trait ToolHost {
+pub trait ProgramHost {
     /// Where `program` is on the search path, if it is there and executable.
     fn locate(&self, program: &ProgramName) -> Option<PathBuf>;
 
@@ -80,7 +80,7 @@ impl Depot {
     }
 
     /// What `host` provides for `package`.
-    pub fn provision(&self, host: &impl ToolHost, package: &Package) -> Provision {
+    pub fn provision(&self, host: &impl ProgramHost, package: &Package) -> Provision {
         match host.locate(package.program()) {
             None => Provision::Missing,
             Some(path) => {
@@ -94,7 +94,7 @@ impl Depot {
     }
 
     /// What `host` provides for every package, in catalog order.
-    pub fn survey(&self, host: &impl ToolHost) -> Vec<Surveyed> {
+    pub fn survey(&self, host: &impl ProgramHost) -> Vec<Surveyed> {
         self.catalog
             .iter()
             .map(|package| Surveyed {
@@ -107,7 +107,7 @@ impl Depot {
 
 #[cfg(test)]
 mod tests {
-    use super::{Depot, ToolHost};
+    use super::{Depot, ProgramHost};
     use crate::{
         package::{PackageId, ProgramName},
         provision::{Found, Provision},
@@ -119,7 +119,7 @@ mod tests {
     /// `fd` that hangs.
     struct FakeHost;
 
-    impl ToolHost for FakeHost {
+    impl ProgramHost for FakeHost {
         fn locate(&self, program: &ProgramName) -> Option<PathBuf> {
             ["node", "jq", "fd"]
                 .contains(&program.as_str())

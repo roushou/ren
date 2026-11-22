@@ -40,14 +40,17 @@ test('errors say the code’s words, or the status without one', () => {
   assert.equal(new RunCommandError(409, 'busy').message, 'A turn is already running.');
   assert.equal(new RunCommandError(502, null).message, 'The command was refused (502).');
   assert.equal(
-    new PackagesError(422, 'tools_refused', 'node 18 is not offered').message,
+    new PackagesError(422, 'packages_refused', 'node 18 is not offered').message,
     'node 18 is not offered.',
   );
   assert.equal(
     new PackagesError(403, 'login_not_allowed', null).message,
     'Your Tailscale login may not change packages here.',
   );
-  assert.equal(new PackagesError(409, 'tools_busy', null).message, Refusals.say('tools_busy'));
+  assert.equal(
+    new PackagesError(409, 'packages_busy', null).message,
+    Refusals.say('packages_busy'),
+  );
 });
 
 test('only the redirect refusals let another address be pasted', () => {

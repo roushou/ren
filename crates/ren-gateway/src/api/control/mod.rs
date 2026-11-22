@@ -13,6 +13,7 @@
 
 pub mod body;
 mod history;
+mod packages;
 pub mod projects;
 mod refusal;
 mod release;
@@ -20,7 +21,6 @@ pub mod request;
 mod runs;
 mod sessions;
 mod sign_in;
-mod tools;
 pub mod work;
 
 use crate::api::Versioned;
@@ -147,7 +147,7 @@ impl ControlApi {
         self,
         reader: ren_store::Reader,
         supervisor: Option<Supervisor>,
-        toolbox: Option<Arc<dyn crate::tools::Toolbox>>,
+        packages: Option<Arc<dyn crate::packages::Packages>>,
         release: crate::api::release::ReleaseFolder,
         shutdown: CancellationToken,
     ) -> Router {
@@ -186,9 +186,9 @@ impl ControlApi {
             folder: release,
         }
         .router();
-        let tools_routes = tools::ToolsApi {
+        let packages_routes = packages::PackagesApi {
             control: control.clone(),
-            toolbox,
+            packages,
         }
         .router();
         Router::new()
@@ -209,7 +209,7 @@ impl ControlApi {
             .route("/control/v1/backup", post(Self::backup))
             .with_state(control)
             .merge(run_routes)
-            .merge(tools_routes)
+            .merge(packages_routes)
             .merge(session_routes)
             .merge(history_routes)
             .merge(work_routes)

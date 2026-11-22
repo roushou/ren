@@ -80,10 +80,10 @@ impl<H: AgentHost> SupervisorTask<H> {
             return Err(SignInError::NotInstalled(harness));
         }
         let workdir = self.root_workdir()?;
-        let tools = self.host.tools();
+        let packages = self.host.packages();
         let processes = plans
             .iter()
-            .map(|plan| self.host.spawn_with_stderr(plan, &workdir, &tools))
+            .map(|plan| self.host.spawn_with_stderr(plan, &workdir, &packages))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| {
                 tracing::debug!(%harness, %error, "cannot start a client's status command");
@@ -111,13 +111,15 @@ impl<H: AgentHost> SupervisorTask<H> {
                             return Err(SignInError::NotInstalled(harness));
                         }
                         let workdir = self.root_workdir()?;
-                        let tools = self.host.tools();
+                        let packages = self.host.packages();
                         let process = match plan.console {
                             Console::Pipes => {
-                                self.host.spawn_with_stderr(&plan.launch, &workdir, &tools)
+                                self.host
+                                    .spawn_with_stderr(&plan.launch, &workdir, &packages)
                             }
                             Console::Terminal => {
-                                self.host.spawn_in_terminal(&plan.launch, &workdir, &tools)
+                                self.host
+                                    .spawn_in_terminal(&plan.launch, &workdir, &packages)
                             }
                         };
                         process
@@ -202,7 +204,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         };
         let Some(stamp) = self
             .host
-            .client_stamp(harness.profile().program, &self.host.tools())
+            .client_stamp(harness.profile().program, &self.host.packages())
         else {
             let _ = reply.send(Err(CommandsError::NotInstalled(harness)));
             return;
@@ -259,7 +261,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             CommandListing::open(harness, &self.version, &folder.as_path().to_string_lossy());
         let process = self
             .host
-            .spawn(&plan, folder, &self.host.tools())
+            .spawn(&plan, folder, &self.host.packages())
             .map_err(|error| {
                 tracing::debug!(%harness, %error, "cannot start a client to list its commands");
                 ListingError::Spawn
@@ -322,7 +324,7 @@ impl<H: AgentHost> SupervisorTask<H> {
             ModelListing::open(harness, &self.version, &workdir.as_path().to_string_lossy());
         let process = self
             .host
-            .spawn(&plan, &workdir, &self.host.tools())
+            .spawn(&plan, &workdir, &self.host.packages())
             .map_err(|error| {
                 tracing::debug!(%harness, %error, "cannot start a client to list its models");
                 ListingError::Spawn

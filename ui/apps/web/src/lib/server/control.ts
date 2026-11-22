@@ -9,7 +9,7 @@
  * `/control/v1/runs` reads (the live runs and their feed, the projects a
  * session can start in, and the clients and models it can start with), and
  * its `/control/v1/history` routes (archiving, unarchiving, and deleting a
- * recording or a run), and its `/control/v1/tools` routes (the host's tools
+ * recording or a run), and its `/control/v1/packages` routes (the host's packages
  * for agents: their listing, a change, a rollback, and a collection), and its
  * `/control/v1/work` routes (queuing a work item and moving one on). Never inference,
  * reads of history, the operator state's session blocks, or the rest of the
@@ -175,14 +175,14 @@ const routes: { pattern: RegExp; route: Route }[] = [
     ),
     route: { method: 'POST', feed: false },
   },
-  // Tools: the listing reads versions by running each program found, and a
+  // Packages: the listing reads versions by running each program found, and a
   // change downloads and unpacks releases, so both may take a while.
-  { pattern: /^\/control\/tools$/, route: { method: 'GET', feed: false, timeout: 60_000 } },
+  { pattern: /^\/control\/packages$/, route: { method: 'GET', feed: false, timeout: 60_000 } },
   {
-    pattern: /^\/control\/tools\/change$/,
+    pattern: /^\/control\/packages\/change$/,
     route: { method: 'POST', feed: false, timeout: 15 * 60_000 },
   },
-  { pattern: /^\/control\/tools\/rollback$/, route: { method: 'POST', feed: false } },
+  { pattern: /^\/control\/packages\/rollback$/, route: { method: 'POST', feed: false } },
   // The Release view's Promote: a request the factory's next pass carries out.
   { pattern: /^\/control\/release\/promote$/, route: { method: 'POST', feed: false } },
   { pattern: /^\/control\/previews\/(ask|withdraw)$/, route: { method: 'POST', feed: false } },
@@ -192,7 +192,7 @@ const routes: { pattern: RegExp; route: Route }[] = [
     pattern: new RegExp(`^/control/work/${runId}/(?:send|land|ship|dismiss)$`),
     route: { method: 'POST', feed: false },
   },
-  { pattern: /^\/control\/tools\/gc$/, route: { method: 'POST', feed: false, timeout: 60_000 } },
+  { pattern: /^\/control\/packages\/gc$/, route: { method: 'POST', feed: false, timeout: 60_000 } },
 ];
 /** Creating a session is the one POST to the session listing's own path. */
 const sessionsPath = '/control/sessions';

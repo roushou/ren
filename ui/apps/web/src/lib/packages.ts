@@ -1,6 +1,6 @@
 // The packages Ren installs for its agents on the daemon's host: what the
-// daemon's `/control/v1/tools` says (through this UI server's
-// `/control/tools` proxy), and the Packages view's pure logic: each package's
+// daemon's `/control/v1/packages` says (through this UI server's
+// `/control/packages` proxy), and the Packages view's pure logic: each package's
 // standing, the change the operator stages before applying it, and how the
 // table groups packages. No browser APIs beyond the `fetch` handed in;
 // tested in tests/packages.test.ts.
@@ -26,13 +26,13 @@ import { Refusals, type Refusal } from './refusal.ts';
 import type { GenerationInstall as WireGenerationInstall } from './wire/GenerationInstall.ts';
 import type { GenerationView as WireGenerationView } from './wire/GenerationView.ts';
 import type { InstallFailure as WireInstallFailure } from './wire/InstallFailure.ts';
-import type { InstalledTool as WireInstalledTool } from './wire/InstalledTool.ts';
+import type { InstalledPackage as WireInstalledPackage } from './wire/InstalledPackage.ts';
 import type { PackageChange as WirePackageChange } from './wire/PackageChange.ts';
-import type { SystemTool as WireSystemTool } from './wire/SystemTool.ts';
-import type { ToolChange as WireToolChange } from './wire/ToolChange.ts';
-import type { ToolCollection as WireToolCollection } from './wire/ToolCollection.ts';
-import type { ToolListing as WireToolListing } from './wire/ToolListing.ts';
-import type { ToolPackage as WireToolPackage } from './wire/ToolPackage.ts';
+import type { SystemProgram as WireSystemProgram } from './wire/SystemProgram.ts';
+import type { PackageSetChange as WirePackageSetChange } from './wire/PackageSetChange.ts';
+import type { PackageCollection as WirePackageCollection } from './wire/PackageCollection.ts';
+import type { PackageListing as WirePackageListing } from './wire/PackageListing.ts';
+import type { ListedPackage as WireListedPackage } from './wire/ListedPackage.ts';
 import type { ChangeRequest as WireChangeRequest } from './wire/ChangeRequest.ts';
 import type { RollbackRequest as WireRollbackRequest } from './wire/RollbackRequest.ts';
 
@@ -170,22 +170,22 @@ const version = branded<'Version'>();
 const generation = brandedCount<'Generation'>();
 
 const listing = versioned(
-  object<PackageListing, WireToolListing>({
+  object<PackageListing, WirePackageListing>({
     platform: nullable(label(platforms)),
     generation,
     bin: nullable(string),
     packages: array(
-      object<Package, WireToolPackage>({
+      object<Package, WireListedPackage>({
         id: packageId,
         origin: nullable(label(origins)),
         kind: nullable(label(KINDS)),
         program: string,
         release: nullable(version),
         installed: nullable(
-          object<InstalledPackage, WireInstalledTool>({ version, sha256: string, dir: string }),
+          object<InstalledPackage, WireInstalledPackage>({ version, sha256: string, dir: string }),
         ),
         system: nullable(
-          object<SystemProgram, WireSystemTool>({
+          object<SystemProgram, WireSystemProgram>({
             path: string,
             version: nullable(version),
             unread: nullable(string),
@@ -207,7 +207,7 @@ const listing = versioned(
 );
 
 const change = versioned(
-  object<GenerationChange, WireToolChange>({
+  object<GenerationChange, WirePackageSetChange>({
     outcome: label(outcomes),
     generation,
     changes: array(
@@ -230,7 +230,7 @@ const change = versioned(
 );
 
 const collection = versioned(
-  object<PackageCollection, WireToolCollection>({
+  object<PackageCollection, WirePackageCollection>({
     generations: array(generation),
     installs: array(string),
   }),
@@ -535,7 +535,7 @@ export class PackagePlan {
     );
   }
 
-  /** The edit `/control/tools/change` takes. */
+  /** The edit `/control/packages/change` takes. */
   body(): { add: PackageId[]; remove: PackageId[] } & WireChangeRequest {
     return { add: [...this.add].sort(), remove: [...this.remove].sort() };
   }
@@ -647,9 +647,9 @@ export class PackagesError extends Error {
   static describe(status: number, code: Stored<Refusal> | null, message: string | null): string {
     if (code === null) return `The request was refused (${status}).`;
     switch (code) {
-      case 'tools_refused':
-      case 'tools_no_generation':
-      case 'tools_collected':
+      case 'packages_refused':
+      case 'packages_no_generation':
+      case 'packages_collected':
         return message === null ? Refusals.say(code) : `${message}.`;
       case 'runs_off':
         return 'Set REN_CONTROL_TOKEN_FILE on the UI server to manage packages here.';
@@ -661,8 +661,7 @@ export class PackagesError extends Error {
   }
 }
 
-/** The daemon's packages, through this UI server's proxy (its routes are
- * still named tools). */
+/** The daemon's packages, through this UI server's proxy. */
 export class PackagesApi {
   readonly #fetch: typeof fetch;
 
@@ -671,25 +670,25 @@ export class PackagesApi {
   }
 
   listing(signal?: AbortSignal): Promise<PackageListing> {
-    return this.#request('GET', '/control/tools', undefined, listing, signal);
+    return this.#request('GET', '/control/packages', undefined, listing, signal);
   }
 
   change(plan: PackagePlan): Promise<GenerationChange> {
-    return this.#request('POST', '/control/tools/change', plan.body(), change);
+    return this.#request('POST', '/control/packages/change', plan.body(), change);
   }
 
   /** Make the next generation hold what a kept `generation` held. */
   rollBack(generation: Generation): Promise<GenerationChange> {
     return this.#request(
       'POST',
-      '/control/tools/rollback',
+      '/control/packages/rollback',
       { generation } satisfies WireRollbackRequest,
       change,
     );
   }
 
   collect(): Promise<PackageCollection> {
-    return this.#request('POST', '/control/tools/gc', {}, collection);
+    return this.#request('POST', '/control/packages/gc', {}, collection);
   }
 
   async #request<T>(

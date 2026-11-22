@@ -54,7 +54,7 @@ impl RunTap {
         harness: Harness,
         workdir: String,
         settings: RunSettings,
-        toolset: Option<ren_depot::toolset::Generation>,
+        toolset: Option<ren_depot::package_set::Generation>,
     ) -> Result<Self, RunUnrecorded> {
         // Every slot first: a run starts recorded whole, or not at all.
         let created = match session {

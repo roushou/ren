@@ -276,9 +276,9 @@ spec (phase 7):
    - A repository declares in `.ren/project.toml` how it is built, served,
      checked, and quiesced (`ren-project`, sans-IO): argv steps whose
      values name the worktree's ports, data, and folder through parsed
-     placeholders. Its `tools` name the depot packages its steps need;
-     every step runs with Ren's current toolset first on its `PATH`, and a
-     tool lacking refuses the command (or, in a canary, fails its build).
+     placeholders. Its `packages` name the depot packages its steps need;
+     every step runs with Ren's current package set first on its `PATH`, and a
+     package lacking refuses the command (or, in a canary, fails its build).
    - `ren project check` runs its checks in a worktree; `ren project
      preview up` builds it, serves it on the worktree's ports as
      `ren-preview-<worktree>-serve`, and records the preview on the work

@@ -1,36 +1,36 @@
-//! `ren tools`: the runtimes and utilities Ren installs on this host for its
-//! agents, from the catalog built into this Ren. It acts on this host's
-//! data directory through the same toolbox as the daemon's
-//! `/control/v1/tools`, beside or without a running daemon; the store's
+//! `ren packages`: the runtimes and utilities Ren installs on this host for
+//! its agents, from the catalog built into this Ren. It acts on this
+//! host's data directory through the same `HostPackages` as the daemon's
+//! `/control/v1/packages`, beside or without a running daemon; the store's
 //! lock keeps the two from changing it at once.
 use crate::context::Context;
 use anyhow::{Context as _, Result, bail};
 use clap::{Args, Subcommand};
-use ren_daemon::tools::{HostToolbox, HostTools, ToolStore, fetch::ReqwestFetch};
+use ren_daemon::packages::{HostPackages, HostPrograms, PackageStore, fetch::ReqwestFetch};
 use ren_depot::{
     package::{Origin, PackageId},
-    toolset::{Edit, Generation},
+    package_set::{Edit, Generation},
 };
-use ren_gateway::tools::{ChangeKind, ChangeOutcome, ToolChange, ToolListing};
+use ren_gateway::packages::{ChangeKind, ChangeOutcome, PackageListing, PackageSetChange};
 use ren_store::{Reader, Store};
 use std::{collections::BTreeSet, process::ExitCode};
 
 /// Install runtimes and utilities for Ren's agents on this host.
 #[derive(Args)]
-pub struct ToolsCmd {
+pub struct PackagesCmd {
     #[command(subcommand)]
-    action: ToolsAction,
+    action: PackagesAction,
 }
 
 #[derive(Subcommand)]
-enum ToolsAction {
+enum PackagesAction {
     /// Every package Ren knows: what this host's PATH has, and what Ren
     /// installed.
     List(ListArgs),
     /// Download, verify, and install packages as a new generation.
-    Install(Packages),
+    Install(PackageNames),
     /// Leave packages out of a new generation. Their files stay until `gc`.
-    Remove(Packages),
+    Remove(PackageNames),
     /// Make the next generation hold what a kept generation held, from
     /// installs still in the store.
     Rollback(RollbackArgs),
@@ -43,31 +43,31 @@ enum ToolsAction {
 
 #[derive(Args)]
 struct RollbackArgs {
-    /// The generation to go back to, as `ren tools list --json` lists them.
+    /// The generation to go back to, as `ren packages list --json` lists them.
     generation: Generation,
 }
 
 #[derive(Args)]
 struct WhichArgs {
-    /// A package name, as `ren tools list` shows it.
+    /// A package name, as `ren packages list` shows it.
     package: PackageId,
 }
 
 #[derive(Args)]
 struct ListArgs {
-    /// Print the listing `/control/v1/tools` answers with.
+    /// Print the listing `/control/v1/packages` answers with.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Args)]
-struct Packages {
-    /// Package names, as `ren tools list` shows them.
+struct PackageNames {
+    /// Package names, as `ren packages list` shows them.
     #[arg(required = true)]
     packages: Vec<PackageId>,
 }
 
-impl ToolsCmd {
+impl PackagesCmd {
     pub async fn run(self, ctx: &Context) -> Result<ExitCode> {
         let config = ctx.config()?;
         let data_dir = ctx.data_dir(&config)?;
@@ -78,32 +78,33 @@ impl ToolsCmd {
         } else {
             None
         };
-        let toolbox = HostToolbox::new(
-            ToolStore::new(
-                data_dir.join(ToolStore::FOLDER),
+        let packages = HostPackages::new(
+            PackageStore::new(
+                data_dir.join(PackageStore::FOLDER),
                 ReqwestFetch::new().context("cannot start downloads")?,
             ),
-            config.tools.depot()?,
-            HostTools::new(ctx.env.search_path()),
-            HostTools::platform(),
+            config.packages.depot()?,
+            HostPrograms::new(ctx.env.search_path()),
+            HostPrograms::platform(),
             reader,
         );
         match self.action {
-            ToolsAction::List(args) => {
-                let listing = toolbox.read_listing().await?;
+            PackagesAction::List(args) => {
+                let listing = packages.read_listing().await?;
                 if args.json {
                     // As the control API sends it.
-                    let sent =
-                        ren_gateway::api::control::body::tools::ToolListing::from(listing.clone());
+                    let sent = ren_gateway::api::control::body::packages::PackageListing::from(
+                        listing.clone(),
+                    );
                     println!("{}", serde_json::to_string_pretty(&sent)?);
                 } else {
                     print!("{}", Self::table(&listing));
                 }
                 Ok(ExitCode::SUCCESS)
             }
-            ToolsAction::Install(args) => {
+            PackagesAction::Install(args) => {
                 Self::change(
-                    &toolbox,
+                    &packages,
                     Edit {
                         add: args.packages.into_iter().collect(),
                         remove: BTreeSet::new(),
@@ -111,9 +112,9 @@ impl ToolsCmd {
                 )
                 .await
             }
-            ToolsAction::Remove(args) => {
+            PackagesAction::Remove(args) => {
                 Self::change(
-                    &toolbox,
+                    &packages,
                     Edit {
                         add: BTreeSet::new(),
                         remove: args.packages.into_iter().collect(),
@@ -121,9 +122,11 @@ impl ToolsCmd {
                 )
                 .await
             }
-            ToolsAction::Rollback(args) => Self::report(toolbox.go_back(args.generation).await?),
-            ToolsAction::Which(args) => {
-                let listing = toolbox.read_listing().await?;
+            PackagesAction::Rollback(args) => {
+                Self::report(packages.go_back(args.generation).await?)
+            }
+            PackagesAction::Which(args) => {
+                let listing = packages.read_listing().await?;
                 let Some(package) = listing.packages.iter().find(|p| p.id == args.package) else {
                     bail!("no package is named {}", args.package);
                 };
@@ -139,8 +142,8 @@ impl ToolsCmd {
                 }
                 Ok(ExitCode::SUCCESS)
             }
-            ToolsAction::Gc => {
-                let collected = toolbox.sweep().await?;
+            PackagesAction::Gc => {
+                let collected = packages.sweep().await?;
                 for generation in &collected.generations {
                     println!("removed generation {generation}");
                 }
@@ -157,12 +160,12 @@ impl ToolsCmd {
 
     /// Apply `edit`: install what it adds and make the next generation
     /// current; nothing changes unless every install succeeds.
-    async fn change(toolbox: &HostToolbox<ReqwestFetch>, edit: Edit) -> Result<ExitCode> {
-        Self::report(toolbox.apply(edit).await?)
+    async fn change(packages: &HostPackages<ReqwestFetch>, edit: Edit) -> Result<ExitCode> {
+        Self::report(packages.apply(edit).await?)
     }
 
     /// Print how a change ended.
-    fn report(changed: ToolChange) -> Result<ExitCode> {
+    fn report(changed: PackageSetChange) -> Result<ExitCode> {
         match changed.outcome {
             ChangeOutcome::Unchanged => {
                 println!("nothing to change (generation {})", changed.generation);
@@ -197,7 +200,7 @@ impl ToolsCmd {
         }
     }
 
-    fn table(listing: &ToolListing) -> String {
+    fn table(listing: &PackageListing) -> String {
         let rows: Vec<[String; 5]> = listing
             .packages
             .iter()

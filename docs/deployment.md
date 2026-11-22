@@ -499,7 +499,7 @@ A repository declares how Ren builds, serves, checks, and quiesces it in
 a preview as Ren's own do:
 
 ```toml
-tools = ["node"]
+packages = ["node"]
 
 [[build]]
 run = ["npm", "ci"]
@@ -526,26 +526,26 @@ name the worktree's first port `{port}`, another `{port+N}` (within its
 100), its data folder `{data}`, and its folder `{worktree}` (`{workspace}`,
 its name before the rename, still reads the same).
 
-Every step, the serve unit's included, runs with Ren's toolset (`ren
-tools`, see [clients.md](clients.md#tools-for-agents)) first on its `PATH`,
+Every step, the serve unit's included, runs with Ren's package set (`ren
+packages`, see [clients.md](clients.md#packages-for-agents)) first on its `PATH`,
 then the caller's, as Ren's runs do: the current generation, named when
-the command starts (`==> Tools: generation 3 (node 26.13.1, ...)`).
-`tools` names the packages the steps need. One Ren installs must be in
+the command starts (`==> Packages: generation 3 (node 26.13.1, ...)`).
+`packages` names the packages the steps need. One Ren installs must be in
 that generation, so steps run the release Ren pins, not another copy on
 the host; one Ren only adopts (git) must be on the host's `PATH`; and a
-package the catalog does not know is added as a `[[tools.package]]` in the
+package the catalog does not know is added as a `[[packages]]` in the
 daemon's `ren.toml`, as for Go:
 
 ```toml
-[[tools.package]]
+[[packages]]
 id = "go"
 kind = "runtime"
 program = "go"
 
-[tools.package.release]
+[packages.release]
 version = "1.25.4"
 
-[[tools.package.release.artifact]]
+[[packages.release.artifact]]
 platform = "linux_x64"
 url = "https://go.dev/dl/go1.25.4.linux-amd64.tar.gz"
 sha256 = "<64 hex digits from go.dev/dl>"
@@ -553,9 +553,9 @@ format = "tar_gz"
 program_at = "go/bin/go"
 ```
 
-A tool lacking refuses `check`, `preview`, and `promote` before any step
-runs, each with what to do (`ren tools install node`); in a canary pass it
-fails the build check. `ren tools gc` keeps the generations runs use, not
+A package lacking refuses `check`, `preview`, and `promote` before any step
+runs, each with what to do (`ren packages install node`); in a canary pass it
+fails the build check. `ren packages gc` keeps the generations runs use, not
 the one a preview or canary serves with: after a change, start them again
 before collecting.
 

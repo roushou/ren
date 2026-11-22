@@ -4,7 +4,7 @@
 //! verbatim instead of failing the query.
 
 use crate::{StoreError, query::Cursor};
-use ren_depot::toolset::Generation;
+use ren_depot::package_set::Generation;
 use ren_harness::attribution::{HintIssue, HintSource};
 use ren_harness::drive::DriveEventKind;
 use ren_harness::tools::CallPurpose;
@@ -761,8 +761,8 @@ pub struct RunView {
     pub model: Option<String>,
     pub effort: Option<Stored<Effort>>,
     pub approvals: Option<Stored<ApprovalPolicy>>,
-    /// The toolset generation on its search path: 0 when Ren had installed
-    /// none; `None` when unknown: the tool store was unreadable, or the store
+    /// The package set generation on its search path: 0 when Ren had installed
+    /// none; `None` when unknown: the package store was unreadable, or the store
     /// holds none for the run.
     pub toolset: Option<Generation>,
 }

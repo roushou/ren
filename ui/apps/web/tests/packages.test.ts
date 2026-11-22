@@ -226,12 +226,12 @@ test('changes and collections post their bodies; refusals read as sentences', as
   assert.equal(changed.outcome, 'activated');
   await api.rollBack(2 as never);
   assert.deepEqual(seen, [
-    'POST /control/tools/change {"add":["fd"],"remove":[]}',
-    'POST /control/tools/rollback {"generation":2}',
+    'POST /control/packages/change {"add":["fd"],"remove":[]}',
+    'POST /control/packages/rollback {"generation":2}',
   ]);
 
   const refused = new PackagesApi(
-    respond(422, { error: 'tools_refused', message: 'fd is not installed by Ren' }),
+    respond(422, { error: 'packages_refused', message: 'fd is not installed by Ren' }),
   );
   await assert.rejects(refused.change(new PackagePlan([], ['fd' as never])), (error: unknown) => {
     assert.ok(error instanceof PackagesError);

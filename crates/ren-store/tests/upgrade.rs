@@ -537,7 +537,7 @@ impl Scenario {
                     effort: Some(Effort::High),
                     approvals: Some(ApprovalPolicy::Edits),
                 },
-                Some(ren_depot::toolset::Generation::from(1)),
+                Some(ren_depot::package_set::Generation::from(1)),
             )
             .unwrap();
         self.attach(session);
@@ -1028,7 +1028,7 @@ impl Scenario {
                 Harness::ClaudeCode,
                 "/work/acme-api".into(),
                 RunSettings::default(),
-                Some(ren_depot::toolset::Generation::from(1)),
+                Some(ren_depot::package_set::Generation::from(1)),
             )
             .unwrap();
         self.later(5_000);

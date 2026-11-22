@@ -1,43 +1,43 @@
-//! The tools Ren installs for its agents, as the control API serves them
-//! (`/control/v1/tools`). The gateway declares the [`Toolbox`] port and the
-//! views it answers with; the daemon implements it over its tool store.
+//! The packages Ren installs for its agents, as the control API serves them
+//! (`/control/v1/packages`). The gateway declares the [`Packages`] port and the
+//! views it answers with; the daemon implements it over its package store.
 
 use futures_util::future::BoxFuture;
 use ren_depot::{
     job::Stage,
     package::{Kind, Origin, PackageId, ProgramName},
+    package_set::{Edit, Generation, PlanError},
     source::Platform,
-    toolset::{Edit, Generation, PlanError},
 };
 use ren_harness::Harness;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
-/// What the control API needs of the host's tools: a listing, a change,
+/// What the control API needs of the host's packages: a listing, a change,
 /// and a collection. The daemon implements it; tests substitute it.
-pub trait Toolbox: Send + Sync + 'static {
+pub trait Packages: Send + Sync + 'static {
     /// Every package, what this host has of it, and the generations.
-    fn listing(&self) -> BoxFuture<'static, Result<ToolListing, ToolboxError>>;
+    fn listing(&self) -> BoxFuture<'static, Result<PackageListing, PackagesError>>;
 
     /// Apply `edit` to the current generation, installing what it adds.
-    fn change(&self, edit: Edit) -> BoxFuture<'static, Result<ToolChange, ToolboxError>>;
+    fn change(&self, edit: Edit) -> BoxFuture<'static, Result<PackageSetChange, PackagesError>>;
 
     /// Make the next generation hold what a kept `generation` held.
     fn roll_back(
         &self,
         generation: Generation,
-    ) -> BoxFuture<'static, Result<ToolChange, ToolboxError>>;
+    ) -> BoxFuture<'static, Result<PackageSetChange, PackagesError>>;
 
     /// Remove generations and installs nothing current or running uses.
-    fn collect(&self) -> BoxFuture<'static, Result<ToolCollection, ToolboxError>>;
+    fn collect(&self) -> BoxFuture<'static, Result<PackageCollection, PackagesError>>;
 }
 
-/// Why a tools request was not carried out.
+/// Why a packages request was not carried out.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ToolboxError {
-    #[error("another change to the tools is in progress")]
+pub enum PackagesError {
+    #[error("another change to the packages is in progress")]
     Busy,
-    #[error("Ren installs tools only on Linux x64, Linux arm64, and macOS arm64")]
+    #[error("Ren installs packages only on Linux x64, Linux arm64, and macOS arm64")]
     Unsupported,
     #[error(transparent)]
     Refused(#[from] PlanError),
@@ -45,14 +45,14 @@ pub enum ToolboxError {
     NoGeneration(Generation),
     #[error("generation {0}'s installs were removed")]
     Collected(Generation),
-    #[error("the tool store failed: {0}")]
+    #[error("the package store failed: {0}")]
     Failed(String),
 }
 
-/// Every package Ren knows, what this host has of each, and the toolset
+/// Every package Ren knows, what this host has of each, and the package set
 /// generations kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolListing {
+pub struct PackageListing {
     /// The platform Ren installs for here; `None` where it installs nothing.
     pub platform: Option<Platform>,
     /// The current generation; 0 before any.
@@ -60,7 +60,7 @@ pub struct ToolListing {
     /// The current generation's folder of programs, which runs put first on
     /// their search path; `None` before any.
     pub bin: Option<String>,
-    pub packages: Vec<ToolPackage>,
+    pub packages: Vec<ListedPackage>,
     /// Every generation kept, newest first.
     pub generations: Vec<GenerationView>,
 }
@@ -68,7 +68,7 @@ pub struct ToolListing {
 /// One package: one the catalog names, or one the current generation
 /// holds that the catalog no longer names.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolPackage {
+pub struct ListedPackage {
     pub id: PackageId,
     /// Which catalog names it; `None` once it was taken out of the
     /// operator's configuration and only the install is left.
@@ -80,16 +80,16 @@ pub struct ToolPackage {
     /// The release Ren installs; `None` for a package it only finds.
     pub release: Option<semver::Version>,
     /// What the current generation holds of it.
-    pub installed: Option<InstalledTool>,
+    pub installed: Option<InstalledPackage>,
     /// What this host's search path has.
-    pub system: Option<SystemTool>,
+    pub system: Option<SystemProgram>,
     /// The clients that need it.
     pub needed_by: Vec<Harness>,
 }
 
 /// A package's install in the current generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InstalledTool {
+pub struct InstalledPackage {
     pub version: semver::Version,
     pub sha256: String,
     /// Its folder in the store.
@@ -98,7 +98,7 @@ pub struct InstalledTool {
 
 /// A package's program on the host's search path.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SystemTool {
+pub struct SystemProgram {
     pub path: String,
     /// The version it reported, when Ren could read one.
     pub version: Option<semver::Version>,
@@ -159,7 +159,7 @@ pub enum ChangeKind {
 
 /// A change's result.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolChange {
+pub struct PackageSetChange {
     pub outcome: ChangeOutcome,
     /// The current generation after the change.
     pub generation: Generation,
@@ -187,7 +187,7 @@ pub struct InstallFailure {
 
 /// What a collection removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolCollection {
+pub struct PackageCollection {
     pub generations: Vec<Generation>,
     pub installs: Vec<String>,
 }

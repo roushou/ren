@@ -4,8 +4,8 @@
 //! [`JobEvent`]. Every way it can end is explicit, interruption included.
 
 use crate::{
+    package_set::Install,
     source::{ArchiveFormat, Artifact, ArtifactUrl, RelativePath, Sha256},
-    toolset::Install,
 };
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -225,8 +225,8 @@ mod tests {
     };
     use crate::{
         package::PackageId,
+        package_set::Install,
         source::{ArchiveFormat, Artifact, Platform, Sha256},
-        toolset::Install,
     };
 
     fn digest(c: char) -> Sha256 {

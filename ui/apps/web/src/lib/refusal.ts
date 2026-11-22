@@ -181,19 +181,19 @@ export class Refusals {
         return 'That is not the address this sign-in waits on. Copy it from the tab the link opened.';
       case 'redirect_incomplete':
         return 'That address has no code yet: approve on the page first, then copy the address it goes to.';
-      // Packages (the daemon's codes still say tools).
-      case 'tools_disabled':
+      // Packages.
+      case 'packages_disabled':
         return 'The daemon could not set up its packages. Its log says why.';
-      case 'tools_busy':
+      case 'packages_busy':
         return 'Another change to the packages is in progress. Try again when it ends.';
-      case 'tools_no_generation':
-      case 'tools_collected':
+      case 'packages_no_generation':
+      case 'packages_collected':
         return 'That generation cannot be restored.';
-      case 'tools_unsupported':
+      case 'packages_unsupported':
         return 'Ren installs packages only on Linux x64, Linux arm64, and macOS arm64.';
-      case 'tools_refused':
+      case 'packages_refused':
         return 'The daemon refused the change.';
-      case 'tools_failed':
+      case 'packages_failed':
         return 'The daemon could not read or write its package store. Its log says why.';
       case 'invalid_order':
         return 'A work item needs at least one mark with a note, within its limits.';

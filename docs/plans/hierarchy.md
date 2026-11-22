@@ -28,7 +28,7 @@ the data. It is never invented in the view.
 | Ren's release         | `<data>/release.json`, written by `cargo xtask canary`    | nothing: there is one                                                                   |
 | A project's release   | `<data>/projects/<folder>/release.json`, by `ren project` | a repository's folder name                                                              |
 | A project's contract  | `.ren/project.toml` in its repository                     | the repository                                                                          |
-| Toolset               | `<data>/tools`                                            | the host                                                                                |
+| Package set           | `<data>/tools`                                            | the host                                                                                |
 
 So the links that exist are **run → session** and **work item → session**,
 and **call → run** through the client's conversation. Nothing points up from
@@ -56,7 +56,7 @@ Records outside the tree stay, and each says why it is outside:
 - **Traffic from clients Ren did not start** (a `claude` pointed at the
   gateway by hand) belongs to no run. The gateway exists for it, so it is
   first-class, under Inspect, never forced into a project.
-- **The toolset, usage, and the recorder's health** belong to the host.
+- **The package set, usage, and the recorder's health** belong to the host.
 
 ## Decisions
 

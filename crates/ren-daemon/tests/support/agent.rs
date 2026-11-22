@@ -9,7 +9,7 @@
 use ren_harness::launch::LaunchPlan;
 use ren_supervisor::{
     AgentHost, AgentProcess, FoundPath, KillSignal, KillSwitch, Look, PathKind, ProcessExit,
-    RunTools, Tenure, WalkLimits, Workdir,
+    RunPackages, Tenure, WalkLimits, Workdir,
 };
 use ren_supervisor::{PlaceGit, Scratch};
 use serde_json::{Value, json};
@@ -37,7 +37,7 @@ impl AgentHost for ScriptedHost {
     fn client_stamp(
         &self,
         program: &str,
-        _tools: &ren_supervisor::RunTools,
+        _packages: &ren_supervisor::RunPackages,
     ) -> Option<ren_supervisor::ClientStamp> {
         Some(ren_supervisor::ClientStamp::new(
             std::path::PathBuf::from("/bin").join(program),
@@ -83,7 +83,7 @@ impl AgentHost for ScriptedHost {
         Ok(())
     }
 
-    fn make_scratch(&self, _dir: &Path, _tools: &RunTools) -> io::Result<Scratch> {
+    fn make_scratch(&self, _dir: &Path, _packages: &RunPackages) -> io::Result<Scratch> {
         Ok(Scratch::Repository)
     }
 
@@ -94,7 +94,7 @@ impl AgentHost for ScriptedHost {
         _folder: &Path,
         _data: &Path,
         _branch: &str,
-        _tools: &RunTools,
+        _packages: &RunPackages,
     ) -> io::Result<()> {
         Ok(())
     }
@@ -119,15 +119,15 @@ impl AgentHost for ScriptedHost {
         }
     }
 
-    fn tools(&self) -> RunTools {
-        RunTools::Empty
+    fn packages(&self) -> RunPackages {
+        RunPackages::Empty
     }
 
     fn spawn(
         &self,
         plan: &LaunchPlan,
         _workdir: &Workdir,
-        _tools: &RunTools,
+        _packages: &RunPackages,
     ) -> io::Result<AgentProcess> {
         let (stdin, agent_in) = tokio::io::duplex(64 * 1024);
         let (agent_out, stdout) = tokio::io::duplex(64 * 1024);
@@ -162,19 +162,19 @@ impl AgentHost for ScriptedHost {
         &self,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess> {
         // Scripted processes write everything to the one stream.
-        self.spawn(plan, workdir, tools)
+        self.spawn(plan, workdir, packages)
     }
 
     fn spawn_in_terminal(
         &self,
         plan: &LaunchPlan,
         workdir: &Workdir,
-        tools: &RunTools,
+        packages: &RunPackages,
     ) -> io::Result<AgentProcess> {
-        self.spawn(plan, workdir, tools)
+        self.spawn(plan, workdir, packages)
     }
 
     fn open_local(

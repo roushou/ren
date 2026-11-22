@@ -15,7 +15,7 @@ use crate::{
     unit::{KillMode, Listener, TransientUnit},
 };
 use ren_daemon::config::{
-    Config, GithubOptions, RunHold, RunsOptions, ToolsOptions, UpstreamConfig, WatchedRepository,
+    Config, GithubOptions, RunHold, RunsOptions, UpstreamConfig, WatchedRepository,
 };
 use ren_daemon::host::HeldRuns;
 use ren_gateway::{
@@ -248,7 +248,9 @@ impl Slot {
                 hold: RunHold::Auto,
                 worktree_env: Default::default(),
             },
-            tools: toml::from_str::<ToolsOptions>(Self::TOOLS).map_err(|_| DevError::Config)?,
+            packages: toml::from_str::<Config>(Self::PACKAGES)
+                .map_err(|_| DevError::Config)?
+                .packages,
             // The fake projects' repositories, on the fake provider's GitHub.
             github: GithubOptions {
                 token_env: Self::GITHUB_TOKEN_ENV.into(),
@@ -271,18 +273,19 @@ impl Slot {
         })
     }
 
-    /// An operator catalog entry, so the Tools view shows one. Its download
-    /// is invented and never answers, so installing it fails at fetch.
-    const TOOLS: &'static str = r#"
-[[package]]
+    /// An operator catalog entry, so the Packages view shows one. Its
+    /// download is invented and never answers, so installing it fails at
+    /// fetch.
+    const PACKAGES: &'static str = r#"
+[[packages]]
 id = "acme-lint"
 kind = "utility"
 program = "acme-lint"
 
-[package.release]
+[packages.release]
 version = "0.3.0"
 
-[[package.release.artifact]]
+[[packages.release.artifact]]
 platform = "linux_x64"
 url = "https://example.invalid/acme-lint-0.3.0.tar.gz"
 sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -755,7 +758,7 @@ mod tests {
         let slot = Slot::new(&HostEnv::from_pairs([("HOME", "/home/dev")])).unwrap();
         let config = slot.config().unwrap();
         config.check().unwrap();
-        assert_eq!(config.tools.package.len(), 1);
+        assert_eq!(config.packages.entries().len(), 1);
         let text = toml::to_string(&config).unwrap();
         for url in [
             &config.anthropic_base_url,

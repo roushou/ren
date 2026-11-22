@@ -225,7 +225,7 @@ impl Recorder {
         harness: ren_harness::Harness,
         workdir: String,
         settings: ren_harness::settings::RunSettings,
-        toolset: Option<ren_depot::toolset::Generation>,
+        toolset: Option<ren_depot::package_set::Generation>,
     ) -> Result<RunTap, RunUnrecorded> {
         RunTap::start(
             self.shared.clone(),

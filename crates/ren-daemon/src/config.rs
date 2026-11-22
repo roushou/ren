@@ -79,8 +79,8 @@ pub enum ConfigError {
     Revision(#[source] serde_json::Error),
     #[error("set --data-dir when HOME is unavailable")]
     NoDataDir,
-    #[error("tools: {0}")]
-    Tools(#[from] CatalogError),
+    #[error("packages: {0}")]
+    Packages(#[from] CatalogError),
     #[error(
         "runs.roots entries must be absolute paths, and runs.places and runs.scratch absolute or under ~/"
     )]
@@ -145,8 +145,11 @@ pub struct Config {
     /// How much a session's attachments may hold.
     pub attachments: AttachmentOptions,
     /// The packages the operator adds to the built-in catalog.
-    #[serde(skip_serializing_if = "ToolsOptions::is_empty")]
-    pub tools: ToolsOptions,
+    #[serde(skip_serializing_if = "PackagesOptions::is_empty")]
+    pub packages: PackagesOptions,
+    /// The `[[packages]]` section's old place, refused by its new name.
+    #[serde(skip_serializing)]
+    pub tools: RenamedTools,
     /// The GitHub repositories watched for registered projects.
     #[serde(skip_serializing_if = "GithubOptions::is_off")]
     pub github: GithubOptions,
@@ -239,23 +242,39 @@ pub struct GithubSetup {
     pub projects: Vec<(ProjectName, RepositorySlug)>,
 }
 
-/// The `[tools]` section: catalog entries in the built-in catalog's form,
-/// each adding a runtime or utility Ren can install for its agents, or
-/// replacing the built-in one of the same name.
+/// The `[[packages]]` entries: catalog entries in the built-in catalog's
+/// form, each adding a runtime or utility Ren can install for its agents,
+/// or replacing the built-in one of the same name.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ToolsOptions {
-    pub package: Vec<CatalogEntry>,
-}
+#[serde(transparent)]
+pub struct PackagesOptions(Vec<CatalogEntry>);
 
-impl ToolsOptions {
+impl PackagesOptions {
     fn is_empty(&self) -> bool {
-        self.package.is_empty()
+        self.0.is_empty()
+    }
+
+    /// The entries, in the order the file writes them.
+    pub fn entries(&self) -> &[CatalogEntry] {
+        &self.0
     }
 
     /// The built-in catalog with these entries.
     pub fn depot(&self) -> Result<Depot, ConfigError> {
-        Ok(Depot::configured(&self.package)?)
+        Ok(Depot::configured(&self.0)?)
+    }
+}
+
+/// The `[[packages]]` section, renamed to `[[packages]]`: a file that still
+/// has it is refused with the new name rather than read without it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RenamedTools;
+
+impl<'de> Deserialize<'de> for RenamedTools {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "`[tools]` was renamed to `[[packages]]`: write each `[[tools.package]]` entry as `[[packages]]`",
+        ))
     }
 }
 
@@ -468,7 +487,8 @@ impl Default for Config {
             instance: InstanceOptions::default(),
             runs: RunsOptions::default(),
             attachments: AttachmentOptions::default(),
-            tools: ToolsOptions::default(),
+            packages: PackagesOptions::default(),
+            tools: RenamedTools,
             github: GithubOptions::default(),
         }
     }
@@ -544,7 +564,7 @@ impl Config {
         )?;
         let policy = Policy::new(self.policy.clone(), &upstreams.summaries())?;
         let users = Users::new(self.users.clone())?;
-        let depot = self.tools.depot()?;
+        let depot = self.packages.depot()?;
         Ok(RuntimeConfig {
             listen: self.listen,
             upstreams,
@@ -626,7 +646,7 @@ impl Config {
         self.retention.validate()?;
         self.buffer.validate()?;
         self.runs.validate()?;
-        self.tools.depot()?;
+        self.packages.depot()?;
         self.github.validate()?;
         Ok(())
     }
@@ -676,11 +696,11 @@ pub struct RuntimeConfig {
     /// Where driven Pi processes find Ren's extension, when the host
     /// environment names a cache.
     pi_cache: Option<PiCache>,
-    /// The host's search path, which a run's toolset folder is put before.
+    /// The host's search path, which a run's package set folder is put before.
     agent_path: Vec<PathBuf>,
     /// How run hosts are started; `None` binds runs to the daemon.
     run_hold: Option<crate::host::Launcher>,
-    /// The packages Ren knows: the built-in catalog with `[tools]`.
+    /// The packages Ren knows: the built-in catalog with `[[packages]]`.
     depot: Depot,
     /// What is watched on GitHub; none while nothing is.
     github: Option<GithubSetup>,
@@ -799,11 +819,11 @@ mod tests {
     }
 
     #[test]
-    fn tools_entries_join_the_builtin_catalog_and_bad_ones_are_refused_at_load() {
+    fn package_entries_join_the_builtin_catalog_and_bad_ones_are_refused_at_load() {
         let entry =
-            "[[tools.package]]\nid = \"acme-lint\"\nkind = \"utility\"\nprogram = \"acme-lint\"\n\
-                     [tools.package.release]\nversion = \"0.3.0\"\n\
-                     [[tools.package.release.artifact]]\nplatform = \"linux_x64\"\n\
+            "[[packages]]\nid = \"acme-lint\"\nkind = \"utility\"\nprogram = \"acme-lint\"\n\
+                     [packages.release]\nversion = \"0.3.0\"\n\
+                     [[packages.release.artifact]]\nplatform = \"linux_x64\"\n\
                      url = \"https://example.test/acme-lint.tar.gz\"\nsha256 = \"{digest}\"\n\
                      format = \"tar_gz\"\nprogram_at = \"acme-lint\"\n"
                 .replace("{digest}", &"a".repeat(64));
@@ -814,20 +834,24 @@ mod tests {
         assert_eq!(acme.origin(), ren_depot::package::Origin::Operator);
         // The section round-trips, and is left out of the revision when empty.
         let written: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
-        assert_eq!(written.tools, config.tools);
-        assert!(
-            !toml::to_string(&Config::default())
-                .unwrap()
-                .contains("tools")
-        );
+        assert_eq!(written.packages, config.packages);
+        let default = toml::to_string(&Config::default()).unwrap();
+        assert!(!default.contains("packages") && !default.contains("tools"));
 
-        let client = "[[tools.package]]\nid = \"codex\"\nkind = \"utility\"\nprogram = \"codex\"\n";
+        let client = "[[packages]]\nid = \"codex\"\nkind = \"utility\"\nprogram = \"codex\"\n";
         let config: Config = toml::from_str(client).unwrap();
         assert!(matches!(
             config.validate(),
-            Err(ConfigError::Tools(ren_depot::CatalogError::Client(_)))
+            Err(ConfigError::Packages(ren_depot::CatalogError::Client(_)))
         ));
         assert!(toml::from_str::<Config>(&entry.replace("https://", "http://")).is_err());
+
+        // The section's old name is refused by its new one.
+        let old = entry
+            .replace("[[packages]]", "[[tools.package]]")
+            .replace("[packages.", "[tools.package.");
+        let error = toml::from_str::<Config>(&old).err().unwrap().to_string();
+        assert!(error.contains("renamed to `[[packages]]`"), "{error}");
     }
 
     #[test]

@@ -138,7 +138,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_versions_tools_print() {
+    fn reads_the_versions_programs_print() {
         assert_eq!(read("v22.17.1\n"), "22.17.1");
         assert_eq!(read("jq-1.7.1"), "1.7.1");
         assert_eq!(read("jq-1.7"), "1.7.0");

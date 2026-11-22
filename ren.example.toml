@@ -91,7 +91,7 @@ hold = "auto"
 # compile to. Ren's own REN_WORKTREE, REN_WORKTREE_PORTS, and
 # REN_WORKTREE_DATA (also given under their old REN_WORKSPACE* names, for
 # project scripts written before the rename) cannot be set here. The key's
-# old name, workspace_env, still reads. `ren tools install sccache` installs
+# old name, workspace_env, still reads. `ren packages install sccache` installs
 # the cache.
 # worktree_env = { RUSTC_WRAPPER = "sccache" }
 
@@ -142,20 +142,20 @@ prompt_bytes = 20971520
 # steps = [{ op = "json_remove", path = "/temperature" }]
 # reason = "example"
 
-# Optional: a tool Ren can install for its agents, beside the built-in
-# catalog (`ren tools list`). An entry with a built-in runtime's or
+# Optional: a package Ren can install for its agents, beside the built-in
+# catalog (`ren packages list`). An entry with a built-in runtime's or
 # utility's id replaces it; clients stay built in. Without `release`, the
 # package is only found on the host's PATH. Each artifact is pinned by its
 # sha256 (GitHub shows each release asset's digest).
-# [[tools.package]]
+# [[packages]]
 # id = "acme-lint"
 # kind = "utility" # or "runtime"
 # program = "acme-lint"
 #
-# [tools.package.release]
+# [packages.release]
 # version = "0.3.0"
 #
-# [[tools.package.release.artifact]]
+# [[packages.release.artifact]]
 # platform = "linux_x64" # linux_arm64, macos_arm64
 # url = "https://github.com/acme/acme-lint/releases/download/v0.3.0/acme-lint-x86_64-unknown-linux-gnu.tar.gz"
 # sha256 = "<64 hex digits>"
