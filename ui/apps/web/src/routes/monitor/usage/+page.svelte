@@ -3,7 +3,7 @@
   import { page } from '$app/state';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { num, providerMark } from '#lib/api.ts';
-  import { compactOrDash, SEPARATOR } from '#lib/display.ts';
+  import { compactOrDash } from '#lib/display.ts';
   import {
     cacheShare,
     HourGrid,
@@ -129,11 +129,6 @@
         aria-current={range === item.range ? 'page' : undefined}>{item.label}</a
       >{/each}
   </nav>
-  <span
-    class="scope-group end usage-note"
-    title="Tokens are what providers report; input includes cached context. They are not subscription allowance or charges."
-    ><Icon name="info" size={12} /> Provider-reported tokens</span
-  >
 {/snippet}
 
 <Toolbar {scope} />
@@ -201,12 +196,16 @@
                     size="figure"
                     width="3em"
                   />{:else}{num(totals?.errors)}{/if}</strong
-              ><small
-                >{#if pending}<Skeleton width="7em" />{:else}{errorRate === null
-                    ? '—'
-                    : `${(errorRate * 100).toFixed(1)}% of calls`}{#if current?.bookkeepingErrors}{SEPARATOR}{num(
-                      current.bookkeepingErrors,
-                    )}{current.bookkeepingErrors >= 100 ? '+' : ''} failed bookkeeping{/if}{/if}</small
+              ><small class="sub"
+                >{#if pending}<Skeleton width="7em" />{:else}<span title="Share of calls"
+                    >{errorRate === null ? '—' : `${(errorRate * 100).toFixed(1)}%`}</span
+                  >{#if current?.bookkeepingErrors}<span
+                      class="chip mono"
+                      title="Failed bookkeeping calls"
+                      ><Glyph mark="warning" />{num(
+                        current.bookkeepingErrors,
+                      )}{current.bookkeepingErrors >= 100 ? '+' : ''}</span
+                    >{/if}{/if}</small
               >
             </div>
             <div class="usage-tile">
@@ -214,10 +213,18 @@
                 >{#if pending}<Skeleton size="figure" width="4em" />{:else}{compactOrDash(
                     totals?.tokens.input ?? null,
                   )}{/if}</strong
-              ><small
-                >{#if pending}<Skeleton width="8em" />{:else}{share === null
-                    ? '—'
-                    : `${Math.round(share * 100)}% read from cache`}{/if}</small
+              ><small class="sub" title="Read from cache"
+                >{#if pending}<Skeleton width="8em" />{:else if share === null}—{:else}<svg
+                    class="meter"
+                    viewBox="0 0 100 4"
+                    preserveAspectRatio="none"
+                    aria-hidden="true"
+                    ><rect class="track" width="100" height="4" /><rect
+                      class="fill cached"
+                      width={share * 100}
+                      height="4"
+                    /></svg
+                  >{Math.round(share * 100)}%{/if}</small
               >
             </div>
             <div class="usage-tile">

@@ -289,11 +289,11 @@
           <section class="figures" aria-label="Tools at a glance">
             <div>
               <span class="cap">Managed</span>
-              <span class="figure"
-                ><Glyph mark="passed" />{tally.managed}<span class="meta"
-                  >in gen {listing.generation}</span
-                ></span
-              >
+              <span class="figure"><Glyph mark="passed" />{tally.managed}</span>
+            </div>
+            <div>
+              <span class="cap">Generation</span>
+              <span class="figure">{listing.generation}</span>
             </div>
             <div>
               <span class="cap">Updates</span>
@@ -308,8 +308,8 @@
               >
             </div>
             <div>
-              <span class="cap">System</span>
-              <span class="figure">{tally.system}<span class="meta">found on PATH</span></span>
+              <span class="cap">On PATH</span>
+              <span class="figure">{tally.system}</span>
             </div>
             <div class="generation-actions">
               {#if previous}<button
@@ -793,7 +793,7 @@
   }
   .figures {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
     gap: 1px;
     border-bottom: 1px solid var(--line);
     background: var(--line);

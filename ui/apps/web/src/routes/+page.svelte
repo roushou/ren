@@ -224,13 +224,18 @@
             <article class="card">
               <Glyph mark="passed" label="Canary passed" />
               <div class="body">
-                <strong>{project.name}'s canary passed: ready to promote</strong>
-                <span class="from muted mono"
-                  >{canary?.commit.slice(0, 12)} · checks {checks.filter((check) => check.passed)
-                    .length}/{checks.length}{project.release?.behind
-                    ? ` · production ↓${project.release.behind}`
-                    : ''} · {project.release?.policy}</span
-                >
+                <strong>{project.name}</strong>
+                <span class="facts">
+                  <span class="chip mono">{canary?.commit.slice(0, 7)}</span>
+                  <span class="chip mono" title="Canary checks"
+                    ><Glyph mark="passed" />{checks.filter((check) => check.passed)
+                      .length}/{checks.length}</span
+                  >
+                  {#if project.release?.behind}<span class="chip mono" title="Production behind"
+                      >↓{project.release.behind}</span
+                    >{/if}
+                  <span class="chip mono" title="Policy">{project.release?.policy}</span>
+                </span>
               </div>
               <div class="acts">
                 <a class="button small" href={ProjectBoard.releaseHref(project)}>Release</a>
@@ -249,9 +254,7 @@
               <Glyph mark="info" label="A preview to check" />
               <div class="body">
                 <strong>{item.title}</strong>
-                <span class="from muted"
-                  >a preview to check · <span class="mono">{home ?? 'no project'}</span></span
-                >
+                <span class="facts"><span class="chip mono">{home ?? 'Scratch'}</span></span>
               </div>
               <div class="acts">
                 {#if home}<a class="button small" href={Work.href(home, item.id)}>Work item</a>{/if}
@@ -268,8 +271,10 @@
             <article class="card">
               <Glyph mark="queued" label="Queued" />
               <div class="body">
-                <strong>{queued.count} queued to send</strong>
-                <span class="from muted mono">{queued.project ?? 'no project'}</span>
+                <strong class="mono">{queued.count}</strong>
+                <span class="facts"
+                  ><span class="chip mono">{queued.project ?? 'Scratch'}</span></span
+                >
               </div>
               <div class="acts">
                 {#if queued.project}<a class="button small" href={ProjectBoard.href(queued.project)}
@@ -339,13 +344,13 @@
             {#if counts.failed}<Glyph mark="failed" />{/if}{counts.failed}
           </dd>
         </div>
-        <div class="wide">
-          <dt class="cap">Tokens</dt>
-          <dd class="mono">
-            {spent
-              ? `${compactOrDash(spent.tokens.input)} in · ${compactOrDash(spent.tokens.output)} out`
-              : '—'}
-          </dd>
+        <div>
+          <dt class="cap">Tokens in</dt>
+          <dd class="mono">{spent ? compactOrDash(spent.tokens.input) : '—'}</dd>
+        </div>
+        <div>
+          <dt class="cap">Tokens out</dt>
+          <dd class="mono">{spent ? compactOrDash(spent.tokens.output) : '—'}</dd>
         </div>
       </dl>
       <div class="scroll">
@@ -371,6 +376,17 @@
 <ApprovalModal {answers} />
 
 <style>
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 2px;
+  }
+  .facts .chip {
+    display: inline-flex;
+    gap: 5px;
+    align-items: center;
+  }
   .home {
     display: flex;
     flex: 1;
@@ -593,9 +609,7 @@
   .tiles > div:nth-child(2n) {
     border-right: 0;
   }
-  .tiles > div.wide {
-    grid-column: 1 / -1;
-    border-right: 0;
+  .tiles > div:nth-last-child(-n + 2) {
     border-bottom: 0;
   }
   .tiles dt {
@@ -607,9 +621,6 @@
     gap: 6px;
     margin: 4px 0 0;
     font-size: 17px;
-  }
-  .tiles .wide dd {
-    font-size: 14px;
   }
   .quiet {
     display: flex;

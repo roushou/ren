@@ -157,19 +157,25 @@
             {
               label: 'Referenced body bytes',
               bytes: usage.referenced_bytes,
-              note: '',
+              note: null,
               tone: 'referenced',
             },
             {
               label: 'Unique chunk bytes',
               bytes: usage.unique_bytes,
-              note: `deduplication ${ratio(usage.referenced_bytes, usage.unique_bytes)}`,
+              note: {
+                label: 'Deduplication',
+                ratio: ratio(usage.referenced_bytes, usage.unique_bytes),
+              },
               tone: 'unique',
             },
             {
               label: 'Compressed chunk bytes',
               bytes: usage.compressed_bytes,
-              note: `compression ${ratio(usage.unique_bytes, usage.compressed_bytes)}`,
+              note: {
+                label: 'Compression',
+                ratio: ratio(usage.unique_bytes, usage.compressed_bytes),
+              },
               tone: 'compressed',
             },
           ]}
@@ -183,12 +189,17 @@
                   height="10"
                 /></svg
               >
-              <span class="mono value">{bytes(step.bytes)}</span>
-              {#if step.note}<span></span><span class="meta">{step.note}</span><span></span>{/if}
+              <span class="mono value"
+                >{#if step.note}<span class="chip mono ratio" title={step.note.label}
+                    >{step.note.ratio}</span
+                  >{/if}{bytes(step.bytes)}</span
+              >
             {/each}
-            <span></span><span class="meta ok"
-              >{ratio(usage.referenced_bytes, usage.compressed_bytes)} smaller than what clients sent</span
-            ><span></span>
+            <span class="funnel-label">Overall</span><span></span><span
+              class="mono value ok"
+              title="What clients sent, against what is on disk"
+              >{ratio(usage.referenced_bytes, usage.compressed_bytes)}</span
+            >
           </div>
         {:else}<Skeleton width="100%" />{/if}
       </section>
@@ -250,17 +261,14 @@
           <div>
             <span class="meta">History window</span>
             <span class="mono">{policy ? `${num(policy.max_age_seconds / 86400)} days` : '—'}</span>
-            <span class="meta">from call start</span>
           </div>
           <div>
             <span class="meta">Call limit</span>
             <span class="mono">{num(policy?.max_calls)}</span>
-            <span class="meta">retained calls</span>
           </div>
           <div>
             <span class="meta">Storage limit</span>
             <span class="mono">{policy ? bytes(policy.max_storage_bytes) : '—'}</span>
-            <span class="meta">on disk</span>
           </div>
         </div>
         <div class="pruned">
@@ -625,7 +633,7 @@
   }
   .funnel {
     display: grid;
-    grid-template-columns: 200px minmax(0, 1fr) 90px;
+    grid-template-columns: 200px minmax(0, 1fr) 160px;
     column-gap: 14px;
     row-gap: 4px;
     align-items: center;
@@ -638,7 +646,10 @@
     font-size: 12.5px;
   }
   .funnel .value {
-    text-align: right;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-end;
   }
   .funnel-track {
     fill: var(--surface-inset);

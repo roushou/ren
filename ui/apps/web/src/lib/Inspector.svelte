@@ -267,15 +267,36 @@
         {#if inspection?.limitations.length}<div class="limitation-list">
             {#each inspection.limitations as reason}<span>{title(reason)}</span>{/each}
           </div>{/if}
-        {#if inspection}<p class="fine-print">
-            Events: {num(inspection.events.understood)} understood · {num(
-              inspection.events.unknown,
-            )}
-            unknown · {num(inspection.events.malformed)} malformed · terminal event {inspection.terminal_event}{inspection
-              .unknown_kinds.length
-              ? ` · unknown kinds: ${inspection.unknown_kinds.map((k) => `${k.kind} (${k.count})`).join(', ')}`
-              : ''}
-          </p>{/if}
+        {#if inspection}
+          {@const events = inspection.events}
+          <dl class="event-figures" aria-label="Events">
+            <div>
+              <dt class="cap">Understood</dt>
+              <dd class="mono">{num(events.understood)}</dd>
+            </div>
+            <div
+              class:warning={events.unknown > 0}
+              title={inspection.unknown_kinds.length
+                ? inspection.unknown_kinds.map((k) => `${k.kind} ×${k.count}`).join('\n')
+                : undefined}
+            >
+              <dt class="cap">Unknown</dt>
+              <dd class="mono">
+                {#if events.unknown}<Glyph mark="warning" />{/if}{num(events.unknown)}
+              </dd>
+            </div>
+            <div class:error={events.malformed > 0}>
+              <dt class="cap">Malformed</dt>
+              <dd class="mono">
+                {#if events.malformed}<Glyph mark="failed" />{/if}{num(events.malformed)}
+              </dd>
+            </div>
+            <div>
+              <dt class="cap">Terminal</dt>
+              <dd class="mono ellipsis">{inspection.terminal_event ?? '—'}</dd>
+            </div>
+          </dl>
+        {/if}
       </section>
       <section class="detail-section">
         <div class="section-heading">
@@ -522,6 +543,39 @@
 </aside>
 
 <style>
+  .event-figures {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1px;
+    margin: 8px 0 0;
+    border: 1px solid var(--line);
+    background: var(--line);
+  }
+  .event-figures > div {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 6px 10px;
+    background: var(--surface);
+  }
+  .event-figures > div.warning {
+    background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+  }
+  .event-figures > div.error {
+    background: color-mix(in srgb, var(--error) 10%, var(--surface));
+  }
+  .event-figures dd {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin: 0;
+  }
+  .event-figures .ellipsis {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
   .allowances {
     display: grid;
     grid-template-columns: 110px minmax(0, 1fr) auto;

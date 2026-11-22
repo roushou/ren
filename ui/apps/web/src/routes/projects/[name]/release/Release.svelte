@@ -67,7 +67,7 @@
     asking = true;
     try {
       await action();
-      toasts.show({ mark: 'passed', text: done, detail: 'The factory acts on its next pass.' });
+      toasts.show({ mark: 'passed', text: done, detail: null });
       await invalidateAll();
     } catch (failure) {
       toasts.show({
@@ -178,13 +178,6 @@
         <div class="node stage">
           <span class="cap">Main</span>
           <span class="commit">{ReleasePage.short(release.main)}</span>
-          <span class="meta"
-            >{release.behind === null
-              ? 'production is not on it'
-              : release.behind === 0
-                ? 'production runs it'
-                : `${release.behind} ahead of production`}</span
-          >
         </div>
         <span class="link" aria-hidden="true"></span>
         <div
@@ -204,11 +197,9 @@
               ><Glyph
                 mark={release.canary.passed ? 'passed' : 'failed'}
                 label={release.canary.passed ? 'Passed' : 'Failed'}
-              />{checks.filter((check) => check.passed)
-                .length}/{checks.length}{#if shots.length}<span>· {shots.length} pages</span
-                >{/if}</span
+              />{checks.filter((check) => check.passed).length}/{checks.length}</span
             >
-          {:else}<span class="meta">none checked</span>{/if}
+          {:else}<span class="meta figure"><Glyph mark="idle" label="Not checked" />—</span>{/if}
         </div>
         <span class="link" class:ahead={view.promotable} aria-hidden="true"></span>
         <div class="node stage production">
@@ -218,7 +209,12 @@
               class="behind mono"
               title="Production is {view.behind}"
               aria-label="Production is {view.behind}">↓{release.behind}</span
-            >{:else}<span class="meta">{view.behind}</span>{/if}
+            >{:else}<span class="meta figure"
+              ><Glyph
+                mark={release.behind === 0 ? 'passed' : 'unknown'}
+                label="Production is {view.behind}"
+              />{release.behind === 0 ? '0' : '—'}</span
+            >{/if}
         </div>
         <span class="link" aria-hidden="true"></span>
         <div class="node stage decision">
@@ -227,7 +223,7 @@
             ><Glyph mark={promotion.mark} label={promotion.sentence} />{promotion.word}</span
           >
           {#if view.asked}
-            <span class="meta">Asked: the factory's next pass installs it.</span>
+            <span class="meta figure"><Glyph mark="queued" label="Promotion asked" />asked</span>
           {:else if view.promotable && release.canary && data.project.factory !== 'ren'}
             <span class="meta mono">ren project promote --project {data.project.name}</span>
           {:else if view.promotable && release.canary}
@@ -235,9 +231,7 @@
             <button
               class="button primary small"
               disabled={asking || !control}
-              title={control
-                ? 'The factory installs it on its next pass, with the install’s steps'
-                : 'This UI only reads: give it the control token to promote'}
+              title={control ? undefined : 'Read only'}
               onclick={() => (confirming = commit)}>Promote {commit.slice(0, 7)}</button
             >
           {/if}
@@ -403,30 +397,41 @@
     title="Promote {commit.slice(0, 7)} to production?"
     onclose={() => (confirming = null)}
   >
-    <p>
-      {release.behind === null
-        ? 'Production runs a build that is not on main.'
-        : `${release.behind} ${release.behind === 1 ? 'commit' : 'commits'} on main that production does not run.`}
-    </p>
+    <dl class="promote-figures">
+      <div>
+        <dt class="cap">Production</dt>
+        <dd class="mono">{ReleasePage.short(view.production).slice(0, 7)}</dd>
+      </div>
+      <div>
+        <dt class="cap">Behind</dt>
+        <dd class="mono">
+          {#if release.behind === null}<Glyph
+              mark="unknown"
+              label="Production is {view.behind}"
+            />—{:else}↓{release.behind}{/if}
+        </dd>
+      </div>
+      {#if release.canary}
+        <div>
+          <dt class="cap">Canary</dt>
+          <dd class="mono">
+            <Glyph
+              mark={release.canary.passed ? 'passed' : 'failed'}
+              label={release.canary.passed ? 'Passed' : 'Failed'}
+            />{release.canary.checks.filter((c) => c.passed).length}/{release.canary.checks.length}
+          </dd>
+        </div>
+      {/if}
+      <div>
+        <dt class="cap">Policy</dt>
+        <dd class="mono">{release.policy}</dd>
+      </div>
+    </dl>
     {#if waiting.length}
       <ul class="promoting">
         {#each waiting as item (item.id)}<li>{item.title}</li>{/each}
       </ul>
     {/if}
-    {#if release.canary}
-      <p class="passed-line">
-        <Glyph
-          mark={release.canary.passed ? 'passed' : 'failed'}
-          label={release.canary.passed ? 'Passed' : 'Failed'}
-        />Canary {release.canary.passed ? 'passed' : 'failed'}
-        {release.canary.checks.filter((c) => c.passed).length}/{release.canary.checks.length}
-        · policy {release.policy}
-      </p>
-    {/if}
-    <p class="meta">
-      production runs {ReleasePage.short(view.production).slice(0, 7)} · the factory installs it on its
-      next pass
-    </p>
     {#snippet actions()}
       <button class="button" onclick={() => (confirming = null)}>Cancel</button>
       <button class="button primary" onclick={() => promote(commit)}>Promote</button>
@@ -789,10 +794,27 @@
     margin: 0 0 8px;
     padding-left: 18px;
   }
-  .passed-line {
+  .promote-figures {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1px;
+    margin: 0 0 12px;
+    border: 1px solid var(--line);
+    background: var(--line);
+  }
+  .promote-figures > div {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    background: var(--surface);
+  }
+  .promote-figures dd {
+    display: flex;
     gap: 6px;
+    align-items: center;
+    margin: 0;
+    font-size: 14px;
   }
 
   @media (max-width: 1100px) {

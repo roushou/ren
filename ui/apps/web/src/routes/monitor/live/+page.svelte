@@ -587,7 +587,11 @@
               >{/if}</a
           >
         {:else}
-          <span class="live-now-item calm">Quiet: nothing in the last {span(Feed.calmMs)}</span>
+          <span class="live-now-item calm"
+            ><Glyph mark="idle" label="Nothing in the last {span(Feed.calmMs)}" /><span class="mono"
+              >0 · {span(Feed.calmMs)}</span
+            ></span
+          >
         {/each}
       </div>
     </section>

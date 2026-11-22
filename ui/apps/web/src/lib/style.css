@@ -1970,13 +1970,6 @@ td.zero {
   color: var(--ink);
   background: var(--surface-hover);
 }
-.usage-note {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--muted);
-  font-size: 11px;
-}
 .usage-tiles {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
@@ -2006,6 +1999,28 @@ td.zero {
 }
 .usage-tile > small {
   color: var(--muted);
+}
+/* A tile's second figure: a share, a meter, a count beside it. */
+.usage-tile > small.sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+}
+.usage-tile > small.sub .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.usage-tile > small.sub .meter {
+  width: 64px;
+  height: 4px;
+}
+.usage-tile > small.sub .meter .track {
+  fill: var(--surface-inset);
+}
+.usage-tile > small.sub .meter .fill {
+  fill: var(--cache-read);
 }
 .usage-panel {
   min-width: 0;

@@ -72,8 +72,8 @@
         </svg>
       </div>
     {/each}
-    {#if timeline.folded}<p class="muted folded">
-        and {timeline.folded} quieter recording{timeline.folded === 1 ? '' : 's'}
+    {#if timeline.folded}<p class="muted folded mono" title="Quieter sessions, not drawn">
+        +{timeline.folded}
       </p>{/if}
     <div class="ticks mono muted" aria-hidden="true">
       {#each ticks as tick, index (index)}<span>{clock(tick)}</span>{/each}

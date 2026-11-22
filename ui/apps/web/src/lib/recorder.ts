@@ -325,7 +325,7 @@ export class RecorderReport {
       },
       {
         label: 'History',
-        used: age === null ? '—' : `oldest ${RecorderReport.duration(age)}`,
+        used: age === null ? '—' : RecorderReport.duration(age),
         limit: on && policy ? RecorderReport.duration(policy.max_age_seconds * 1000) : 'no limit',
         share: share(age, policy ? policy.max_age_seconds * 1000 : undefined),
         binding: false,

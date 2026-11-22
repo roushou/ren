@@ -87,11 +87,6 @@
               '3em',
               'figure',
             )}</strong
-          ><small
-            >{@render value(
-              totals && `${compact(totals.cache_read_tokens)} of ${compact(totals.context_tokens)}`,
-              '7em',
-            )}</small
           >
         </div>
         <div class="usage-tile">
@@ -101,22 +96,21 @@
               '4em',
               'figure',
             )}</strong
-          ><small>tokens</small>
+          >
         </div>
         <div class="usage-tile">
           <span>Output</span><strong class="mono"
             >{@render value(totals && compact(totals.output_tokens), '4em', 'figure')}</strong
-          ><small>tokens</small>
+          >
         </div>
         <div class="usage-tile">
           <span>Calls</span><strong class="mono"
             >{@render value(totals && num(totals.calls), '3em', 'figure')}</strong
-          ><small
-            >{@render value(
-              totals && `${num(totals.calls_with_usage)} reported usage`,
-              '7em',
-            )}</small
-          >
+          >{#if totals && totals.calls_with_usage < totals.calls}<small
+              class="sub"
+              title="Calls that reported usage"
+              ><Glyph mark="warning" />{num(totals.calls_with_usage)}/{num(totals.calls)}</small
+            >{/if}
         </div>
       </section>
 

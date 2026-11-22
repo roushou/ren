@@ -80,7 +80,7 @@ test('the limit nearest its end is the one retention prunes for first', () => {
     [
       ['Storage', '683.6 KiB', '976.6 KiB', true],
       ['Calls', '500', '10,000', false],
-      ['History', 'oldest 3 days', '7 days', false],
+      ['History', '3 days', '7 days', false],
     ],
   );
   assert.equal(gauges[0]?.share, 0.7);

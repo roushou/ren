@@ -218,7 +218,7 @@
   </div>
   <div class="payload-status" role="status">
     <Glyph mark={following ? 'responding' : 'idle'} /><span
-      >{following ? 'Live · every 2 seconds' : stopped || 'Snapshot'}{updated
+      >{following ? 'Live' : stopped || 'Snapshot'}{updated
         ? ` · ${new Date(updated).toLocaleTimeString()}`
         : ''}</span
     >{#if cards.length > 6}<button class="text-button jump-latest" onclick={latest}

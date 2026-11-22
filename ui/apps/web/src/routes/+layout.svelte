@@ -354,10 +354,7 @@
           class="place-name"
           class:active={view === 'projects'}
           href={here.href}
-          aria-current={view === 'projects' ? 'page' : undefined}
-          >{here.label}{#if where === 'system' && place.node}<span class="mono muted"
-              >{place.node}</span
-            >{/if}</a
+          aria-current={view === 'projects' ? 'page' : undefined}>{here.label}</a
         >
       {/if}
       {#if where === 'projects' && (inProject || view === 'scratch')}
