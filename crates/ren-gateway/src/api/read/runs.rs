@@ -2,7 +2,7 @@
 //! converts once from the type it reports (`From`), naming every field.
 
 use super::drive::DriveEvent;
-use ren_depot::toolset::Generation;
+use ren_depot::package_set::Generation;
 use ren_harness::Harness;
 use ren_harness::settings::ApprovalPolicy;
 use ren_harness::settings::Effort;
@@ -115,8 +115,8 @@ pub struct RunView {
     pub effort: Option<Stored<Effort>>,
     #[ts(as = "Option<String>")]
     pub approvals: Option<Stored<ApprovalPolicy>>,
-    /// The toolset generation on its search path: 0 when Ren had installed
-    /// none; `None` when unknown: the tool store was unreadable, or the store
+    /// The package set generation on its search path: 0 when Ren had installed
+    /// none; `None` when unknown: the package store was unreadable, or the store
     /// holds none for the run.
     #[ts(as = "Option<u64>")]
     pub toolset: Option<Generation>,

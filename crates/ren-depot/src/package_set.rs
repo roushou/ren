@@ -1,10 +1,10 @@
 //! What Ren has installed and what a run is given: immutable installs, each
-//! in its own content-addressed folder, gathered into numbered toolset
+//! in its own content-addressed folder, gathered into numbered package set
 //! generations. A change is planned as the next generation; the one a run
 //! started with stays whole until no run uses it.
 
 use crate::{
-    Depot, ToolHost,
+    Depot, ProgramHost,
     package::{PackageId, ProgramName},
     source::{Artifact, Platform, RelativePath, Sha256, Source},
 };
@@ -61,7 +61,7 @@ impl Install {
     }
 }
 
-/// A toolset's number. Each change makes the next one; numbers never repeat.
+/// A package set's number. Each change makes the next one; numbers never repeat.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -103,27 +103,27 @@ impl fmt::Display for Generation {
 
 /// The installs one generation gives a run, at most one per package.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Toolset {
+pub struct PackageSet {
     generation: Generation,
     installs: BTreeMap<PackageId, Install>,
 }
 
-/// A program a toolset puts on a run's search path: its name in the
-/// toolset's `bin` folder, and the program in the store it leads to.
+/// A program a package set puts on a run's search path: its name in the
+/// package set's `bin` folder, and the program in the store it leads to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
     pub name: ProgramName,
     pub target: RelativePath,
 }
 
-/// A package something needs (a project's steps) that neither a toolset
+/// A package something needs (a project's steps) that neither a package set
 /// nor its host gives it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Lack {
     #[error("no package is named {0}")]
     Unknown(PackageId),
-    /// Ren installs it, and the toolset does not hold it.
-    #[error("{0} is not in Ren's toolset")]
+    /// Ren installs it, and the package set does not hold it.
+    #[error("{0} is not in Ren's package set")]
     NotInstalled(PackageId),
     /// Ren only adopts it from the host, and the host's search path has
     /// no `program`.
@@ -143,7 +143,7 @@ pub struct Edit {
     pub remove: BTreeSet<PackageId>,
 }
 
-/// One package's change between a toolset and the next.
+/// One package's change between a package set and the next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
     Add(Install),
@@ -151,7 +151,7 @@ pub enum Change {
     Remove(Install),
 }
 
-/// The changes that turn a toolset into what the operator wants. Each new
+/// The changes that turn a package set into what the operator wants. Each new
 /// install also names the artifact to fetch for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
@@ -184,7 +184,7 @@ pub enum PlanError {
     },
 }
 
-impl Toolset {
+impl PackageSet {
     /// Generation 0: nothing installed.
     pub fn empty() -> Self {
         Self {
@@ -212,19 +212,19 @@ impl Toolset {
         self.installs.values()
     }
 
-    /// The install of `package`, if this toolset has one.
+    /// The install of `package`, if this package set has one.
     pub fn install(&self, package: &PackageId) -> Option<&Install> {
         self.installs.get(package)
     }
 
-    /// What of `needed` this toolset and `host` do not give: a package Ren
-    /// installs must be in the toolset (the host's own copy does not
+    /// What of `needed` this package set and `host` do not give: a package Ren
+    /// installs must be in the package set (the host's own copy does not
     /// count, so what runs is the release Ren pins), and one Ren only
     /// adopts must be on the host's search path.
     pub fn lacks(
         &self,
         depot: &Depot,
-        host: &impl ToolHost,
+        host: &impl ProgramHost,
         needed: &BTreeSet<PackageId>,
     ) -> Vec<Lack> {
         needed
@@ -247,7 +247,7 @@ impl Toolset {
             .collect()
     }
 
-    /// The programs this toolset puts on a run's search path.
+    /// The programs this package set puts on a run's search path.
     pub fn links(&self) -> Vec<Link> {
         self.installs
             .values()
@@ -258,7 +258,7 @@ impl Toolset {
             .collect()
     }
 
-    /// The packages this toolset holds after `edit`. Removing a package it
+    /// The packages this package set holds after `edit`. Removing a package it
     /// does not hold, or adding and removing one, is refused.
     pub fn wanted_after(&self, edit: &Edit) -> Result<BTreeSet<PackageId>, PlanError> {
         if let Some(both) = edit.add.intersection(&edit.remove).next() {
@@ -274,7 +274,7 @@ impl Toolset {
         Ok(wanted)
     }
 
-    /// The changes that make this toolset hold exactly `wanted`, each at the
+    /// The changes that make this package set hold exactly `wanted`, each at the
     /// release the catalog pins, for `platform`. A held package the catalog
     /// no longer names is kept as it is.
     pub fn plan(
@@ -336,7 +336,7 @@ impl Toolset {
     /// The plan that makes the next generation hold exactly what `older`
     /// held: its installs, whatever the catalog pins now. It fetches
     /// nothing, so every install `older` holds must still be in the store.
-    pub fn back_to(&self, older: &Toolset) -> Plan {
+    pub fn back_to(&self, older: &PackageSet) -> Plan {
         let mut changes = Vec::new();
         for (id, install) in &older.installs {
             match self.installs.get(id) {
@@ -361,12 +361,12 @@ impl Toolset {
         }
     }
 
-    /// The install folders the toolsets in `live` hold: the current
+    /// The install folders the package sets in `live` hold: the current
     /// generation and every generation a live run started with. Collection
     /// keeps these and removes every other folder in the store.
-    pub fn retained(live: &[&Toolset]) -> BTreeSet<RelativePath> {
+    pub fn retained(live: &[&PackageSet]) -> BTreeSet<RelativePath> {
         live.iter()
-            .flat_map(|toolset| toolset.installs())
+            .flat_map(|set| set.installs())
             .map(Install::dir)
             .collect()
     }
@@ -391,7 +391,7 @@ impl Plan {
     /// The next generation: `current` with this plan's changes, once every
     /// install it adds is in the store. A plan made from another generation
     /// is refused, since `current` changed under it.
-    pub fn apply(self, current: &Toolset) -> Result<Toolset, PlanError> {
+    pub fn apply(self, current: &PackageSet) -> Result<PackageSet, PlanError> {
         if current.generation != self.from {
             return Err(PlanError::Stale {
                 planned: self.from,
@@ -409,7 +409,7 @@ impl Plan {
                 }
             }
         }
-        Ok(Toolset {
+        Ok(PackageSet {
             generation: current.generation.next(),
             installs,
         })
@@ -418,7 +418,7 @@ impl Plan {
 
 #[cfg(test)]
 mod tests {
-    use super::{Change, Edit, Generation, Lack, PlanError, Toolset};
+    use super::{Change, Edit, Generation, Lack, PackageSet, PlanError};
     use crate::{
         Depot,
         package::{Kind, Package, PackageId},
@@ -436,7 +436,7 @@ mod tests {
                     .unwrap(),
                 sha256: digest.to_string().repeat(64).parse().unwrap(),
                 format: ArchiveFormat::TarGz,
-                program_at: "bin/tool".parse().unwrap(),
+                program_at: "bin/program".parse().unwrap(),
             }],
         })
     }
@@ -473,7 +473,7 @@ mod tests {
     /// A host whose search path has `codex` and `node`.
     struct Host;
 
-    impl crate::ToolHost for Host {
+    impl crate::ProgramHost for Host {
         fn locate(&self, program: &crate::package::ProgramName) -> Option<std::path::PathBuf> {
             ["codex", "node"]
                 .contains(&program.as_str())
@@ -490,9 +490,9 @@ mod tests {
     }
 
     #[test]
-    fn what_a_toolset_and_its_host_lack_of_what_is_needed() {
+    fn what_a_package_set_and_its_host_lack_of_what_is_needed() {
         let depot = depot("22.17.1", 'a');
-        let empty = Toolset::empty();
+        let empty = PackageSet::empty();
         let one = empty
             .plan(&depot, Platform::LinuxX64, &wanted(&[PackageId::JQ]))
             .unwrap()
@@ -532,7 +532,7 @@ mod tests {
 
     #[test]
     fn a_plan_adds_replaces_and_removes_and_applies_as_the_next_generation() {
-        let empty = Toolset::empty();
+        let empty = PackageSet::empty();
         let first = empty
             .plan(
                 &depot("22.17.1", 'a'),
@@ -551,12 +551,12 @@ mod tests {
                 .map(|link| link.target.as_str())
                 .collect::<Vec<_>>(),
             [
-                "jq/1.7.1-bbbbbbbbbbbbbbbb/bin/tool",
-                "node/22.17.1-aaaaaaaaaaaaaaaa/bin/tool"
+                "jq/1.7.1-bbbbbbbbbbbbbbbb/bin/program",
+                "node/22.17.1-aaaaaaaaaaaaaaaa/bin/program"
             ]
         );
 
-        // Nothing to do when the toolset already holds what is wanted.
+        // Nothing to do when the package set already holds what is wanted.
         let same = one
             .plan(
                 &depot("22.17.1", 'a'),
@@ -589,7 +589,7 @@ mod tests {
 
     #[test]
     fn an_edit_adds_to_and_removes_from_what_is_held() {
-        let empty = Toolset::empty();
+        let empty = PackageSet::empty();
         let depot = depot("22.17.1", 'a');
         let one = empty
             .plan(&depot, Platform::LinuxX64, &wanted(&[PackageId::NODE]))
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn going_back_restores_an_older_generations_installs_as_the_next() {
-        let empty = Toolset::empty();
+        let empty = PackageSet::empty();
         let one = empty
             .plan(
                 &depot("22.17.1", 'a'),
@@ -667,11 +667,10 @@ mod tests {
 
     #[test]
     fn a_plan_made_from_an_older_generation_is_refused() {
-        let empty = Toolset::empty();
+        let empty = PackageSet::empty();
         let depot = depot("22.17.1", 'a');
-        let plan = |toolset: &Toolset| {
-            toolset
-                .plan(&depot, Platform::LinuxX64, &wanted(&[PackageId::NODE]))
+        let plan = |set: &PackageSet| {
+            set.plan(&depot, Platform::LinuxX64, &wanted(&[PackageId::NODE]))
                 .unwrap()
         };
         let stale = plan(&empty);
@@ -687,7 +686,7 @@ mod tests {
 
     #[test]
     fn a_plan_names_what_cannot_be_installed() {
-        let empty = Toolset::empty();
+        let empty = PackageSet::empty();
         let depot = depot("22.17.1", 'a');
         assert_eq!(
             empty.plan(&depot, Platform::LinuxX64, &wanted(&[PackageId::CODEX])),
@@ -708,7 +707,7 @@ mod tests {
 
     #[test]
     fn an_install_taken_out_of_the_catalog_stays_until_removed() {
-        let empty = Toolset::empty();
+        let empty = PackageSet::empty();
         let both = empty
             .plan(
                 &depot("22.17.1", 'a'),
@@ -759,7 +758,7 @@ mod tests {
 
     #[test]
     fn collection_retains_every_install_a_live_generation_holds() {
-        let empty = Toolset::empty();
+        let empty = PackageSet::empty();
         let one = empty
             .plan(
                 &depot("22.17.1", 'a'),
@@ -778,8 +777,8 @@ mod tests {
             .unwrap()
             .apply(&one)
             .unwrap();
-        let dirs = |live: &[&Toolset]| -> Vec<String> {
-            Toolset::retained(live)
+        let dirs = |live: &[&PackageSet]| -> Vec<String> {
+            PackageSet::retained(live)
                 .iter()
                 .map(ToString::to_string)
                 .collect()

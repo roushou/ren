@@ -147,7 +147,7 @@ Modules carry no lint headers of their own. A module with submodules lives in
   starts and its program lookup on the agents' `PATH`), `HeldRuns` and
   `RunHost` (`ren_daemon::host::held`: starting a run host, and the one client
   it holds), `ren_git::Git`
-  (the one place Ren runs git), and `HostTools` (`ren_daemon::tools`, its
+  (the one place Ren runs git), and `HostPrograms` (`ren_daemon::packages`, its
   `--version` probes), and the daemon's server
   and supervisor task spawns. Outside the daemon, `ren-git`'s `Git` (the one place
   Ren runs git, which `ren-cli`'s build script reads its revision with) and
@@ -217,7 +217,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   CLI dependency.
 - `crates/ren-project`: a project's contract with Ren (`ProjectContract`,
   read from `.ren/project.toml`): the depot packages its steps need
-  (`tools`), its build, serve, check, and quiesce steps,
+  (`packages`), its build, serve, check, and quiesce steps,
   each an argv with the environment it adds, never a shell line, whose
   values name the `Place` a step runs for through a parsed `Template`
   (`{port}`, `{port+N}`, `{data}`, `{worktree}`, read from its old name
@@ -263,10 +263,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   factory keeps it in production's data folder (`Previews::FILE`). Its
   manifest allows only pure dependencies, and `src/purity.rs` keeps its
   sources free of I/O.
-- `crates/ren-depot`: the tools Ren's agents run with, with `Depot` as its
+- `crates/ren-depot`: the packages Ren's agents run with, with `Depot` as its
   primary type: the package catalog (`package`: `Package`, `PackageId`,
   `ProgramName`, `Kind`, client, runtime, or utility, and `Origin`; the
-  built-in `catalog.toml` and the operator's `[tools]` entries, a
+  built-in `catalog.toml` and the operator's `[[packages]]` entries, a
   `CatalogEntry` each, merged by `Depot::configured`), a
   `Requirement` (a package and a `semver` range), a program's version read
   from its own `--version` output (`version`: `ObservedVersion`, which keeps
@@ -274,12 +274,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   provides and whether it fits (`provision`: `Provision`, `Fit`). For
   installing, it has where a package comes from (`source`: `Source`, a
   `Release` with an `Artifact` per `Platform` pinned by `Sha256`), immutable
-  installs gathered into numbered generations (`toolset`: `Install`,
-  `Toolset`, `Generation`, and the `Plan` from one generation to the next),
+  installs gathered into numbered generations (`package_set`: `Install`,
+  `PackageSet`, `Generation`, and the `Plan` from one generation to the next),
   and the pure `InstallJob` machine (`job`). It reaches the host only
-  through its `ToolHost` port, which the daemon's `HostTools` implements;
-  `ren doctor` surveys the host with it. The daemon's `tools` module carries
-  out its jobs and generations, for `ren tools`, `/control/v1/tools`, and
+  through its `ProgramHost` port, which the daemon's `HostPrograms` implements;
+  `ren doctor` surveys the host with it. The daemon's `packages` module carries
+  out its jobs and generations, for `ren packages`, `/control/v1/packages`, and
   the UI's Tools view; `docs/plans/dependencies.md` is the plan, where
   deviations from it are recorded. Its
   manifest allows only pure dependencies, and `src/purity.rs` keeps its
@@ -466,7 +466,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ClientStatus` (`client`) say whether a run can start
   with each client here; `AgentHost` (`host`) is the port for resolving paths,
   looking in folders, making folders (a scratch run's as a repository),
-  finding programs, the current toolset a process gets (`RunTools`: a
+  finding programs, the current package set a process gets (`RunPackages`: a
   generation and its folder, none, or an unreadable store, recorded as such
   with the run), doing blocking work off the task (`AgentHost::blocking`,
   Tokio's blocking pool in `ProcessHost`), and starting processes, which tests
@@ -562,9 +562,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
     pinned in `tests/fixtures/labels.txt`. Its `request` module holds each request
     the CLI sends as a value (`ControlRequest`: method, path, and the body types
     the routes parse), and `tests/runs.rs` sends each one to the router.
-    Its `tools` module serves `/control/v1/tools` (listing, change, and
-    collection) through the `Toolbox` port the gateway declares in `tools`
-    (with its views), which the daemon's `HostToolbox` implements.
+    Its `packages` module serves `/control/v1/packages` (listing, change, and
+    collection) through the `Packages` port the gateway declares in `packages`
+    (with its views), which the daemon's `HostPackages` implements.
     Its `sessions` module serves `/control/v1/sessions`: creating a session,
     prompting, unqueueing, answering approvals, configuring, choosing its
     client while a draft, interrupting, stopping, archiving, unarchiving,
@@ -599,16 +599,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   its exit, and serves one daemon at a time over a socket whose frames
   (`frame`, pure, kept when unknown: a host may be an older build) are a
   cross-version surface. The daemon lists held runs before opening the
-  store (`Store::open_holding`). `tools` is the tool store on disk
-  (`ToolStore`, under `<data>/tools`, and `HostTools`, the depot's
-  `ToolHost`, in `tools::host`): it carries out the depot's
+  store (`Store::open_holding`). `packages` is the package store on disk
+  (`PackageStore`, under `<data>/tools`, and `HostPrograms`, the depot's
+  `ProgramHost`, in `packages::host`): it carries out the depot's
   `InstallJob`s (downloading through its `Fetch` seam, `ReqwestFetch` in
   production, https only and capped in bytes; unpacking tar.gz, zip, and
   bare releases, refusing entries that reach outside their folder), and
-  applies an `Edit` under its lock file (`ToolStore::change`), activating,
-  restoring, and collecting toolset generations with renames of finished
-  folders and links. `HostToolbox` is the gateway's `Toolbox` over it,
-  which `ren tools` uses too.
+  applies an `Edit` under its lock file (`PackageStore::change`), activating,
+  restoring, and collecting package set generations with renames of finished
+  folders and links. `HostPackages` is the gateway's `Packages` over it,
+  which `ren packages` uses too.
   Its integration tests hold `TestGateway` (`tests/support`) and the gateway,
   WebSocket, decision, and full-daemon tests; they use the gateway's complete
   router with test capabilities.
@@ -616,7 +616,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`lib.rs`) and a thin `main.rs` that sets up logging and captures `HostEnv`.
   `commands` holds clap parsing and dispatch (`runs` is `ren runs`, the
   control API's runs, sent through `ControlTarget` like `ren control`;
-  `tools` is `ren tools`, the depot's catalog and this host's tool store,
+  `packages` is `ren packages`, the depot's catalog and this host's package store,
   acted on in its data directory): each command is a
   `#[derive(Args)]` struct with its own execution method, and command groups
   are `#[derive(Subcommand)]` enums. `client` chooses the gateway (`--gateway`,
@@ -646,10 +646,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   storage directly, and never proxies inference. There are two exceptions.
   Runs and tools: with `REN_CONTROL_TOKEN_FILE` set, `/control/runs*`,
   `/control/sessions*`,
-  `/control/history/*`, and `/control/tools*` (`src/lib/server/control.ts`,
+  `/control/history/*`, and `/control/packages*` (`src/lib/server/control.ts`,
   `RunsProxy`) forward the Sessions and Tools views' same-origin JSON requests
   to the daemon's `/control/v1/runs*`, `/control/v1/sessions*`, its archive,
-  unarchive, and delete routes, and `/control/v1/tools` (listing, change, and
+  unarchive, and delete routes, and `/control/v1/packages` (listing, change, and
   collection) only, with the control token read from that
   file on each request, never sent to the browser, and, with
   `REN_CONTROL_LOGINS` set, only for those Tailscale logins; `src/lib/runs.ts`
@@ -797,7 +797,7 @@ directly.
 | Crate                                      | Primary type                                        | Depends on        |
 | ------------------------------------------ | --------------------------------------------------- | ----------------- |
 | `ren-protocol`                             | `CallInspector`                                     | none of ours      |
-| `ren-depot`                                | `Depot`, with its `ToolHost` port                   | none of ours      |
+| `ren-depot`                                | `Depot`, with its `ProgramHost` port                | none of ours      |
 | `ren-git`                                  | `Git`                                               | none of ours      |
 | `ren-release`                              | `Release`                                           | protocol          |
 | `ren-github`                               | `Client`                                            | none of ours      |

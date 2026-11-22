@@ -31,7 +31,7 @@ mod worktree;
 pub use client::{Client, ClientStatus};
 pub use files::{FileListing, FileMatch, FileQuery, FoundPath, PathKind, WalkLimits};
 pub use host::{
-    AgentHost, AgentProcess, ClientStamp, HeldRun, KillSignal, KillSwitch, RunTools, Scratch,
+    AgentHost, AgentProcess, ClientStamp, HeldRun, KillSignal, KillSwitch, RunPackages, Scratch,
     Tenure, Untracked,
 };
 pub use place::{Look, Place, PlaceGit, PlaceKind, Search};

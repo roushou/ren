@@ -3,7 +3,7 @@
 /**
  * A package's program on the host's search path.
  */
-export type SystemTool = { path: string, 
+export type SystemProgram = { path: string, 
 /**
  * The version it reported, when Ren could read one.
  */

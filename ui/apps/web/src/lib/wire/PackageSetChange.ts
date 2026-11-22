@@ -5,7 +5,7 @@ import type { PackageChange } from "./PackageChange.ts";
 /**
  * A change's result.
  */
-export type ToolChange = { outcome: string, 
+export type PackageSetChange = { outcome: string, 
 /**
  * The current generation after the change.
  */

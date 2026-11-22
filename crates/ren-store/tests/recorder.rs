@@ -805,7 +805,7 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
                 effort: Some(ren_harness::settings::Effort::High),
                 approvals: Some(ren_harness::settings::ApprovalPolicy::Edits),
             },
-            Some(ren_depot::toolset::Generation::from(3)),
+            Some(ren_depot::package_set::Generation::from(3)),
         )
         .unwrap();
     let thread = ren_protocol::native::NativeThreadId::new(uuid::Uuid::from_u128(7)).unwrap();
@@ -846,7 +846,7 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
             ren_harness::Harness::Codex,
             "/work/b".into(),
             ren_harness::settings::RunSettings::default(),
-            Some(ren_depot::toolset::Generation::from(2)),
+            Some(ren_depot::package_set::Generation::from(2)),
         )
         .unwrap();
     drop(left);
@@ -885,12 +885,18 @@ async fn a_runs_lifecycle_is_recorded_and_read_back() {
     assert_eq!(ended.exit, Some(ProcessExit::Signal(9)));
     let open = reader.run(unfinished).await.unwrap().unwrap();
     assert_eq!((open.end, open.exit), (None, None), "still running");
-    // Each run's toolset generation; collection keeps the running one's.
-    assert_eq!(ended.toolset, Some(ren_depot::toolset::Generation::from(3)));
-    assert_eq!(open.toolset, Some(ren_depot::toolset::Generation::from(2)));
+    // Each run's package set generation; collection keeps the running one's.
     assert_eq!(
-        reader.live_toolsets().await.unwrap(),
-        [ren_depot::toolset::Generation::from(2)]
+        ended.toolset,
+        Some(ren_depot::package_set::Generation::from(3))
+    );
+    assert_eq!(
+        open.toolset,
+        Some(ren_depot::package_set::Generation::from(2))
+    );
+    assert_eq!(
+        reader.live_generations().await.unwrap(),
+        [ren_depot::package_set::Generation::from(2)]
     );
     assert_eq!(
         (open.model, open.effort, open.approvals),

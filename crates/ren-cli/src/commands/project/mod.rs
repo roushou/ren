@@ -11,9 +11,10 @@
 //! commits name (`Work-Item: <id>`), or that `--work` gives, so the Work
 //! view opens the marked page on it. Removing the worktree stops it.
 //!
-//! Every step runs with Ren's toolset (`ren tools`) first on its search
-//! path, as Ren's runs do; a tool the contract names (`tools`) that the
-//! toolset or the host lacks refuses the command before any step runs.
+//! Every step runs with Ren's package set (`ren packages`) first on its
+//! search path, as Ren's runs do; a package the contract names
+//! (`packages`) that the package set or the host lacks refuses the command
+//! before any step runs.
 //!
 //! This module is the one place the CLI runs a project's declared steps.
 
@@ -29,10 +30,10 @@ use crate::{context::Context, management::Management};
 use anyhow::{Context as _, Result, anyhow, bail};
 use clap::{Args, Subcommand};
 use ren_daemon::{
+    packages::{HostPrograms, PackageStore},
     tailscale::{NodeStatus, Route, ServeStatus},
-    tools::{HostTools, ToolStore},
 };
-use ren_depot::toolset::{Generation, Lack};
+use ren_depot::package_set::{Generation, Lack};
 use ren_gateway::api::{
     control::request::{ControlRequest, PreviewWorkRequest, WorkChange},
     read::{ReadBody, work::WorkPreviewBody},
@@ -142,7 +143,7 @@ struct ProjectPlace {
 /// The one place the CLI runs a project's steps and its preview's unit,
 /// with the search path each gets.
 struct Steps {
-    /// Ren's toolset's programs, then the caller's search path; `None`
+    /// Ren's package set's programs, then the caller's search path; `None`
     /// keeps the caller's.
     path: Option<String>,
 }
@@ -456,56 +457,60 @@ impl ProjectPlace {
 }
 
 impl Steps {
-    /// The steps of `contract` on this host: Ren's current toolset goes
-    /// first on their search path. Refused when a tool the contract names
-    /// is lacking, or the toolset it would come from cannot be read.
+    /// The steps of `contract` on this host: Ren's current package set
+    /// goes first on their search path. Refused when a package the
+    /// contract names is lacking, or the package set it would come from
+    /// cannot be read.
     pub(super) fn of(ctx: &Context, contract: &ProjectContract) -> Result<Self> {
         let config = ctx.config()?;
-        let store = ToolStore::without_downloads(ctx.data_dir(&config)?.join(ToolStore::FOLDER));
+        let store =
+            PackageStore::without_downloads(ctx.data_dir(&config)?.join(PackageStore::FOLDER));
         let caller = Self {
             path: ctx.env.get("PATH").map(str::to_owned),
         };
-        let toolset = match store.current() {
-            Ok(toolset) => toolset,
-            Err(error) if contract.tools().is_empty() => {
-                eprintln!("Ren's toolset does not read ({error}); steps run with your PATH alone.");
+        let set = match store.current() {
+            Ok(set) => set,
+            Err(error) if contract.packages().is_empty() => {
+                eprintln!(
+                    "Ren's package set does not read ({error}); steps run with your PATH alone."
+                );
                 return Ok(caller);
             }
             Err(error) => {
                 return Err(error).with_context(|| {
                     format!(
-                        "{} names tools, and Ren's toolset does not read",
+                        "{} names packages, and Ren's package set does not read",
                         ProjectContract::FILE
                     )
                 });
             }
         };
         let search = ctx.env.search_path();
-        let lacks = toolset.lacks(
-            &config.tools.depot()?,
-            &HostTools::new(search.clone()),
-            contract.tools(),
+        let lacks = set.lacks(
+            &config.packages.depot()?,
+            &HostPrograms::new(search.clone()),
+            contract.packages(),
         );
         if !lacks.is_empty() {
             bail!(Self::lacking(&lacks));
         }
-        if toolset.generation() == Generation::NONE {
+        if set.generation() == Generation::NONE {
             return Ok(caller);
         }
-        let bin = store.bin(toolset.generation());
+        let bin = store.bin(set.generation());
         let dirs: Vec<PathBuf> = std::iter::once(bin.clone())
             .chain(search.into_iter().filter(|dir| *dir != bin))
             .collect();
         let path = std::env::join_paths(dirs)?
             .into_string()
             .map_err(|_| anyhow!("the search path is not text"))?;
-        let installs: Vec<String> = toolset
+        let installs: Vec<String> = set
             .installs()
             .map(|install| format!("{} {}", install.package, install.version))
             .collect();
         println!(
-            "==> Tools: generation {} ({})",
-            toolset.generation(),
+            "==> Packages: generation {} ({})",
+            set.generation(),
             installs.join(", ")
         );
         Ok(Self { path: Some(path) })
@@ -517,16 +522,14 @@ impl Steps {
             .iter()
             .map(|lack| match lack {
                 Lack::Unknown(_) => {
-                    format!(
-                        "  {lack}: add it to the daemon's ren.toml as a [[tools.package]] entry"
-                    )
+                    format!("  {lack}: add it to the daemon's ren.toml as a [[packages]] entry")
                 }
-                Lack::NotInstalled(id) => format!("  {lack}: run `ren tools install {id}`"),
+                Lack::NotInstalled(id) => format!("  {lack}: run `ren packages install {id}`"),
                 Lack::NotOnHost { .. } => format!("  {lack}: install it on this host"),
             })
             .collect();
         format!(
-            "{} names tools its steps cannot have:\n{}",
+            "{} names packages its steps cannot have:\n{}",
             ProjectContract::FILE,
             lines.join("\n")
         )
@@ -561,7 +564,7 @@ impl Steps {
 
     /// Starts `step` as the transient user unit `unit`, in `dir`, with the
     /// steps' search path: a unit otherwise gets the user manager's, which
-    /// lacks Ren's toolset and the programs in the operator's home.
+    /// lacks Ren's package set and the programs in the operator's home.
     pub(super) fn start(&self, unit: &str, step: &Expanded, dir: &Path) -> Result<()> {
         let mut argv = vec![
             "systemd-run".to_owned(),

@@ -1,24 +1,24 @@
 //! DRAFT
 
-use crate::tools::ChangeKind;
-use crate::tools::ChangeOutcome;
-use crate::tools::GenerationState;
+use crate::packages::ChangeKind;
+use crate::packages::ChangeOutcome;
+use crate::packages::GenerationState;
 use ren_depot::job::Stage;
 use ren_depot::package::Kind;
 use ren_depot::package::Origin;
 use ren_depot::package::PackageId;
 use ren_depot::package::ProgramName;
+use ren_depot::package_set::Generation;
 use ren_depot::source::Platform;
-use ren_depot::toolset::Generation;
 use ren_harness::Harness;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// Every package Ren knows, what this host has of each, and the toolset
+/// Every package Ren knows, what this host has of each, and the package set
 /// generations kept.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct ToolListing {
+pub struct PackageListing {
     /// The platform Ren installs for here; `None` where it installs nothing.
     #[ts(as = "Option<String>")]
     pub platform: Option<Platform>,
@@ -28,14 +28,14 @@ pub struct ToolListing {
     /// The current generation's folder of programs, which runs put first on
     /// their search path; `None` before any.
     pub bin: Option<String>,
-    pub packages: Vec<ToolPackage>,
+    pub packages: Vec<ListedPackage>,
     /// Every generation kept, newest first.
     pub generations: Vec<GenerationView>,
 }
 
-impl From<crate::tools::ToolListing> for ToolListing {
-    fn from(value: crate::tools::ToolListing) -> Self {
-        let crate::tools::ToolListing {
+impl From<crate::packages::PackageListing> for PackageListing {
+    fn from(value: crate::packages::PackageListing) -> Self {
+        let crate::packages::PackageListing {
             platform,
             generation,
             bin,
@@ -55,7 +55,7 @@ impl From<crate::tools::ToolListing> for ToolListing {
 /// A change's result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct ToolChange {
+pub struct PackageSetChange {
     #[ts(as = "String")]
     pub outcome: ChangeOutcome,
     /// The current generation after the change.
@@ -65,9 +65,9 @@ pub struct ToolChange {
     pub failures: Vec<InstallFailure>,
 }
 
-impl From<crate::tools::ToolChange> for ToolChange {
-    fn from(value: crate::tools::ToolChange) -> Self {
-        let crate::tools::ToolChange {
+impl From<crate::packages::PackageSetChange> for PackageSetChange {
+    fn from(value: crate::packages::PackageSetChange) -> Self {
+        let crate::packages::PackageSetChange {
             outcome,
             generation,
             changes,
@@ -85,15 +85,15 @@ impl From<crate::tools::ToolChange> for ToolChange {
 /// What a collection removed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct ToolCollection {
+pub struct PackageCollection {
     #[ts(as = "Vec<u64>")]
     pub generations: Vec<Generation>,
     pub installs: Vec<String>,
 }
 
-impl From<crate::tools::ToolCollection> for ToolCollection {
-    fn from(value: crate::tools::ToolCollection) -> Self {
-        let crate::tools::ToolCollection {
+impl From<crate::packages::PackageCollection> for PackageCollection {
+    fn from(value: crate::packages::PackageCollection) -> Self {
+        let crate::packages::PackageCollection {
             generations,
             installs,
         } = value;
@@ -114,9 +114,9 @@ pub struct GenerationInstall {
     pub version: semver::Version,
 }
 
-impl From<crate::tools::GenerationInstall> for GenerationInstall {
-    fn from(value: crate::tools::GenerationInstall) -> Self {
-        let crate::tools::GenerationInstall { package, version } = value;
+impl From<crate::packages::GenerationInstall> for GenerationInstall {
+    fn from(value: crate::packages::GenerationInstall) -> Self {
+        let crate::packages::GenerationInstall { package, version } = value;
         Self { package, version }
     }
 }
@@ -132,9 +132,9 @@ pub struct GenerationView {
     pub installs: Vec<GenerationInstall>,
 }
 
-impl From<crate::tools::GenerationView> for GenerationView {
-    fn from(value: crate::tools::GenerationView) -> Self {
-        let crate::tools::GenerationView {
+impl From<crate::packages::GenerationView> for GenerationView {
+    fn from(value: crate::packages::GenerationView) -> Self {
+        let crate::packages::GenerationView {
             generation,
             state,
             installs,
@@ -160,9 +160,9 @@ pub struct InstallFailure {
     pub reason: String,
 }
 
-impl From<crate::tools::InstallFailure> for InstallFailure {
-    fn from(value: crate::tools::InstallFailure) -> Self {
-        let crate::tools::InstallFailure {
+impl From<crate::packages::InstallFailure> for InstallFailure {
+    fn from(value: crate::packages::InstallFailure) -> Self {
+        let crate::packages::InstallFailure {
             package,
             version,
             stage,
@@ -180,7 +180,7 @@ impl From<crate::tools::InstallFailure> for InstallFailure {
 /// A package's install in the current generation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct InstalledTool {
+pub struct InstalledPackage {
     #[ts(as = "String")]
     pub version: semver::Version,
     pub sha256: String,
@@ -188,9 +188,9 @@ pub struct InstalledTool {
     pub dir: String,
 }
 
-impl From<crate::tools::InstalledTool> for InstalledTool {
-    fn from(value: crate::tools::InstalledTool) -> Self {
-        let crate::tools::InstalledTool {
+impl From<crate::packages::InstalledPackage> for InstalledPackage {
+    fn from(value: crate::packages::InstalledPackage) -> Self {
+        let crate::packages::InstalledPackage {
             version,
             sha256,
             dir,
@@ -217,9 +217,9 @@ pub struct PackageChange {
     pub to: Option<semver::Version>,
 }
 
-impl From<crate::tools::PackageChange> for PackageChange {
-    fn from(value: crate::tools::PackageChange) -> Self {
-        let crate::tools::PackageChange {
+impl From<crate::packages::PackageChange> for PackageChange {
+    fn from(value: crate::packages::PackageChange) -> Self {
+        let crate::packages::PackageChange {
             change,
             package,
             from,
@@ -237,7 +237,7 @@ impl From<crate::tools::PackageChange> for PackageChange {
 /// A package's program on the host's search path.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct SystemTool {
+pub struct SystemProgram {
     pub path: String,
     /// The version it reported, when Ren could read one.
     #[ts(as = "Option<String>")]
@@ -246,9 +246,9 @@ pub struct SystemTool {
     pub unread: Option<String>,
 }
 
-impl From<crate::tools::SystemTool> for SystemTool {
-    fn from(value: crate::tools::SystemTool) -> Self {
-        let crate::tools::SystemTool {
+impl From<crate::packages::SystemProgram> for SystemProgram {
+    fn from(value: crate::packages::SystemProgram) -> Self {
+        let crate::packages::SystemProgram {
             path,
             version,
             unread,
@@ -265,7 +265,7 @@ impl From<crate::tools::SystemTool> for SystemTool {
 /// holds that the catalog no longer names.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct ToolPackage {
+pub struct ListedPackage {
     #[ts(as = "String")]
     pub id: PackageId,
     /// Which catalog names it; `None` once it was taken out of the
@@ -282,17 +282,17 @@ pub struct ToolPackage {
     #[ts(as = "Option<String>")]
     pub release: Option<semver::Version>,
     /// What the current generation holds of it.
-    pub installed: Option<InstalledTool>,
+    pub installed: Option<InstalledPackage>,
     /// What this host's search path has.
-    pub system: Option<SystemTool>,
+    pub system: Option<SystemProgram>,
     /// The clients that need it.
     #[ts(as = "Vec<String>")]
     pub needed_by: Vec<Harness>,
 }
 
-impl From<crate::tools::ToolPackage> for ToolPackage {
-    fn from(value: crate::tools::ToolPackage) -> Self {
-        let crate::tools::ToolPackage {
+impl From<crate::packages::ListedPackage> for ListedPackage {
+    fn from(value: crate::packages::ListedPackage) -> Self {
+        let crate::packages::ListedPackage {
             id,
             origin,
             kind,

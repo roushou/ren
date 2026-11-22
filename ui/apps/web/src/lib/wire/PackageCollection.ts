@@ -3,4 +3,4 @@
 /**
  * What a collection removed.
  */
-export type ToolCollection = { generations: Array<number>, installs: Array<string>, };
+export type PackageCollection = { generations: Array<number>, installs: Array<string>, };

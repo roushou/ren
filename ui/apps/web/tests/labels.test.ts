@@ -89,10 +89,10 @@ const ui: [string, readonly string[]][] = [
   ['ren-recorder capture::ExitKind', exit.exitKinds],
   ['ren-harness sign_in::SignInMethod', signIn.SIGN_IN_METHODS],
   ['ren-depot package::Kind', tools.KINDS],
-  ['ren-gateway tools::ChangeKind', tools.changeKinds],
-  ['ren-gateway tools::GenerationState', tools.generationStates],
+  ['ren-gateway packages::ChangeKind', tools.changeKinds],
+  ['ren-gateway packages::GenerationState', tools.generationStates],
   ['ren-depot package::Origin', tools.origins],
-  ['ren-gateway tools::ChangeOutcome', tools.outcomes],
+  ['ren-gateway packages::ChangeOutcome', tools.outcomes],
   ['ren-depot source::Platform', tools.platforms],
   ['ren-depot job::Stage', tools.stages],
 ];

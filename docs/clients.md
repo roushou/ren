@@ -118,9 +118,9 @@ The launch mechanism follows [Claude's gateway protocol](https://code.claude.com
 [Codex's per-run configuration overrides](https://learn.chatgpt.com/docs/config-file/config-advanced#one-off-overrides-from-the-cli),
 and [OpenAI authentication for custom providers](https://learn.chatgpt.com/docs/auth#alternative-model-providers).
 
-### Tools for agents
+### Packages for agents
 
-`ren tools` installs runtimes and utilities on this host from the catalog
+`ren packages` installs runtimes and utilities on this host from the catalog
 built into this Ren: Node.js, Bun, jq, fd, and ripgrep, each at one pinned
 release for Linux x64, Linux arm64, and macOS arm64. The clients themselves and
 git are only found on `PATH`, never installed.
@@ -133,15 +133,15 @@ clients stay built in, and two packages may not provide one program. The
 configuration is refused at load otherwise.
 
 ```toml
-[[tools.package]]
+[[packages]]
 id = "acme-lint"
 kind = "utility" # or "runtime"
 program = "acme-lint"
 
-[tools.package.release]
+[packages.release]
 version = "0.3.0"
 
-[[tools.package.release.artifact]]
+[[packages.release.artifact]]
 platform = "linux_x64" # linux_arm64, macos_arm64
 url = "https://github.com/acme/acme-lint/releases/download/v0.3.0/acme-lint-x86_64-unknown-linux-gnu.tar.gz"
 sha256 = "<64 hex digits; GitHub shows each release asset's digest>"
@@ -153,12 +153,12 @@ Taking an entry out leaves its install in the current generation, listed as
 not in the catalog, until it is removed.
 
 ```sh
-ren tools list
-ren tools install node jq
-ren tools remove jq
-ren tools rollback 2    # a new generation holding what generation 2 held
-ren tools which jq      # the program a new run finds
-ren tools gc
+ren packages list
+ren packages install node jq
+ren packages remove jq
+ren packages rollback 2    # a new generation holding what generation 2 held
+ren packages which jq      # the program a new run finds
+ren packages gc
 ```
 
 Each download comes over https and must match the SHA-256 the catalog pins;
@@ -176,7 +176,7 @@ later change makes a new generation for later runs, and `gc` keeps every
 generation a run without an end still uses (as the database records it).
 With nothing installed, runs get the daemon's `PATH` unchanged. A
 project's declared steps get the current generation the same way, and
-`tools` in its `.ren/project.toml` names what they need
+`packages` in its `.ren/project.toml` names what they need
 ([deployment.md](deployment.md#projects)).
 
 The web UI's Tools view shows the same on the daemon's host, filterable by
@@ -184,9 +184,9 @@ name or path and by source: a row per package with the version runs use and
 where it comes from (Ren's install,
 first on their `PATH` over any copy the daemon's `PATH` has, or that copy);
 staged changes, as the versions runs use before and after; the earlier
-toolsets, as history; and which clients need what. Installs, updates, and removals are staged and then
+package sets, as history; and which clients need what. Installs, updates, and removals are staged and then
 applied as one generation; it needs the UI server's `REN_CONTROL_TOKEN_FILE`,
-as Sessions does. Over the control API it is [`/control/v1/tools`](api.md#tools).
+as Sessions does. Over the control API it is [`/control/v1/packages`](api.md#packages).
 
 ## Native endpoints
 

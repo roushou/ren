@@ -273,8 +273,8 @@ impl<H: AgentHost> SupervisorTask<H> {
         let session = process.session();
         let resting = process.resting();
         let state = process.state().clone();
-        let tools = self.host.tools();
-        let book = self.book_key(process.harness(), process.workdir(), &tools);
+        let packages = self.host.packages();
+        let book = self.book_key(process.harness(), process.workdir(), &packages);
         let mut live = self.take_on(process, agent, read, lines, served);
         live.book = book;
         live.tap = Some(tap);

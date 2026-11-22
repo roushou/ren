@@ -3,7 +3,7 @@
 /**
  * A package's install in the current generation.
  */
-export type InstalledTool = { version: string, sha256: string, 
+export type InstalledPackage = { version: string, sha256: string, 
 /**
  * Its folder in the store.
  */

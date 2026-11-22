@@ -114,7 +114,7 @@ pub enum Kind {
     Client,
     /// A language runtime other programs run on.
     Runtime,
-    /// A command-line tool agents and Ren use.
+    /// A command-line utility agents and Ren use.
     Utility,
 }
 

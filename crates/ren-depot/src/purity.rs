@@ -10,7 +10,7 @@ fn sources_stay_free_of_runtime_and_io() {
         ("job.rs", include_str!("job.rs")),
         ("provision.rs", include_str!("provision.rs")),
         ("source.rs", include_str!("source.rs")),
-        ("toolset.rs", include_str!("toolset.rs")),
+        ("package_set.rs", include_str!("package_set.rs")),
         ("version.rs", include_str!("version.rs")),
     ];
     let forbidden = [

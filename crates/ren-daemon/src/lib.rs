@@ -7,13 +7,13 @@
 
 pub mod config;
 pub mod host;
+pub mod packages;
 pub mod tailscale;
-pub mod tools;
 
 use crate::config::RuntimeConfig;
 use crate::host::{HeldRuns, ObservationThread, ProcessHost, RandomIds, SystemClock};
-use crate::tools::HostTools;
-use crate::tools::{HostToolbox, ToolStore, fetch::ReqwestFetch};
+use crate::packages::HostPrograms;
+use crate::packages::{HostPackages, PackageStore, fetch::ReqwestFetch};
 use ren_gateway::{
     ControlToken, Gateway, ManagementSetup, ReleaseFolder, ReqwestUpstream, Shutdown, Stopped,
     control::Controls,
@@ -241,12 +241,12 @@ impl Daemon {
             clock.clone(),
             shutdown.clone(),
         );
-        let tools = Self::toolbox(config, data_dir, &reader);
+        let packages = Self::packages(config, data_dir, &reader);
         let pulls = Self::watch_github(config, clock, &shutdown);
         let ingress = gateway.into_ingress(
             listener,
             ManagementSetup {
-                tools,
+                packages,
                 reader,
                 backup,
                 retention: config.retention().clone(),
@@ -353,7 +353,7 @@ impl Daemon {
         let host = ProcessHost::new(
             config.pi_cache().cloned(),
             config.agent_path().to_vec(),
-            ToolStore::without_downloads(data_dir.join(ToolStore::FOLDER)),
+            PackageStore::without_downloads(data_dir.join(PackageStore::FOLDER)),
         );
         let host = match held {
             Some(held) => host.holding(held),
@@ -419,21 +419,21 @@ impl Daemon {
         });
         board
     }
-    /// The host's tools for the control API, or none when downloads cannot
-    /// be set up (the tools routes then say so).
-    fn toolbox(
+    /// The host's packages for the control API, or none when downloads cannot
+    /// be set up (the packages routes then say so).
+    fn packages(
         config: &RuntimeConfig,
         data_dir: &std::path::Path,
         reader: &Reader,
-    ) -> Option<Arc<dyn ren_gateway::tools::Toolbox>> {
+    ) -> Option<Arc<dyn ren_gateway::packages::Packages>> {
         let fetch = ReqwestFetch::new()
-            .inspect_err(|error| tracing::warn!(%error, "tools: cannot start downloads"))
+            .inspect_err(|error| tracing::warn!(%error, "packages: cannot start downloads"))
             .ok()?;
-        Some(Arc::new(HostToolbox::new(
-            ToolStore::new(data_dir.join(ToolStore::FOLDER), fetch),
+        Some(Arc::new(HostPackages::new(
+            PackageStore::new(data_dir.join(PackageStore::FOLDER), fetch),
             config.depot().clone(),
-            HostTools::new(config.agent_path().to_vec()),
-            HostTools::platform(),
+            HostPrograms::new(config.agent_path().to_vec()),
+            HostPrograms::platform(),
             Some(reader.clone()),
         )))
     }

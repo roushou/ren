@@ -218,11 +218,11 @@ impl TestGateway {
         .await
     }
 
-    /// Forward over HTTP, with `tools` behind `/control/v1/tools`.
-    pub async fn with_tools(
+    /// Forward over HTTP, with `packages` behind `/control/v1/packages`.
+    pub async fn with_packages(
         config: &Config,
         dir: &Path,
-        tools: Arc<dyn ren_gateway::tools::Toolbox>,
+        packages: Arc<dyn ren_gateway::packages::Packages>,
     ) -> Self {
         let runtime = Self::resolve(config);
         let upstream =
@@ -232,7 +232,7 @@ impl TestGateway {
             dir,
             upstream,
             None::<(Vec<PathBuf>, agent::ScriptedHost)>,
-            Some(tools),
+            Some(packages),
         )
         .await
     }
@@ -255,7 +255,7 @@ impl TestGateway {
         dir: &Path,
         upstream: U,
         runs: Option<(Vec<PathBuf>, H)>,
-        tools: Option<Arc<dyn ren_gateway::tools::Toolbox>>,
+        packages: Option<Arc<dyn ren_gateway::packages::Packages>>,
     ) -> Self {
         let runtime = Self::resolve(config);
         let clock = Arc::new(ManualClock::at(UnixMillis::from_millis(1_800_000_000_000)));
@@ -337,7 +337,7 @@ impl TestGateway {
             build: build(),
             instance: runtime.instance(),
             runs: supervisor,
-            tools,
+            packages,
             release: ReleaseFolder::in_data(dir),
             pulls: pulls.clone(),
         });

@@ -1565,7 +1565,7 @@ mod digests {
                     harness: Harness::Codex,
                     workdir: workdir.clone(),
                     settings: ren_harness::settings::RunSettings::default(),
-                    toolset: Some(ren_depot::toolset::Generation::NONE),
+                    toolset: Some(ren_depot::package_set::Generation::NONE),
                 },
                 RunFact::Opened {
                     thread: NativeThreadId::new(Uuid::from_u128(native)).unwrap(),
@@ -1817,7 +1817,7 @@ mod history {
                     harness: ren_harness::Harness::Codex,
                     workdir: "/work/acme".into(),
                     settings: ren_harness::settings::RunSettings::default(),
-                    toolset: Some(ren_depot::toolset::Generation::NONE),
+                    toolset: Some(ren_depot::package_set::Generation::NONE),
                 },
                 RunFact::Opened {
                     thread: NativeThreadId::new(Uuid::from_u128(native)).unwrap(),
@@ -2073,7 +2073,7 @@ mod history {
                 harness: ren_harness::Harness::Codex,
                 workdir: "/work/acme".into(),
                 settings: ren_harness::settings::RunSettings::default(),
-                toolset: Some(ren_depot::toolset::Generation::NONE),
+                toolset: Some(ren_depot::package_set::Generation::NONE),
             },
         }));
         fixture.store.commit(&batch).await.unwrap();
@@ -2359,7 +2359,7 @@ mod conversation {
                     harness: ren_harness::Harness::ClaudeCode,
                     workdir: "/work/acme".into(),
                     settings: ren_harness::settings::RunSettings::default(),
-                    toolset: Some(ren_depot::toolset::Generation::NONE),
+                    toolset: Some(ren_depot::package_set::Generation::NONE),
                 },
             }));
             self.store.commit(&batch).await.unwrap();
@@ -2382,7 +2382,7 @@ mod conversation {
                     harness: ren_harness::Harness::ClaudeCode,
                     workdir: "/work/acme".into(),
                     settings: ren_harness::settings::RunSettings::default(),
-                    toolset: Some(ren_depot::toolset::Generation::NONE),
+                    toolset: Some(ren_depot::package_set::Generation::NONE),
                 },
                 RunFact::Opened {
                     thread: NativeThreadId::new(Uuid::from_u128(thread)).unwrap(),
@@ -2590,7 +2590,7 @@ mod conversation {
                 harness: ren_harness::Harness::Codex,
                 workdir: "/work/acme-web".into(),
                 settings: ren_harness::settings::RunSettings::default(),
-                toolset: Some(ren_depot::toolset::Generation::NONE),
+                toolset: Some(ren_depot::package_set::Generation::NONE),
             },
         }));
         batch.push(Op::Session(SessionRecord {
@@ -2632,7 +2632,7 @@ mod conversation {
                 harness: ren_harness::Harness::Codex,
                 workdir: "/work/acme".into(),
                 settings: ren_harness::settings::RunSettings::default(),
-                toolset: Some(ren_depot::toolset::Generation::NONE),
+                toolset: Some(ren_depot::package_set::Generation::NONE),
             },
         }));
         fixture.store.commit(&batch).await.unwrap();
@@ -2696,7 +2696,7 @@ mod conversation {
                 harness: ren_harness::Harness::Codex,
                 workdir: "/work/acme".into(),
                 settings: ren_harness::settings::RunSettings::default(),
-                toolset: Some(ren_depot::toolset::Generation::NONE),
+                toolset: Some(ren_depot::package_set::Generation::NONE),
             },
         }));
         batch.push(Op::RunEntry(RunEntry {

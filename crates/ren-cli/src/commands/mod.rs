@@ -3,6 +3,7 @@ pub mod doctor;
 pub mod history;
 pub mod init;
 pub mod mcp;
+pub mod packages;
 pub mod preview;
 pub mod project;
 pub mod release;
@@ -12,7 +13,6 @@ pub mod runs;
 pub mod serve;
 pub mod service;
 pub mod tail;
-pub mod tools;
 pub mod users;
 
 use clap::ValueEnum;
