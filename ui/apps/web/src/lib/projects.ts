@@ -2,26 +2,45 @@
 // registered projects with what is under way for each, and what waits on
 // the operator across them: a canary to promote, a preview to check, work
 // still queued. Read from `/api/projects` and `/api/work`.
-import type { Project } from './api.ts';
+import type { Project, ProjectId } from './api.ts';
 import {
+  Runs,
   Sessions,
   type ApprovalAsk,
   type ApprovalId,
+  type Read,
+  type RunClient,
   type RunSnapshot,
   type SessionBody,
   type SessionId,
 } from './runs.ts';
 import { Work, type WorkItem } from './work.ts';
+import type { Said } from './layer/toasts.svelte.ts';
+import { SignIns } from './signIn.ts';
+import type { Mark } from './marks.ts';
 
 /** An approval a running session waits on, with the project it works for. */
 export interface Approval {
   session: SessionId;
   approval: ApprovalId;
   ask: ApprovalAsk;
+  /** The client that asks. */
+  harness: RunSnapshot['harness'];
   /** The project's name; null when the session works for none. */
   project: string | null;
   /** The first line of the session's first prompt, to know it by. */
   prompt: string | null;
+}
+
+/** A project at a glance, as its row on Projects shows it. */
+export interface ProjectGlance {
+  /** Its state's glyph, and the words for it. */
+  mark: Mark;
+  state: string;
+  /** The one thing to do about it, worst first; null when nothing is. */
+  action: { kind: 'review'; approval: Approval } | { kind: 'promote' } | { kind: 'release' } | null;
+  /** When one of its sessions last started or ended a run; null for none. */
+  active: number | null;
 }
 
 /** A queued work item's project, by name; null when none holds it. */
@@ -30,14 +49,8 @@ export interface Queued {
   count: number;
 }
 
-/** One state's work items, in the order a project's page shows them. */
-export interface WorkGroup {
-  state: 'queued' | 'sent' | 'landed' | 'shipped' | 'dismissed';
-  label: string;
-  /** What the state means, in a few words. */
-  note: string;
-  items: WorkItem[];
-}
+/** A list the board reads beside the projects. */
+export type BoardList = 'work' | 'runs' | 'sessions' | 'clients';
 
 /** The projects and the work under them, as the Projects view shows them. */
 export class ProjectBoard {
@@ -49,6 +62,11 @@ export class ProjectBoard {
   readonly sessions: readonly SessionBody[];
   /** The one project the board is for, by name; null for every project. */
   readonly only: string | null;
+  /** Each client and its sign-in on the daemon's host. */
+  readonly clients: readonly RunClient[];
+  /** The lists that failed to read: what waits on the operator is unknown
+   * there, not empty. */
+  readonly unread: readonly BoardList[];
 
   constructor(
     projects: readonly Project[],
@@ -56,12 +74,68 @@ export class ProjectBoard {
     live: readonly RunSnapshot[] = [],
     sessions: readonly SessionBody[] = [],
     only: string | null = null,
+    clients: readonly RunClient[] = [],
+    unread: readonly BoardList[] = [],
   ) {
+    this.unread = unread;
     this.projects = projects;
     this.work = work;
     this.live = live;
     this.sessions = sessions;
     this.only = only;
+    this.clients = clients;
+  }
+
+  /** Clients signed out on the daemon's host: a run cannot use them until
+   * the operator signs them in. */
+  get signedOut(): RunClient[] {
+    return this.clients.filter((client) => SignIns.signedOut(client.sign_in));
+  }
+
+  /** The board of every project from the layout's read; empty before it
+   * is in. */
+  static read(
+    read: {
+      projects: readonly Project[];
+      work: Read<readonly WorkItem[]>;
+      live: Read<readonly RunSnapshot[]>;
+      sessions: Read<readonly SessionBody[]>;
+      clients: Read<readonly RunClient[]>;
+    } | null,
+  ): ProjectBoard {
+    if (!read) return new ProjectBoard([], []);
+    const value = <T>(list: Read<readonly T[]>): readonly T[] =>
+      list.state === 'read' ? list.value : [];
+    const lists: readonly [BoardList, Read<readonly unknown[]>][] = [
+      ['work', read.work],
+      ['runs', read.live],
+      ['sessions', read.sessions],
+      ['clients', read.clients],
+    ];
+    return new ProjectBoard(
+      read.projects,
+      value(read.work),
+      value(read.live),
+      value(read.sessions),
+      null,
+      value(read.clients),
+      lists.filter(([, list]) => list.state === 'failed').map(([name]) => name),
+    );
+  }
+
+  /** Whether the layout's read of every project says no project is named
+   * `name`: false when it did not read, so a page reads the project itself. */
+  static unknown(
+    read: { projects: readonly Project[]; failed: string | null } | null,
+    name: string,
+  ): boolean {
+    return read !== null && read.failed === null && !read.projects.some((p) => p.name === name);
+  }
+
+  /** The project named `name`, as the layout's read of every project has
+   * it; null when it did not read or has none by that name. */
+  static known(read: { projects: readonly Project[] } | null, name: string): Project | null {
+    return read?.projects.find((project) => project.name === name) ?? null;
   }
 
   /** The board of `project` alone: its work (Ren's holds the items from
@@ -85,6 +159,7 @@ export class ProjectBoard {
         session: run.session,
         approval: waiting.approval,
         ask: waiting.ask,
+        harness: run.harness,
         project: this.nameOf(stored?.project ?? null),
         prompt: stored?.first_prompt ?? null,
       }));
@@ -133,21 +208,133 @@ export class ProjectBoard {
       );
   }
 
+  /** How many things wait on the operator: what the top bar's Pending
+   * counts. */
+  get waiting(): number {
+    return (
+      this.approvals.length +
+      this.toPromote.length +
+      this.previews.length +
+      this.queued.length +
+      this.signedOut.length
+    );
+  }
+
+  /**
+   * What newly waits on the operator between two boards, said as toasts: an
+   * approval a run started asking, a canary that newly passed. What stopped
+   * waiting, and what waited already, says nothing.
+   */
+  static news(before: ProjectBoard, after: ProjectBoard): Said[] {
+    const asked = new Set(before.approvals.map(ProjectBoard.#approvalKey));
+    const approvals = after.approvals
+      .filter((waiting) => !asked.has(ProjectBoard.#approvalKey(waiting)))
+      .map((waiting): Said => {
+        const said = Runs.ask(waiting.ask);
+        return {
+          mark: 'yours',
+          text: said.action,
+          detail: [waiting.project ?? 'No project', waiting.prompt]
+            .filter((part) => part !== null)
+            .join(' · '),
+          link: {
+            label: 'Open session',
+            href: Sessions.deskHref(waiting.project, waiting.session),
+          },
+        };
+      });
+    const passed = new Set(before.toPromote.map(ProjectBoard.#canaryKey));
+    const canaries = after.toPromote
+      .filter((project) => !passed.has(ProjectBoard.#canaryKey(project)))
+      .map((project): Said => {
+        const release = project.release;
+        const canary = release?.canary ?? null;
+        const checks = canary?.checks ?? [];
+        return {
+          mark: 'passed',
+          text: `Canary ${canary?.commit.slice(0, 12) ?? ''} ${checks.filter((check) => check.passed).length}/${checks.length}`,
+          detail: `${project.name} · production ${release?.behind ? `↓${release.behind}` : 'up to date'}`,
+          // Where Ren promotes, the toast asks it of Release's modal.
+          link:
+            project.factory === 'ren' && canary
+              ? {
+                  label: 'Promote…',
+                  href: `${ProjectBoard.releaseHref(project)}?promote=${encodeURIComponent(canary.commit)}`,
+                  emphasis: 'primary',
+                }
+              : { label: 'Release', href: ProjectBoard.releaseHref(project) },
+        };
+      });
+    return [...approvals, ...canaries];
+  }
+
+  static #approvalKey(waiting: Approval): string {
+    return `${waiting.session}:${waiting.approval}`;
+  }
+
+  /** A project's canary by its build: a newer one passing is news again. */
+  static #canaryKey(project: Project): string {
+    return `${project.id}:${project.release?.canary?.commit ?? ''}`;
+  }
+
+  /** `project` at a glance: waiting on the operator first, then a failed
+   * canary, then running, else idle; its one action; when it was last
+   * active. */
+  glance(project: Project): ProjectGlance {
+    const approval = this.approvals.find((waiting) => waiting.project === project.name) ?? null;
+    const release = project.release;
+    const failed = release?.decision === 'failed' || release?.decision === 'promotion_failed';
+    const promotable = release?.decision === 'awaiting_operator';
+    const [mark, state]: [Mark, string] = approval
+      ? ['yours', 'Waits for you']
+      : failed
+        ? ['failed', 'Canary failed']
+        : project.running
+          ? ['responding', 'Running']
+          : promotable
+            ? ['yours', 'Ready to promote']
+            : ['idle', 'Idle'];
+    const action: ProjectGlance['action'] = approval
+      ? { kind: 'review', approval }
+      : promotable && project.factory === 'ren'
+        ? { kind: 'promote' }
+        : promotable || failed
+          ? { kind: 'release' }
+          : null;
+    const times = this.sessions.flatMap((body) =>
+      body.stored?.project === project.id
+        ? body.stored.runs.flatMap((run) => [
+            run.started_at,
+            ...(run.ended_at ? [run.ended_at] : []),
+          ])
+        : [],
+    );
+    return { mark, state, action, active: times.length ? Math.max(...times) : null };
+  }
+
   /** Whether anything waits on the operator. */
   get pending(): boolean {
     return (
       this.approvals.length > 0 ||
       this.toPromote.length > 0 ||
       this.previews.length > 0 ||
-      this.queued.length > 0
+      this.queued.length > 0 ||
+      this.signedOut.length > 0
     );
   }
 
-  /** The name of the project with `id`; null for none, or one not listed. */
   /** The name of the project `item` belongs to: its own, or
    * Ren's for one from before projects. */
   homeOf(item: WorkItem): string | null {
     return Work.home(item, this.projects)?.name ?? null;
+  }
+
+  /** Work on its way across projects, the most recently changed first:
+   * queued, in a session, or landed and waiting for production. */
+  get inFlight(): WorkItem[] {
+    return this.work
+      .filter((item) => item.state === 'queued' || item.state === 'sent' || item.state === 'landed')
+      .toSorted((a, b) => b.updated_at - a.updated_at);
   }
 
   /** How many current sessions work for no project: Scratch's. */
@@ -155,28 +342,10 @@ export class ProjectBoard {
     return Sessions.within(this.sessions, { kind: 'scratch', projects: this.projects }).length;
   }
 
-  nameOf(id: string | null): string | null {
+  /** The name of the project with `id`; null for none, or one not listed. */
+  nameOf(id: ProjectId | null): string | null {
     if (id === null) return null;
     return this.projects.find((project) => project.id === id)?.name ?? null;
-  }
-
-  /** `items` by state, open ones first; a state with none is left out. */
-  static groups(items: readonly WorkItem[]): WorkGroup[] {
-    const states = [
-      ['queued', 'Queued', 'marked, not sent yet'],
-      ['sent', 'Sent', 'an agent is on it'],
-      ['landed', 'Landed', 'on main, not in production'],
-      ['shipped', 'Shipped', 'in production'],
-      ['dismissed', 'Dismissed', 'left undone'],
-    ] as const;
-    return states
-      .map(([state, label, note]) => ({
-        state,
-        label,
-        note,
-        items: items.filter((item) => item.state === state),
-      }))
-      .filter((group) => group.items.length > 0);
   }
 
   /** Where a project opens: its sessions. */

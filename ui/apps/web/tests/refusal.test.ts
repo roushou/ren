@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { controlRefusals } from '../src/lib/api.ts';
 import { proxyRefusals, refusals, Refusals } from '../src/lib/refusal.ts';
 import { RunCommandError } from '../src/lib/runs.ts';
-import { ToolsError } from '../src/lib/tools.ts';
+import { PackagesError } from '../src/lib/packages.ts';
 
 test('a refused body’s code is read into the vocabulary, keeping one this UI does not know', () => {
   assert.equal(Refusals.read({ api_version: 1, error: 'busy' }), 'busy');
@@ -40,14 +40,17 @@ test('errors say the code’s words, or the status without one', () => {
   assert.equal(new RunCommandError(409, 'busy').message, 'A turn is already running.');
   assert.equal(new RunCommandError(502, null).message, 'The command was refused (502).');
   assert.equal(
-    new ToolsError(422, 'packages_refused', 'node 18 is not offered').message,
+    new PackagesError(422, 'packages_refused', 'node 18 is not offered').message,
     'node 18 is not offered.',
   );
   assert.equal(
-    new ToolsError(403, 'login_not_allowed', null).message,
+    new PackagesError(403, 'login_not_allowed', null).message,
     'Your Tailscale login may not change packages here.',
   );
-  assert.equal(new ToolsError(409, 'packages_busy', null).message, Refusals.say('packages_busy'));
+  assert.equal(
+    new PackagesError(409, 'packages_busy', null).message,
+    Refusals.say('packages_busy'),
+  );
 });
 
 test('only the redirect refusals let another address be pasted', () => {

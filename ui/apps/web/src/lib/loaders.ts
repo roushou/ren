@@ -19,11 +19,29 @@ import {
   type TurnId,
   type TurnSummary,
   type UsageView,
+  type Project,
 } from './api.ts';
-import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
+import {
+  RunsClient,
+  Sessions,
+  type RunClient,
+  type RunSnapshot,
+  type Read,
+  type SessionBody,
+} from './runs.ts';
+import { WorkApi, type WorkItem } from './work.ts';
+import {
+  Sparkline,
+  localDayStart,
+  parseRange,
+  rangeStart,
+  usagePoints,
+  type UsageRange,
+} from './usage.ts';
 import { listingQuery } from './traffic.ts';
 import { readSnapshot, snapshotError, type Snapshot } from './snapshots.ts';
 import { Arrival, type Arriving } from './arrival.ts';
+import type { GitHubData } from './github.ts';
 import { Band, Board, LivePlace, type LiveWindow } from './board.ts';
 import { RecordingList, type RecordingDetail } from './recordings.ts';
 import { changed, query } from './query.ts';
@@ -69,7 +87,7 @@ const callFilters: readonly (keyof RawCallQuery & string)[] = [
 
 export function gatewaySnapshot(fetcher: typeof fetch) {
   const api = new ManagementApi(fetcher);
-  return readSnapshot('gateway', async (): Promise<GatewayData> => {
+  return Arrival.read('gateway', async (): Promise<GatewayData> => {
     // Health reads recorder counters, not storage, so the two run together.
     const [health, storage, release] = await Promise.all([
       api.health(),
@@ -449,12 +467,6 @@ export function reportSnapshot(fetcher: typeof fetch, recordingId: RecordingId) 
   });
 }
 
-/** What one turn did, read from its calls' bodies. */
-export function turnSnapshot(fetcher: typeof fetch, turnId: TurnId) {
-  const api = new ManagementApi(fetcher);
-  return Arrival.read(`/turns/${turnId}`, () => api.turn(turnId));
-}
-
 export interface SearchData {
   /** The text searched for; empty before a search. */
   q: string;
@@ -688,4 +700,112 @@ export class LiveReader {
       };
     });
   }
+}
+
+/** What every page reads for Pending, and the Projects view for its board.
+ * Each list says whether it read: a list that failed is not an empty one. */
+export interface ProjectsData {
+  projects: Project[];
+  /** Why the projects did not read, when they did not. */
+  failed: string | null;
+  /** Work items under way, across every project. */
+  work: Read<WorkItem[]>;
+  /** The runs the daemon holds, for the approvals they wait on; none when
+   * this UI only reads. */
+  live: Read<RunSnapshot[]>;
+  /** The current sessions, for the project each run works for. */
+  sessions: Read<SessionBody[]>;
+  /** Each client and its sign-in on the daemon's host; none when this UI
+   * only reads. */
+  clients: Read<RunClient[]>;
+}
+
+export async function projectsData(
+  fetcher: typeof fetch,
+  control: 'drives' | 'reads',
+): Promise<ProjectsData> {
+  const api = new ManagementApi(fetcher);
+  const runs = new RunsClient(fetcher);
+  const settle = <T>(reading: Promise<T>): Promise<Read<T>> =>
+    reading.then(
+      (value): Read<T> => ({ state: 'read', value }),
+      (failure: unknown): Read<T> => ({
+        state: 'failed',
+        reason: failure instanceof Error ? failure.message : 'The read failed.',
+      }),
+    );
+  const none = <T>(): Promise<Read<T[]>> => Promise.resolve({ state: 'read', value: [] });
+  const [listed, work, live, sessions, clients] = await Promise.all([
+    api.projects().then(
+      (projects) => ({ projects, failed: null }),
+      (failure: unknown) => ({
+        projects: [],
+        failed: failure instanceof Error ? failure.message : 'The projects did not read.',
+      }),
+    ),
+    settle(new WorkApi(fetcher).list('current')),
+    control === 'drives' ? settle(runs.live()) : none<RunSnapshot>(),
+    control === 'drives' ? settle(runs.sessions('current')) : none<SessionBody>(),
+    control === 'drives' ? settle(runs.clients()) : none<RunClient>(),
+  ]);
+  return { ...listed, work, live, sessions, clients };
+}
+
+/** Which recordings are sessions Ren drives, for the links between Monitor
+ * and their desks: none when it drives none here, or they did not read. It
+ * arrives like any page's read, so the page never waits on the links. */
+export function deskLinks(fetcher: typeof fetch): Promise<Arriving<Map<RecordingId, string>>> {
+  return Arrival.read('desks', async () => {
+    const [bodies, projects] = await Promise.all([
+      new RunsClient(fetcher).sessions().catch(() => []),
+      new ManagementApi(fetcher).projects().catch(() => []),
+    ]);
+    return Sessions.desks(bodies, projects);
+  });
+}
+
+/** Each current project's calls by hour over the last day, as sparklines
+ * 96 × 24, by project name. A project whose usage did not read has none. */
+export function projectSparks(
+  fetcher: typeof fetch,
+  now: number,
+): Promise<Arriving<Map<string, Sparkline>>> {
+  const api = new ManagementApi(fetcher);
+  return Arrival.read('projects:sparks', async () => {
+    const projects = (await api.projects()).filter((project) => project.archived_at === null);
+    const read = await Promise.all(
+      projects.map(async (project) => {
+        const usage = await api
+          .usage({ from_ms: now - 86_400_000, project: project.name })
+          .catch(() => null);
+        return usage
+          ? ([project.name, Sparkline.of(usagePoints(usage.hours, '24h', now), 96, 24)] as const)
+          : null;
+      }),
+    );
+    return new Map(read.filter((entry) => entry !== null));
+  });
+}
+
+/** Each current project's GitHub watch, for System's GitHub page and its
+ * summary. */
+export function githubWatches(fetcher: typeof fetch): Promise<Arriving<GitHubData>> {
+  const api = new ManagementApi(fetcher);
+  return Arrival.read('github', async (): Promise<GitHubData> => {
+    try {
+      const projects = (await api.projects()).filter((project) => project.archived_at === null);
+      const watches = await Promise.all(
+        projects.map(async (project) => ({
+          project: project.name,
+          watch: await api.projectPulls(project.name).catch(() => null),
+        })),
+      );
+      return { watches, failed: null };
+    } catch (failure) {
+      return {
+        watches: [],
+        failed: failure instanceof Error ? failure.message : 'The projects did not read.',
+      };
+    }
+  });
 }

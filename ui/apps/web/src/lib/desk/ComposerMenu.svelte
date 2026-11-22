@@ -89,7 +89,7 @@
     max-height: min(320px, 45vh);
     border-top: 2px solid var(--accent);
     background: var(--popover);
-    box-shadow: var(--popover-shadow);
+    box-shadow: var(--elev-popover);
   }
   .menu-head {
     display: flex;
@@ -125,7 +125,7 @@
     box-shadow: inset 2px 0 var(--accent);
   }
   .name {
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+    font-family: var(--mono);
     color: var(--ink);
     white-space: nowrap;
     overflow: hidden;

@@ -15,11 +15,21 @@
   } = $props();
 </script>
 
-<span class="skeleton {size}" style:width aria-hidden="true"></span>
+<!-- Its width is set from script: the CSP refuses inline style in markup the
+     server draws, and an unsized slot would stretch to its row. -->
+<span
+  class="skeleton {size}"
+  {@attach (node) => {
+    node.style.width = width;
+  }}
+  aria-hidden="true"
+></span>
 
 <style>
   .skeleton {
     display: inline-block;
+    align-self: flex-start;
+    width: 6em;
     max-width: 100%;
     height: 9px;
     vertical-align: middle;
@@ -31,6 +41,7 @@
   }
   .block {
     display: block;
+    width: 100%;
     height: 100%;
   }
   @keyframes breathe {

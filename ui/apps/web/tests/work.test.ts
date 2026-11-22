@@ -200,3 +200,41 @@ test("a project holds its items, Ren's those from before projects too", () => {
   assert.equal(Work.home(item('x', 'gone-id'), [acme, ren]), null);
   assert.equal(Work.href('acme-web', 'a' as WorkItemId), '/projects/acme-web/work/a');
 });
+
+test('a work item’s way to production marks what it passed, where it is, and what is to come', () => {
+  const item = (state: string, more: Record<string, unknown> = {}) =>
+    ({
+      state,
+      session: null,
+      landed: null,
+      shipped: null,
+      order: { page: { path: '/billing' } },
+      ...more,
+    }) as never;
+  const marks = (it: never) => Work.way(it).map((step) => step.mark);
+  assert.deepEqual(marks(item('queued')), ['queued', 'draft', 'draft', 'draft']);
+  assert.deepEqual(marks(item('sent', { session: 's' })), ['passed', 'running', 'draft', 'draft']);
+  assert.deepEqual(marks(item('landed', { session: 's', landed: 'abc' })), [
+    'passed',
+    'passed',
+    'running',
+    'draft',
+  ]);
+  assert.deepEqual(
+    marks(
+      item('shipped', { session: 's', landed: 'abc', shipped: { kind: 'commit', commit: 'c' } }),
+    ),
+    ['passed', 'passed', 'passed', 'passed'],
+  );
+  // Dismissed after it was sent: it stops there.
+  assert.deepEqual(marks(item('dismissed', { session: 's' })), [
+    'passed',
+    'passed',
+    'idle',
+    'idle',
+  ]);
+  assert.equal(
+    Work.way(item('landed', { landed: 'abcdef1234567890' }))[2]?.detail,
+    'as abcdef123456',
+  );
+});

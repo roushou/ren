@@ -3,15 +3,21 @@
  * (docs/plans/hierarchy.md), and its title. Pure, so the layout's choices
  * are tested without a browser.
  *
- * Three destinations hold every view: Projects (the factory: each
+ * Home (`/`, under the wordmark) is where the operator lands: what needs
+ * them, what is moving, what happened since they looked, everywhere. Three
+ * places hold every other view, and never show each other: Projects (each
  * project, with its work, sessions, and release under it, and Scratch for
- * sessions that work for none), Inspect (everything recorded), and
- * Host (this machine). The header names the three; under it, the current
- * destination's own pages, or inside a project, the project's.
+ * sessions that work for none), Monitor (what agents and models did), and
+ * System (the machine Ren runs on). Home's bar names the three; inside one,
+ * the bar holds only that place's pages, or inside a project, the
+ * project's.
  */
+import type { Environment } from './api.ts';
+import { unrecognised, type Stored } from './decode.ts';
 
 /** A view of the workbench, one per page. */
 export type View =
+  | 'home'
   | 'projects'
   | 'work'
   | 'scratch'
@@ -22,16 +28,19 @@ export type View =
   | 'recordings'
   | 'recording'
   | 'report'
-  | 'turn'
   | 'search'
   | 'usage'
-  | 'tools'
+  | 'packages'
+  | 'github'
   | 'release'
-  | 'recorder';
+  | 'recorder'
+  | 'system';
 
-/** A page of a destination, or of a project: a recording's report and
- * turns sit under Recordings. */
+/** A page of a place, or of a project: a session's calls, report and
+ * turns sit under Monitor's Sessions (`recordings`: the gateway's sessions,
+ * as it records them). */
 export type Tab =
+  | 'home'
   | 'projects'
   | 'scratch'
   | 'sessions'
@@ -41,68 +50,83 @@ export type Tab =
   | 'traffic'
   | 'recordings'
   | 'search'
-  | 'tools'
+  | 'packages'
+  | 'github'
   | 'usage'
-  | 'recorder';
+  | 'recorder'
+  | 'system';
 
-/** The header's three places. */
-export type Destination = 'projects' | 'inspect' | 'host';
+/** Where a view sits: Home, or one of the three places. */
+export type Place = 'home' | 'projects' | 'monitor' | 'system';
 
-/** A destination's page, as its row of links shows it. */
+/** A place's page, as its row of links shows it. */
 export interface PageLink {
   tab: Tab;
   href: string;
   label: string;
 }
 
+/** The tag beside the wordmark of an instance that is not production, and
+ * what that instance is. */
+export interface InstanceBadge {
+  tag: string;
+  what: string;
+}
+
 export class Views {
-  /** The destinations, in the header's order, each with where it opens. */
-  static readonly destinations: readonly {
-    destination: Destination;
+  /** The three places, in Home's order, each with where it opens. */
+  static readonly places: readonly {
+    place: Exclude<Place, 'home'>;
     href: string;
     label: string;
   }[] = [
-    { destination: 'projects', href: '/', label: 'Projects' },
-    { destination: 'inspect', href: '/overview', label: 'Inspect' },
-    { destination: 'host', href: '/tools', label: 'Host' },
+    { place: 'projects', href: '/projects', label: 'Projects' },
+    { place: 'monitor', href: '/monitor', label: 'Monitor' },
+    { place: 'system', href: '/system', label: 'System' },
   ];
 
-  /** The view a SvelteKit route id is; an unknown route is Traffic, the
-   * workbench's own view. */
-  static of(route: string | null): View {
+  /** The view a SvelteKit route id is; null for a route that is no view
+   * (an error, or a route this table does not name). */
+  static of(route: string | null): View | null {
     switch (route) {
       case '/':
+        return 'home';
+      case '/projects':
         return 'projects';
       case '/projects/[name]/work/[id]':
         return 'work';
-      case '/projects/[name]/sessions':
+      case '/projects/[name]/sessions/[[session]]':
         return 'sessions';
       case '/projects/[name]/release':
         return 'release';
-      case '/scratch':
+      case '/scratch/[[session]]':
         return 'scratch';
-      case '/overview':
+      case '/monitor':
         return 'overview';
-      case '/live':
+      case '/monitor/live':
         return 'live';
-      case '/recordings':
+      case '/monitor/sessions':
         return 'recordings';
-      case '/recordings/[id]':
+      case '/monitor/sessions/[id]':
         return 'recording';
-      case '/recordings/[id]/report':
+      case '/monitor/sessions/[id]/report':
         return 'report';
-      case '/turns/[id]':
-        return 'turn';
-      case '/search':
+      case '/monitor/search':
         return 'search';
-      case '/usage':
+      case '/monitor/usage':
         return 'usage';
-      case '/tools':
-        return 'tools';
-      case '/recorder':
+      case '/system/packages':
+        return 'packages';
+      case '/system/github':
+        return 'github';
+      case '/system/recorder':
         return 'recorder';
-      default:
+      case '/system':
+        return 'system';
+      case '/monitor/traffic':
         return 'traffic';
+      default:
+        return null;
     }
   }
 
@@ -111,10 +135,10 @@ export class Views {
     switch (view) {
       case 'recording':
       case 'report':
-      case 'turn':
         return 'recordings';
       case 'work':
         return 'release';
+      case 'home':
       case 'projects':
       case 'scratch':
       case 'overview':
@@ -124,9 +148,11 @@ export class Views {
       case 'recordings':
       case 'search':
       case 'usage':
-      case 'tools':
+      case 'packages':
+      case 'github':
       case 'release':
       case 'recorder':
+      case 'system':
         return view;
       default: {
         const never: never = view;
@@ -135,9 +161,30 @@ export class Views {
     }
   }
 
-  /** The destination `tab` belongs to. */
-  static destination(tab: Tab): Destination {
+  /** A place's own page, which its name in the bar opens: its summary, never
+   * one of its tabs. */
+  static landing(place: Place): View {
+    switch (place) {
+      case 'home':
+        return 'home';
+      case 'projects':
+        return 'projects';
+      case 'monitor':
+        return 'overview';
+      case 'system':
+        return 'system';
+      default: {
+        const never: never = place;
+        return never;
+      }
+    }
+  }
+
+  /** The place `tab` belongs to. */
+  static place(tab: Tab): Place {
     switch (tab) {
+      case 'home':
+        return 'home';
       case 'projects':
       case 'scratch':
       case 'sessions':
@@ -148,11 +195,13 @@ export class Views {
       case 'traffic':
       case 'recordings':
       case 'search':
-        return 'inspect';
-      case 'tools':
       case 'usage':
+        return 'monitor';
+      case 'packages':
+      case 'github':
       case 'recorder':
-        return 'host';
+      case 'system':
+        return 'system';
       default: {
         const never: never = tab;
         return never;
@@ -160,46 +209,44 @@ export class Views {
     }
   }
 
-  /** A destination's pages, in the order its row shows them; inside the
-   * project named `project`, the project's own. */
-  static pages(destination: Destination, project: string | null = null): readonly PageLink[] {
-    switch (destination) {
+  /** A place's pages, in the order its bar shows them; inside the project
+   * named `project`, the project's own. Home and the Projects list
+   * have none: the place's name leads there. */
+  static pages(place: Place, project: string | null = null): readonly PageLink[] {
+    switch (place) {
+      case 'home':
+        return [];
       case 'projects': {
-        if (project !== null) {
-          const base = `/projects/${encodeURIComponent(project)}`;
-          return [
-            { tab: 'sessions', href: `${base}/sessions`, label: 'Sessions' },
-            { tab: 'release', href: `${base}/release`, label: 'Release' },
-          ];
-        }
+        if (project === null) return [];
+        const base = `/projects/${encodeURIComponent(project)}`;
         return [
-          { tab: 'projects', href: '/', label: 'Projects' },
-          { tab: 'scratch', href: '/scratch', label: 'Scratch' },
+          { tab: 'sessions', href: `${base}/sessions`, label: 'Sessions' },
+          { tab: 'release', href: `${base}/release`, label: 'Release' },
         ];
       }
-      case 'inspect':
+      case 'monitor':
         return [
-          { tab: 'overview', href: '/overview', label: 'Overview' },
-          { tab: 'live', href: '/live', label: 'Live' },
-          { tab: 'traffic', href: '/traffic', label: 'Traffic' },
-          { tab: 'recordings', href: '/recordings', label: 'Recordings' },
-          { tab: 'search', href: '/search', label: 'Search' },
+          { tab: 'live', href: '/monitor/live', label: 'Live' },
+          { tab: 'traffic', href: '/monitor/traffic', label: 'Traffic' },
+          { tab: 'recordings', href: '/monitor/sessions', label: 'Sessions' },
+          { tab: 'search', href: '/monitor/search', label: 'Search' },
+          { tab: 'usage', href: '/monitor/usage', label: 'Usage' },
         ];
-      case 'host':
+      case 'system':
         return [
-          { tab: 'tools', href: '/tools', label: 'Tools' },
-          { tab: 'usage', href: '/usage', label: 'Usage' },
-          { tab: 'recorder', href: '/recorder', label: 'Recorder' },
+          { tab: 'packages', href: '/system/packages', label: 'Packages' },
+          { tab: 'github', href: '/system/github', label: 'GitHub' },
+          { tab: 'recorder', href: '/system/recorder', label: 'Recorder' },
         ];
       default: {
-        const never: never = destination;
+        const never: never = place;
         return never;
       }
     }
   }
 
   /** Whether `tab` can be scoped to one project with `?project=`: every
-   * Inspect page. */
+   * Monitor page that reads one. */
   static scoped(tab: Tab): boolean {
     switch (tab) {
       case 'traffic':
@@ -208,13 +255,16 @@ export class Views {
       case 'live':
       case 'search':
         return true;
+      case 'home':
       case 'projects':
       case 'scratch':
       case 'sessions':
       case 'release':
-      case 'tools':
+      case 'packages':
+      case 'github':
       case 'usage':
       case 'recorder':
+      case 'system':
         return false;
       default: {
         const never: never = tab;
@@ -230,9 +280,33 @@ export class Views {
       : link.href;
   }
 
+  /** The wordmark's tag for an instance that is not production: the gateway
+   * says what kind of instance it is; the UI only shows it. Production, and a
+   * kind this UI does not know, carry none. */
+  static instanceBadge(environment: Stored<Environment>): InstanceBadge | null {
+    switch (environment) {
+      case 'production':
+        return null;
+      case 'development':
+        return { tag: 'dev', what: 'A development gateway, not the installed service' };
+      case 'canary':
+        return { tag: 'canary', what: "The canary: main's tip on a copy of production's history" };
+      case 'preview':
+        return {
+          tag: 'preview',
+          what: "A preview: one worktree's branch on a copy of production's history",
+        };
+      default:
+        unrecognised(environment);
+        return null;
+    }
+  }
+
   /** What the toolbar and the document title call `view`. */
   static title(view: View): string {
     switch (view) {
+      case 'home':
+        return 'Home';
       case 'projects':
         return 'Projects';
       case 'work':
@@ -248,23 +322,25 @@ export class Views {
       case 'traffic':
         return 'Traffic';
       case 'recordings':
-        return 'Recordings';
+        return 'Sessions';
       case 'recording':
-        return 'Recording activity';
+        return 'Session calls';
       case 'report':
-        return 'Recording report';
-      case 'turn':
-        return 'Turn';
+        return 'Session report';
       case 'search':
         return 'Search';
       case 'usage':
         return 'Usage';
-      case 'tools':
-        return 'Tools';
+      case 'packages':
+        return 'Packages';
+      case 'github':
+        return 'GitHub';
       case 'release':
         return 'Release';
       case 'recorder':
         return 'Recorder & storage';
+      case 'system':
+        return 'System';
       default: {
         const never: never = view;
         return never;

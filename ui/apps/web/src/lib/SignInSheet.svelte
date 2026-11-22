@@ -8,7 +8,7 @@
   a provider, so it never passes for a provider's own page.
 -->
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { Dialogs } from './layer/dialog.ts';
   import CopyButton from './CopyButton.svelte';
   import Icon from './Icon.svelte';
   import { RunCommandError, type Drivable } from './runs.ts';
@@ -76,10 +76,6 @@
   let step = $state<Step>({ kind: 'choosing' });
   let pasted = $state('');
   let dialog = $state<HTMLDialogElement>();
-
-  $effect(() => {
-    untrack(() => dialog?.showModal());
-  });
 
   const reason = (error: unknown): string => {
     if (error instanceof RunCommandError) {
@@ -203,6 +199,7 @@
 
 <dialog
   bind:this={dialog}
+  {@attach Dialogs.modal()}
   class="sign-in"
   aria-labelledby="sign-in-title"
   data-harness={harness}
@@ -383,11 +380,11 @@
     border-radius: 0;
     background: var(--popover);
     color: var(--ink);
-    box-shadow: var(--popover-shadow);
+    box-shadow: var(--elev-modal);
     font-size: 13px;
   }
   .sign-in::backdrop {
-    background: rgb(0 0 0 / 0.45);
+    background: var(--scrim);
   }
   header {
     display: flex;

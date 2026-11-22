@@ -20,7 +20,9 @@ use std::{
 /// A page of the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Page {
-    /// The factory's home: every project, and what is pending.
+    /// The desk: what needs the operator, what is under way, what happened.
+    Desk,
+    /// Every project at a glance.
     Projects,
     Release,
     Overview,
@@ -49,7 +51,8 @@ struct Newest {
 }
 
 impl Page {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
+        Self::Desk,
         Self::Projects,
         Self::Release,
         Self::Overview,
@@ -65,6 +68,7 @@ impl Page {
 
     pub fn name(self) -> &'static str {
         match self {
+            Self::Desk => "desk",
             Self::Projects => "projects",
             Self::Release => "release",
             Self::Overview => "overview",
@@ -89,24 +93,25 @@ impl Page {
             .as_deref()
             .map(|name| format!("/projects/{name}"));
         match self {
-            Self::Projects => Some("/".into()),
+            Self::Desk => Some("/".into()),
+            Self::Projects => Some("/projects".into()),
             Self::Release => project.map(|base| format!("{base}/release")),
-            Self::Overview => Some("/overview".into()),
-            Self::Live => Some("/live".into()),
-            Self::Traffic => Some("/traffic".into()),
-            Self::Recordings => Some("/recordings".into()),
+            Self::Overview => Some("/monitor/overview".into()),
+            Self::Live => Some("/monitor/live".into()),
+            Self::Traffic => Some("/monitor/traffic".into()),
+            Self::Recordings => Some("/monitor/sessions".into()),
             Self::Recording => newest
                 .recording
                 .as_ref()
-                .map(|id| format!("/recordings/{id}")),
-            Self::Usage => Some("/usage".into()),
-            Self::Search => Some("/search?q=retry".into()),
+                .map(|id| format!("/monitor/sessions/{id}")),
+            Self::Usage => Some("/monitor/usage".into()),
+            Self::Search => Some("/monitor/search?q=retry".into()),
             Self::Sessions => Some(match (project, newest.run.as_deref()) {
                 (Some(base), Some(run)) => format!("{base}/sessions?run={run}"),
                 (Some(base), None) => format!("{base}/sessions"),
                 (None, Some(_) | None) => "/scratch".into(),
             }),
-            Self::Tools => Some("/tools".into()),
+            Self::Tools => Some("/system/tools".into()),
         }
     }
 }
@@ -323,7 +328,7 @@ mod tests {
             match page {
                 Page::Recording => {
                     assert_eq!(page.path(&none), None);
-                    assert_eq!(page.path(&some).as_deref(), Some("/recordings/s1"));
+                    assert_eq!(page.path(&some).as_deref(), Some("/monitor/sessions/s1"));
                 }
                 Page::Release => {
                     assert_eq!(page.path(&none), None);
@@ -340,7 +345,8 @@ mod tests {
                         Some("/projects/ren/sessions")
                     );
                 }
-                Page::Projects
+                Page::Desk
+                | Page::Projects
                 | Page::Overview
                 | Page::Live
                 | Page::Traffic

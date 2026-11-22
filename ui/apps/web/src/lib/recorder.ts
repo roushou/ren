@@ -2,8 +2,10 @@
 // retention is to pruning, and which counters need a look. The layout's tab
 // marker and footer, and the overview, read capture health through it too.
 // No browser, no fetching; tested in tests/recorder.test.ts.
+import { Elapsed } from './time.ts';
 import type { FileUsage, RecorderMetrics, RetentionPolicy, StorageView } from './api.ts';
 import { bytes, num } from './api.ts';
+import { Shares } from './display.ts';
 import { assertNever } from './decode.ts';
 
 /**
@@ -30,8 +32,19 @@ export interface CounterNote {
   detail: string;
 }
 
+/** One figure of how recording stands, toned by its own limits. */
+export interface Indicator {
+  key: 'lost' | 'unrecorded' | 'errors' | 'queue' | 'commit' | 'lag';
+  label: string;
+  value: string;
+  tone: VerdictTone;
+  /** How full it is, 0–1, for a figure with a capacity; else null. */
+  share: number | null;
+}
+
 /** One retention limit, and how much of it is used. */
 export interface Gauge {
+  key: 'storage' | 'calls' | 'history';
   label: string;
   used: string;
   limit: string;
@@ -39,6 +52,30 @@ export interface Gauge {
   share: number | null;
   /** The limit closest to its end: retention prunes for it first. */
   binding: boolean;
+}
+
+/** One step of what a request or response body becomes on disk, with the
+ * ratio it saves on the step before it. */
+export interface BodyStep {
+  label: string;
+  bytes: number;
+  note: { label: string; ratio: string } | null;
+  tone: 'referenced' | 'unique' | 'compressed';
+}
+
+/** One part of the database files' bytes on disk. */
+export interface DiskPart {
+  key: 'meta-live' | 'meta-free' | 'blob-live' | 'blob-free';
+  label: string;
+  bytes: number;
+}
+
+/** One of the recorder queue's two limits, and how much of it is used. */
+export interface QueueMeter {
+  label: string;
+  /** Used over capacity, 0–1 and past it; 0 for no capacity. */
+  share: number;
+  text: string;
 }
 
 export class RecorderReport {
@@ -73,6 +110,15 @@ export class RecorderReport {
     this.gauges = RecorderReport.gauges(storage, policy, oldest, now);
   }
 
+  /** Storage used past this share of its limit needs a look. */
+  static readonly CROWDED = 0.8;
+
+  /** Storage, when it is close enough to its limit to need a look. */
+  get crowded(): Gauge | null {
+    const storage = this.gauges.find((gauge) => gauge.key === 'storage');
+    return storage?.share != null && storage.share > RecorderReport.CROWDED ? storage : null;
+  }
+
   /** Bytes the recorder could not keep: the queue was full or storage failed. */
   static lostBytes(recorder: RecorderMetrics): number {
     const omissions = recorder.omissions;
@@ -100,50 +146,99 @@ export class RecorderReport {
     return health.calls ? `${calls} not recorded` : `${bytes(health.bytes)} not captured`;
   }
 
-  /** The verdict line: a headline, its tone, and the facts behind it. */
-  get verdict(): { tone: VerdictTone; headline: string; facts: string[] } {
-    const recorder = this.recorder;
-    const queue = Math.max(
-      recorder.queue.capacity ? recorder.queue.items / recorder.queue.capacity : 0,
-      recorder.queue.byte_capacity ? recorder.queue.bytes / recorder.queue.byte_capacity : 0,
-    );
-    const timing = [
-      `queue ${RecorderReport.percent(queue)} full`,
-      `commits ${num(recorder.last_commit_ms)} ms (slowest ${num(recorder.max_commit_ms)} ms)`,
-      `lag ${num(recorder.lag_ms)} ms`,
-    ];
+  /** Queue use past these shares needs a look, then is trouble. */
+  static readonly QUEUE_WARN = 0.7;
+  static readonly QUEUE_ERROR = 0.9;
+
+  /** How full something with a capacity is: fine, past the queue's warning
+   * share, or past its error share. Retention limits read the same way. */
+  static fullness(share: number): 'fine' | 'warning' | 'error' {
+    if (share >= RecorderReport.QUEUE_ERROR) return 'error';
+    if (share >= RecorderReport.QUEUE_WARN) return 'warning';
+    return 'fine';
+  }
+  /** A commit slower than these, in ms, needs a look, then is trouble. */
+  static readonly COMMIT_WARN_MS = 250;
+  static readonly COMMIT_ERROR_MS = 1000;
+  /** Recording lag past these, in ms, needs a look, then is trouble. */
+  static readonly LAG_WARN_MS = 1000;
+  static readonly LAG_ERROR_MS = 5000;
+
+  /** How recording stands: its tone and the state it names. */
+  get verdict(): { tone: VerdictTone; headline: string } {
     const health = this.health;
     switch (health.kind) {
       case 'failing':
-        return {
-          tone: 'error',
-          headline: 'Recording failing',
-          facts: [
-            `${num(health.storageErrors)} storage and ${num(health.retentionErrors)} retention errors since startup`,
-            ...timing,
-          ],
-        };
+        return { tone: 'error', headline: 'Recording failing' };
       case 'lost':
-        return {
-          tone: 'warning',
-          headline: 'Capture loss since startup',
-          facts: [RecorderReport.lossText(health), ...timing],
-        };
+        return { tone: 'warning', headline: 'Capture loss since startup' };
       case 'healthy':
-        return {
-          tone: 'success',
-          headline: 'Recording healthy',
-          facts: ['nothing lost since startup', ...timing],
-        };
+        return { tone: 'success', headline: 'Recording healthy' };
       default:
         return assertNever(health);
     }
   }
 
-  /** `7%`, or `<1%` for a little that is not nothing. */
-  static percent(share: number): string {
-    if (share > 0 && share < 0.01) return '<1%';
-    return `${Math.round(share * 100)}%`;
+  /** The figures behind the verdict, each toned by its own limits. */
+  get indicators(): Indicator[] {
+    const recorder = this.recorder;
+    const queue = Math.max(
+      recorder.queue.capacity ? recorder.queue.items / recorder.queue.capacity : 0,
+      recorder.queue.byte_capacity ? recorder.queue.bytes / recorder.queue.byte_capacity : 0,
+    );
+    const lost = RecorderReport.lostBytes(recorder);
+    const unrecorded = recorder.omissions.unrecorded_calls;
+    const errors = recorder.storage_errors + recorder.retention_errors;
+    const above = (value: number, warn: number, error: number): VerdictTone =>
+      value >= error ? 'error' : value >= warn ? 'warning' : 'success';
+    return [
+      {
+        key: 'lost',
+        label: 'Lost',
+        value: bytes(lost),
+        tone: lost ? 'warning' : 'success',
+        share: null,
+      },
+      {
+        key: 'unrecorded',
+        label: 'Unrecorded',
+        value: num(unrecorded),
+        tone: unrecorded ? 'warning' : 'success',
+        share: null,
+      },
+      {
+        key: 'errors',
+        label: 'Errors',
+        value: num(errors),
+        tone: errors ? 'error' : 'success',
+        share: null,
+      },
+      {
+        key: 'queue',
+        label: 'Queue',
+        value: Shares.percent(queue),
+        tone: above(queue, RecorderReport.QUEUE_WARN, RecorderReport.QUEUE_ERROR),
+        share: Math.min(1, queue),
+      },
+      {
+        key: 'commit',
+        label: 'Commit',
+        value: `${num(recorder.last_commit_ms)} ms`,
+        tone: above(
+          recorder.max_commit_ms,
+          RecorderReport.COMMIT_WARN_MS,
+          RecorderReport.COMMIT_ERROR_MS,
+        ),
+        share: null,
+      },
+      {
+        key: 'lag',
+        label: 'Lag',
+        value: `${num(recorder.lag_ms)} ms`,
+        tone: above(recorder.lag_ms, RecorderReport.LAG_WARN_MS, RecorderReport.LAG_ERROR_MS),
+        share: null,
+      },
+    ];
   }
 
   static counters(recorder: RecorderMetrics): { amount: number; note: CounterNote }[] {
@@ -244,6 +339,7 @@ export class RecorderReport {
       on && value !== null && limit ? value / limit : null;
     const gauges: Gauge[] = [
       {
+        key: 'storage',
         label: 'Storage',
         used: used === null ? '—' : bytes(used),
         limit: on && policy ? bytes(policy.max_storage_bytes) : 'no limit',
@@ -251,6 +347,7 @@ export class RecorderReport {
         binding: false,
       },
       {
+        key: 'calls',
         label: 'Calls',
         used: storage ? num(storage.calls) : '—',
         limit: on && policy ? num(policy.max_calls) : 'no limit',
@@ -258,9 +355,10 @@ export class RecorderReport {
         binding: false,
       },
       {
+        key: 'history',
         label: 'History',
-        used: age === null ? '—' : `oldest ${RecorderReport.duration(age)}`,
-        limit: on && policy ? RecorderReport.duration(policy.max_age_seconds * 1000) : 'no limit',
+        used: age === null ? '—' : Elapsed.span(age),
+        limit: on && policy ? Elapsed.span(policy.max_age_seconds * 1000) : 'no limit',
         share: share(age, policy ? policy.max_age_seconds * 1000 : undefined),
         binding: false,
       },
@@ -275,17 +373,122 @@ export class RecorderReport {
     return gauges.map((gauge) => ({ ...gauge, binding: gauge === nearest }));
   }
 
+  /** How a retention limit stands. Retention keeps calls and history at
+   * their limits by pruning the oldest, so a full one is the limit working:
+   * only storage filling up needs a look. */
+  static limitFullness(gauge: Gauge): 'fine' | 'warning' | 'error' {
+    switch (gauge.key) {
+      case 'storage':
+        return gauge.share === null ? 'fine' : RecorderReport.fullness(gauge.share);
+      case 'calls':
+      case 'history':
+        return 'fine';
+      default:
+        return assertNever(gauge.key);
+    }
+  }
+
+  /** A capacity's meter: its own colour while fine, else how it stands. */
+  static meterTone(share: number): 'chart' | 'warning' | 'error' {
+    return RecorderReport.toneOf(RecorderReport.fullness(share));
+  }
+
+  /** A fullness as a meter's colour. */
+  static toneOf(fullness: 'fine' | 'warning' | 'error'): 'chart' | 'warning' | 'error' {
+    switch (fullness) {
+      case 'fine':
+        return 'chart';
+      case 'warning':
+      case 'error':
+        return fullness;
+      default:
+        return assertNever(fullness);
+    }
+  }
+
   /** A database file's in-use bytes: its pages less the free ones. */
   static live(file: FileUsage): number {
     return Math.max(0, file.page_count - file.freelist_count) * file.page_size;
   }
 
-  /** `45 min`, `6 h`, `3.5 days`. */
-  static duration(ms: number): string {
-    const hours = ms / 3_600_000;
-    if (hours < 1) return `${Math.max(1, Math.round(ms / 60_000))} min`;
-    if (hours < 48) return `${Math.round(hours)} h`;
-    const days = hours / 24;
-    return `${Number.isInteger(days) ? days : days.toFixed(1)} days`;
+  /** A database file's free pages, in bytes: room it holds and does not use. */
+  static free(file: FileUsage): number {
+    return file.freelist_count * file.page_size;
+  }
+
+  /** How many times `numerator` is `denominator` (`3.20×`); `—` over nothing. */
+  static ratio(numerator: number, denominator: number): string {
+    return denominator > 0 ? `${(numerator / denominator).toFixed(2)}×` : '—';
+  }
+
+  /** What bodies become on disk: the bytes calls reference, the distinct
+   * chunks they dedupe to, and those chunks compressed. */
+  static bodySteps(storage: StorageView): BodyStep[] {
+    return [
+      {
+        label: 'Referenced body bytes',
+        bytes: storage.referenced_bytes,
+        note: null,
+        tone: 'referenced',
+      },
+      {
+        label: 'Unique chunk bytes',
+        bytes: storage.unique_bytes,
+        note: {
+          label: 'Deduplication',
+          ratio: RecorderReport.ratio(storage.referenced_bytes, storage.unique_bytes),
+        },
+        tone: 'unique',
+      },
+      {
+        label: 'Compressed chunk bytes',
+        bytes: storage.compressed_bytes,
+        note: {
+          label: 'Compression',
+          ratio: RecorderReport.ratio(storage.unique_bytes, storage.compressed_bytes),
+        },
+        tone: 'compressed',
+      },
+    ];
+  }
+
+  /** The database files' bytes on disk: each file's live and free pages. */
+  static diskParts(storage: StorageView): DiskPart[] {
+    return [
+      {
+        key: 'meta-live',
+        label: 'Metadata · live',
+        bytes: RecorderReport.live(storage.disk.metadata),
+      },
+      {
+        key: 'meta-free',
+        label: 'Metadata · free pages',
+        bytes: RecorderReport.free(storage.disk.metadata),
+      },
+      { key: 'blob-live', label: 'Blobs · live', bytes: RecorderReport.live(storage.disk.blobs) },
+      {
+        key: 'blob-free',
+        label: 'Blobs · free pages',
+        bytes: RecorderReport.free(storage.disk.blobs),
+      },
+    ];
+  }
+
+  /** The recorder queue against its record and byte limits. */
+  static queueMeters(recorder: RecorderMetrics): QueueMeter[] {
+    const share = (used: number, capacity: number) => (capacity > 0 ? used / capacity : 0);
+    const queue = recorder.queue;
+    return [
+      {
+        label: 'Records',
+        share: share(queue.items, queue.capacity),
+        text: `${num(queue.items)} / ${num(queue.capacity)}`,
+      },
+      {
+        label: 'Bytes',
+        share: share(queue.bytes, queue.byte_capacity),
+        text: `${bytes(queue.bytes)} / ${bytes(queue.byte_capacity)}`,
+      },
+    ];
   }
 }

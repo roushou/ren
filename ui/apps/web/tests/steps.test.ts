@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { CommandIntent, Entry, ItemId } from '../src/lib/runs.ts';
-import { Steps } from '../src/lib/steps.ts';
+import type { RecordingId } from '../src/lib/api.ts';
+import { Steps, TurnLines, type Block, type Step } from '../src/lib/steps.ts';
 
 const WORK = '/work/acme';
 const id = (text: string) => text as ItemId;
@@ -107,6 +108,12 @@ test('a command reads as its client said it, and as written only when it said no
   assert.deepEqual([mixed.act, mixed.targets], ['run', ['rg todo && make']]);
   const failed = Steps.read(command('c4', 'cargo test', undefined, 'failed', 101) as never, WORK);
   assert.deepEqual([failed.state, failed.failure], ['failed', 'exit 101']);
+  const bare = Steps.read(command('c5', 'rm -rf build', undefined, 'failed', null) as never, WORK);
+  assert.deepEqual(
+    [bare.state, bare.failure],
+    ['failed', null],
+    'a failure with no exit code says nothing more than its mark',
+  );
 });
 
 test('a tool reads as its effects, and as its name without any', () => {
@@ -165,4 +172,114 @@ test('a group reads in a line, by kind, files read again counted once', () => {
     ]),
     'Run the tests',
   );
+});
+
+test('picked steps quote as a prompt’s list, and copy as commands with their output', () => {
+  const steps = [
+    Steps.read(command('c1', 'cargo test', undefined, 'completed', 101) as never, WORK),
+    Steps.read(read('r1', 'src/lib.rs') as never, WORK),
+  ];
+  assert.equal(
+    Steps.quote(steps),
+    'About these steps:\n- Run `cargo test` (failed, exit 101)\n- Read `src/lib.rs`',
+  );
+  assert.equal(Steps.quote(steps.slice(1)), 'About this step:\n- Read `src/lib.rs`');
+  assert.equal(Steps.text(steps), '$ cargo test\n\nRead src/lib.rs');
+});
+
+test('a command’s output marks its failing and passing lines, and leaves the rest', () => {
+  const lines = Steps.lines(
+    [
+      'running 2 tests',
+      'test backoff::caps ... ok',
+      'test backoff::doubles ... FAILED',
+      'error[E0308]: mismatched types',
+      "thread 'main' panicked at src/lib.rs",
+      'test result: FAILED. 1 passed; 1 failed',
+      'test result: ok. 12 passed; 0 failed',
+      'build failed: 0 failed jobs',
+      '',
+    ].join('\n'),
+  );
+  assert.deepEqual(
+    lines.map((line) => line.reads),
+    [null, 'passed', 'failed', 'failed', 'failed', 'failed', 'passed', 'failed'],
+  );
+});
+
+test('turns at a glance: prompt, steps, failures, time, and a ruler by time and steps', () => {
+  const step = (state: 'done' | 'failed' | 'running', from: number, to: number) =>
+    ({ state, span: { from, to }, took: to - from }) as unknown as Step;
+  const prompt = (text: string): Block => ({
+    kind: 'entry',
+    entry: { kind: 'prompt', item: 'i' as never, text, images: [] },
+  });
+  const steps = (key: string, list: Step[]): Block => ({
+    kind: 'steps',
+    key,
+    steps: list,
+    state: 'done',
+  });
+  const lines = TurnLines.of([
+    [
+      prompt('Find it\nthen fix it'),
+      steps('a', [step('done', 0, 1000), step('failed', 1000, 3000)]),
+    ],
+    [prompt('Run the suite'), steps('b', [step('running', 5000, 6000)])],
+  ]);
+  assert.deepEqual(
+    lines.map((line) => [line.prompt, line.steps, line.failed, line.ms, line.state]),
+    [
+      ['Find it', 2, 1, 3000, 'failed'],
+      ['Run the suite', 1, 0, 1000, 'running'],
+    ],
+  );
+  const bars = TurnLines.ruler(lines, 40);
+  assert.deepEqual(
+    bars.map((bar) => [Math.round(bar.width), bar.height]),
+    [
+      [75, 40],
+      [25, 20],
+    ],
+  );
+  assert.equal(bars[1]?.x, bars[0]?.width);
+});
+
+test('a tool call is drawn with the verb its effect is', () => {
+  assert.equal(Steps.act('read_file'), 'read');
+  assert.equal(Steps.act('write_file'), 'edit');
+  assert.equal(Steps.act('delegate'), 'delegate');
+  assert.equal(Steps.act(null), 'tool');
+  assert.equal(Steps.ICONS[Steps.act('delegate')], 'spark');
+});
+
+test('a conversation’s steps in order, and where one sits among its turn’s', () => {
+  const turns = [
+    Steps.blocks([read('r1', 'a.rs'), said('Next.'), read('r2', 'b.rs')], WORK),
+    Steps.blocks([said('Again.'), command('c1', 'ls'), read('r3', 'c.rs')], WORK),
+  ];
+  assert.deepEqual(
+    Steps.all(turns).map((step) => step.entry.item),
+    ['r1', 'r2', 'c1', 'r3'],
+  );
+  assert.deepEqual(Steps.place(turns, id('r2')), { turn: 1, index: 2, of: 2 });
+  assert.deepEqual(Steps.place(turns, id('r3')), { turn: 2, index: 2, of: 2 });
+  assert.equal(Steps.place(turns, id('missing')), null);
+});
+
+test('the calls around steps: their recording, over the time they ran with a margin', () => {
+  const recording = '0190f3a0-0000-7000-8000-0000000000dd' as RecordingId;
+  const step = (span: { from: number; to: number } | null) =>
+    ({ span, took: null }) as unknown as Step;
+  assert.equal(
+    Steps.calls(recording, [
+      step({ from: 100_000, to: 110_000 }),
+      step({ from: 90_000, to: 95_000 }),
+    ]),
+    `/monitor/traffic?recording=${recording}&from_ms=60000&until_ms=140000`,
+  );
+  // Without a known time, the whole recording.
+  assert.equal(Steps.calls(recording, [step(null)]), `/monitor/traffic?recording=${recording}`);
+  assert.equal(Steps.calls(null, [step(null)]), null);
+  assert.equal(Steps.calls(recording, []), null);
 });

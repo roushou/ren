@@ -1,58 +1,88 @@
 <script lang="ts">
+  import { Clock } from './time.ts';
+  import type { GatewayData } from '#lib/loaders.ts';
+  import SlideOver from '#lib/layer/SlideOver.svelte';
   import Toolbar from './Toolbar.svelte';
-  import { onDestroy, onMount, untrack } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { goto } from '$app/navigation';
-  import { page, navigating } from '$app/state';
+  import { page } from '$app/state';
   import { getWorkbench } from './workbench.svelte.ts';
   import { createArrival } from './snapshot.svelte.ts';
-  import type { Arriving } from './arrival.ts';
+  import { Arrival, type Arriving } from './arrival.ts';
   import type { Column } from './columns.ts';
   import SkeletonRows from './SkeletonRows.svelte';
-  import { offPageSelection, type OffPageSelection, type TrafficData } from './loaders.ts';
-  import { CallId, type CallView, type RecordingId } from './api.ts';
-  import { num, short, title, clock, providerName, providerMark } from './api.ts';
-  import {
-    isActive,
-    callBadge,
-    captureChip,
-    duration,
-    elapsed,
-    date,
-    httpChip,
-    streamChip,
-    tokenSummary,
-    recordingTone,
-    compactOrDash,
-    callerShown,
-    SEPARATOR,
-  } from './display.ts';
-  import {
-    type Filters,
-    type TextFilter,
-    TEXT_FILTERS,
-    clientChoices,
-    sinceChoices,
-    emptyFilters,
-    trafficParams,
-    filtersFromParams,
-    selectedCall,
-    turnGroups,
-    neighbour,
-  } from './traffic.ts';
+  import type { TrafficData } from './loaders.ts';
+  import { num, short, type RecordingId } from './api.ts';
+  import { duration, date } from './display.ts';
+  import { type Filters, sinceChoices, turnGroups } from './traffic.ts';
   import { LiveFollow } from './live.ts';
   import Icon from './Icon.svelte';
-  import RecordingActions from './RecordingActions.svelte';
+  import SessionHead from './SessionHead.svelte';
+  import TurnPanel from './TurnPanel.svelte';
+  import { ManagementApi, TurnId, type TurnMetrics } from './api.ts';
   import Inspector from './Inspector.svelte';
-  import Select, { type SelectOption } from './Select.svelte';
+  import CallOverview from './CallOverview.svelte';
+  import ContextChart from './ContextChart.svelte';
   import Segmented, { type SegmentedOption } from './Segmented.svelte';
   import ConnectClient from './ConnectClient.svelte';
-  import RecordingName from './RecordingName.svelte';
+  import TrafficFilters from './traffic/TrafficFilters.svelte';
+  import CallRow from './traffic/CallRow.svelte';
+  import TurnRow from './traffic/TurnRow.svelte';
+  import { CallSelection } from './traffic/selection.svelte.ts';
   let {
     snapshot,
     recordingId,
-  }: { snapshot: Arriving<TrafficData>; recordingId: RecordingId | null } = $props();
+    desk = null,
+  }: {
+    snapshot: Arriving<TrafficData>;
+    recordingId: RecordingId | null;
+    /** Where the session opens on its desk, when Ren drives it. */
+    desk?: string | null;
+  } = $props();
   const workbench = getWorkbench();
+  /** A session's turns: each one's prompt, and the report's figures for it. */
+  let turnInfo = $state.raw<{
+    recording: RecordingId;
+    prompts: Map<TurnId, string>;
+    metrics: Map<TurnId, TurnMetrics>;
+  } | null>(null);
+  $effect(() => {
+    // Read again as the page refreshes; a read that lands after another
+    // session opened is dropped. Not aborted: live refreshes come faster
+    // than a slow read finishes.
+    void workbench.refreshed;
+    const target = recordingId;
+    if (!target) return;
+    const api = new ManagementApi();
+    void Promise.all([
+      api.turns(target, 100).catch(() => null),
+      api.report(target).catch(() => null),
+    ]).then(([listed, report]) => {
+      if (recordingId !== target) return;
+      turnInfo = {
+        recording: target,
+        prompts: new Map(
+          (listed?.turns ?? []).flatMap((turn) =>
+            turn.prompt ? [[turn.turn, turn.prompt.text.trim().split('\n')[0] ?? '']] : [],
+          ),
+        ),
+        metrics: new Map((report?.turns ?? []).map((turn) => [turn.turn, turn])),
+      };
+    });
+  });
+  const turns = $derived(turnInfo && turnInfo.recording === recordingId ? turnInfo : null);
+  /** The turn open beside the calls, as the address names it (`?turn=`). */
+  const turnOpen = $derived(
+    TurnId.parse((page.shallow?.url ?? page.url).searchParams.get('turn') ?? ''),
+  );
+  /** Open `turn` beside the calls, or close it: the address follows, so Back
+   * and a reload show the same, and nothing is read again. */
+  function openTurn(turn: TurnId | null) {
+    const url = new URL((page.shallow?.url ?? page.url).href);
+    if (turn) url.searchParams.set('turn', turn);
+    else url.searchParams.delete('turn');
+    void goto(url, { shallow: true, replaceState: true });
+  }
   // The scope bar shows the narrowing controls, or the recording itself.
   const arrival = createArrival(() => snapshot);
   const shown = $derived(arrival.current);
@@ -61,10 +91,15 @@
   const retained = $derived(shown.state === 'ready' ? shown.snapshot : null);
   /** The listing's columns: its header and its outline rows are drawn from them. */
   const callColumns: Column[] = [
-    { label: 'Time', class: 'time-column' },
-    { label: 'Call' },
-    { label: 'Model / upstream' },
-    { label: 'Outcome / duration' },
+    { label: 'Time', class: 'col-time' },
+    { label: '', class: 'col-mark' },
+    { label: 'Call', class: 'col-call' },
+    { label: 'Model', class: 'col-model' },
+    { label: 'Tools requested', class: 'col-tools' },
+    { label: 'Context · cached', class: 'col-context', numeric: true },
+    { label: 'Out', class: 'col-out', numeric: true },
+    { label: 'Duration', class: 'col-duration', numeric: true },
+    { label: 'HTTP', class: 'col-http', numeric: true },
   ];
   const calls = $derived(retained?.value?.calls ?? []);
   const nextAfter = $derived(retained?.value?.next ?? null);
@@ -77,11 +112,13 @@
   const updated = $derived(retained?.updated ?? null);
   const today = date(Date.now());
   const liveStatus = $derived(
-    LiveFollow.summary(workbench.live, updated ? `Updated ${clock(updated)}` : null),
+    LiveFollow.summary(workbench.live, updated ? `Updated ${Clock.second(updated)}` : null),
   );
-  const loading = $derived(workbench.manual || !!navigating.to);
+  const loading = $derived(workbench.loading);
   /** The daemon's per-body capture limit, to tell a trimmed body from lost bytes. */
-  const bodyLimit = $derived(page.data.gateway?.value?.storage.capture?.body_limit_bytes ?? null);
+  const bodyLimit = $derived(
+    Arrival.value<GatewayData>(page.data.gateway)?.storage.capture?.body_limit_bytes ?? null,
+  );
   const after = $derived(page.url.searchParams.get('after'));
   const appliedQuery = $derived(
     new URLSearchParams(
@@ -92,135 +129,27 @@
   );
   const applied = $derived(new URLSearchParams(appliedQuery));
   const filterCount = $derived([...applied.keys()].length);
-  let filters = $state(emptyFilters());
-  $effect(() => {
-    filters = filtersFromParams(new URLSearchParams(applied));
-  });
-  let filterError = $state('');
+  /** The filter form, drawn afresh from the address whenever it changes. */
+  let form = $state<ReturnType<typeof TrafficFilters>>();
+  /** Whether the form's advanced filters are open; kept across its drafts. */
   let moreFilters = $state(false);
-  let searchInput = $state<HTMLInputElement>();
-  // On a phone the list and the call are separate screens: nothing is
-  // selected until a row is tapped.
-  let narrow = $state(false);
-  onMount(() => {
-    const query = window.matchMedia('(max-width: 760px)');
-    narrow = query.matches;
-    const change = () => (narrow = query.matches);
-    query.addEventListener('change', change);
-    return () => query.removeEventListener('change', change);
-  });
-  const linkedCall = $derived(page.url.searchParams.get('call'));
-  // A clicked row is selected at once; the URL catches up a moment later.
-  let pending = $state<CallId | null>(null);
-  $effect(() => {
-    if (pending !== null && linkedCall === pending) pending = null;
-  });
-  const selectedId = $derived(
-    pending ??
-      (linkedCall !== null
-        ? CallId.parse(linkedCall)
-        : page.url.searchParams.get('inspect') === 'off' || narrow
-          ? null
-          : calls[0]?.id),
-  );
-  let observed = $state<CallView | undefined>();
-  // A linked call that is not on this page is read on its own; the listing
-  // never reloads for a selection.
-  let offPage = $state<OffPageSelection>({ kind: 'none' });
-  $effect(() => {
-    const raw = linkedCall;
-    const listed = calls;
-    if (raw === null || listed.some((call) => call.id === raw)) {
-      offPage = { kind: 'none' };
-      return;
-    }
-    const current = untrack(() => offPage);
-    if (current.kind === 'loaded' && current.call.id === raw) return;
-    const controller = new AbortController();
-    void offPageSelection(fetch, raw, listed, controller.signal).then((result) => {
-      if (!controller.signal.aborted) offPage = result;
-    });
-    return () => controller.abort();
-  });
-  const selected = $derived(
-    selectedCall(selectedId, calls, observed, offPage.kind === 'loaded' ? offPage.call : undefined),
-  );
-  const selectionError = $derived(
-    linkedCall !== null && !selected && offPage.kind === 'failed' ? offPage.message : '',
-  );
-  $effect(() => {
-    workbench.selected = selected;
-    workbench.callCount = calls.length;
-    workbench.activeCount = calls.filter(isActive).length;
-  });
-  onDestroy(() => {
-    workbench.selected = undefined;
-    workbench.callCount = 0;
-    workbench.activeCount = 0;
-  });
+  const selection = new CallSelection(() => calls, fetch);
+  /** The page's longest finished call: each row's duration bar is its share. */
+  const longest = $derived(Math.max(0, ...calls.map((call) => duration(call) ?? 0)));
+  /** When the page was read: an open call runs to it on the timeline. */
+  const readAt = $derived(updated ?? 0);
   const groups = $derived(
     recordingId
       ? turnGroups(calls)
       : [{ id: 'recent', label: 'Recent calls', turn: null, rows: calls }],
   );
-  function callHref(id: CallId) {
-    const url = new URL(page.url.href);
-    url.searchParams.set('call', id);
-    url.searchParams.delete('inspect');
-    return url.pathname + url.search;
-  }
-  $effect(() => {
-    // Canonicalize the initial selection through Kit's data-loading navigation. Live
-    // refreshes must never switch the inspector when a newer call arrives.
-    if (
-      !narrow &&
-      !page.url.searchParams.has('call') &&
-      page.url.searchParams.get('inspect') !== 'off' &&
-      calls.length
-    ) {
-      void goto(callHref(calls[0].id), {
-        replace: true,
-        reset: false,
-        state: page.state,
-        persistState: true,
-      });
-    }
-  });
-  /** A click anywhere on a row selects it, except on its own links and
-   * buttons, or when the click ended a text selection. */
-  function selectRow(event: MouseEvent, id: CallId) {
-    if (event.target instanceof Element && event.target.closest('a,button,input,select')) return;
-    if (window.getSelection()?.toString()) return;
-    selectCall(event, id);
-  }
-  function selectCall(event: MouseEvent, id: CallId) {
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
-      return;
-    event.preventDefault();
-    pending = id;
-    void goto(callHref(id), {
-      reset: false,
-      state: page.state,
-      persistState: true,
-    }).finally(() => {
-      // Whether it landed or was superseded, the URL decides from here.
-      if (pending === id) pending = null;
-    });
-  }
-  async function closeInspector() {
-    const id = selectedId;
-    const url = new URL(page.url.href);
-    url.searchParams.delete('call');
-    url.searchParams.set('inspect', 'off');
-    await goto(url, { reset: false, state: page.state, persistState: true });
-    if (id) document.getElementById(`call-${id}`)?.focus();
-  }
-  function updateCall(record: CallView) {
-    observed = record;
-  }
+  /** On the traffic page, rows name their session and narrow to it. */
+  const sessions = $derived(
+    recordingId ? null : { recordings: recordingsById, details, onfilter: pick },
+  );
   function showCallRecording(id: RecordingId) {
-    const url = new URL(`/recordings/${encodeURIComponent(id)}`, page.url.origin);
-    if (selectedId) url.searchParams.set('call', selectedId);
+    const url = new URL(`/monitor/sessions/${encodeURIComponent(id)}`, page.url.origin);
+    if (selection.id) url.searchParams.set('call', selection.id);
     void goto(url);
   }
   function paginate(next: boolean) {
@@ -237,50 +166,13 @@
     else url.searchParams.delete('after');
     void goto(url, { reset: false, state: { cursors }, persistState: true });
   }
-  function applyFilters() {
-    try {
-      const query = trafficParams(filters);
-      filterError = '';
-      void goto(`${page.url.pathname}${query ? `?${query}` : ''}`, { reset: false });
-    } catch (error) {
-      filterError = error instanceof Error ? error.message : 'Invalid filters.';
-    }
-  }
-  function resetFilters() {
-    filters = emptyFilters();
-    applyFilters();
-  }
-  function quickFilter(status: string, toolsOnly = false) {
-    filters.status = status;
-    filters.has_tools = toolsOnly;
-    applyFilters();
-  }
-  function removeFilter(key: string) {
-    if (key === 'from_ms') filters.from = '';
-    else if (key === 'until_ms') filters.until = '';
-    else if (key === 'has_tools') filters.has_tools = false;
-    else if (key === 'kind') filters.kind = 'model';
-    else if ((TEXT_FILTERS as readonly string[]).includes(key)) filters[key as TextFilter] = '';
-    applyFilters();
-  }
-  /** Narrow to one choice and apply at once. */
+  /** Narrow the form's draft and apply it at once. */
   function pick(change: (filters: Filters) => void) {
-    change(filters);
-    applyFilters();
+    form?.pick(change);
   }
-  const recordingChoices = $derived(retained?.value?.recordings ?? []);
-  const recordingOptions = $derived<SelectOption<string>[]>([
-    { value: '', label: 'All recordings' },
-    ...recordingChoices.map((choice) => ({
-      value: choice.id,
-      label: short(choice.native_id),
-      hint: `${providerName(choice.provider)} · ${date(choice.last_seen)} ${clock(choice.last_seen)}`,
-    })),
-  ]);
-  const clientOptions: SegmentedOption<string>[] = [
-    { value: '', label: 'All clients' },
-    ...clientChoices.map((choice) => ({ value: choice.client, label: choice.label })),
-  ];
+  function clearFilters() {
+    void goto(page.url.pathname, { reset: false });
+  }
   // A custom from–until range (`range`) is none of these, so none is chosen.
   const sinceOptions: SegmentedOption<string>[] = [
     { value: '', label: 'Any', title: 'No time limit' },
@@ -290,75 +182,24 @@
       title: choice.title,
     })),
   ];
-  const providerOptions: SelectOption<string>[] = [
-    { value: '', label: 'All providers' },
-    { value: 'anthropic', label: 'Anthropic' },
-    { value: 'openai', label: 'OpenAI' },
-    { value: 'codex', label: 'Codex' },
-    { value: 'deepseek', label: 'DeepSeek' },
-  ];
-  const statusOptions: SelectOption<string>[] = [
-    { value: '', label: 'All statuses' },
-    { value: 'active', label: 'In progress' },
-    { value: 'finished', label: 'Finished' },
-    { value: 'errors', label: 'Errors' },
-    { value: 'interrupted', label: 'Interrupted / cancelled' },
-  ];
-  const hidden = $derived(retained?.value?.hidden ?? null);
-  function recordingName(id: string) {
-    const found = recordingChoices.find((item) => item.id === id);
-    return found ? short(found.native_id) : short(id);
-  }
-  function chipLabel(key: string, value: string) {
-    if (key === 'recording') return `Recording: ${recordingName(value)}`;
-    if (key === 'user') return `User: ${value}`;
-    if (key === 'client')
-      return `Client: ${clientChoices.find((item) => item.client === value)?.label ?? value}`;
-    if (key === 'since')
-      return sinceChoices.find((item) => item.since === value)?.title ?? `Since: ${value}`;
-    if (key === 'kind') return value === 'other' ? 'Bookkeeping calls only' : 'All call kinds';
-    if (key === 'from_ms' || key === 'until_ms')
-      return `${key === 'from_ms' ? 'From' : 'Until'}: ${new Date(Number(value)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
-    return key === 'has_tools'
-      ? 'Has tool calls'
-      : `${key === 'q' ? 'Search' : title(key)}: ${value}`;
-  }
-  /** `j` and `k` select the next and previous call, as in a mail reader. */
-  function step(direction: 1 | -1) {
-    const next = neighbour(calls, selectedId, direction);
-    if (!next || next.id === selectedId) return;
-    pending = next.id;
-    void goto(callHref(next.id), {
-      reset: false,
-      state: page.state,
-      persistState: true,
-    }).finally(() => {
-      if (pending === next.id) pending = null;
-    });
-    document.getElementById(`call-${next.id}`)?.closest('tr')?.scrollIntoView({ block: 'nearest' });
-  }
   function keydown(event: KeyboardEvent) {
     const typing =
       event.target instanceof HTMLElement &&
       (event.target.matches('input,textarea,select') || event.target.isContentEditable);
-    if (!typing && !event.metaKey && !event.ctrlKey && !event.altKey) {
-      if (event.key === 'j' || event.key === 'k') {
-        event.preventDefault();
-        step(event.key === 'j' ? 1 : -1);
-        return;
-      }
-    }
-    if (event.key === 'Escape' && selected) void closeInspector();
+    if (typing) return;
     if (
-      event.key === '/' &&
-      !recordingId &&
-      !(
-        event.target instanceof HTMLElement &&
-        (event.target.matches('input,textarea,select') || event.target.isContentEditable)
-      )
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      (event.key === 'j' || event.key === 'k')
     ) {
       event.preventDefault();
-      searchInput?.focus();
+      selection.step(event.key === 'j' ? 1 : -1);
+      return;
+    }
+    if (event.key === '/' && !recordingId) {
+      event.preventDefault();
+      form?.focusSearch();
     }
   }
 </script>
@@ -366,227 +207,78 @@
 {#snippet callHead()}
   <thead
     ><tr
-      >{#each callColumns as column (column.label)}<th class={column.class}>{column.label}</th
+      >{#each callColumns as column (column.class)}<th
+          class={column.class}
+          class:numeric={column.numeric}>{column.label}</th
         >{/each}</tr
     ></thead
   >
 {/snippet}
 
 {#snippet scope()}
-  {#if recordingId}
-    <div class="scope-group scope-identity">
-      {#if recording}<span class="scope-recording"
-          ><RecordingName {recording} detail={details.get(recording.id)} /></span
-        ><small class="mono muted" title={`Ren's own ID for this recording: ${recording.id}`}
-          >{short(recording.native_id)}</small
-        >{:else}<strong class="mono">{short(recordingId)}</strong>{/if}
-    </div>
-    {#if recording}<div class="scope-group scope-figures">
-        <span><b class="mono">{num(recording.call_count)}</b> calls</span>
-        <span><b class="mono">{num(recording.turn_count)}</b> turns</span>
-        <span class:error-count={!!recording.error_count}
-          ><b class="mono">{num(recording.error_count)}</b> errors</span
-        >
-        <span
-          title="Provider reported; input includes cached context. Not subscription allowance or charges."
-          ><b class="mono">{compactOrDash(recording.tokens.input)}</b>
-          in ·
-          <b class="mono">{compactOrDash(recording.tokens.output)}</b> out</span
-        >
-      </div>{/if}
-    <div class="scope-group end">
-      {#if page.data.runsControl}<RecordingActions
-          recording={recordingId}
-          shelf={recording ? recording.archived_at !== null : null}
-        />{/if}
-      <a class="text-button" href={`/recordings/${encodeURIComponent(recordingId)}/report`}
-        >Turns and report <Icon name="arrow" size={12} /></a
-      ><a class="text-button" href={`/traffic?recording=${encodeURIComponent(recordingId)}`}
-        >Narrow in Traffic <Icon name="arrow" size={12} /></a
-      ><a class="text-button" href="/recordings">All recordings <Icon name="arrow" size={12} /></a>
-    </div>
-  {:else}
-    <div class="scope-group">
-      <Segmented
-        label="Client"
-        options={clientOptions}
-        value={applied.get('client') ?? ''}
-        onchange={(client) => pick((f) => (f.client = client))}
-      />
-    </div>
-    <div class="scope-group">
-      <Select
-        label="Recording"
-        size="compact"
-        options={recordingOptions}
-        value={applied.get('recording') ?? ''}
-        placeholder={recordingName(applied.get('recording') ?? '')}
-        onchange={(recording) => pick((f) => (f.recording = recording))}
-      />
-    </div>
-    <div class="scope-group">
-      <Segmented
-        label="Time"
-        options={sinceOptions}
-        value={applied.get('since') ?? (applied.get('from_ms') ? 'range' : '')}
-        onchange={(since) =>
-          pick((f) => {
-            f.since = since;
-            f.from = '';
-            f.until = '';
-          })}
-      />
-    </div>
-    <div class="scope-group end">
-      <label
-        class="toggle-control model-only"
-        title="Hide token counts, model listings, and WebSocket handshakes"
-        ><input
-          type="checkbox"
-          checked={(applied.get('kind') ?? 'model') === 'model'}
-          onchange={(e) => pick((f) => (f.kind = e.currentTarget.checked ? 'model' : 'all'))}
-        /><span class="switch"></span><span
-          >Model calls only{#if hidden}<span class="muted hidden-count"
-              >{hidden >= 100 ? '100+' : hidden} hidden</span
-            >{/if}</span
-        ></label
-      >
-    </div>
-  {/if}
+  <div class="scope-group">
+    <Segmented
+      label="Time"
+      options={sinceOptions}
+      value={applied.get('since') ?? (applied.get('from_ms') ? 'range' : '')}
+      onchange={(since) =>
+        pick((f) => {
+          f.since = since;
+          f.from = '';
+          f.until = '';
+        })}
+    />
+  </div>
 {/snippet}
 
 <svelte:window onkeydown={keydown} />
-{#if selectionError}<div class="notice danger" role="alert">
-    <Icon name="alert" size={14} /><span>Selected call: {selectionError}</span><button
+{#if selection.error}<div class="notice danger" role="alert">
+    <Icon name="alert" size={14} /><span>Selected call: {selection.error}</span><button
       class="text-button"
-      onclick={closeInspector}>Dismiss</button
+      onclick={selection.close}>Dismiss</button
     >
   </div>{/if}
-<Toolbar {scope} />
-<div class="traffic-workspace" class:with-inspector={!!selected}>
+<Toolbar scope={recordingId ? undefined : scope} />
+<div class="traffic-workspace">
   <section class="panel list-panel traffic-panel" aria-label="Recorded calls">
+    {#if recordingId}<SessionHead
+        {recordingId}
+        {recording}
+        detail={details.get(recordingId) ?? null}
+        {desk}
+        view="calls"
+      />{/if}
+    {#if !recordingId && !outlined && calls.length}<CallOverview
+        {calls}
+        now={readAt}
+        name={(id) =>
+          details.get(id)?.prompt?.text.trim().split('\n')[0] ||
+          short(recordingsById.get(id)?.native_id ?? id)}
+        selected={selection.id}
+        onrecording={(recording) => pick((f) => (f.recording = recording))}
+        href={selection.href}
+        oncall={selection.select}
+      />{/if}
     {#if !recordingId}
-      <div class="request-tabs" aria-label="Quick filters">
-        <button
-          class:active={!applied.get('status') && !applied.get('has_tools')}
-          aria-pressed={!applied.get('status') && !applied.get('has_tools')}
-          onclick={() => quickFilter('')}>All calls</button
-        >
-        <button
-          class:active={applied.get('status') === 'active'}
-          aria-pressed={applied.get('status') === 'active'}
-          onclick={() => quickFilter('active')}
-          ><span class="status-dot live"></span> In progress</button
-        >
-        <button
-          class:active={applied.get('status') === 'errors'}
-          aria-pressed={applied.get('status') === 'errors'}
-          onclick={() => quickFilter('errors')}>Errors</button
-        >
-        <button
-          class:active={applied.get('has_tools') === 'true'}
-          aria-pressed={applied.get('has_tools') === 'true'}
-          onclick={() => quickFilter('', true)}>Tool requests</button
-        >
-        <span class="table-update" role="status">{liveStatus}</span>
-      </div>
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          applyFilters();
-        }}
-        aria-label="Traffic filters"
-      >
-        <div class="filter-toolbar">
-          <label class="search-input main-search"
-            ><Icon name="search" /><input
-              bind:this={searchInput}
-              aria-label="Search traffic"
-              placeholder="Search call ID, model, or tool…"
-              maxlength="128"
-              bind:value={filters.q}
-            /><kbd>/</kbd></label
-          ><Select
-            label="Provider"
-            class="provider-select"
-            options={providerOptions}
-            bind:value={filters.provider}
-            onchange={applyFilters}
-          /><button
-            class="button"
-            type="button"
-            class:chosen={moreFilters}
-            aria-expanded={moreFilters}
-            aria-controls="advanced-filters"
-            onclick={() => (moreFilters = !moreFilters)}
-            ><Icon name="filter" size={14} /> Filters {#if filterCount}<span class="count-pill"
-                >{filterCount}</span
-              >{/if}</button
-          ><button class="button primary" type="submit"
-            >Search <Icon name="arrow" size={14} /></button
-          >
-        </div>
-        {#if moreFilters}<div class="advanced-filters" id="advanced-filters">
-            <label
-              >User<input
-                placeholder="Named user id…"
-                maxlength="64"
-                bind:value={filters.user}
-              /></label
-            ><label
-              >Model<input
-                placeholder="Model contains…"
-                maxlength="128"
-                bind:value={filters.model}
-              /></label
-            ><label
-              >Tool name<input
-                placeholder="Tool contains…"
-                maxlength="128"
-                bind:value={filters.tool}
-              /></label
-            >
-            <div class="filter-field">
-              <span aria-hidden="true">Status</span><Select
-                label="Status"
-                options={statusOptions}
-                bind:value={filters.status}
-              />
-            </div>
-            <label>From · local time<input type="datetime-local" bind:value={filters.from} /></label
-            ><label
-              >Until · local time<input type="datetime-local" bind:value={filters.until} /></label
-            ><label class="check-label"
-              ><input type="checkbox" bind:checked={filters.has_tools} /> Has observed tool calls</label
-            >
-            <div class="filter-note">
-              <span>Model and tool filters use observations from finished responses.</span><button
-                class="button small"
-                type="button"
-                onclick={resetFilters}>Reset</button
-              ><button class="button primary small" type="submit">Apply filters</button>
-            </div>
-          </div>{/if}
-        {#if filterCount}<div class="filter-chips">
-            {#each [...applied.entries()] as [key, value]}<button
-                type="button"
-                class="filter-chip"
-                onclick={() => removeFilter(key)}
-                aria-label={`Remove ${chipLabel(key, value)}`}
-                >{chipLabel(key, value)}<Icon name="close" size={12} /></button
-              >{/each}<button type="button" class="text-button" onclick={resetFilters}
-              >Clear all</button
-            >
-          </div>{/if}
-        {#if filterError}<div class="inline-error" role="alert">
-            <Icon name="alert" size={14} />{filterError}
-          </div>{/if}
-      </form>
+      {#key appliedQuery}<TrafficFilters
+          bind:this={form}
+          bind:more={moreFilters}
+          {applied}
+          live={liveStatus}
+          recordings={retained?.value?.recordings ?? []}
+          hidden={retained?.value?.hidden ?? null}
+        />{/key}
     {/if}
+    {#if recordingId && !outlined && calls.length}<ContextChart
+        {calls}
+        selected={selection.id}
+        href={selection.href}
+        oncall={selection.select}
+      />{/if}
     <div class="list-content" class:busy={loading && calls.length > 0} aria-busy={loading}>
       {#if outlined}
         <div class="attempt-list">
-          <table class="requests-table">
+          <table class="calls-table">
             {@render callHead()}
             <tbody><SkeletonRows columns={callColumns} rows={12} /></tbody>
           </table>
@@ -600,9 +292,6 @@
               : "Can't reach Ren"}
           </h2>
           <p>{retained.error.message}</p>
-          <p class="muted">
-            Nothing is shown because nothing could be read, not because nothing was recorded.
-          </p>
           <button class="button" onclick={() => void invalidateAll()}
             ><Icon name="refresh" size={14} /> Retry</button
           >
@@ -621,133 +310,39 @@
                   ? 'No requests on this page'
                   : 'No recorded traffic'}
           </h2>
-          <p>
-            {loading
-              ? 'Reading captured traffic from your gateway.'
-              : filterCount || !!after
-                ? 'Try a broader search or adjust your filters.'
-                : recordingId
-                  ? 'Refresh to check for new activity in this recording.'
-                  : 'Point a client at Ren or use a launch command below.'}
-          </p>
-          {#if !loading && (filterCount || !!after)}<button class="button" onclick={resetFilters}
-              >Clear filters & return to first page</button
+          {#if !loading && (filterCount || !!after)}<button class="button" onclick={clearFilters}
+              >Clear filters</button
             >
           {:else if !loading && !recordingId}<ConnectClient
               layout="box"
               gatewayOrigin={page.data.gatewayUrl}
-            />
-            <span class="empty-footnote"
-              ><Icon name="shield" size={12} /> Uses your client’s existing sign-in</span
-            >{/if}
+            />{/if}
         </div>
       {:else}
         <div class="attempt-list">
-          {#each groups as group (group.id)}
-            {#if recordingId}<div class="turn-heading">
-                <Icon name="sessions" size={13} /><strong>{group.label}</strong><span
-                  >{group.rows.length} call{group.rows.length === 1 ? '' : 's'}</span
-                >{#if group.turn}<a
-                    class="text-button turn-link"
-                    href={`/turns/${encodeURIComponent(group.turn)}`}
-                    >What this turn did <Icon name="arrow" size={12} /></a
-                  >{/if}
-              </div>{/if}
-            <table class="requests-table">
-              {@render callHead()}
+          <table class="calls-table">
+            {@render callHead()}
+            {#each groups as group (group.id)}
               <tbody>
-                {#each group.rows as c, index (c.id)}{@const badge = callBadge(c)}{@const http =
-                    httpChip(c.status)}{@const stream = streamChip(c)}{@const capture = captureChip(
-                    c,
-                    bodyLimit,
-                  )}{@const tokens = tokenSummary(c.usage)}
-                  <tr
-                    class="call-row"
-                    class:selected={selectedId === c.id}
-                    onclick={(event) => selectRow(event, c.id)}
-                  >
-                    <td class="time-column mono" title={new Date(c.started_at).toLocaleString()}
-                      >{clock(c.started_at)}{#if date(c.started_at) !== today}<small
-                          >{date(c.started_at)}</small
-                        >{/if}</td
-                    >
-                    <td
-                      ><a
-                        class="row-link mono"
-                        id={`call-${c.id}`}
-                        href={callHref(c.id)}
-                        onclick={(event) => selectCall(event, c.id)}
-                        aria-label={`Inspect call ${c.id}`}
-                        aria-current={selectedId === c.id ? 'true' : undefined}>{short(c.id)}</a
-                      >{#if !recordingId}{@const previous = group.rows[index - 1]}<small
-                          class="mono recording-line"
-                          title={c.attribution.hint?.session ??
-                            'No session identifier was reported'}
-                          >{#if c.recording}{@const recording = c.recording}<button
-                              type="button"
-                              class="recording-filter"
-                              title="Show only this recording's calls"
-                              aria-label={`Show only recording ${short(c.attribution.hint?.session ?? recording)}`}
-                              onclick={() => pick((f) => (f.recording = recording))}
-                              >{#if recordingsById.get(recording) && (!previous || previous.recording !== c.recording)}<RecordingName
-                                  recording={recordingsById.get(recording)!}
-                                  detail={details.get(recording)}
-                                  client={false}
-                                />{:else}<span class="recording-dot tone-{recordingTone(recording)}"
-                                ></span>{#if !previous || previous.recording !== c.recording}{c
-                                    .attribution.hint
-                                    ? short(c.attribution.hint.session)
-                                    : 'Recording'}{/if}{/if}</button
-                            >{:else if !previous || previous.recording !== c.recording}No recording{/if}{#if c.caller.user || c.caller.login}{@const caller =
-                              callerShown(c.caller)}<span class="caller-line"
-                              >{SEPARATOR}{#if caller.user}{@const user = caller.user}<button
-                                  type="button"
-                                  class="recording-filter"
-                                  title={`${caller.title}. Show only this user's calls`}
-                                  aria-label={`Show only user ${user}'s calls`}
-                                  onclick={() => pick((f) => (f.user = user))}
-                                  >{caller.label}</button
-                                >{:else}<span title={caller.title}>{caller.label}</span>{/if}</span
-                            >{/if}</small
-                        >{/if}</td
-                    >
-                    <td
-                      ><span class="model-line"
-                        ><span
-                          class="provider-mark tiny {c.provider}"
-                          title={providerName(c.provider)}>{providerMark(c.provider)}</span
-                        ><span class="model-name" title={c.model ?? title(c.endpoint)}
-                          >{c.model ??
-                            (isActive(c) ? 'Awaiting observation' : title(c.endpoint))}</span
-                        ></span
-                      >{#if c.tool_names.length}<span class="tool-chips"
-                          >{#each c.tool_names.slice(0, 3) as name}<span class="chip tool-chip"
-                              ><Icon name="tool" size={10} />{name}</span
-                            >{/each}{#if c.tool_names.length > 3}<span class="chip"
-                              >+{c.tool_names.length - 3}</span
-                            >{/if}</span
-                        >{/if}</td
-                    >
-                    <td
-                      ><span class="badge {badge.tone}">{badge.label}</span><small
-                        class="outcome-line"
-                        ><span class="status-code {http.tone}" title={http.title}>{http.label}</span
-                        ><span>{elapsed(duration(c))}</span>{#if tokens}<span title={tokens.title}
-                            >{tokens.input} in · {tokens.output} out</span
-                          >{/if}</small
-                      >{#if stream.tone !== 'success' && stream.tone !== 'live'}<span
-                          class="chip {stream.tone}"
-                          title={stream.title}>{stream.label}</span
-                        >{/if}{#if capture.tone === 'warning'}<span
-                          class="chip warning"
-                          title={capture.title}>{capture.label}</span
-                        >{/if}</td
-                    >
-                  </tr>
-                {/each}
+                {#if recordingId}<TurnRow
+                    {group}
+                    prompt={group.turn ? turns?.prompts.get(group.turn) : null}
+                    opened={turnOpen}
+                    columns={callColumns.length}
+                    ontoggle={openTurn}
+                  />{/if}
+                {#each group.rows as call, index (call.id)}<CallRow
+                    {call}
+                    previous={group.rows[index - 1]}
+                    {selection}
+                    {today}
+                    {bodyLimit}
+                    {longest}
+                    {sessions}
+                  />{/each}
               </tbody>
-            </table>
-          {/each}
+            {/each}
+          </table>
         </div>
       {/if}
     </div>
@@ -767,10 +362,80 @@
       </div>
     </div>
   </section>
-  {#if selected}{#key selected.id}<Inspector
-        call={selected}
-        close={closeInspector}
-        onrecording={showCallRecording}
-        onupdate={updateCall}
-      />{/key}{/if}
+  {#if selection.call}<SlideOver
+      label="Call details"
+      pin="call"
+      onclose={() => void selection.close()}
+      size="wide"
+      >{#key selection.call.id}<Inspector
+          call={selection.call}
+          onrecording={showCallRecording}
+          onupdate={selection.observe}
+        />{/key}</SlideOver
+    >{/if}
 </div>
+
+{#if recordingId && turnOpen}
+  <SlideOver label="Turn details" size="wide" pin="turn" onclose={() => openTurn(null)}>
+    <TurnPanel
+      turn={turnOpen}
+      metrics={turns?.metrics.get(turnOpen) ?? null}
+      report={`/monitor/sessions/${encodeURIComponent(recordingId)}/report`}
+    />
+  </SlideOver>
+{/if}
+
+<style>
+  .calls-table {
+    table-layout: fixed;
+  }
+  .calls-table :global(td) {
+    vertical-align: middle;
+  }
+  /* The header's column widths; each row's cells carry the same. */
+  .calls-table .col-time {
+    width: 88px;
+    white-space: nowrap;
+  }
+  .calls-table .col-mark {
+    width: 26px;
+    padding-right: 0;
+  }
+  .calls-table .col-call {
+    width: 32%;
+  }
+  .calls-table .col-model {
+    width: 16%;
+  }
+  .calls-table .col-tools {
+    width: 16%;
+  }
+  .calls-table .col-context {
+    width: 128px;
+  }
+  .calls-table .col-out {
+    width: 64px;
+  }
+  .calls-table .col-duration {
+    width: 112px;
+  }
+  .calls-table .col-http {
+    width: 56px;
+  }
+  .numeric {
+    text-align: right;
+  }
+  @media (max-width: 960px) {
+    .calls-table .col-tools,
+    .calls-table .col-out,
+    .calls-table .col-http {
+      display: none;
+    }
+  }
+  @media (max-width: 760px) {
+    .calls-table .col-context,
+    .calls-table .col-model {
+      display: none;
+    }
+  }
+</style>

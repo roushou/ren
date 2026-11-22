@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  decisions,
   Desk,
   Memory,
   Compose,
@@ -18,6 +19,7 @@ import {
   type RecordedRun,
   type RunSnapshot,
 } from '../src/lib/runs.ts';
+import { Steps } from '../src/lib/steps.ts';
 
 const run = '0190f3a0-0000-7000-8000-0000000000aa';
 const other = '0190f3a0-0000-7000-8000-0000000000bb';
@@ -130,7 +132,7 @@ test('controls follow the state: prompt when idle, answer and interrupt while wo
     }),
     {
       label: 'Needs you',
-      tone: 'warn',
+      mark: 'yours',
     },
   );
 });
@@ -240,9 +242,27 @@ test('items of two processes keep apart though a client names them alike, stored
   // A session's second process names its first items as the first did.
   const stored = new Transcript().load({
     entries: [
-      { run: first, seq: 1, event: prompt('explain the parser') },
-      { run: first, seq: 2, event: reply('It reads tokens.') },
-      { run: second, seq: 1, event: prompt('and the lexer?') },
+      {
+        run: first,
+        seq: 1,
+        at: 0 as never,
+        started_at: 0 as never,
+        event: prompt('explain the parser'),
+      },
+      {
+        run: first,
+        seq: 2,
+        at: 0 as never,
+        started_at: 0 as never,
+        event: reply('It reads tokens.'),
+      },
+      {
+        run: second,
+        seq: 1,
+        at: 0 as never,
+        started_at: 0 as never,
+        event: prompt('and the lexer?'),
+      },
     ],
     earlier: false,
   });
@@ -464,7 +484,13 @@ test('the stored conversation and the live feed merge into one, nothing cut', ()
       reply('m1', long),
       event({ kind: 'turn_ended', turn: 't1', end: { kind: 'completed' } }),
       prompt('u2', 'and the docs'),
-    ].map((event, index) => ({ run: run as never, seq: index + 1, event })),
+    ].map((event, index) => ({
+      run: run as never,
+      seq: index + 1,
+      at: 0 as never,
+      started_at: 0 as never,
+      event,
+    })),
     earlier: false,
   });
   assert.equal(loaded.read, true);
@@ -918,6 +944,22 @@ test('the page’s opening reads each stand on their own', async () => {
   assert.equal(opening.recorded.state, 'read');
 });
 
+test('a run’s state marks it: only an approval waits on the operator', () => {
+  const mark = (state: unknown) => Runs.mark(state as never).mark;
+  assert.equal(mark({ phase: 'starting' }), 'waiting');
+  assert.equal(mark({ phase: 'idle', thread: null, turn: null, queued: null }), 'idle');
+  assert.equal(
+    mark({ phase: 'working', thread: null, turn: null, approvals: [], queued: null }),
+    'responding',
+  );
+  assert.equal(Runs.endMark('stopped'), 'idle');
+  assert.equal(Runs.endMark('exited', { kind: 'code', value: 0 }), 'idle');
+  assert.equal(Runs.endMark('exited', { kind: 'code', value: 2 }), 'warning');
+  assert.equal(Runs.endMark('recovered'), 'warning');
+  assert.equal(Runs.endMark('spawn_failed'), 'failed');
+  assert.equal(mark({ phase: 'unrecognized', text: 'paused' }), 'unknown');
+});
+
 test('how a run ended reads in words; the process’s exit is a detail', () => {
   const ended = (end: string, exit: unknown = null) =>
     Runs.mark({ phase: 'ended', end: end as never, exit: exit as never }).label;
@@ -1018,4 +1060,110 @@ test('a prompt goes with how to deliver it; the queue and settings have their ow
     `/control/sessions/${run}/unqueue {}`,
     `/control/sessions/${run}/settings {"model":null,"effort":"high","approvals":null}`,
   ]);
+});
+
+test('every decision has distinct words, and only allowing reads as passed', () => {
+  const words = decisions.map((decision) => Runs.decision(decision));
+  assert.equal(new Set(words.map((said) => said.label)).size, decisions.length);
+  assert.equal(new Set(words.map((said) => said.done)).size, decisions.length);
+  assert.deepEqual(
+    words.map((said) => said.mark),
+    ['passed', 'passed', 'idle', 'idle'],
+  );
+});
+
+test('a stored item keeps when it ran; a step reads how long, and a group adds it up', () => {
+  const run = 'run-1' as never;
+  const command = (id: string, phase: 'started' | 'completed') =>
+    ({
+      kind: 'item',
+      phase,
+      item: {
+        id,
+        kind: 'command_execution',
+        read: {
+          as: 'command',
+          command: 'cargo test',
+          intent: { said: 'unsaid' },
+          status: phase === 'completed' ? 'completed' : 'in_progress',
+          output: null,
+          exit_code: phase === 'completed' ? 0 : null,
+        },
+      },
+    }) as never;
+  const transcript = new Transcript().load({
+    entries: [
+      {
+        run,
+        seq: 1,
+        at: 1_000 as never,
+        started_at: 1_000 as never,
+        event: command('c1', 'started'),
+      },
+      {
+        run,
+        seq: 2,
+        at: 3_500 as never,
+        started_at: 1_000 as never,
+        event: command('c1', 'completed'),
+      },
+      {
+        run,
+        seq: 3,
+        at: 4_000 as never,
+        started_at: 4_000 as never,
+        event: command('c2', 'started'),
+      },
+    ],
+    earlier: false,
+  });
+  assert.deepEqual([...transcript.spans], [['run-1/c1', { from: 1_000, to: 3_500 }]]);
+  // The time survives the live feed's next event.
+  const later = transcript.apply(command('c3', 'started'), run);
+  assert.deepEqual(later.spans.get('run-1/c1' as never), { from: 1_000, to: 3_500 });
+  const [group] = Steps.blocks(later.entries, null, later.spans);
+  assert.equal(group?.kind, 'steps');
+  if (group?.kind !== 'steps') return;
+  assert.deepEqual(
+    group.steps.map((step) => step.took),
+    [2_500, null, null],
+  );
+  assert.equal(Steps.took(group.steps), 2_500);
+  assert.equal(Steps.took([]), null);
+  // The window the picked steps ran over, from what is known of them.
+  assert.deepEqual(Steps.window(group.steps), { from: 1_000, to: 3_500 });
+  assert.equal(Steps.window(group.steps.slice(1)), null);
+});
+
+test('an approval asks its question by its client and what it asks for', () => {
+  assert.equal(
+    Runs.question({ kind: 'command', command: 'git push', cwd: null, reason: null }, 'Codex'),
+    'Allow Codex to run this command?',
+  );
+  assert.equal(
+    Runs.question({ kind: 'tool', tool: 'WebFetch', detail: null }, 'Claude Code'),
+    'Allow Claude Code to use WebFetch?',
+  );
+  assert.deepEqual(
+    decisions.map((decision) => Runs.decision(decision).label),
+    ['Allow once', 'Allow for this session', 'Decline', 'Decline and stop'],
+  );
+});
+
+test('a failed command says the refusal, an unreachable server, or the error', () => {
+  const refused = new RunCommandError(409, null);
+  assert.equal(RunCommandError.say(refused), refused.message);
+  assert.equal(
+    RunCommandError.say(new TypeError('fetch failed')),
+    'Cannot reach the Ren UI server.',
+  );
+  assert.equal(RunCommandError.say(new Error('Gone.')), 'Gone.');
+  assert.equal(RunCommandError.say('nope'), 'Something went wrong.');
+});
+
+test('only a lost or given-up runs feed is worth a word', () => {
+  assert.deepEqual(
+    (['opening', 'open', 'reconnecting', 'closed'] as const).map((feed) => Runs.feedNote(feed)),
+    ['', '', 'updates reconnecting', 'updates stopped'],
+  );
 });

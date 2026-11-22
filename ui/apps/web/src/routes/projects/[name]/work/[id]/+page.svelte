@@ -7,10 +7,15 @@
   import Toolbar from '#lib/Toolbar.svelte';
   import WorkItemDetail from '#lib/WorkItemDetail.svelte';
   import { invalidateAll } from '$app/navigation';
+  import PageOutline from '#lib/PageOutline.svelte';
+  import { createArrival } from '#lib/snapshot.svelte.ts';
   import { WorkApi, WorkError, type WorkItem } from '#lib/work.ts';
+  import { Sessions } from '#lib/runs.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
+  const arrival = createArrival(() => data.work);
+  const read = $derived(arrival.snapshot?.value ?? null);
   const work = new WorkApi(fetch);
   let failed = $state<string | null>(null);
 
@@ -25,36 +30,35 @@
   }
 </script>
 
-{#snippet scope()}
-  <span class="muted">{data.item.title}</span>
-{/snippet}
+<Toolbar />
 
-<Toolbar {scope} />
-
-<section class="item" aria-label={data.item.title}>
-  {#if failed}<p class="error" role="alert">{failed}</p>{/if}
-  <WorkItemDetail
-    item={data.item}
-    project={data.project.factory === 'ren'
-      ? { kind: 'ren' }
-      : { kind: 'other', name: data.project.name }}
-    ondismiss={(item) => void dismiss(item)}
-  />
-</section>
+{#if read}
+  <section class="item" aria-label={read.item.title}>
+    {#if failed}<p class="error" role="alert">{failed}</p>{/if}
+    <WorkItemDetail
+      item={read.item}
+      desk={read.item.session ? Sessions.deskHref(read.project.name, read.item.session) : null}
+      project={read.project.factory === 'ren'
+        ? { kind: 'ren' }
+        : { kind: 'other', name: read.project.name }}
+      ondismiss={(item) => void dismiss(item)}
+      pulls={read.pulls}
+      repository={read.repository}
+    />
+  </section>
+{:else}
+  <PageOutline figures={0} rows={8} error={arrival.snapshot?.error ?? null} />
+{/if}
 
 <style>
   .item {
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 12px 16px;
-    max-width: 760px;
   }
   .error {
-    margin: 0 0 8px;
+    margin: 0;
+    padding: 8px 16px;
     color: var(--error);
-  }
-  .muted {
-    color: var(--muted);
   }
 </style>

@@ -55,17 +55,19 @@ test('background failure retains only the matching snapshot and recovery clears 
 
 test('gateway reads health, storage, and the release together and accept degraded recorder health', async () => {
   const calls: string[] = [];
-  const result = await gatewaySnapshot(async (input) => {
-    calls.push(path(input));
-    switch (path(input)) {
-      case '/health':
-        return versioned(healthBody({ storage_errors: 1 }), { status: 503 });
-      case '/api/projects/ren/release':
-        return versioned({ release: null, shots: [], promotion_requested: null });
-      default:
-        return versioned(storageFixture());
-    }
-  });
+  const result = ready(
+    await gatewaySnapshot(async (input) => {
+      calls.push(path(input));
+      switch (path(input)) {
+        case '/health':
+          return versioned(healthBody({ storage_errors: 1 }), { status: 503 });
+        case '/api/projects/ren/release':
+          return versioned({ release: null, shots: [], promotion_requested: null });
+        default:
+          return versioned(storageFixture());
+      }
+    }),
+  );
   assert.deepEqual(calls, ['/health', '/api/storage', '/api/projects/ren/release']);
   assert.ok(result.value);
   assert.equal(result.value.health.status, 'degraded');
@@ -75,24 +77,28 @@ test('gateway reads health, storage, and the release together and accept degrade
 });
 
 test('a gateway without the projects route still gives a snapshot', async () => {
-  const result = await gatewaySnapshot(async (input) => {
-    switch (path(input)) {
-      case '/health':
-        return versioned(healthBody());
-      case '/api/projects':
-        return versioned({ error: 'not_found' }, { status: 404 });
-      default:
-        return versioned(storageFixture());
-    }
-  });
+  const result = ready(
+    await gatewaySnapshot(async (input) => {
+      switch (path(input)) {
+        case '/health':
+          return versioned(healthBody());
+        case '/api/projects':
+          return versioned({ error: 'not_found' }, { status: 404 });
+        default:
+          return versioned(storageFixture());
+      }
+    }),
+  );
   assert.ok(result.value);
   assert.equal(result.value.release, null);
 });
 
 test('the gateway names its environment', async () => {
-  const read = (body: object) =>
-    gatewaySnapshot(async (input) =>
-      path(input) === '/health' ? versioned(body) : versioned(storageFixture()),
+  const read = async (body: object) =>
+    ready(
+      await gatewaySnapshot(async (input) =>
+        path(input) === '/health' ? versioned(body) : versioned(storageFixture()),
+      ),
     );
   const development = await read({ ...healthBody(), instance: { environment: 'development' } });
   assert.equal(development.value?.health.instance.environment, 'development');
@@ -103,7 +109,7 @@ test('every response is version-checked and a mismatch is reported distinctly', 
   for (const fetcher of [2, null, '1']
     .map((version) => async () => versioned(healthBody(), undefined, version))
     .concat(unversioned)) {
-    const result = await gatewaySnapshot(fetcher);
+    const result = ready(await gatewaySnapshot(fetcher));
     assert.equal(result.value, null);
     assert.equal(result.error?.kind, 'incompatible');
     assert.match(result.error?.message ?? '', /requires version 1/);

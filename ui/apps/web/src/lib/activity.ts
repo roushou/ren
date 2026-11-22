@@ -1,5 +1,7 @@
 // What turns did and where a recording's tokens went, as the views show them.
 // Pure: no browser, no fetching; tested in tests/activity.test.ts.
+import { TurnContexts } from './recordings.ts';
+import { Elapsed } from './time.ts';
 import type {
   CallId,
   EffectKind,
@@ -18,7 +20,7 @@ import type {
 } from './api.ts';
 import { title } from './api.ts';
 import { assertNever, unrecognised, type Stored } from './decode.ts';
-import { compact, span, type Tone as DisplayTone } from './display.ts';
+import { compact, type Tone as DisplayTone } from './display.ts';
 
 /** Activity is read from finished records, so it has no live tone. */
 export type Tone = Exclude<DisplayTone, 'live'>;
@@ -44,7 +46,9 @@ export function findingLine(finding: Finding): FindingLine {
         detail:
           `Wrote ${tokens(finding.cache_written_tokens)} to the cache and read ` +
           `${compact(finding.cache_read_tokens)} of an earlier ${tokens(finding.earlier_peak_tokens)}` +
-          (finding.idle_before_ms === null ? '.' : `, after ${span(finding.idle_before_ms)} idle.`),
+          (finding.idle_before_ms === null
+            ? '.'
+            : `, after ${Elapsed.span(finding.idle_before_ms)} idle.`),
         call: finding.call,
         turn: finding.turn,
       };
@@ -192,32 +196,21 @@ export class ContextChart {
   readonly max: number;
 
   constructor(rows: TurnRow[]) {
-    const turns = [...rows]
-      .reverse()
-      .filter(
-        (row) =>
-          row.metrics.context_start_tokens !== null || row.metrics.context_end_tokens !== null,
-      );
-    this.max = Math.max(
-      1,
-      ...turns.flatMap((row) => [
-        row.metrics.context_start_tokens ?? 0,
-        row.metrics.context_end_tokens ?? 0,
-      ]),
-    );
+    const oldest = [...rows].reverse();
+    const turns = TurnContexts.of(oldest.map((row) => row.metrics));
+    this.max = Math.max(1, ...turns.flatMap((turn) => [turn.startTokens, turn.endTokens]));
     const step = 1000 / Math.max(1, turns.length);
     const gap = Math.min(2, step / 6);
-    this.bars = turns.map((row, index) => {
-      const start = row.metrics.context_start_tokens ?? row.metrics.context_end_tokens ?? 0;
-      const end = row.metrics.context_end_tokens ?? start;
+    this.bars = turns.map((turn, index) => {
+      const row = oldest.find((each) => each.metrics.turn === turn.turn);
       return {
-        turn: row.metrics.turn,
+        turn: turn.turn,
         x: index * step + gap,
         width: Math.max(1, step - 2 * gap),
-        start: start / this.max,
-        end: end / this.max,
-        flagged: row.findings.length > 0,
-        title: `${rowPrompt(row)} · ${compact(start)} → ${compact(end)}`,
+        start: turn.start,
+        end: turn.end,
+        flagged: (row?.findings.length ?? 0) > 0,
+        title: `${row ? rowPrompt(row) : 'Turn'} · ${compact(turn.startTokens)} → ${compact(turn.endTokens)}`,
       };
     });
   }
@@ -304,19 +297,19 @@ export function harnessLabel(harness: Stored<Harness>): string {
 
 /** A call, selected in its recording's traffic. */
 export function callHref(recording: RecordingId, call: CallId): string {
-  return `/recordings/${encodeURIComponent(recording)}?call=${encodeURIComponent(call)}`;
+  return `/monitor/sessions/${encodeURIComponent(recording)}?call=${encodeURIComponent(call)}`;
 }
 
-/** What one turn did. */
-export function turnHref(turn: TurnId): string {
-  return `/turns/${encodeURIComponent(turn)}`;
+/** What one turn did: its panel, beside its recording's calls. */
+export function turnHref(recording: RecordingId, turn: TurnId): string {
+  return `/monitor/sessions/${encodeURIComponent(recording)}?${new URLSearchParams({ turn })}`;
 }
 
 /** A search hit: its turn, else its call in its recording, else the call in Traffic. */
 export function searchHitHref(hit: SearchHit): string {
-  if (hit.turn) return turnHref(hit.turn);
+  if (hit.recording && hit.turn) return turnHref(hit.recording, hit.turn);
   if (hit.recording) return callHref(hit.recording, hit.call);
-  return `/traffic?call=${encodeURIComponent(hit.call)}`;
+  return `/monitor/traffic?call=${encodeURIComponent(hit.call)}`;
 }
 
 /** Where a finding's link leads, and what it says. */
@@ -335,7 +328,8 @@ export function findingLink(
   recording: RecordingId,
   page: 'recording' | 'turn',
 ): FindingLink | null {
-  if (page === 'recording' && line.turn) return { href: turnHref(line.turn), label: 'Open turn' };
+  if (page === 'recording' && line.turn)
+    return { href: turnHref(recording, line.turn), label: 'Open turn' };
   if (line.call) return { href: callHref(recording, line.call), label: 'Open call' };
   return null;
 }

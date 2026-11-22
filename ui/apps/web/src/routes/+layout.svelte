@@ -1,30 +1,35 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { beforeNavigate, goto, preloadCode, refreshAll } from '$app/navigation';
+  import { Now } from '#lib/now.svelte.ts';
+  import { Marks } from '#lib/marks.ts';
+  import { harnessLabel } from '#lib/activity.ts';
+  import Toasts from '#lib/layer/Toasts.svelte';
+  import { toasts } from '#lib/layer/toasts.svelte.ts';
+  import CommandPalette from '#lib/layer/CommandPalette.svelte';
+  import { ProjectBoard } from '#lib/projects.ts';
+  import { onMount, untrack } from 'svelte';
+  import { beforeNavigate, invalidate, preloadCode } from '$app/navigation';
   import { page, navigating } from '$app/state';
-  import { createSettled, createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { createArrival, createSettled } from '#lib/snapshot.svelte.ts';
   import { Workbench, setWorkbench } from '#lib/workbench.svelte.ts';
   import { LiveConnection } from '#lib/live.svelte.ts';
-  import { num, short, clock } from '#lib/api.ts';
-  import { captureState } from '#lib/display.ts';
+  import { ManagementApi } from '#lib/api.ts';
   import type { SnapshotError } from '#lib/snapshots.ts';
-  import Icon, { type IconName } from '#lib/Icon.svelte';
-  import ThemeControl from '#lib/ThemeControl.svelte';
-  import ConnectClient from '#lib/ConnectClient.svelte';
-  import AddressToggle from '#lib/AddressToggle.svelte';
-  import { addressView } from '#lib/address.svelte.ts';
-  import { GatewayPlace, type Network } from '#lib/place.ts';
   import { RecorderReport } from '#lib/recorder.ts';
-  import { ReleaseLine } from '#lib/release.ts';
-  import { PageEvidence } from '#lib/work.ts';
-  import CopyButton from '#lib/CopyButton.svelte';
+  import { PageEvidence, Work } from '#lib/work.ts';
   import RedlineLayer from 'redline/RedlineLayer.svelte';
   import BriefingPanel from '#lib/BriefingPanel.svelte';
   import { RedlineDesk } from 'redline/desk';
   import { Recipients } from '#lib/briefing.svelte.ts';
-  import { Views, type Destination } from '#lib/view.ts';
-  import { Arrival } from '#lib/arrival.ts';
-  import type { RecordingsData } from '#lib/loaders.ts';
+  import { Views } from '#lib/view.ts';
+  import type { EdgeReading } from '#lib/edge.ts';
+  import { Arrival, type Arriving } from '#lib/arrival.ts';
+  import WorkbenchHeader from '#lib/shell/WorkbenchHeader.svelte';
+  import BottomEdge from '#lib/shell/BottomEdge.svelte';
+  import '@fontsource/inter/latin-400.css';
+  import '@fontsource/inter/latin-500.css';
+  import '@fontsource/inter/latin-600.css';
+  import '@fontsource/jetbrains-mono/latin-400.css';
+  import '@fontsource/jetbrains-mono/latin-500.css';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
   let { data, children }: LayoutProps = $props();
@@ -70,40 +75,9 @@
       console.error = log;
     };
   });
-  const gateway = createSnapshot(() => data.gateway);
-  const health = $derived(gateway.current.value?.health);
-  /** The tag on the wordmark of an instance that is not production: the
-   * gateway says what kind of instance it is; the UI only shows it. */
-  const marked = $derived.by(() => {
-    switch (health?.instance.environment) {
-      case 'development':
-        return { tag: 'dev', what: 'A development gateway, not the installed service' };
-      case 'canary':
-        return { tag: 'canary', what: "The canary: main's tip on a copy of production's history" };
-      case 'preview':
-        return {
-          tag: 'preview',
-          what: "A preview: one worktree's branch on a copy of production's history",
-        };
-      default:
-        return null;
-    }
-  });
-  const storage = $derived(gateway.current.value?.storage);
-  /** Where the release stands, once the factory has run against this gateway. */
-  const release = $derived.by(() => {
-    const view = gateway.current.value?.release;
-    return view ? ReleaseLine.of(view) : null;
-  });
-  /** The tab row, which scrolls sideways on a phone. */
-  let tabs = $state<HTMLElement>();
-  // Keep the current view's tab in sight when the row is narrower than its tabs.
-  $effect(() => {
-    void page.url.pathname;
-    tabs
-      ?.querySelector('[aria-current="page"]')
-      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  });
+  const gateway = createArrival(() => data.gateway);
+  const health = $derived(gateway.snapshot?.value?.health);
+  const storage = $derived(gateway.snapshot?.value?.storage);
   const view = $derived(Views.of(page.route.id));
   /** The view being navigated to, when it is another one: its tab lights up
    * at once. */
@@ -112,16 +86,77 @@
       ? Views.of(navigating.to.route.id)
       : null,
   );
-  const tab = $derived(Views.tab(target ?? view));
-  /** The header's place the page is in, and so the row of pages under it. */
-  const destination = $derived(Views.destination(tab));
+  const tab = $derived.by(() => {
+    const shown = target ?? view;
+    return shown ? Views.tab(shown) : null;
+  });
+  /** Home, or the place the page is in: the bar shows only it. */
+  const where = $derived(tab ? Views.place(tab) : 'home');
+  /** The place's own entry: its name, and where that leads. */
+  const here = $derived(Views.places.find((each) => each.place === where) ?? null);
+  /** What waits on the operator, across every project: the top bar's Pending. */
+  const boardRead = createArrival(() => data.board);
+  const board = $derived(ProjectBoard.read(boardRead.snapshot?.value ?? null));
+  /** What newly waits on the operator, said as a toast as it arrives:
+   * unless the page that says it is the one on screen. The first board says
+   * nothing; it is where the operator starts. */
+  let lastBoard: ProjectBoard | null = null;
+  $effect(() => {
+    const now = board;
+    // Not before the board is in: an empty board is not news.
+    if (!boardRead.snapshot) return;
+    const before = lastBoard;
+    lastBoard = now;
+    if (!before) return;
+    const here = untrack(() => `${page.url.pathname}${page.url.search}`);
+    for (const said of ProjectBoard.news(before, now))
+      if (said.link?.href !== here) toasts.show(said);
+  });
+  /** Whether ⌘K's palette is open. */
+  let commanding = $state(false);
+  function shortcut(event: KeyboardEvent) {
+    if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey) && !event.altKey) {
+      event.preventDefault();
+      commanding = true;
+    }
+  }
   /** The project whose pages the row shows, inside one. */
   const inProject = $derived.by(() => {
     const to = navigating.to ?? page;
     return to.route.id?.startsWith('/projects/[name]') ? (to.params?.name ?? null) : null;
   });
-  /** The project an Inspect page is narrowed to, when it can be. */
-  const scope = $derived(Views.scoped(tab) ? page.url.searchParams.get('project') : null);
+  const clock = new Now(60_000);
+  /** How recording stands on this host, for System's mark on Home. */
+  const hostReport = $derived(
+    health
+      ? new RecorderReport(
+          health.recorder,
+          storage?.usage ?? null,
+          storage?.policy ?? null,
+          null,
+          clock.current,
+        )
+      : null,
+  );
+  const hostVerdict = $derived(hostReport?.verdict ?? null);
+  /** What on the host needs a look, worst first; null when nothing does. */
+  const hostAttention = $derived.by((): { mark: 'failed' | 'warning'; label: string } | null => {
+    if (error) return { mark: 'failed', label: 'the gateway is not answering' };
+    if (hostVerdict && hostVerdict.tone !== 'success')
+      return {
+        mark: Marks.ofTone(hostVerdict.tone) === 'failed' ? 'failed' : 'warning',
+        label: hostVerdict.headline,
+      };
+    if (hostReport?.crowded) return { mark: 'warning', label: 'storage is near its limit' };
+    if (board.signedOut.length)
+      return {
+        mark: 'warning',
+        label: `${board.signedOut.map((client) => harnessLabel(client.harness)).join(', ')} signed out`,
+      };
+    return null;
+  });
+  /** The project a Monitor page is narrowed to, when it can be. */
+  const scope = $derived(tab && Views.scoped(tab) ? page.url.searchParams.get('project') : null);
   /** The same page, for every project. */
   const unscoped = $derived.by(() => {
     const params = new URLSearchParams(page.url.search);
@@ -130,206 +165,153 @@
     const search = params.toString();
     return search ? `${page.url.pathname}?${search}` : page.url.pathname;
   });
-  const destinationIcons = {
-    projects: 'branch',
-    inspect: 'logs',
-    host: 'storage',
-  } as const satisfies Record<Destination, IconName>;
   /** The page's reads, as each comes in, for the status line and the error banner. */
-  const reads = createSettled(() => [
-    page.data.overview,
-    page.data.traffic,
-    page.data.live,
-    page.data.recordings,
-    page.data.usage,
-    page.data.recorder,
-    page.data.report,
-    page.data.turn,
-    page.data.search,
-  ]);
-  const recordingCount = $derived(
-    reads.of<RecordingsData>(page.data.recordings)?.value?.recordings.length ?? 0,
+  /** The pages' own reads, by the name their loads give them: any that
+   * failed is the bottom edge's to say. */
+  const PAGE_READS = [
+    'overview',
+    'traffic',
+    'live',
+    'recordings',
+    'usage',
+    'recorder',
+    'report',
+    'search',
+  ] as const;
+  const reads = createSettled(() =>
+    PAGE_READS.map((key) => page.data[key] as Arriving<unknown> | undefined),
   );
-  const selected = $derived(workbench.selected);
-  const pageTitle = $derived(page.error ? 'Page unavailable' : Views.title(view));
+  const pageTitle = $derived(page.error ? 'Page unavailable' : view ? Views.title(view) : 'Ren');
   const gatewayOrigin = $derived(page.data.gatewayUrl);
-  // The header names where the gateway runs, not its address.
-  const place = $derived(GatewayPlace.parse(gatewayOrigin));
-  const shownOrigin = $derived(addressView.revealed ? place.origin : place.masked);
-  const networkIcons = {
-    loopback: 'monitor',
-    tailnet: 'lock',
-    private: 'lan',
-    public: 'globe',
-  } as const satisfies Record<Network, IconName>;
   // Bytes past the capture policy are left out by design: never loss.
   const capture = $derived(health ? RecorderReport.capture(health.recorder) : null);
   const loss = $derived(capture?.kind === 'lost');
   const degraded = $derived(!!health && (health.status !== 'ok' || capture?.kind === 'failing'));
-  const loading = $derived(workbench.manual || !!navigating.to);
   let refreshError = $state('');
   const failure = $derived<SnapshotError | null>(
-    gateway.current.error ??
-      reads.of(page.data.traffic)?.error ??
-      reads.of(page.data.live)?.error ??
-      reads.of(page.data.recordings)?.error ??
-      reads.of(page.data.recorder)?.error ??
-      reads.of(page.data.report)?.error ??
-      reads.of(page.data.turn)?.error ??
-      reads.of(page.data.search)?.error ??
+    gateway.snapshot?.error ??
+      PAGE_READS.map(
+        (key) => reads.of(page.data[key] as Arriving<unknown> | undefined)?.error,
+      ).find((error) => error) ??
       null,
   );
   const error = $derived(refreshError || failure?.message || '');
   const incompatible = $derived(failure?.kind === 'incompatible');
-  const updated = $derived(gateway.current.updated);
+  const updated = $derived(gateway.snapshot?.updated);
+  /** Recorder notices the operator dismissed this visit, by their words. */
+  let dismissed = $state<string[]>([]);
+  /** What the bottom edge says its strips from. */
+  const edge = $derived<EdgeReading>({
+    failure: error ? (incompatible ? 'incompatible' : 'unreachable') : null,
+    readAt: updated ?? null,
+    recorder: !health
+      ? null
+      : degraded
+        ? 'the recorder logged errors'
+        : capture?.kind === 'lost'
+          ? RecorderReport.lossText(capture)
+          : null,
+    dismissed: new Set(dismissed),
+    readOnly: !page.data.runsControl,
+  });
   async function reload() {
     // A navigation in flight loads fresh data itself.
     if (navigating.to) return;
-    workbench.refreshing = true;
     try {
-      await refreshAll();
+      // Every load that read Ren reads it again; the server loads that only
+      // hold settings (and the desk's and Packages', whose pages follow their
+      // own feeds) do not. A refresh a click interrupts then leaves only
+      // those reads to redo, not a round trip to this server first.
+      await invalidate(() => true, true);
       refreshError = '';
       workbench.refreshed++;
     } catch {
       refreshError = 'Unable to refresh this view.';
-    } finally {
-      workbench.refreshing = false;
     }
   }
-  let live = $state<LiveConnection>();
   async function refresh() {
     workbench.manual = true;
     try {
-      await (live ? live.refresh() : reload());
+      await (workbench.connection ? workbench.connection.refresh() : reload());
     } finally {
       workbench.manual = false;
     }
   }
-  // Set before any page renders its toolbar, on the server too.
-  workbench.controls = {
-    refresh: () => void refresh(),
-    loading: () => loading,
-    problem: () => error,
-  };
   // The views' code is small and static: fetch it once up front, so switching
   // views waits only for data (which hovering a tab also starts).
   onMount(() => {
     for (const route of [
       '/',
-      '/overview',
-      '/live',
-      '/traffic',
-      '/recordings',
-      '/usage',
-      '/recorder',
-      '/recordings/[id]',
-      '/recordings/[id]/report',
-      '/turns/[id]',
-      '/search',
-      '/scratch',
+      '/projects',
+      '/monitor',
+      '/monitor/live',
+      '/monitor/traffic',
+      '/monitor/sessions',
+      '/monitor/usage',
+      '/system/recorder',
+      '/monitor/sessions/[id]',
+      '/monitor/sessions/[id]/report',
+      '/monitor/search',
+      '/scratch/[[session]]',
     ] as const)
       void preloadCode(route);
   });
   onMount(() => {
-    live = new LiveConnection({
+    const connection = new LiveConnection({
       refresh: reload,
       reload,
       progress: (update) => workbench.stream(update),
     });
-    return () => live?.destroy();
+    workbench.connection = connection;
+    return () => {
+      workbench.connection = null;
+      connection.destroy();
+    };
   });
   $effect(() => {
     // Follow the live feed only while automatic updates are on.
-    live?.dispatch({ kind: workbench.automatic ? 'enable' : 'disable' });
-  });
-  $effect(() => {
-    if (live) workbench.live = live.state;
+    workbench.connection?.dispatch({ kind: workbench.automatic ? 'enable' : 'disable' });
   });
 </script>
 
+<svelte:window onkeydown={shortcut} />
+
 <svelte:head><title>Ren - {pageTitle}</title></svelte:head>
 <div class="app-shell">
-  <header class="workbench-header">
-    <a
-      class="brand"
-      class:marked
-      href="/"
-      aria-label={marked ? `Ren projects, ${marked.tag} gateway` : 'Ren projects'}
-      title={marked?.what}
-      ><span class="flaps" aria-hidden="true"
-        ><span class="flap">R</span><span class="flap">E</span><span class="flap">N</span
-        >{#if marked}<span class="instance-badge">{marked.tag}</span>{/if}</span
-      ></a
-    >
-    <nav class="workbench-tabs" aria-label="Ren" bind:this={tabs}>
-      {#each Views.destinations as place (place.destination)}
-        <a
-          href={place.href}
-          data-sveltekit-preload-data="hover"
-          class:active={destination === place.destination}
-          aria-current={destination === place.destination ? 'page' : undefined}
-          ><Icon
-            name={destinationIcons[place.destination]}
-            size={14}
-          />{place.label}{#if place.destination === 'host' && (loss || degraded)}<span
-              class="warning"
-              aria-label="Recording needs attention">!</span
-            >{/if}</a
-        >
-      {/each}
-    </nav>
-    <button
-      class="gateway-place mono"
-      class:public={place.network === 'public'}
-      popovertarget="connect-panel"
-      title="Gateway on {place.node ??
-        GatewayPlace.networkLabel(place.network)}, reached over {GatewayPlace.networkLabel(
-        place.network,
-      )}. {error ? 'The management API is not answering. ' : ''}Connect a client"
-      ><span class="status-dot" class:error={!!error} class:neutral={!updated && !error}
-      ></span>{#if place.node && place.network !== 'loopback'}<b>{place.node}</b><span
-          class="gateway-sep">·</span
-        >{/if}<Icon name={networkIcons[place.network]} size={12} /><span
-        >{place.network === 'loopback'
-          ? 'this machine'
-          : GatewayPlace.networkLabel(place.network)}</span
-      ><Icon name="chevron" size={11} /></button
-    >
-    <div id="connect-panel" class="connect-panel" popover="auto" aria-label="Connect a client">
-      <header>
-        <strong>Connect a client</strong>
-        <span class="mono">{shownOrigin}</span>{#if place.maskable}<AddressToggle />{/if}<CopyButton
-          text={gatewayOrigin}
-          label="Copy the gateway address"
-        />
-      </header>
-      <ConnectClient layout="list" {gatewayOrigin} />
-      <p><Icon name="shield" size={12} /> Each client keeps its own sign-in; Ren forwards it.</p>
-    </div>
-    <ThemeControl />
-  </header>
-  <nav
-    class="page-row"
-    aria-label={Views.destinations.find((place) => place.destination === destination)?.label}
-  >
-    {#if inProject}
-      <span class="crumb"
-        ><a href="/">Projects</a><span class="muted">/</span><strong>{inProject}</strong></span
-      >
-    {/if}
-    {#each Views.pages(destination, inProject) as link (link.tab)}
-      <a
-        href={Views.scopedHref(link, scope)}
-        data-sveltekit-preload-data="hover"
-        class:active={tab === link.tab}
-        aria-current={tab === link.tab ? 'page' : undefined}
-        >{link.label}{#if link.tab === 'recorder' && (loss || degraded)}<span
-            class="warning"
-            aria-label="Recording needs attention">!</span
-          >{/if}</a
-      >
-    {/each}
-  </nav>
+  <WorkbenchHeader
+    {view}
+    environment={health?.instance.environment ?? null}
+    {where}
+    {here}
+    {tab}
+    {inProject}
+    {scope}
+    {board}
+    {hostAttention}
+    recording={loss || degraded ? 'attention' : 'well'}
+    {error}
+    updated={updated ?? null}
+    {gatewayOrigin}
+    redline={page.data.runsControl ? { desk: redline, recipients } : null}
+    oncommand={() => (commanding = true)}
+    onrefresh={() => void refresh()}
+  />
+  {#if commanding}<CommandPalette
+      projects={board.active}
+      here={inProject}
+      sources={{
+        promotable: board.toPromote.flatMap((project) =>
+          project.factory === 'ren' && project.release?.canary
+            ? [{ project: project.name, commit: project.release.canary.commit }]
+            : [],
+        ),
+        work: board.work.map((item) => {
+          const home = board.homeOf(item);
+          return { title: item.title, project: home, href: home ? Work.href(home, item.id) : null };
+        }),
+      }}
+      onclose={() => (commanding = false)}
+    />{/if}
   {#if scope}
     <div class="scope-row" role="status">
       <span>Project <a href={`/projects/${encodeURIComponent(scope)}`}>{scope}</a></span>
@@ -345,80 +327,91 @@
   <main class="workspace" class:navigating={!!navigating.to} aria-busy={!!navigating.to}>
     {@render children()}
   </main>
-  <footer class="statusline" class:redlining={redline.open} aria-label="Gateway status">
-    <span
-      class="read-only"
-      title={page.data.runsControl
-        ? 'History is read-only; this UI starts and drives sessions'
-        : 'This UI only reads: give it the control token to drive sessions'}
-      >{page.data.runsControl ? 'DRIVES SESSIONS' : 'READ ONLY'}</span
-    >
-    <span
-      class="connection-state"
-      title={error ||
-        'Last successful management API snapshot; does not establish upstream availability.'}
-      ><span class="status-dot" class:error={!!error} class:neutral={!updated}></span>{error
-        ? incompatible
-          ? 'API version mismatch'
-          : 'Snapshot failed'
-        : updated
-          ? 'API reachable'
-          : 'Connecting…'}</span
-    >
-    <button
-      class="recorder-status"
-      class:warning={loss || degraded}
-      onclick={() => goto('/recorder')}
-      title="Recorder counters since startup; open diagnostics"
-      ><Icon name={loss || degraded ? 'alert' : 'storage'} size={13} />{!health
-        ? 'Recorder unknown'
-        : degraded
-          ? 'Recorder errors recorded'
-          : capture?.kind === 'lost'
-            ? RecorderReport.lossText(capture)
-            : 'No capture loss recorded'}</button
-    >
-    {#if release}<span
-        class="release-status"
-        class:warning={release.tone === 'warning'}
-        class:error={release.tone === 'bad'}
-        title={release.detail}>{release.text}</span
-      >{/if}
-    <span class="status-context mono"
-      >{selected && (view === 'traffic' || view === 'recording')
-        ? `${short(selected.id)} · ${captureState(selected, gateway.current.value?.storage.capture?.body_limit_bytes ?? null).toLowerCase()}`
-        : view === 'recorder'
-          ? `${num(storage?.usage.calls)} calls retained`
-          : view === 'recordings'
-            ? `${recordingCount}${recordingCount === 100 ? '+' : ''} recordings loaded`
-            : view === 'traffic' || view === 'recording'
-              ? `${workbench.callCount} calls on page · ${workbench.activeCount} in progress`
-              : `${num(storage?.usage.calls)} calls retained`}</span
-    >
-    <span
-      class="snapshot-time mono"
-      title={updated ? new Date(updated).toLocaleString() : undefined}
-      >{loading ? 'Refreshing…' : updated ? `Snapshot ${clock(updated)}` : 'No snapshot'}</span
-    >
-    {#if page.data.runsControl}<button
-        class="redline-toggle"
-        class:on={redline.open}
-        data-redline
-        aria-pressed={redline.open}
-        onpointerenter={() => recipients.prepare()}
-        onfocus={() => recipients.prepare()}
-        onclick={() => redline.toggle()}
-        title="Mark what's wrong on this page for an agent to fix (m)"
-        ><Icon name="pencil" size={12} />Redline{#if redline.marks.length}<span
-            class="redline-count">{redline.marks.length}</span
-          >{/if}</button
-      >{/if}
-  </footer>
+  <Toasts />
+  <BottomEdge
+    reading={edge}
+    onretry={() => void refresh()}
+    ondismiss={(said) => (dismissed = [...dismissed, said])}
+  />
   {#if page.data.runsControl}<RedlineLayer desk={redline} />{#if redline.open}<BriefingPanel
         desk={redline}
         {recipients}
         source={page.data.redlineSource}
         revision={health?.build.revision ?? null}
         {evidence}
+        renProject={ManagementApi.ren(board.projects)?.name ?? null}
       />{/if}{/if}
 </div>
+
+<style>
+  .app-shell {
+    position: relative;
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  /* A Monitor page narrowed to one project, under the header. */
+  .scope-row {
+    display: flex;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    padding: 6px 14px;
+    font-size: 12px;
+    background: var(--accent-soft);
+    border-bottom: 1px solid var(--accent-border);
+    color: var(--accent-text);
+  }
+  .scope-row a {
+    color: var(--accent-text);
+    font-weight: 600;
+  }
+  .scope-row .clear {
+    margin-left: auto;
+    font-weight: 500;
+  }
+  /* Loading: an indeterminate bar under the header while a view loads. It
+     appears only after a short delay, so fast navigations do not flicker. */
+  .nav-progress {
+    position: absolute;
+    top: 73px;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    height: 2px;
+    overflow: hidden;
+    opacity: 0;
+    animation: progress-in 0s linear 120ms forwards;
+  }
+  .nav-progress::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 35%;
+    background: var(--accent);
+    animation: progress-run 1.1s ease-in-out infinite;
+  }
+  @keyframes progress-in {
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes progress-run {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .nav-progress::before {
+      width: 100%;
+      animation: none;
+      opacity: 0.6;
+    }
+  }
+</style>

@@ -1,83 +1,120 @@
 <!--
   The steps between two things the agent said, as one line of what they did
-  ("Read supervisor.rs ×2 · Ran 3 commands"), folded until opened. Open, each
-  step is a row: what it did and on what, in its client's words when it gave
-  some; a command opens again to the command exactly as run and its output.
-  Success says nothing: only a step that runs, failed, or was declined is
-  marked, and the folded line counts the failed ones. It opens only when the
-  operator opens it.
+  ("Read supervisor.rs ×2 · Ran 3 commands") with their outcomes counted and
+  their time added up, folded until opened. Open, each step is a row: its
+  verb, what it acted on, its outcome, and a bar of its time against the
+  group's longest. A row opens the step whole beside the transcript
+  (`onopen`); its box picks it to act on with others (`onpick`). The
+  operator opens the group; it never opens itself.
 -->
 <script lang="ts">
-  import Icon, { type IconName } from '#lib/Icon.svelte';
-  import { Steps, type Act, type GroupState, type Step } from '#lib/steps.ts';
+  import { Elapsed } from '#lib/time.ts';
+  import Meter from '../Meter.svelte';
+  import Glyph from '#lib/Glyph.svelte';
+  import Icon from '#lib/Icon.svelte';
+  import type { ItemId } from '#lib/runs.ts';
+  import { Steps, type GroupState, type Step } from '#lib/steps.ts';
 
   let {
     steps,
     state,
     open,
     ontoggle,
+    onopen,
+    chosen,
+    picked,
+    onpick,
   }: {
     steps: readonly Step[];
     state: GroupState;
     open: boolean;
     ontoggle: (open: boolean) => void;
+    /** Open `step` beside the transcript. */
+    onopen: (step: Step) => void;
+    /** The step open beside the transcript, if it is one of these. */
+    chosen: ItemId | null;
+    /** The steps picked to act on together, across the conversation. */
+    picked: ReadonlySet<ItemId>;
+    onpick: (step: Step, on: boolean) => void;
   } = $props();
 
   const summary = $derived(Steps.summary(steps));
   const failed = $derived(steps.filter((step) => step.state === 'failed').length);
-
-  const ICONS: Record<Act, IconName> = {
-    read: 'file',
-    search: 'search',
-    list: 'rows',
-    edit: 'pencil',
-    run: 'terminal',
-    delegate: 'spark',
-    fetch: 'globe',
-    tool: 'tool',
-  };
+  const passed = $derived(steps.filter((step) => step.state === 'done').length);
+  const took = $derived(Steps.took(steps));
+  /** The longest step's time: each row's bar is its share of it. */
+  const longest = $derived(Math.max(0, ...steps.map((step) => step.took ?? 0)));
 </script>
 
-{#snippet mark(step: Step)}
-  {#if step.state === 'running'}<span class="phase-dot tone-live" title="Running"></span>
-  {:else if step.state === 'failed'}<span class="chip danger">{step.failure}</span>
-  {:else if step.state === 'declined'}<span class="chip neutral">declined</span>{/if}
-{/snippet}
-
-{#snippet line(step: Step)}
-  <Icon name={ICONS[step.act]} size={12} />
-  <span class="verb">{Steps.VERBS[step.act]}</span>
-  {#if step.said}
-    <span class="said">{step.said}</span>
-    <span class="target mono muted" title={step.targets.join('\n')}>{step.targets.join(', ')}</span>
-  {:else}
-    <span class="target mono" title={step.targets.join('\n')}>{step.targets.join(', ')}</span>
-  {/if}
-  {@render mark(step)}
+{#snippet outcome(step: Step)}
+  {#if step.state === 'running'}<Glyph mark="running" label={true} />
+  {:else if step.state === 'failed'}<Glyph
+      mark="failed"
+      label={step.failure ? `Failed, ${step.failure}` : true}
+    />
+  {:else if step.state === 'declined'}<Glyph mark="idle" label="Declined" />
+  {:else}<Glyph mark="passed" label="Done" />{/if}
 {/snippet}
 
 <section class="steps" class:failed={state === 'failed'}>
   <button class="steps-line" aria-expanded={open} onclick={() => ontoggle(!open)}>
     <span class="fold" class:open><Icon name="chevron" size={10} /></span>
     <span class="summary">{summary}</span>
-    {#if state === 'running'}<span class="phase-dot tone-live" title="Running"></span>{/if}
-    {#if failed}<span class="chip danger">{failed} failed</span>{/if}
-    <span class="count muted">{steps.length === 1 ? '1 step' : `${steps.length} steps`}</span>
+    {#if state === 'running'}<Glyph mark="running" label={true} />{/if}
+    <span class="tally mono">
+      {#if failed}<span class="count"
+          ><Glyph mark="failed" label={`${failed} failed`} />{failed}</span
+        >{/if}
+      {#if passed}<span class="count"><Glyph mark="passed" label={`${passed} done`} />{passed}</span
+        >{/if}
+    </span>
+    <span class="time mono muted">{took === null ? '' : Elapsed.stopwatch(took)}</span>
   </button>
   {#if open}
     <ol class="step-list">
       {#each steps as step (step.entry.item)}
-        <li>
-          {#if step.entry.kind === 'command'}
-            {@const command = step.entry}
-            <details class="step">
-              <summary class="step-row">{@render line(step)}</summary>
-              <pre class="activity-pre">{command.command}</pre>
-              {#if command.output}<pre class="activity-pre output">{command.output}</pre>{/if}
-            </details>
-          {:else}
-            <div class="step-row">{@render line(step)}</div>
-          {/if}
+        <li class:picked={picked.has(step.entry.item)}>
+          <input
+            class="pick"
+            type="checkbox"
+            checked={picked.has(step.entry.item)}
+            onchange={(event) => onpick(step, event.currentTarget.checked)}
+            aria-label="Pick {Steps.VERBS[step.act]} {step.targets.join(', ')}"
+          />
+          <button
+            class="step-row"
+            class:chosen={chosen === step.entry.item}
+            aria-pressed={chosen === step.entry.item}
+            onclick={() => onopen(step)}
+          >
+            <span
+              class="verb"
+              title={Steps.VERBS[step.act]}
+              aria-label={Steps.VERBS[step.act]}
+              role="img"><Icon name={Steps.ICONS[step.act]} size={12} /></span
+            >
+            <span class="what">
+              {#if step.said}<span class="said">{step.said}</span>{/if}
+              <span class="target mono" class:muted={step.said !== null}
+                >{step.targets.join(', ')}</span
+              >
+            </span>
+            <span class="outcome">{@render outcome(step)}</span>
+            <span class="track"
+              ><Meter
+                share={step.took !== null && longest > 0 ? step.took / longest : 0}
+                least={0.02}
+                tone={step.state === 'failed'
+                  ? 'error'
+                  : step.state === 'running'
+                    ? 'live'
+                    : 'muted'}
+              /></span
+            >
+            <span class="time mono muted"
+              >{step.took === null ? '' : Elapsed.stopwatch(step.took)}</span
+            >
+          </button>
         </li>
       {/each}
     </ol>
@@ -86,7 +123,9 @@
 
 <style>
   .steps {
-    border-bottom: 1px solid var(--line-subtle);
+    margin: 6px 16px;
+    border: 1px solid var(--line);
+    background: var(--surface);
     font-size: 12px;
   }
   .steps.failed {
@@ -97,7 +136,8 @@
     align-items: center;
     gap: 8px;
     width: 100%;
-    padding: 6px 16px;
+    height: 28px;
+    padding: 0 12px;
     border: 0;
     border-radius: 0;
     background: none;
@@ -120,70 +160,120 @@
   .summary {
     min-width: 0;
     overflow: hidden;
+    color: var(--ink);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .count {
+  .tally {
+    display: inline-flex;
     flex: none;
+    gap: 8px;
     margin-left: auto;
+    font-size: 11px;
   }
-  .steps-line > .chip,
-  .steps-line > .phase-dot {
+  .count {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .time {
     flex: none;
+    min-width: 40px;
+    font-size: 11px;
+    text-align: right;
   }
   .step-list {
     margin: 0;
-    padding: 0 0 4px;
+    padding: 0;
+    border-top: 1px solid var(--line);
     list-style: none;
   }
-  .step-row {
+  li {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 3px 16px 3px 34px;
-    color: var(--ink);
   }
-  summary.step-row {
-    cursor: pointer;
-    list-style: none;
-  }
-  summary.step-row::-webkit-details-marker {
-    display: none;
-  }
-  .step[open] > summary.step-row {
+  li.picked {
     background: var(--surface-inset);
   }
-  .step > pre {
-    margin: 0 16px 4px 34px;
+  .pick {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    margin: 0 0 0 12px;
+    accent-color: var(--accent);
+    opacity: 0.35;
+  }
+  li:hover .pick,
+  li.picked .pick,
+  .pick:focus-visible {
+    opacity: 1;
+  }
+  .step-row {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr) 14px 80px 40px;
+    align-items: center;
+    column-gap: 10px;
+    width: 100%;
+    height: 26px;
+    padding: 0 12px 0 10px;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .step-row:hover {
+    background: var(--surface-hover);
+  }
+  .step-row.chosen {
+    background: var(--surface-inset);
+    box-shadow: inset 2px 0 var(--accent);
   }
   .verb {
-    flex: none;
-    width: 52px;
+    display: inline-flex;
     color: var(--muted);
+  }
+  .what {
+    display: flex;
+    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
   }
   .said {
     flex: none;
     max-width: 50%;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .target {
     min-width: 0;
     overflow: hidden;
+    font-size: 11.5px;
     text-overflow: ellipsis;
-    white-space: nowrap;
   }
-  .step-row > .chip,
-  .step-row > .phase-dot {
-    flex: none;
-    margin-left: auto;
+  .outcome {
+    display: inline-flex;
+    justify-content: center;
   }
-  /* Scoped here: the page's own dots are drawn by its styles. */
-  .phase-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--live);
+  .track {
+    display: block;
+    width: 100%;
+    --meter-track: var(--line);
+  }
+  @media (max-width: 760px) {
+    .steps {
+      margin-left: 16px;
+    }
+    .step-row {
+      grid-template-columns: 14px minmax(0, 1fr) 14px 40px;
+    }
+    .track {
+      display: none;
+    }
   }
 </style>

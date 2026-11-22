@@ -8,8 +8,12 @@
     measure,
     label,
     period,
+    cached = null,
   }: {
     points: UsagePoint[];
+    /** The part of each bar read from the cache, drawn as its own band at
+     * the bar's foot; null when the measure has none. */
+    cached?: readonly number[] | null;
     measure: UsageMeasure;
     /** The measure's name, for the tooltip and the table. */
     label: string;
@@ -82,7 +86,13 @@
               width={`${(BAR / slots) * 100}%`}
               y={y(values[index])}
               height={HEIGHT - y(values[index])}
-            />{/if}
+            />{#if cached && cached[index]}<rect
+                class="usage-bar-cached"
+                x={at(index, (1 - BAR) / 2)}
+                width={`${(BAR / slots) * 100}%`}
+                y={y(Math.min(cached[index]!, values[index]!))}
+                height={HEIGHT - y(Math.min(cached[index]!, values[index]!))}
+              />{/if}{/if}
           {#if index % every === 0}
             <text class="usage-axis" x={at(index, 0.5)} y={HEIGHT + 16} text-anchor="middle"
               >{period(point.start).short}</text
@@ -131,3 +141,10 @@
     </table>
   </details>
 </div>
+
+<style>
+  .usage-bar-cached {
+    fill: color-mix(in srgb, var(--success) 70%, transparent);
+    pointer-events: none;
+  }
+</style>

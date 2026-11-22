@@ -1,3 +1,4 @@
+import type { ProjectId } from '../src/lib/api.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -200,13 +201,6 @@ test('a new session starts where the last session asked something worked', async
   assert.equal(Sessions.inScratch('/work/acme', null), false);
 });
 
-test('a run leads to its session', async () => {
-  const bodies = await sessions();
-  assert.equal(Sessions.of(bodies, runA1), sessionA);
-  assert.equal(Sessions.of(bodies, runB), sessionB);
-  assert.equal(Sessions.of(bodies, '0190f3a0-0000-7000-8000-00000000ffff' as RunId), null);
-});
-
 test('session commands go to their routes', async () => {
   const seen: string[] = [];
   const client = new RunsClient((async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -248,8 +242,8 @@ test('a session in a worktree Ren made carries it, with its ports', async () => 
 });
 
 test("a desk holds its project's sessions, and Scratch those of none", async () => {
-  const acme = { id: 'p-acme', name: 'acme', repository: '/work/acme' };
-  const web = { id: 'p-web', name: 'acme-web', repository: '/work/acme-web' };
+  const acme = { id: 'p-acme' as ProjectId, name: 'acme', repository: '/work/acme' };
+  const web = { id: 'p-web' as ProjectId, name: 'acme-web', repository: '/work/acme-web' };
   const bodies = await sessions();
   const owned = bodies.map((body) =>
     body.session === sessionA && body.stored
@@ -274,8 +268,43 @@ test("a desk holds its project's sessions, and Scratch those of none", async () 
   assert.equal(Sessions.projectOf(fresh('/w/acme-web-3', 'acme-web-3'), [acme, web]), web);
   assert.equal(Sessions.projectOf(fresh('/scratch/s-1', null), [acme, web]), null);
   assert.equal(
-    Sessions.deskHref('acme web', { session: sessionA }),
-    `/projects/acme%20web/sessions?session=${sessionA}`,
+    Sessions.deskHref('acme web', sessionA),
+    `/projects/acme%20web/sessions/${sessionA}`,
   );
   assert.equal(Sessions.deskHref(null), '/scratch');
+  assert.equal(Sessions.deskHref(null, sessionA), `/scratch/${sessionA}`);
+  // The desk reads the open session back from its address.
+  const desk = Sessions.deskHref('acme web');
+  assert.equal(Sessions.openOn(Sessions.deskHref('acme web', sessionA), desk), sessionA);
+  assert.equal(Sessions.openOn(desk, desk), null);
+  assert.equal(Sessions.openOn('/scratch/not-a-session', '/scratch'), null);
+});
+
+test('a session Ren drives is found by the recording its calls went under', async () => {
+  const recording = '0190f3a0-0000-7000-8000-0000000000dd';
+  const bodies = (await sessions()).map((body) =>
+    body.session === sessionA && body.stored
+      ? {
+          ...body,
+          stored: {
+            ...body.stored,
+            project: 'p-acme' as never,
+            runs: body.stored.runs.map((run) => ({ ...run, recording })),
+          },
+        }
+      : body,
+  ) as SessionBody[];
+  const projects = [{ id: 'p-acme' as never, name: 'acme-web', repository: '/srv/acme-web' }];
+  const found = Sessions.desks(bodies, projects);
+  assert.equal(found.size, 1);
+  assert.equal(found.get(recording as never), `/projects/acme-web/sessions/${sessionA}`);
+  // A session of no project known opens in Scratch.
+  assert.equal(Sessions.desks(bodies, []).get(recording as never), `/scratch/${sessionA}`);
+});
+
+test('a session’s title is the first line of what it was asked, else of its first prompt', () => {
+  assert.equal(Sessions.title('  Fix the build \nand the tests', 'Other'), 'Fix the build');
+  assert.equal(Sessions.title(null, 'Read the logs\nthen say'), 'Read the logs');
+  assert.equal(Sessions.title(null, null), null);
+  assert.equal(Sessions.title('   \nsecond line', null), null);
 });

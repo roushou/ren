@@ -13,4 +13,9 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    // Nothing becomes a data: URL: the policy (src/csp.ts) loads only from
+    // this origin, so an inlined font would be refused.
+    assetsInlineLimit: 0,
+  },
 });

@@ -10,7 +10,7 @@ async function themeInitializer() {
   return match[1];
 }
 
-test('early theme initialization respects saved preference, system appearance, and unavailable storage', async () => {
+test('early theme initialization opens dark unless a light or system preference is saved', async () => {
   const script = await themeInitializer();
   for (const darkSystem of [false, true]) {
     for (const saved of ['light', 'dark', 'system', 'invalid', null]) {
@@ -28,7 +28,9 @@ test('early theme initialization respects saved preference, system appearance, a
           matchMedia: () => ({ matches: darkSystem }),
         });
         const preference =
-          !storageBlocked && (saved === 'light' || saved === 'dark') ? saved : 'system';
+          !storageBlocked && (saved === 'light' || saved === 'dark' || saved === 'system')
+            ? saved
+            : 'dark';
         assert.equal(dataset.themePreference, preference);
         assert.equal(
           dataset.theme,

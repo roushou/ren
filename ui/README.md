@@ -16,67 +16,67 @@ Browser ──> optional SvelteKit server ──> Rust management API
 below from `ui`; its scripts run each member's. Paths to source files below are
 in `apps/web`.
 
-Pages: Overview (`/`: one line that says how it stands, edged by the worst thing in it;
-what needs attention in the last day, worst first, with repeats folded into a count:
-exposed secrets, recording trouble, failed and cut-off model calls, then failed
-bookkeeping such as quota probes, which is not the agents' work; the recordings active in
-the last 15 minutes in the Live page's state colours; the day's calls (against the day
-before), failed work calls, input tokens cached and fresh, and output tokens; and input
-per hour with failed and cut-off calls ticked along the same hours, filling the rest of
-the window; with nothing recorded in the last day it leads with how to connect a client), Live
-(`/live`: the recordings active in the last 15 minutes as they work (or 5 minutes, an
-hour, or four hours, chosen beside the active count; a window holding more than the page
-reads at once is marked partial), on a four-by-two board
-of cards or as rows: each recording's client and provider, its state (shown by a coloured edge down the card and
-a glyph of its own: responding, waiting for a response, the client's turn, your turn when
-a call finished its turn without asking for tools, idle, failed, warning, or unknown), and its current
-turn's prompt, replies, and tool calls (each with what it touched, its result, and the
-first line it returned; like calls in a row merge into one line with a count, and commands
-drop the `cd` into the turn's directory), with what the turn read, wrote, and ran. A
-card's header links to its recording; hovering it shows the card's actions: open the turn,
-open the current call, pin the card so it stays on the board while its recording is active
-(`?pin=`), and expand it (`?focus=`) over four slots with every call of the turn and its
-tools' input and output (`Escape` closes it). This is below a band of
-output tokens over the last 10 minutes, grouped by client, provider, or model (`?by=`):
-one chart of fixed height that draws only what had output, the biggest four on their own
-and the rest merged, stacked so its top edge is the total (**Ribbon**, the default) or
-each in its own lane (**Area**). Its legend sits inside the chart; hovering a series
-outlines its cards, and selecting it shows only its recordings (`?series=`). Then comes a **Now** strip of what happened
-lately, newest first: new recordings, prompts, finished calls, failed tools, bad endings,
-and rate limits, with calls still waiting for a response head kept first. Pinned recordings, then those with a call open, then the most recent, get
-the eight cards; quiet ones dim. While a call streams, its card shows the end of its
-reply so far, the tools it has begun, and whether the model is thinking (never stored); a
-client that reports no turns shows only that. The full text appears once the call finishes
-and its activity is derived),
-Traffic (`/traffic`; wherever a recording appears, there and on a recording's page, in Search,
-and in Usage, it is named by its client, its newest prompt, and its folder), Recordings (`/recordings`: each recording's client, its newest prompt, and its folder, what it
-is doing now, and its size against the rest, grouped by day, with single-call recordings
-that have no turn folded away; `/recordings/:id`, each recording's context and
-cache report at `/recordings/:id/report` (with each turn's context drawn oldest to newest,
-from where it started to where it ended), and what a turn did at `/turns/:id`: its prompt,
-tool calls with their effects and reported results, files, commands (one row each,
-opening to the whole command), and findings, with paths shown relative to the folder the
-turn works in), Search
-(`/search`: full-text search over prompts, replies, and tool input and output), Usage
-(`/usage`: calls, failed work calls (with failed bookkeeping counted apart), and tokens
-over the last day by hour, the last week, or all retained calls by local day, by model,
-and the busiest recordings), and Recorder
-(`/recorder`: whether recording is healthy, how close storage, calls, and history are to
-their retention limits with the nearest marked as the one pruned for first, and only the
-loss and error counters that are not zero; bytes past the capture policy are noted as
-left out by design, never as loss, here, in the Recorder tab, and in the footer). The header names where the gateway runs
-(its node and network, such as `ren · tailnet`, with the API's status dot) rather
-than its address, and opens each client's `ren run` command, ready to copy. Addresses
-there show with their identifying part masked (a tailnet's name, a public domain)
-until the eye button reveals them for the page; copying always copies the real one. The bar under the tabs shows each page's scope and the controls that
-change it, such as Traffic's client, recording, time, and model-calls-only narrowing;
-when they don't fit on one line they fold behind a **Scope** button. Traffic shows
-model calls only by default, hiding token counts, model listings, and WebSocket
-handshakes until that switch is off. On Traffic and a recording page, `j` and `k` select
-the next and previous call, `/` focuses search, and `Escape` closes the inspector. The selected call (`?call=`) and the filters live in the URL,
-so links, reloads, and Back/Forward work. With **Live updates** on, the UI follows the
-daemon's `/api/live` feed and refreshes when calls change. The UI requires management
-API version 1 and shows an explicit mismatch error for any other version.
+## Pages
+
+Home (`/`, under the wordmark) is where the operator lands. Every other page
+sits in one of three places, and inside a place the bar holds only that
+place's pages (`lib/view.ts`).
+
+- **Home:** a prompt that starts a session in any project; what needs you
+  anywhere (approvals, questions, signed-out clients, storage near its limit,
+  a canary to promote, previews, queued work); the sessions under way; and
+  what ended since you last marked it seen.
+- **Projects** (`/projects`): one row per project with its sessions, work,
+  release and calls over the day; the sessions under way and the work in
+  flight below. Inside a project:
+  - **Sessions** (`/projects/<name>/sessions[/<session>]`, and Scratch at
+    `/scratch[/<session>]` for sessions of no project): the session desk,
+    described below.
+  - **Release** (`/projects/<name>/release`): open pull requests → main →
+    canary → production → decision, the canary's checks and captured pages,
+    commit previews, and the work shipped and waiting.
+  - **A work item** (`/projects/<name>/work/<id>`): its way to production,
+    its marks, session, pull requests, and the page evidence it carries.
+- **Monitor** (`/monitor`, its name in the bar): each provider over the last day
+  (calls, failures, failure rate by hour, the allowance its newest limit
+  headers report, its last failure), failures by provider and ending,
+  what is live, secrets seen, and the day against the one before.
+  Its pages:
+  - **Live** (`/monitor/live`): output per second by client, provider, or
+    model; a Now strip of what just happened; a 3 × 2 wall of the busiest
+    sessions, each card its current turn (pin with `?pin=`, expand with
+    `?focus=`).
+  - **Traffic** (`/monitor/traffic`): calls by session over time, then one
+    line per call; the call panel opens on its evidence. `j`/`k` move, `/`
+    searches, `Escape` closes; the selected call and filters live in the
+    URL.
+  - **Sessions** (`/monitor/sessions`): every session seen through the
+    gateway (a recording), with a desk link for those Ren drives; a
+    session's calls (`/monitor/sessions/<recording>`, a turn's panel with
+    `?turn=`) and its context and cache report (`…/report`).
+  - **Search** (`/monitor/search`): full-text search over prompts, replies,
+    and tool input and output, grouped by session.
+  - **Usage** (`/monitor/usage`): calls, failed work calls (bookkeeping
+    apart), and tokens by hour or day, by model, session, and user.
+- **System** (`/system`, its name in the bar): recording's losses, errors and
+  limits, the packages to update or missing and clients signed out, and the
+  GitHub watches, each leading to its page. Its pages:
+  - **Packages** (`/system/packages`): what Ren installs for its agents,
+    by generation, with install, remove, restore, and clean-up, and each
+    client's sign-in.
+  - **GitHub** (`/system/github`): each project's watched repository and
+    its open pull requests by where they stand.
+  - **Recorder** (`/system/recorder`): recording health, retention limits,
+    disk use, the queue, commit times, and loss and error counters.
+
+Monitor's pages that read calls take `?project=` to show one project's.
+The top bar holds ⌘K, Pending, the gateway (its node and network, opening
+each client's `ren run` command, with identifying parts masked until
+revealed), **Live** updates (following the daemon's `/api/live` feed), a
+refresh, Redline, and the theme. The bottom edge appears only when
+something is wrong: the daemon unreachable or on another API version,
+recording losing data, or the UI read-only. The UI requires management API
+version 1.
 
 ## Develop
 
@@ -140,7 +140,7 @@ folders and their sessions, the conversation (its recorded turns, then what
 streams in), its approvals with what each asks, and a prompt box whose bar holds
 its settings. New session, or a folder's `+`, opens a draft with its
 prompt ready: its client starts with the first prompt, and until then its bar
-also holds its folder and its client. `/runs` links lead here. Sessions, and archiving, unarchiving, and deleting
+also holds its folder and its client. Sessions, and archiving, unarchiving, and deleting
 recordings and runs, are the only things the UI changes, and only when the UI
 server is given the daemon's control token file:
 
@@ -161,12 +161,11 @@ own pages (`Sec-Fetch-Site: same-origin`, or an `Origin` naming this host, and a
 JSON body), and with `REN_CONTROL_LOGINS` set, carry one of those logins in the
 `Tailscale-User-Login` header Tailscale Serve adds. Without it, anyone who
 reaches the UI can drive runs: leave it unset only for a UI on loopback. Without
-`REN_CONTROL_TOKEN_FILE`, the view lists recorded runs and explains how to turn
-it on.
+`REN_CONTROL_TOKEN_FILE`, the desk is read-only.
 
 ### Redline
 
-With the control token, every page has Redline (the status line's Redline
+With the control token, every page has Redline (the top bar's Redline
 button, or `m`): mark what's wrong on the page for an agent to fix. While it is
 on, the element under the pointer is outlined and named, a click marks it
 instead of reaching the page, and you write a note in place; `Esc` leaves, and

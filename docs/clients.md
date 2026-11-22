@@ -179,7 +179,7 @@ project's declared steps get the current generation the same way, and
 `packages` in its `.ren/project.toml` names what they need
 ([deployment.md](deployment.md#projects)).
 
-The web UI's Tools view shows the same on the daemon's host, filterable by
+The web UI's Packages page (`/system/packages`) shows the same on the daemon's host, filterable by
 name or path and by source: a row per package with the version runs use and
 where it comes from (Ren's install,
 first on their `PATH` over any copy the daemon's `PATH` has, or that copy);

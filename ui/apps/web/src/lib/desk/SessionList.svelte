@@ -22,14 +22,16 @@
 </script>
 
 <script lang="ts">
+  import { Elapsed } from '#lib/time.ts';
   import { tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { slide } from 'svelte/transition';
   import { harnessLabel } from '#lib/activity.ts';
   import type { Shelf } from '#lib/api.ts';
+  import Glyph from '#lib/Glyph.svelte';
   import Icon from '#lib/Icon.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
-  import { ago } from '#lib/overview.ts';
+
   import {
     Deletions,
     Sessions,
@@ -85,7 +87,14 @@
 
   /** How many of a folder's sessions show before the rest fold. */
   const SHOWN = 5;
-  /** Folders whose every session is shown. */
+  /** What the listed sessions are doing, for the list's head. */
+  const running = $derived(
+    folders.reduce(
+      (sum, folder) => sum + folder.sessions.filter((session) => Sessions.running(session)).length,
+      0,
+    ),
+  );
+  const waiting = $derived(folders.reduce((sum, folder) => sum + folder.waiting, 0));
   const unfolded = new SvelteSet<string>();
 
   /** No fold for those who asked for less motion. */
@@ -202,24 +211,24 @@
   <button
     class="run-row"
     class:selected={session.session === selected}
-    class:needs={mark.tone === 'warn'}
+    class:needs={mark.mark === 'yours'}
     aria-current={session.session === selected ? 'true' : undefined}
     onclick={() => onselect(session.session)}
   >
-    <span
-      class="phase-dot tone-{mark.tone}"
-      class:draft={session.phase === 'draft'}
-      class:resting={!Sessions.running(session) && mark.tone === 'neutral'}
-    ></span>
+    <Glyph
+      mark={unused ? 'draft' : mark.mark}
+      label={unused || mark.label === harnessLabel(session.harness)
+        ? `${unused ? 'Draft' : 'Resting'} · ${harnessLabel(session.harness)}`
+        : `${mark.label} · ${harnessLabel(session.harness)}`}
+    />
     <span class="run-name" class:unused
       >{asked ?? (unused ? 'New session' : `${harnessLabel(session.harness)} session`)}</span
     >
-    <span class="run-state tone-{mark.tone}"
-      >{unused || mark.label === 'Draft'
-        ? `Draft · ${harnessLabel(session.harness)}`
-        : mark.label}</span
+    <span
+      class="run-when muted mono"
+      title={session.activeAt ? Elapsed.ago(session.activeAt, now) : undefined}
+      >{session.activeAt ? Elapsed.ago(session.activeAt, now) : 'now'}</span
     >
-    <span class="run-when muted">{session.activeAt ? ago(session.activeAt, now) : 'now'}</span>
   </button>
 {/snippet}
 
@@ -230,9 +239,21 @@
       <span class="muted back">Back to sessions</span>
     </button>
   {:else}
-    <button class="new-run" onclick={onnew}>
-      <Icon name="spark" size={13} /> New session
-    </button>
+    <header class="list-head">
+      <span class="cap"
+        >Sessions<span class="count"
+          >· {folders.reduce((sum, folder) => sum + folder.sessions.length, 0)}</span
+        ></span
+      >
+      {#if running || waiting}<span class="doing mono"
+          >{#if running}<span title="{running} running"
+              ><Glyph mark="responding" label="Running" />{running}</span
+            >{/if}{#if waiting}<span title="{waiting} waiting for you"
+              ><Glyph mark="yours" label="Waiting for you" />{waiting}</span
+            >{/if}</span
+        >{/if}
+      <button class="button small" onclick={onnew}>New</button>
+    </header>
   {/if}
   {#if listing === 'pending'}
     <section class="folder" aria-busy="true" aria-label="Sessions, on their way">
@@ -243,9 +264,8 @@
       {#each OUTLINE_ROWS as width, index (index)}
         <div class="run-item" aria-hidden="true">
           <div class="run-row outline">
-            <span class="phase-dot resting"></span>
+            <Glyph mark="idle" />
             <span class="run-name"><Skeleton {width} /></span>
-            <span class="run-state"><Skeleton width="34%" /></span>
             <span class="run-when"><Skeleton width="2.4em" /></span>
           </div>
         </div>
@@ -261,11 +281,16 @@
             (session, index) =>
               index < SHOWN || session.session === selected || Sessions.running(session),
           )}
-      <section class="folder">
-        <header title={folder.workdir}>
+      <section class="folder" class:single={folders.length === 1}>
+        <header title={folder.workdir} class:hidden={folders.length === 1}>
           <Icon name="file" size={12} />
           <strong>{folder.name}</strong>
-          {#if folder.waiting}<span class="chip warning">{folder.waiting} needs you</span>{/if}
+          {#if folder.waiting}<span class="waiting mono"
+              ><Glyph
+                mark="yours"
+                label={`${folder.waiting} waiting for you`}
+              />{folder.waiting}</span
+            >{/if}
           {#if shown.includes('/')}<span class="muted mono parent"
               ><bdi>{shown.slice(0, shown.lastIndexOf('/') + 1)}</bdi></span
             >{/if}
@@ -290,9 +315,7 @@
       </section>
     {:else}
       <p class="note">
-        {shelf === 'archived'
-          ? 'Nothing is archived.'
-          : 'No sessions yet. Start one with New session.'}
+        {shelf === 'archived' ? 'Nothing is archived.' : 'No sessions yet.'}
       </p>
     {/each}
   {/if}
@@ -341,9 +364,38 @@
   .new-run:hover {
     background: var(--row-hover);
   }
+  /* The list's head: how many, and a new one. */
+  .list-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+  }
+  .count {
+    margin-left: 6px;
+  }
+  .doing {
+    display: inline-flex;
+    gap: 10px;
+    margin-left: auto;
+    margin-right: 10px;
+    font-size: 11px;
+  }
+  .doing > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
   .folder {
     border-bottom: 1px solid var(--line);
     padding-bottom: 4px;
+  }
+  /* One folder needs no heading: the project names it. */
+  .folder.single {
+    border-bottom: 0;
+  }
+  .folder header.hidden {
+    display: none;
   }
   .folder header {
     display: flex;
@@ -354,9 +406,6 @@
     min-width: 0;
   }
   .folder header strong {
-    white-space: nowrap;
-  }
-  .folder header .chip {
     white-space: nowrap;
   }
   .folder header .parent {
@@ -400,17 +449,20 @@
   }
   .run-row {
     display: grid;
-    grid-template-columns: 7px minmax(0, 1fr) auto;
-    grid-template-rows: auto auto;
-    column-gap: 8px;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    column-gap: 10px;
     align-items: center;
     width: 100%;
-    padding: 5px 12px 5px 18px;
+    min-height: 34px;
+    padding: 6px 12px;
     border: 0;
+    border-bottom: 1px solid var(--line-subtle);
+    box-shadow: inset 2px 0 transparent;
     background: none;
     color: var(--ink);
     font: inherit;
-    font-size: 12px;
+    font-size: 12.5px;
+    font-weight: 500;
     text-align: left;
     cursor: pointer;
   }
@@ -425,6 +477,7 @@
   }
   .run-row.selected {
     background: var(--row-selected);
+    box-shadow: inset 2px 0 var(--accent);
   }
   /* A row and its trash control, which stands where its time does. */
   .run-item {
@@ -563,24 +616,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .run-state {
-    grid-column: 2;
-    grid-row: 2;
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .run-state.tone-warn {
-    color: var(--warning);
-  }
-  .run-state.tone-live {
-    color: var(--live);
-  }
-  .run-state.tone-danger {
-    color: var(--error);
-  }
   .run-when {
-    grid-column: 3;
-    grid-row: 1 / span 2;
     font-size: 11px;
   }
   .new-run .back {
@@ -628,47 +664,12 @@
     font-size: 12px;
     color: var(--muted);
   }
-  .phase-dot {
-    grid-row: 1 / span 2;
-    box-sizing: border-box;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--muted);
-  }
-  .tone-live.phase-dot {
-    background: var(--live);
-  }
-  .tone-warn.phase-dot {
-    background: var(--warning);
-  }
-  .tone-ok.phase-dot {
-    background: var(--success);
-  }
-  .tone-danger.phase-dot {
-    background: var(--error);
-  }
-  /* Nothing running: a ring, so the sessions that are live stand out. */
-  .phase-dot.resting {
-    background: none;
-    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--muted) 65%, transparent);
-  }
-  .phase-dot.resting.draft {
-    box-shadow: none;
-    border: 1.5px dashed color-mix(in srgb, var(--muted) 65%, transparent);
-  }
-  .tone-live.phase-dot {
-    animation: working 1.6s ease-in-out infinite;
-  }
-  @keyframes working {
-    50% {
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 30%, transparent);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .tone-live.phase-dot {
-      animation: none;
-    }
+  .waiting {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--ink);
   }
   .run-name.unused {
     color: var(--muted);

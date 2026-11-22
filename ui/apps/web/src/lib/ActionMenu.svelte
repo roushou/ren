@@ -146,7 +146,7 @@
     border: 1px solid var(--popover-border);
     border-top: 2px solid var(--accent);
     background: var(--popover);
-    box-shadow: var(--popover-shadow);
+    box-shadow: var(--elev-popover);
     outline: none;
   }
   .panel button {
@@ -182,7 +182,7 @@
     border-bottom: 1px solid var(--popover-border);
     background: var(--surface-inset);
     color: var(--muted);
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+    font-family: var(--mono);
     font-size: 11px;
     line-height: 1.5;
   }

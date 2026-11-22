@@ -2,7 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { decisions, ManagementApi, type ReleaseView } from '../src/lib/api.ts';
-import { Promotion, ReleaseLine, ReleasePage, ReleaseStrip } from '../src/lib/release.ts';
+import {
+  Previewing,
+  Promotion,
+  PullChips,
+  PullWatch,
+  ReleaseFigures,
+  ReleaseLine,
+  ReleasePage,
+  ReleaseStrip,
+} from '../src/lib/release.ts';
+import type { Pull } from '../src/lib/api.ts';
 import type { WorkItem } from '../src/lib/work.ts';
 
 const fixture = (name: string) =>
@@ -154,4 +164,93 @@ test("Ren's release is read as `ren`'s, else as the project registered as Ren", 
     '/api/projects',
     '/api/projects/ren-main/release',
   ]);
+});
+
+const pinnedFactory: typeof fetch = async (input) => {
+  const path = new URL(String(input), 'http://ui.test').pathname;
+  return Response.json(fixture(path.endsWith('/pulls') ? 'project_pulls' : 'project_previews'));
+};
+
+test("a project's pull requests and previews decode, and read as rows", async () => {
+  const api = new ManagementApi(pinnedFactory);
+  const watch = await api.projectPulls('ren');
+  const previews = await api.projectPreviews('ren');
+  const pulls = PullWatch.pulls(watch);
+  assert.equal(PullWatch.repository(watch), 'acme/ren');
+  assert.equal(PullWatch.note(watch), null);
+  assert.equal(pulls.length, 1);
+  const [pull] = pulls as [Pull];
+  // Checks still running come before being behind its base.
+  assert.deepEqual(PullChips.of(pull, 'status', previews.previews), {
+    mark: 'running',
+    label: 'Checks running',
+  });
+  assert.deepEqual(PullChips.of(pull, 'checks', previews.previews), {
+    mark: 'running',
+    label: '1/2 checks passed',
+  });
+  assert.deepEqual(PullChips.of(pull, 'preview', previews.previews), {
+    mark: 'passed',
+    label: 'Up',
+  });
+  assert.deepEqual(
+    Previewing.rows(previews.previews, pulls, 'ren.example').map((row) => [
+      row.slot,
+      row.chip.mark,
+      row.of,
+      row.action,
+    ]),
+    [
+      [
+        0,
+        'passed',
+        '#12 feat: a landing page',
+        { kind: 'open', href: 'https://ren.example:9451/' },
+      ],
+      [1, 'failed', '333333333333', { kind: 'retry', commit: '3'.repeat(40) }],
+    ],
+  );
+});
+
+test('a pull request stands by what blocks it most', () => {
+  const pull = (overrides: Partial<Pull>): Pull => ({
+    number: 1,
+    title: 't',
+    url: 'u',
+    author: null,
+    readiness: 'ready',
+    head_branch: 'b',
+    head: 'h',
+    base_branch: 'main',
+    merge: 'clean',
+    review: 'not_required',
+    checks: 'passing',
+    check_list: [],
+    work_items: [],
+    ...overrides,
+  });
+  const status = (overrides: Partial<Pull>) => PullChips.status(pull(overrides)).label;
+  assert.equal(status({}), 'Ready to merge');
+  assert.equal(status({ readiness: 'draft', checks: 'failing' }), 'Draft');
+  assert.equal(status({ checks: 'failing', merge: 'conflicting' }), 'Checks failing');
+  assert.equal(status({ merge: 'conflicting' }), 'Conflicts with its base');
+  assert.equal(status({ review: 'review_required', merge: 'blocked' }), 'Review required');
+  assert.equal(PullChips.checks(pull({ checks: 'none' })).label, 'No checks');
+  assert.equal(PullWatch.note({ watch: 'off' }), 'No GitHub repository watched');
+});
+
+test('the figures under the flow', async () => {
+  const release = await new ManagementApi(pinned).release();
+  assert.ok(release);
+  const figures = ReleaseFigures.of(new ReleasePage(release, null), []);
+  assert.deepEqual(
+    figures.map((item) => [item.label, item.value]),
+    [
+      ['Production', '1 behind main'],
+      ['Canary', `${release.canary?.checks.length}/${release.canary?.checks.length}`],
+      ['Policy', 'manual'],
+      ['Open pull requests', '0'],
+      ['Next', `Promote ${release.canary?.commit.slice(0, 12)}`],
+    ],
+  );
 });

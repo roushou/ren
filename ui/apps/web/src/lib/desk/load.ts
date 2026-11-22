@@ -1,6 +1,6 @@
 import type { LoadEvent } from '@sveltejs/kit';
 import { Arrival, type Arriving } from '#lib/arrival.ts';
-import { RunId, RunsClient, SessionId, Sessions, type StoredConversation } from '#lib/runs.ts';
+import { RunId, RunsClient, SessionId, type StoredConversation } from '#lib/runs.ts';
 import type { DeskServerData } from '#lib/server/sessionDesk.ts';
 
 /** The selected session's newest run's conversation, as the page receives it. */
@@ -22,11 +22,12 @@ export type DeskData = DeskServerData & {
  * selected session's newest run's conversation is read here too: in full
  * for a first load, so the page renders with it, and handed over on its way
  * on a navigation in the browser, so the page appears at once with its
- * outline. A link to a run (`?run=`) shows the session it served.
+ * outline. The open session is the address's last part
+ * (`…/sessions/<session>`, `/scratch/<session>`).
  */
 export class SessionDeskLoad {
   static async load({
-    url,
+    params,
     parent,
     data,
     fetch,
@@ -37,10 +38,7 @@ export class SessionDeskLoad {
       ...(start?.sessions.state === 'read' ? start.sessions.value : []),
       ...(start?.archivedSessions.state === 'read' ? start.archivedSessions.value : []),
     ];
-    const linkedRun = RunId.parse(url.searchParams.get('run'));
-    const session =
-      SessionId.parse(url.searchParams.get('session')) ??
-      (linkedRun ? Sessions.of(bodies, linkedRun) : null);
+    const session = SessionId.parse(params.session ?? null);
     const body = session ? bodies.find((entry) => entry.session === session) : undefined;
     const run = body ? (body.served?.process ?? body.stored?.runs[0]?.id ?? null) : null;
     // A failed read is handed over too: the page reads it again, and says why

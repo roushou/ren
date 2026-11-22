@@ -280,7 +280,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   through its `ProgramHost` port, which the daemon's `HostPrograms` implements;
   `ren doctor` surveys the host with it. The daemon's `packages` module carries
   out its jobs and generations, for `ren packages`, `/control/v1/packages`, and
-  the UI's Tools view; `docs/plans/dependencies.md` is the plan, where
+  the UI's Packages page; `docs/plans/dependencies.md` is the plan, where
   deviations from it are recorded. Its
   manifest allows only pure dependencies, and `src/purity.rs` keeps its
   sources free of I/O.
@@ -644,10 +644,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   reads the daemon only through the management API and forwards only allowlisted
   read-only endpoints. It never forwards browser cookies or credentials, never reads
   storage directly, and never proxies inference. There are two exceptions.
-  Runs and tools: with `REN_CONTROL_TOKEN_FILE` set, `/control/runs*`,
+  Runs and packages: with `REN_CONTROL_TOKEN_FILE` set, `/control/runs*`,
   `/control/sessions*`,
   `/control/history/*`, and `/control/packages*` (`src/lib/server/control.ts`,
-  `RunsProxy`) forward the Sessions and Tools views' same-origin JSON requests
+  `RunsProxy`) forward the session desk's and Packages page's same-origin JSON requests
   to the daemon's `/control/v1/runs*`, `/control/v1/sessions*`, its archive,
   unarchive, and delete routes, and `/control/v1/packages` (listing, change, and
   collection) only, with the control token read from that
@@ -655,9 +655,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `REN_CONTROL_LOGINS` set, only for those Tailscale logins; `src/lib/runs.ts`
   is the view's pure core (run states, the live transcript, the sessions by
   folder (`Sessions`), projects by place, and the clients a run can start with),
-  `src/lib/tools.ts` the Tools view's pure core (each package's
-  `Standing`, the `ToolPlan` staged before it is applied, and `ToolGroups`),
-  whose first read the UI server makes (`src/routes/tools/+page.server.ts`),
+  `src/lib/packages.ts` the Packages page's pure core (each package's
+  `Standing`, the `PackagePlan` staged before it is applied, and
+  `PackageGroups`), whose first read the UI server makes
+  (`src/routes/system/packages/+page.server.ts`),
   `src/lib/refusal.ts` what each refusal code means to the operator
   (`Refusals`: the daemon's `ControlRefusal` codes and the proxy's own
   `proxyRefusals`, one exhaustive table),
@@ -684,12 +685,20 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Markdown.svelte` from `ui/packages/markdown` draws Markdown, and
   `src/lib/server/runsStart.ts` makes the session desk's first reads on the UI
   server, with the browser's Tailscale login and never its cookies, so the
-  page renders as it will stay. The desk (`src/lib/desk/SessionDesk.svelte`)
-  is one component held by a project's Sessions page
-  (`src/routes/projects/[name]/sessions`) and by Scratch (`src/routes/scratch`),
-  each with its scope (`SessionScope`: a project's sessions, or those of no
-  project). The old `/work` and `/sessions` addresses lead to where an item or
-  session now is (`src/lib/server/oldAddress.ts`).
+  page renders as it will stay. The desk (`src/lib/desk/SessionDesk.svelte`,
+  composing `DeskFeed` (`feed.svelte.ts`: the feeds, lists and transcripts),
+  `ComposerState` (`composer.svelte.ts`), `SessionActions`
+  (`actions.svelte.ts`), and the header, conversation, ruler and composer
+  components beside them) is held by a project's Sessions page
+  (`src/routes/projects/[name]/sessions/[[session]]`) and by Scratch
+  (`src/routes/scratch/[[session]]`), each with its scope (`SessionScope`: a
+  project's sessions, or those of no project). `src/lib/view.ts` is the
+  navigation's pure core (`Views`: which place and page a route is, and each
+  place's pages), `src/lib/layer/` the overlays (hover card, popover,
+  slide-over, floating bar, modal, toasts, the ⌘K palette), `src/lib/marks.ts`
+  the glyphs states are drawn with, and `src/lib/arrival.ts` how a page's
+  read arrives (`Arrival`: within a grace period, or pending while the page
+  draws its outline or the newest read the browser kept).
 - `ui/packages/redline`: Redline, a Bun workspace package of the UI with
   `Redline` as its primary type (`src/redline.ts`: what a mark points at,
   and the Markdown brief its marks make, with the lines a host adds as a

@@ -1,9 +1,18 @@
 // The Recordings page's pure logic: what each row says about its recording,
 // which rows fold away, and how the rest group by day. No browser, no
 // fetching; tested in tests/recordings.test.ts.
-import type { CallView, Excerpt, Harness, RecordingId, RecordingView } from './api.ts';
+import type {
+  CallView,
+  Excerpt,
+  Harness,
+  RecordingId,
+  RecordingView,
+  TurnId,
+  TurnMetrics,
+} from './api.ts';
 import { providerName } from './api.ts';
-import { Board, type StateMark } from './board.ts';
+import { Board } from './board.ts';
+import type { Mark } from './marks.ts';
 import type { Stored } from './decode.ts';
 import { date } from './display.ts';
 
@@ -16,7 +25,7 @@ export interface RecordingDetail {
 
 /** A recording's state right now: a call in flight, recent activity, or neither. */
 export type RecordingNow =
-  | { kind: 'open'; label: string; mark: StateMark }
+  | { kind: 'open'; label: string; mark: Mark }
   | { kind: 'recent'; at: number }
   | { kind: 'quiet'; at: number };
 
@@ -30,6 +39,73 @@ export interface RecordingRow {
   /** Requests and input tokens against the list's largest, 0–1. */
   requests: number;
   tokens: number;
+  /** When it was active within the day it was last seen, as shares of
+   * that day (0–1): from its first call, or the day's start if earlier. */
+  day: { from: number; to: number };
+}
+
+/** What the listed recordings add up to, over the list. */
+export interface RecordingSummary {
+  recordings: number;
+  /** With a call in flight now. */
+  open: number;
+  requests: number;
+  errors: number;
+  tokensIn: number;
+  /** Each client's share of the requests, the busiest first. */
+  clients: { client: string; requests: number; share: number }[];
+}
+
+/** One turn's context, against the recording's peak (0–1). */
+/** One turn's context, against the largest any of the turns reached. */
+export interface TurnContext {
+  turn: TurnId;
+  /** The tokens it started and ended with. */
+  startTokens: number;
+  endTokens: number;
+  /** Those against the peak, 0–1. */
+  start: number;
+  end: number;
+  /** The share of its context read from cache, 0–1; null when not reported. */
+  hit: number | null;
+  /** Its cache was written afresh more than it was read. */
+  rebuilt: boolean;
+  /** Its tokens, start to end, and its cache share, in words. */
+  title: string;
+}
+
+/** Turns' context as one scale: every chart of context per turn draws these. */
+export class TurnContexts {
+  /** A turn whose cache was read for less than this share was rebuilt. */
+  static readonly REBUILT_BELOW = 0.5;
+
+  /** `turns` oldest first, those that reported any context, against the
+   * largest context any of them started or ended with. */
+  static of(turns: readonly TurnMetrics[]): TurnContext[] {
+    const reported = turns.filter(
+      (turn) => turn.context_start_tokens !== null || turn.context_end_tokens !== null,
+    );
+    const sized = reported.map((turn) => {
+      const startTokens = turn.context_start_tokens ?? turn.context_end_tokens ?? 0;
+      return { turn, startTokens, endTokens: turn.context_end_tokens ?? startTokens };
+    });
+    const peak = Math.max(1, ...sized.flatMap((one) => [one.startTokens, one.endTokens]));
+    return sized.map(({ turn, startTokens, endTokens }) => {
+      const hit = turn.cache_hit_percent === null ? null : turn.cache_hit_percent / 100;
+      return {
+        turn: turn.turn,
+        startTokens,
+        endTokens,
+        start: startTokens / peak,
+        end: endTokens / peak,
+        hit,
+        rebuilt: hit !== null && hit < TurnContexts.REBUILT_BELOW && turn.cache_written_tokens > 0,
+        title: `${startTokens.toLocaleString()} → ${endTokens.toLocaleString()} tokens${
+          hit === null ? '' : ` · ${Math.round(hit * 100)}% from cache`
+        }`,
+      };
+    });
+  }
 }
 
 export interface DayGroup {
@@ -60,6 +136,7 @@ export class RecordingList {
 
   readonly groups: DayGroup[];
   readonly folded: RecordingRow[];
+  readonly summary: RecordingSummary;
 
   constructor(input: RecordingListInput) {
     const rows = input.recordings
@@ -90,6 +167,28 @@ export class RecordingList {
       groups.set(day, group);
     }
     this.groups = [...groups.values()];
+    this.summary = RecordingList.#summary(scaled);
+  }
+
+  static #summary(rows: readonly RecordingRow[]): RecordingSummary {
+    const requests = rows.reduce((sum, row) => sum + row.recording.call_count, 0);
+    const byClient = new Map<string, number>();
+    for (const row of rows)
+      byClient.set(row.client, (byClient.get(row.client) ?? 0) + row.recording.call_count);
+    return {
+      recordings: rows.length,
+      open: rows.filter((row) => row.now.kind === 'open').length,
+      requests,
+      errors: rows.reduce((sum, row) => sum + row.recording.error_count, 0),
+      tokensIn: rows.reduce((sum, row) => sum + (row.recording.tokens.input ?? 0), 0),
+      clients: [...byClient]
+        .map(([client, count]) => ({
+          client,
+          requests: count,
+          share: requests ? count / requests : 0,
+        }))
+        .toSorted((a, b) => b.requests - a.requests),
+    };
   }
 
   /** One call and no turn: a check or a count, not a recording of work. */
@@ -116,7 +215,20 @@ export class RecordingList {
           : { kind: 'quiet', at: recording.last_seen },
       requests: 0,
       tokens: 0,
+      day: RecordingList.#day(recording, input.dayStart),
     };
+  }
+
+  static #day(
+    recording: RecordingView,
+    dayStart: (ms: number) => number,
+  ): {
+    from: number;
+    to: number;
+  } {
+    const start = dayStart(recording.last_seen);
+    const share = (ms: number) => Math.min(1, Math.max(0, (ms - start) / 86_400_000));
+    return { from: share(recording.first_seen), to: share(recording.last_seen) };
   }
 
   /** Whether a row matches the search: its client, provider, IDs, prompt, or folder. */

@@ -1,194 +1,168 @@
 <!--
-  What waits on the operator: approvals a working run asks (answered here),
-  a canary to promote, a preview to check, work still queued. The Projects
-  view shows it across every project (`ProjectBoard.of`).
+  What waits on the operator, across every project, one row each: a glyph
+  for what kind of wait it is, its name (a link to where its details are),
+  and the one thing to do about it. Approvals a working run asks, a client
+  signed out, a canary to promote, a preview to check, work still queued.
+  An approval is a decision with consequences, so it is answered in a modal
+  that shows it whole (or in its session), never from the list itself.
 -->
 <script lang="ts">
-  import Icon from '#lib/Icon.svelte';
-  import { invalidateAll } from '$app/navigation';
-  import { ProjectBoard, type Approval } from '#lib/projects.ts';
-  import { RunCommandError, Runs, RunsClient, Sessions, type Decision } from '#lib/runs.ts';
+  import Glyph from '#lib/Glyph.svelte';
+  import ApprovalModal from '#lib/ApprovalModal.svelte';
+  import { ApprovalAnswers } from '#lib/approvals.svelte.ts';
+  import { ProjectBoard } from '#lib/projects.ts';
+  import { Runs, Sessions } from '#lib/runs.ts';
   import { Work } from '#lib/work.ts';
+  import { harnessLabel } from '#lib/activity.ts';
 
   let { board }: { board: ProjectBoard } = $props();
-  const runs = new RunsClient();
-  /** The approval being answered, and what went wrong with the last answer. */
-  let answering = $state<string | null>(null);
-  let failed = $state<string | null>(null);
-
-  async function answer(waiting: Approval, decision: Decision) {
-    answering = waiting.approval;
-    failed = null;
-    try {
-      await runs.toSession(waiting.session, {
-        kind: 'answer',
-        approval: waiting.approval,
-        decision,
-      });
-      await invalidateAll();
-    } catch (failure) {
-      failed = failure instanceof RunCommandError ? failure.message : 'The answer did not go.';
-    } finally {
-      answering = null;
-    }
-  }
+  const answers = new ApprovalAnswers();
+  const origin = ApprovalAnswers.origin;
 </script>
 
-<h2>Pending</h2>
-{#if !board.pending}
-  <p class="muted quiet">Nothing waits on you.</p>
-{/if}
-{#if board.approvals.length}
-  <h3>Approvals</h3>
-  {#if failed}<p class="error quiet" role="alert">{failed}</p>{/if}
+<header class="head">
+  <h2>
+    Pending{#if board.waiting}<span class="count">·</span><span class="count">{board.waiting}</span
+      >{/if}
+  </h2>
+</header>
+{#if board.unread.length && !board.pending}
+  <p class="quiet muted">
+    <Glyph mark="failed" label={true} /> Not read: {board.unread.join(', ')}
+  </p>
+{:else if !board.pending}
+  <p class="quiet muted"><Glyph mark="passed" label={true} /> Nothing waits on you.</p>
+{:else}
   <ul>
     {#each board.approvals as waiting (`${waiting.session}:${waiting.approval}`)}
       {@const said = Runs.ask(waiting.ask)}
+      {@const desk = Sessions.deskHref(waiting.project, waiting.session)}
       <li>
-        <span class="muted"
-          >{[waiting.project ?? 'no project', waiting.prompt]
-            .filter((part) => part !== null)
-            .join(' · ')}</span
+        <Glyph mark="yours" label="Waits for you: {said.action}" />
+        <a class="name" href={desk} title="{origin(waiting)} · {said.action}"
+          >{waiting.prompt?.split('\n')[0] ?? said.action}</a
         >
-        <span>{said.action}</span>
-        {#if said.detail}<code class="ask">{said.detail}</code>{/if}
-        {#if said.reason}<span class="muted">{said.reason}</span>{/if}
-        <span class="actions">
-          {#if waiting.ask.kind === 'questions'}
-            <!-- Questions are answered in their session, or skipped here. -->
-            <a
-              class="button primary small"
-              href={Sessions.deskHref(waiting.project, { session: waiting.session })}>Answer</a
-            >
-            <button
-              class="button small"
-              disabled={answering !== null}
-              onclick={() => void answer(waiting, 'decline')}>Skip</button
-            >
-          {:else}
-            <button
-              class="button primary small"
-              disabled={answering !== null}
-              onclick={() => void answer(waiting, 'accept')}>Approve</button
-            >
-            <button
-              class="button small"
-              disabled={answering !== null}
-              onclick={() => void answer(waiting, 'decline')}>Decline</button
-            >
-            <a
-              class="button small"
-              href={Sessions.deskHref(waiting.project, { session: waiting.session })}
-              >Open session</a
-            >
-          {/if}
-        </span>
+        {#if waiting.ask.kind === 'questions'}
+          <!-- Questions are answered in their session. -->
+          <a class="button primary small" href={desk}>Answer</a>
+        {:else}
+          <button class="button primary small" onclick={() => answers.review(waiting)}
+            >Review…</button
+          >
+        {/if}
       </li>
     {/each}
-  </ul>
-{/if}
-{#if board.toPromote.length}
-  <h3>Ready to promote</h3>
-  <ul>
+    {#each board.signedOut as client (client.harness)}
+      <li>
+        <Glyph mark="warning" label="Signed out on this host" />
+        <span class="name">{harnessLabel(client.harness)}</span>
+        <a class="button small" href="/system/packages">Sign in</a>
+      </li>
+    {/each}
     {#each board.toPromote as project (project.id)}
+      {@const canary = project.release?.canary ?? null}
       <li>
-        <span class="muted">{project.name} · {project.release?.policy}</span>
-        <a href={ProjectBoard.releaseHref(project)}
-          >Canary {project.release?.canary?.commit.slice(0, 12)} passed</a
+        <Glyph mark="passed" label="Canary passed" />
+        <a
+          class="name"
+          href={ProjectBoard.releaseHref(project)}
+          title="Canary {canary?.commit.slice(0, 12) ?? ''} passed · {project.release?.policy}"
+          >{project.name} release</a
         >
+        {#if project.factory === 'ren' && canary}<a
+            class="button small"
+            href="{ProjectBoard.releaseHref(project)}?promote={encodeURIComponent(canary.commit)}"
+            >Promote…</a
+          >{:else}<a class="button small" href={ProjectBoard.releaseHref(project)}>Release</a>{/if}
       </li>
     {/each}
-  </ul>
-{/if}
-{#if board.previews.length}
-  <h3>Previews to check</h3>
-  <ul>
     {#each board.previews as item (item.id)}
       {@const home = board.homeOf(item)}
       <li>
-        <span class="muted">{home ?? 'no project'}</span>
-        {#if home}<a href={Work.href(home, item.id)}>{item.title}</a>{:else}<span>{item.title}</span
-          >{/if}
-        {#if item.preview}<a class="out" href={item.preview.ui} target="_blank" rel="noopener"
-            ><Icon name="arrow" size={11} />Open the preview</a
+        <Glyph mark="info" label="A preview to check" />
+        {#if home}<a class="name" href={Work.href(home, item.id)} title={home}>{item.title}</a
+          >{:else}<span class="name">{item.title}</span>{/if}
+        {#if item.preview}<a
+            class="button small"
+            href={item.preview.ui}
+            target="_blank"
+            rel="noopener">Open</a
           >{/if}
       </li>
     {/each}
-  </ul>
-{/if}
-{#if board.queued.length}
-  <h3>Queued work</h3>
-  <ul>
     {#each board.queued as queued (queued.project)}
       <li>
-        {#if queued.project}
-          <a href={ProjectBoard.href(queued.project)}>{queued.project}</a>
-        {:else}
-          <span>No project</span>
-        {/if}
-        <span class="muted">{queued.count} to send</span>
+        <Glyph mark="queued" label="{queued.count} queued to send" />
+        <span class="name"
+          >{queued.project ?? 'No project'}<span class="muted sep">· {queued.count} queued</span
+          ></span
+        >
+        {#if queued.project}<a class="button small" href={ProjectBoard.href(queued.project)}>Open</a
+          >{/if}
       </li>
     {/each}
   </ul>
 {/if}
+<ApprovalModal {answers} />
 
 <style>
-  h2 {
-    margin: 0;
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
     padding: 12px 16px;
-    font-size: 13px;
-    font-weight: 600;
     border-bottom: 1px solid var(--line);
   }
-  h3 {
+  h2 {
     margin: 0;
-    padding: 12px 16px 4px;
-    font-size: 11px;
+    font-family: var(--mono);
+    font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
+  }
+  h2 {
+    display: flex;
+    gap: 8px;
+  }
+  .count {
     color: var(--muted);
   }
   ul {
-    list-style: none;
     margin: 0;
-    padding: 0;
+    padding: 4px 0;
+    list-style: none;
   }
   li {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--line-subtle);
-  }
-  .muted {
-    font-size: 12px;
-  }
-  .out {
-    display: inline-flex;
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr) auto;
     align-items: center;
-    gap: 4px;
-    font-size: 12px;
+    column-gap: 12px;
+    min-height: 40px;
+    padding: 4px 16px;
   }
-  .ask {
-    font-size: 12px;
-    overflow-wrap: anywhere;
-    white-space: pre-wrap;
+  li:hover {
+    background: var(--surface-hover);
   }
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 4px;
+  .name {
+    overflow: hidden;
+    color: var(--ink);
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  a.name:hover {
+    text-decoration: underline;
+  }
+  .sep {
+    margin-left: 6px;
   }
   .quiet {
-    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin: 0;
-  }
-  .muted {
-    color: var(--muted);
-  }
-  .error {
-    color: var(--error);
+    padding: 14px 16px;
   }
 </style>

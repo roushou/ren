@@ -126,7 +126,7 @@ below says whether it is built. Record every deviation here, with its reason.
    `/control/v1/packages/rollback`, "Restore" in the view) makes a new
    generation holding what a kept one held, from the store; `ren packages
    which` names the program a new run finds.
-5. **Tools view.** Built (`/tools`): one flush table grouped by kind
+5. **Tools view.** Built (`/system/tools`): one flush table grouped by kind
    (what a new run gets and where from, Ren's release, and each row's one
    change; the header names what runs get from Ren), changes staged in a plan bar and applied as one generation,
    and an inspector with the release, its digest and folder, what `PATH`

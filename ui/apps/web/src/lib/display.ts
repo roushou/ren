@@ -419,6 +419,19 @@ export function compactOrDash(value: number | null): string {
   return value === null ? '—' : compact(value);
 }
 
+/** A share of a whole. */
+export class Shares {
+  /** As a percentage: tenths below 10% (`2.1%`, `0.2%`), whole above
+   * (`87%`); an em dash when there is none. */
+  static percent(fraction: number | null): string {
+    if (fraction === null) return '—';
+    const percent = fraction * 100;
+    return percent > 0 && percent < 10
+      ? `${Number(percent.toFixed(1))}%`
+      : `${Math.round(percent)}%`;
+  }
+}
+
 /** A whole percentage, e.g. `87%`, or an em dash when there is none. */
 export function percentOrDash(value: number | null): string {
   return value === null ? '—' : `${value}%`;
@@ -447,7 +460,7 @@ export function tokenSummary(
   return {
     input: compact(input),
     output: usage.output_tokens === null ? '—' : compact(usage.output_tokens),
-    title: `${parts.join(' · ')} (provider reported; not subscription allowance or charges)`,
+    title: `${parts.join(' · ')}`,
   };
 }
 
@@ -464,7 +477,7 @@ export function spentSummary(tokens: TokenTotals): { text: string; title: string
   ].filter(Boolean);
   return {
     text: `${compactOrDash(tokens.input)} in · ${compactOrDash(tokens.output)} out`,
-    title: `${parts.join(' · ')} (provider reported; not subscription allowance or charges)`,
+    title: `${parts.join(' · ')}`,
   };
 }
 
@@ -609,29 +622,8 @@ export function messageCounts(messages: MessageView[]): { request: number; respo
 export function duration(call: { started_at: number; ended_at: number | null }): number | null {
   return call.ended_at === null ? null : Math.max(0, call.ended_at - call.started_at);
 }
-export function elapsed(ms: number | null) {
-  return ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`;
-}
 export const date = (ms: number) =>
   new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' });
-
-export function captureState(call: CallView, bodyLimit: number | null = null): string {
-  // Open calls are still recording; completeness is final only once they end.
-  const life = lifecycle(call.state);
-  switch (life) {
-    case 'open':
-      return 'Recording';
-    case 'recovered':
-      return 'Interrupted capture';
-    case 'finished':
-      if (trimmedAtLimit(call, bodyLimit)) return 'Trimmed at the capture limit';
-      return call.capture_complete ? 'Complete capture' : 'Partial capture';
-    case 'unknown':
-      return 'Capture unknown';
-    default:
-      return assertNever(life);
-  }
-}
 
 /** `0.1.0 (00a590295015)`, as `ren --version` and `ren doctor` show it. */
 /** A build as text; `—` before health has loaded. */
@@ -648,16 +640,6 @@ export function buildLabel(build: Build | null): string {
     default:
       return assertNever(revision);
   }
-}
-
-/** How long something lasted, at a glance: 45 s, 12 min, 1 h 23 min. */
-export function span(ms: number): string {
-  const seconds = Math.max(0, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds} s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
 }
 
 /** Recordings get one of eight colors, the same for an ID everywhere. A class,

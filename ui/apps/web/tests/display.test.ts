@@ -1,6 +1,8 @@
+import { Elapsed } from '../src/lib/time.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  Shares,
   attemptEnding,
   callerShown,
   buildLabel,
@@ -9,8 +11,6 @@ import {
   messageCounts,
   statusBadge,
   duration,
-  elapsed,
-  captureState,
   modelState,
   transportState,
   streamChip,
@@ -22,7 +22,6 @@ import {
   spentSummary,
   tokenSummary,
   previewChips,
-  span,
   recordingTone,
   captureChip,
   trimmedAtLimit,
@@ -108,17 +107,15 @@ test('badges and transport labels describe each state', () => {
 
 test('duration remains unknown for open calls and formats observed time', () => {
   assert.equal(duration(callFixture()), null);
-  assert.equal(elapsed(null), '—');
-  assert.equal(elapsed(duration(finished({ ended_at: 1250 as CallView['started_at'] }))), '250 ms');
-  assert.equal(elapsed(duration(finished({ ended_at: 4600 as CallView['started_at'] }))), '3.60 s');
-});
-
-test('capture labels remain independent of model and transport outcomes', () => {
-  const completed = finished({ outcome: 'completed', terminal: 'interrupted' });
-  assert.equal(captureState({ ...completed, capture_complete: false }), 'Partial capture');
-  assert.equal(captureState(completed), 'Complete capture');
-  assert.equal(captureState(callFixture()), 'Recording');
-  assert.equal(captureState(callFixture(callId(1), { state: 'recovered' })), 'Interrupted capture');
+  assert.equal(Elapsed.latency(null), '—');
+  assert.equal(
+    Elapsed.latency(duration(finished({ ended_at: 1250 as CallView['started_at'] }))),
+    '250 ms',
+  );
+  assert.equal(
+    Elapsed.latency(duration(finished({ ended_at: 4600 as CallView['started_at'] }))),
+    '3.60 s',
+  );
 });
 
 test('attempt endings name the recorded cause and phase, and nothing when absent', () => {
@@ -284,13 +281,7 @@ test('a body preview reads as chips, with gaps spelled out', () => {
   );
 });
 
-test('spans read at a glance, and recording colors are stable', () => {
-  assert.deepEqual([45_000, 12 * 60_000, 83 * 60_000, 120 * 60_000].map(span), [
-    '45 s',
-    '12 min',
-    '1 h 23 min',
-    '2 h',
-  ]);
+test('recording colors are stable', () => {
   const id = 'cecf7cbd-be7f-4563-9d85-3d5bea8fd082';
   assert.equal(recordingTone(id), recordingTone(id));
   assert.ok(recordingTone(id) >= 0 && recordingTone(id) < 8);
@@ -320,7 +311,6 @@ test('a body cut at the capture limit is trimmed by design; any other cut is par
     [captureChip(trimmed, limit).label, captureChip(trimmed, limit).tone],
     ['Trimmed at limit', 'neutral'],
   );
-  assert.equal(captureState(trimmed, limit), 'Trimmed at the capture limit');
   // Without the limit (storage not read yet) it cannot be told apart, so it stays partial.
   assert.equal(captureChip(trimmed, null).tone, 'warning');
   // Bytes missing short of the limit are loss.
@@ -384,4 +374,16 @@ test('a caller reads as its user, its login, or unidentified', () => {
   assert.equal(shown('unlisted', null, 'carol@example.com').user, null);
   assert.equal(shown('unidentified', null, null).label, 'Unidentified');
   assert.equal(shown('from_the_future', null, null).user, null);
+});
+
+test('a share reads in tenths below ten percent, whole above', () => {
+  assert.deepEqual([null, 0, 0.002, 0.021, 0.07, 0.876, 1].map(Shares.percent), [
+    '—',
+    '0%',
+    '0.2%',
+    '2.1%',
+    '7%',
+    '88%',
+    '100%',
+  ]);
 });

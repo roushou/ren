@@ -16,6 +16,7 @@ import {
   type Shelf,
   type ToolEffect,
   type UnixMillis,
+  type ProjectId,
 } from './api.ts';
 import {
   checkedSignIn,
@@ -64,6 +65,7 @@ import {
   type ImageTaking,
   type KeptAttachment,
 } from './attachments.ts';
+import type { Mark } from './marks.ts';
 import { Refusals, type Refusal } from './refusal.ts';
 import { processExit, type ProcessExit } from './exit.ts';
 import { Questions, type Question, type QuestionKey } from './questions.ts';
@@ -722,7 +724,7 @@ export interface StoredSession {
   harness: Stored<Harness>;
   workdir: string;
   /** The project it works for, by id; null outside every project. */
-  project: string | null;
+  project: ProjectId | null;
   created_at: UnixMillis;
   model: ModelId | null;
   effort: Stored<Effort> | null;
@@ -772,7 +774,7 @@ const storedSession = object<StoredSession, WireSessionView>({
   id: SessionId.decode,
   harness: label(harnesses),
   workdir: string,
-  project: nullable(string),
+  project: nullable(branded<'ProjectId'>()),
   created_at: brandedCount<'UnixMillis'>(),
   model: nullable(branded<'ModelId'>()),
   effort: nullable(label(EFFORTS)),
@@ -1005,6 +1007,8 @@ const storedConversation = versioned(
       object<StoredConversation['entries'][number], WireRunEntryView>({
         run: RunId.decode,
         seq: count,
+        at: brandedCount<'UnixMillis'>(),
+        started_at: brandedCount<'UnixMillis'>(),
         event: (value, path) => driveEvent(value, path),
       }),
     ),
@@ -1020,6 +1024,14 @@ export class RunCommandError extends Error {
     super(code === null ? `The command was refused (${status}).` : Refusals.say(code));
     this.status = status;
     this.code = code;
+  }
+
+  /** What a failed run command, or a read, says to the operator: the
+   * refusal, that the UI server cannot be reached, or the error's own words. */
+  static say(error: unknown): string {
+    if (error instanceof RunCommandError) return error.message;
+    if (error instanceof TypeError) return 'Cannot reach the Ren UI server.';
+    return error instanceof Error ? error.message : 'Something went wrong.';
   }
 }
 
@@ -1425,9 +1437,22 @@ export type Entry =
   | { kind: 'turn_end'; turn: NativeTurnId; end: TurnEnd }
   | { kind: 'notice'; tone: 'warn' | 'danger'; text: string };
 
+/** When a conversation item started and when it completed. */
+export interface ItemSpan {
+  from: UnixMillis;
+  to: UnixMillis;
+}
+
 /** A run's conversation as the daemon stored it (`/api/runs/{id}/conversation`). */
 export interface StoredConversation {
-  entries: { run: RunId; seq: number; event: DriveEvent }[];
+  /** Each event, with when its item was first and last reported. */
+  entries: {
+    run: RunId;
+    seq: number;
+    at: UnixMillis;
+    started_at: UnixMillis;
+    event: DriveEvent;
+  }[];
   /** Older entries were left out of the read. */
   earlier: boolean;
 }
@@ -1447,30 +1472,44 @@ export class Transcript {
   readonly read: boolean;
   /** Older entries were left out of the read. */
   readonly earlier: boolean;
+  /** When each stored item started and completed. Only what the daemon
+   * stored says: an item that finished on the live feed has its span once
+   * the conversation is read again. */
+  readonly spans: ReadonlyMap<ItemId, ItemSpan>;
 
   constructor(
     entries: Entry[] = [],
     turn: NativeTurnId | null = null,
     read = false,
     earlier = false,
+    spans: ReadonlyMap<ItemId, ItemSpan> = new Map(),
   ) {
     this.entries = entries;
     this.turn = turn;
     this.read = read;
     this.earlier = earlier;
+    this.spans = spans;
   }
 
   /** What the daemon stored, with what streamed in meanwhile kept. */
   load(stored: StoredConversation): Transcript {
     let loaded = new Transcript();
-    for (const entry of stored.entries) loaded = loaded.apply(entry.event, entry.run);
+    const spans = new Map(this.spans);
+    for (const entry of stored.entries) {
+      loaded = loaded.apply(entry.event, entry.run);
+      if (entry.event.kind === 'item' && entry.event.phase === 'completed')
+        spans.set(Transcript.#own(entry.event.item.id, entry.run), {
+          from: entry.started_at,
+          to: entry.at,
+        });
+    }
     const entries = loaded.entries.slice();
     for (const live of this.entries) {
       const at = entries.findIndex((entry) => Transcript.same(entry, live));
       if (at === -1) entries.push(live);
       else if (Transcript.done(live) && !Transcript.done(entries[at]!)) entries[at] = live;
     }
-    return new Transcript(entries, this.turn ?? loaded.turn, true, stored.earlier);
+    return new Transcript(entries, this.turn ?? loaded.turn, true, stored.earlier, spans);
   }
 
   /** Every prompt sent, oldest first, to recall. */
@@ -1482,6 +1521,11 @@ export class Transcript {
   firstPrompt(): string | null {
     const prompt = this.entries.find((entry) => entry.kind === 'prompt');
     return prompt?.kind === 'prompt' ? prompt.text : null;
+  }
+
+  /** An item's id within the process that reported it. */
+  static #own(item: ItemId, run: RunId | null): ItemId {
+    return run === null ? item : (`${run}/${item}` as ItemId);
   }
 
   static #itemOf(entry: Entry): ItemId | null {
@@ -1522,10 +1566,10 @@ export class Transcript {
    * a process, by its name alone.
    */
   apply(event: DriveEvent, run: RunId | null = null): Transcript {
-    const own = (item: ItemId): ItemId => (run === null ? item : (`${run}/${item}` as ItemId));
+    const own = (item: ItemId): ItemId => Transcript.#own(item, run);
     switch (event.kind) {
       case 'turn_started':
-        return new Transcript(this.entries, event.turn, this.read, this.earlier);
+        return new Transcript(this.entries, event.turn, this.read, this.earlier, this.spans);
       case 'delta': {
         const item = own(event.item);
         const index = this.#find(item);
@@ -1538,7 +1582,7 @@ export class Transcript {
       case 'item':
         return this.#item({ ...event.item, id: own(event.item.id) }, event.phase === 'completed');
       case 'turn_ended':
-        return new Transcript(this.entries, event.turn, this.read, this.earlier).#push({
+        return new Transcript(this.entries, event.turn, this.read, this.earlier, this.spans).#push({
           kind: 'turn_end',
           turn: event.turn,
           end: event.end,
@@ -1628,11 +1672,11 @@ export class Transcript {
   #replace(index: number, entry: Entry): Transcript {
     const entries = this.entries.slice();
     entries[index] = entry;
-    return new Transcript(entries, this.turn, this.read, this.earlier);
+    return new Transcript(entries, this.turn, this.read, this.earlier, this.spans);
   }
 
   #append(entry: Entry): Transcript {
-    return new Transcript([...this.entries, entry], this.turn, this.read, this.earlier);
+    return new Transcript([...this.entries, entry], this.turn, this.read, this.earlier, this.spans);
   }
 
   /** Add `entry`, or put it in the place of the same entry said before. */
@@ -1666,13 +1710,34 @@ export const UNSTARTED: RunControls = {
   approvals: [],
 };
 
-/** How a run's state reads in the sidebar and header. */
+/** How a run's state reads in the sidebar and header: its mark, and the
+ * words the mark's tooltip says. */
 export interface PhaseMark {
   label: string;
-  tone: 'live' | 'warn' | 'neutral' | 'danger' | 'ok';
+  mark: Mark;
 }
 
+/** A desk's runs feed: opening for the first time, open, lost and being
+ * reopened by the browser, or given up on. */
+export type RunsFeed = 'opening' | 'open' | 'reconnecting' | 'closed';
+
 export class Runs {
+  /** What the header says of the runs feed: only a lost or given-up feed is
+   * worth a word; the first opening is not a reconnect. */
+  static feedNote(feed: RunsFeed): string {
+    switch (feed) {
+      case 'opening':
+      case 'open':
+        return '';
+      case 'reconnecting':
+        return 'updates reconnecting';
+      case 'closed':
+        return 'updates stopped';
+      default:
+        return assertNever(feed);
+    }
+  }
+
   /** A conversation's turns: each starts at its prompt. */
   static turns(entries: readonly Entry[]): Entry[][] {
     const turns: Entry[][] = [];
@@ -1705,26 +1770,27 @@ export class Runs {
     }
   }
 
-  /** A run's state in a few words, with the tone of its dot. */
+  /** A run's state as a mark, with its words. Only an approval it waits on
+   * is the operator's: a run between turns rests. */
   static mark(state: RunState): PhaseMark {
     switch (state.phase) {
       case 'starting':
-        return { label: 'Starting', tone: 'neutral' };
+        return { label: 'Starting', mark: 'waiting' };
       case 'idle':
-        return { label: 'Your turn', tone: 'ok' };
+        return { label: 'Your turn', mark: 'idle' };
       case 'working':
         return state.approvals.length
-          ? { label: 'Needs you', tone: 'warn' }
-          : { label: 'Working', tone: 'live' };
+          ? { label: 'Needs you', mark: 'yours' }
+          : { label: 'Working', mark: 'responding' };
       case 'stopping':
-        return { label: 'Stopping', tone: 'neutral' };
+        return { label: 'Stopping', mark: 'waiting' };
       case 'ended':
         return {
           label: Runs.endLabel(state.end, state.exit),
-          tone: Runs.endTone(state.end, state.exit),
+          mark: Runs.endMark(state.end, state.exit),
         };
       case 'unrecognized':
-        return { label: state.text, tone: 'neutral' };
+        return { label: state.text, mark: 'unknown' };
       default:
         return assertNever(state);
     }
@@ -1763,22 +1829,24 @@ export class Runs {
     }
   }
 
-  static endTone(end: Stored<RunEnd>, exit: ProcessExit | null = null): PhaseMark['tone'] {
+  /** How a run's ending marks it: a clean stop rests, an ending that lost
+   * work needs a look, and a client that never ran failed. */
+  static endMark(end: Stored<RunEnd>, exit: ProcessExit | null = null): Mark {
     switch (end) {
       case 'stopped':
       case 'idled':
-        return 'neutral';
+        return 'idle';
       case 'exited':
-        return exit?.kind === 'code' && exit.value === 0 ? 'neutral' : 'warn';
+        return exit?.kind === 'code' && exit.value === 0 ? 'idle' : 'warning';
       case 'drained':
       case 'recovered':
-        return 'warn';
+        return 'warning';
       case 'spawn_failed':
       case 'open_refused':
-        return 'danger';
+        return 'failed';
       default:
         unrecognised(end);
-        return 'neutral';
+        return 'unknown';
     }
   }
 
@@ -1820,6 +1888,68 @@ export class Runs {
     const homed = offered.find((place) => place.shown.startsWith('~/'));
     const home = homed ? homed.path.slice(0, homed.path.length - homed.shown.length + 1) : null;
     return home && workdir.startsWith(`${home}/`) ? `~${workdir.slice(home.length)}` : workdir;
+  }
+
+  /** How the operator says `decision`: its button, what it does, and how
+   * the answer reads once given. Lowest consequence first is `decisions`'
+   * own order; a form lists them the other way, the primary one last. */
+  static decision(decision: Decision): {
+    label: string;
+    hint: string;
+    mark: Mark;
+    done: string;
+  } {
+    switch (decision) {
+      case 'accept':
+        return {
+          label: 'Allow once',
+          hint: 'Allow this, and ask again next time',
+          mark: 'passed',
+          done: 'Allowed once',
+        };
+      case 'accept_for_session':
+        return {
+          label: 'Allow for this session',
+          hint: 'Allow this, and the same kind of action for the rest of the session',
+          mark: 'passed',
+          done: 'Allowed for this session',
+        };
+      case 'decline':
+        return {
+          label: 'Decline',
+          hint: 'Refuse it; the turn goes on',
+          mark: 'idle',
+          done: 'Declined',
+        };
+      case 'cancel':
+        return {
+          label: 'Decline and stop',
+          hint: 'Refuse it and end the turn',
+          mark: 'idle',
+          done: 'Declined, and the turn stopped',
+        };
+      default:
+        return assertNever(decision);
+    }
+  }
+
+  /** An approval as the question it puts to the operator, naming the
+   * client that asks. */
+  static question(ask: ApprovalAsk, client: string): string {
+    switch (ask.kind) {
+      case 'command':
+        return `Allow ${client} to run this command?`;
+      case 'file_change':
+        return `Allow ${client} to change these files?`;
+      case 'tool':
+        return `Allow ${client} to use ${ask.tool}?`;
+      case 'questions':
+        return ask.title ?? `${client} asks a question`;
+      case 'unrecognized':
+        return `Allow ${client} to ${ask.text}?`;
+      default:
+        return assertNever(ask);
+    }
   }
 
   /** One line saying what an approval asks. */
@@ -2129,6 +2259,13 @@ export type SessionScope =
   { kind: 'project'; project: DeskProject } | { kind: 'scratch'; projects: readonly DeskProject[] };
 
 export class Sessions {
+  /** A session's title: the first line of what it was asked, as stored,
+   * else of its first prompt read here; null when neither says anything. */
+  static title(asked: string | null, firstPrompt: string | null): string | null {
+    const text = asked ?? firstPrompt;
+    return text ? text.split('\n')[0]!.trim() || null : null;
+  }
+
   /**
    * The project among `projects` that `body` works for: as stored, else
    * (for a moment after it is made) by its folder, the project's
@@ -2162,12 +2299,38 @@ export class Sessions {
     }
   }
 
-  /** The desk a session is on: its project's, by name, or Scratch (null). */
-  static deskHref(project: string | null, query: Record<string, string> = {}): string {
-    const search = new URLSearchParams(query).toString();
-    const path =
+  /** Where each session among `bodies` opens on its desk (its project's,
+   * or Scratch), by the recordings its runs' calls were recorded under: a
+   * session Ren drives, as the gateway saw it. */
+  static desks(
+    bodies: readonly SessionBody[],
+    projects: readonly DeskProject[],
+  ): Map<RecordingId, string> {
+    const found = new Map<RecordingId, string>();
+    for (const body of bodies) {
+      const href = Sessions.deskHref(
+        Sessions.projectOf(body, projects)?.name ?? null,
+        body.session,
+      );
+      for (const run of body.stored?.runs ?? [])
+        if (run.recording && !found.has(run.recording)) found.set(run.recording, href);
+    }
+    return found;
+  }
+
+  /** The desk a session is on: its project's, by name, or Scratch (null);
+   * with `session`, that session open on it. */
+  static deskHref(project: string | null, session: SessionId | null = null): string {
+    const desk =
       project === null ? '/scratch' : `/projects/${encodeURIComponent(project)}/sessions`;
-    return search ? `${path}?${search}` : path;
+    return session ? `${desk}/${encodeURIComponent(session)}` : desk;
+  }
+
+  /** The session `pathname` opens on the desk at `desk`; null for the desk
+   * alone, or an address that is not a session's. */
+  static openOn(pathname: string, desk: string): SessionId | null {
+    if (!pathname.startsWith(`${desk}/`)) return null;
+    return SessionId.parse(decodeURIComponent(pathname.slice(desk.length + 1)));
   }
 
   static #base(path: string): string {
@@ -2270,15 +2433,15 @@ export class Sessions {
     const state = session.state;
     if (state && Sessions.running(session)) {
       return state.phase === 'idle' && session.phase === 'draft'
-        ? { label: 'Draft', tone: 'neutral' }
+        ? { label: 'Draft', mark: 'draft' }
         : Runs.mark(state);
     }
-    if (state?.phase === 'ended' && Runs.endTone(state.end, state.exit) === 'danger') {
+    if (state?.phase === 'ended' && Runs.endMark(state.end, state.exit) === 'failed') {
       return Runs.mark(state);
     }
     return session.phase === 'draft'
-      ? { label: 'Draft', tone: 'neutral' }
-      : { label: client, tone: 'neutral' };
+      ? { label: 'Draft', mark: 'draft' }
+      : { label: client, mark: 'idle' };
   }
 
   /**
@@ -2317,16 +2480,6 @@ export class Sessions {
   /** Whether `workdir` is a scratch folder of its own, under `scratch`. */
   static inScratch(workdir: string, scratch: string | null): boolean {
     return scratch !== null && workdir.startsWith(`${scratch}/`);
-  }
-
-  /** The session one of whose runs is `run`, for links to a run. */
-  static of(bodies: readonly SessionBody[], run: RunId): SessionId | null {
-    return (
-      bodies.find(
-        (body) =>
-          body.served?.process === run || body.stored?.runs.some((entry) => entry.id === run),
-      )?.session ?? null
-    );
   }
 }
 

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  Sparkline,
+  HourGrid,
   axisTicks,
   cacheShare,
   measureValue,
@@ -50,7 +52,7 @@ test('a day by the hour has 24 bars, empty hours included', () => {
   assert.equal(points[0].tokens.input, null);
 });
 
-test('a week folds hours into seven days', () => {
+test('a week is drawn by the hour, from the start of its first day', () => {
   const points = usagePoints(
     [
       hour(Date.UTC(2026, 10, 6, 1), 1, 10),
@@ -63,14 +65,10 @@ test('a week folds hours into seven days', () => {
     now,
     utcDay,
   );
-  assert.equal(points.length, 7);
-  const today = points.at(-1)!;
-  assert.deepEqual(
-    [today.calls, today.errors, today.tokens.input, today.tokens.cache_read],
-    [4, 1, 40, 20],
-  );
-  const nov2 = points.find((p) => p.start === Date.UTC(2026, 10, 2))!;
-  assert.deepEqual([nov2.calls, nov2.tokens.input], [2, null]);
+  assert.equal(points[0]?.start, rangeStart('7d', now, utcDay));
+  assert.ok(points.every((p, i) => i === 0 || p.start - points[i - 1]!.start === 3_600_000));
+  const at3 = points.find((p) => p.start === Date.UTC(2026, 10, 6, 15))!;
+  assert.deepEqual([at3.calls, at3.errors, at3.tokens.input], [3, 1, 30]);
   assert.equal(
     points.reduce((sum, p) => sum + p.calls, 0),
     6,
@@ -104,4 +102,42 @@ test('measures and cache share read the right numbers', () => {
     cacheShare({ ...counts, tokens: { input: null, output: null, cache_read: null } }),
     null,
   );
+});
+
+test('the hour grid places each hour’s calls in its local day and hour, over the last week', () => {
+  const DAY = 86_400_000;
+  const HOUR = 3_600_000;
+  const dayStart = (ms: number) => Math.floor(ms / DAY) * DAY;
+  const hourOf = (ms: number) => Math.floor((ms % DAY) / HOUR);
+  const now = 20 * DAY + 15 * HOUR;
+  const bucket = (start: number, calls: number) =>
+    ({ start, calls, errors: 0, tokens: { input: null, output: null, cache_read: null } }) as never;
+  const grid = HourGrid.of(
+    [bucket(20 * DAY + 9 * HOUR, 4), bucket(14 * DAY + 23 * HOUR, 2), bucket(10 * DAY, 99)],
+    now,
+    dayStart,
+    hourOf,
+  );
+  assert.deepEqual(
+    grid.rows.map((row) => row.day / DAY),
+    [14, 15, 16, 17, 18, 19, 20],
+  );
+  assert.equal(grid.rows[6]?.cells[9], 4);
+  assert.equal(grid.rows[0]?.cells[23], 2);
+  // Older than the week: left out.
+  assert.equal(grid.busiest, 4);
+});
+
+test('a sparkline draws calls left to right, busiest near the top, none near the bottom', () => {
+  const point = (calls: number) => ({
+    start: 0,
+    calls,
+    errors: 0,
+    tokens: { input: 0, output: 0, cache_read: 0 },
+  });
+  const spark = Sparkline.of([point(0), point(5), point(10)], 96, 24);
+  assert.equal(spark.line, 'M 0.0 22.0 L 48.0 12.0 L 96.0 2.0');
+  assert.equal(spark.area, `${spark.line} L 96 24 L 0 24 Z`);
+  // A quiet day is a flat line along the bottom.
+  assert.equal(Sparkline.of([point(0), point(0)], 96, 24).line, 'M 0.0 22.0 L 96.0 22.0');
 });

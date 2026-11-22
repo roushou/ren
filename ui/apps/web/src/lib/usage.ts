@@ -1,6 +1,7 @@
 // The Usage page's pure logic: the range, the time window it reads, the
 // contiguous buckets a chart draws, and clean axis ticks. No browser needed.
 import type { UsageBucket, UsageCounts } from './api.ts';
+import { Elapsed } from './time.ts';
 
 /** What the page shows: the last day by hour, the last week by day, or all retained calls by day. */
 export type UsageRange = '24h' | '7d' | 'all';
@@ -22,8 +23,7 @@ export function parseRange(text: string | null): UsageRange {
   }
 }
 
-const HOUR = 3_600_000;
-const DAY = 24 * HOUR;
+const { HOUR, DAY } = Elapsed;
 
 /** The start of a range, relative to `now`; none for everything retained. */
 export function rangeStart(range: UsageRange, now: number, dayStart: (ms: number) => number) {
@@ -71,7 +71,8 @@ export function usagePoints(
   now: number,
   dayStart: (ms: number) => number = localDayStart,
 ): UsagePoint[] {
-  const byHour = range === '24h';
+  // A day and a week are drawn by the hour; everything retained, by the day.
+  const byHour = range !== 'all';
   const key = (ms: number) => (byHour ? Math.floor(ms / HOUR) * HOUR : dayStart(ms));
   const first = rangeStart(range, now, dayStart) ?? (hours.length ? key(hours[0].start) : key(now));
   const last = key(now);
@@ -135,4 +136,68 @@ export function axisTicks(max: number, count = 4): number[] {
 export function cacheShare(counts: UsageCounts): number | null {
   const { input, cache_read } = counts.tokens;
   return input && cache_read !== null ? cache_read / input : null;
+}
+
+/** One day's row of the hour-of-day grid: its label and calls per local hour. */
+export interface HourRow {
+  day: number;
+  cells: number[];
+}
+
+/**
+ * Calls by local hour of day over the last week: one row per local day,
+ * oldest first, each with 24 hourly counts, and the busiest hour to shade
+ * against. The API counts by UTC hour; each is placed in the local day and
+ * hour it starts in, so a zone off the hour still lands in one cell.
+ */
+export class HourGrid {
+  readonly rows: HourRow[];
+  readonly busiest: number;
+
+  private constructor(rows: HourRow[]) {
+    this.rows = rows;
+    this.busiest = Math.max(0, ...rows.flatMap((row) => row.cells));
+  }
+
+  static of(
+    hours: readonly UsageBucket[],
+    now: number,
+    dayStart: (ms: number) => number = localDayStart,
+    hourOf: (ms: number) => number = (ms) => new Date(ms).getHours(),
+  ): HourGrid {
+    const days: number[] = [];
+    for (let at = dayStart(now - 6 * DAY); days.length < 7; at = dayStart(at + DAY + HOUR))
+      days.push(at);
+    const rows = days.map((day) => ({ day, cells: Array.from({ length: 24 }, () => 0) }));
+    for (const hour of hours) {
+      const row = rows.find((each) => each.day === dayStart(hour.start));
+      if (row) row.cells[hourOf(hour.start)]! += hour.calls;
+    }
+    return new HourGrid(rows);
+  }
+}
+
+/** A small line of calls over time, as SVG paths in a `width` × `height` box:
+ * the line, and the area under it. */
+export class Sparkline {
+  readonly line: string;
+  readonly area: string;
+
+  private constructor(line: string, area: string) {
+    this.line = line;
+    this.area = area;
+  }
+
+  /** `points` drawn left to right, the busiest a pixel under the top and none
+   * a pixel above the bottom. */
+  static of(points: readonly UsagePoint[], width: number, height: number): Sparkline {
+    const top = Math.max(1, ...points.map((point) => point.calls));
+    const step = width / Math.max(1, points.length - 1);
+    const at = points.map(
+      (point, index) =>
+        `${(index * step).toFixed(1)} ${(height - 2 - (point.calls / top) * (height - 4)).toFixed(1)}`,
+    );
+    const line = `M ${at.join(' L ')}`;
+    return new Sparkline(line, `${line} L ${width} ${height} L 0 ${height} Z`);
+  }
 }

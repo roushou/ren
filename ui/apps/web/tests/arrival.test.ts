@@ -62,3 +62,26 @@ test('a pending read shows its outline, or the same query’s previous rows', ()
   assert.equal(failed.snapshot.value, 'rows');
   assert.equal(failed.snapshot.error?.kind, 'unreachable');
 });
+
+test('the browser keeps each key newest read with a value, and only so many', () => {
+  const snapshot = (key: string, value: number | null) => ({
+    key,
+    value,
+    error: null,
+    updated: value === null ? null : 1,
+  });
+  Arrival.keep(snapshot('kept:a', 1));
+  Arrival.keep(snapshot('kept:a', null));
+  assert.equal(Arrival.newest<number>('kept:a')?.value, 1);
+  assert.equal(
+    Arrival.value<number>({ state: 'pending', key: 'kept:a', snapshot: new Promise(() => {}) }),
+    1,
+  );
+  assert.equal(Arrival.value<number>({ state: 'ready', snapshot: snapshot('kept:a', 2) }), 2);
+  assert.equal(Arrival.newest('kept:never'), null);
+  for (let index = 0; index <= Arrival.KEPT; index++)
+    Arrival.keep(snapshot(`kept:${index}`, index));
+  // The oldest kept gives way.
+  assert.equal(Arrival.newest('kept:a'), null);
+  assert.equal(Arrival.newest<number>(`kept:${Arrival.KEPT}`)?.value, Arrival.KEPT);
+});

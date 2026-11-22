@@ -1,4 +1,8 @@
 <script lang="ts">
+  import ChipTag from './ChipTag.svelte';
+  import type { GatewayData } from '#lib/loaders.ts';
+  import { Arrival } from '#lib/arrival.ts';
+  import Glyph from '#lib/Glyph.svelte';
   import { onMount, untrack } from 'svelte';
   import {
     ManagementApi,
@@ -61,7 +65,9 @@
   );
   const open = $derived(preview?.ending === 'open');
   /** The daemon's per-body capture limit, to tell a trimmed body from lost bytes. */
-  const bodyLimit = $derived(page.data.gateway?.value?.storage.capture?.body_limit_bytes ?? null);
+  const bodyLimit = $derived(
+    Arrival.value<GatewayData>(page.data.gateway)?.storage.capture?.body_limit_bytes ?? null,
+  );
   const chips = $derived(preview ? previewChips(preview, bodyLimit) : []);
   /** Thinking the provider withheld is a fact about the response, not a
    * message: it becomes a chip instead of an empty card. */
@@ -212,8 +218,8 @@
     </div>
   </div>
   <div class="payload-status" role="status">
-    <span class="status-dot" class:live={following} class:neutral={!following}></span><span
-      >{following ? 'Live · every 2 seconds' : stopped || 'Snapshot'}{updated
+    <Glyph mark={following ? 'responding' : 'idle'} /><span
+      >{following ? 'Live' : stopped || 'Snapshot'}{updated
         ? ` · ${new Date(updated).toLocaleTimeString()}`
         : ''}</span
     >{#if cards.length > 6}<button class="text-button jump-latest" onclick={latest}
@@ -229,19 +235,13 @@
     </p>{/if}
   {#if preview}
     <div class="chip-row" aria-label="Capture of this body">
-      {#each chips as chip}<span class="chip {chip.tone}" title={chip.title}>{chip.label}</span
-        >{/each}{#if mode === 'readable' && hiddenThinking}<span
+      {#each chips as chip}<ChipTag {chip} />{/each}{#if mode === 'readable' && hiddenThinking}<span
           class="chip thinking-chip"
           title="The model thought before answering; the provider sent only a signature, not the text"
           >Thinking hidden</span
         >{/if}
     </div>
-    {#if open}<p class="callout">
-        {following
-          ? 'Streaming captured output. Totals arrive when recording ends.'
-          : 'Recording in progress. Enable Follow live to watch output arrive.'}
-      </p>
-    {:else if preview.ending === 'unfinished'}<p class="callout">
+    {#if !open && preview.ending === 'unfinished'}<p class="callout">
         The body never finished. Only the captured bytes are shown; missing bytes are not
         reconstructed.
       </p>{/if}
@@ -272,11 +272,7 @@
             class="body-card {card.kind}"
             open={!folded(card)}
           >
-            <summary
-              title={card.kind === 'tool_call'
-                ? 'Requested by the model. Whether it ran is up to your client.'
-                : undefined}
-            >
+            <summary>
               <span class="card-icon"><Icon name={icon(card.kind)} size={13} /></span><span
                 class="card-label">{card.label}</span
               >{#if card.detail}<code class="card-detail">{card.detail}</code>{/if}
@@ -309,8 +305,5 @@
         No readable text: the body is binary, or compressed with an encoding the preview cannot
         decode. Raw shows the captured bytes.
       </p>{/if}
-  {:else if !busy && !error}<p class="fine-print">
-      Load a body to inspect messages, tool arguments, and results. Content stays in this view and
-      is not saved in browser storage.
-    </p>{/if}
+  {/if}
 </section>

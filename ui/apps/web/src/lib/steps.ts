@@ -6,11 +6,12 @@
 // between two things said gather into one group, folded to a line. Pure: no
 // DOM, no fetches.
 
-import type { EffectKind } from './api.ts';
+import type { IconName } from './Icon.svelte';
+import type { EffectKind, RecordingId } from './api.ts';
 import { Board } from './board.ts';
 import { assertNever } from './decode.ts';
 import type { Stored } from './decode.ts';
-import { Runs, type CommandPart, type Entry } from './runs.ts';
+import { Runs, type CommandPart, type Entry, type ItemId, type ItemSpan } from './runs.ts';
 
 /** An entry that is a step: something the agent did, not something said. */
 export type StepEntry = Extract<Entry, { kind: 'command' | 'file_change' | 'tool' }>;
@@ -33,8 +34,14 @@ export interface Step {
   /** The client's own words for it, when it gave some. */
   said: string | null;
   state: StepState;
-  /** How it failed, when it did: its exit code, or that it failed. */
+  /** How it failed, when it failed with an exit code (`exit 1`); its mark
+   * says that it failed. */
   failure: string | null;
+  /** When it started and completed, as the daemon stored them; null while
+   * it runs, or when only the live feed said. */
+  span: ItemSpan | null;
+  /** How long it took, in milliseconds, from its span. */
+  took: number | null;
 }
 
 /** What a turn shows: something said as it is, or a group of steps. */
@@ -42,7 +49,32 @@ export type Block =
   | { kind: 'entry'; entry: Exclude<Entry, StepEntry> }
   | { kind: 'steps'; key: string; steps: Step[]; state: GroupState };
 
+/** Where a step sits in a conversation: its turn's number, and its place
+ * among the turn's steps, of how many; each counted from 1. */
+export interface StepPlace {
+  turn: number;
+  index: number;
+  of: number;
+}
+
 export class Steps {
+  /** Each verb's icon, wherever a step or a tool call is drawn. */
+  static readonly ICONS: Record<Act, IconName> = {
+    read: 'file',
+    search: 'search',
+    list: 'rows',
+    edit: 'pencil',
+    run: 'terminal',
+    delegate: 'spark',
+    fetch: 'globe',
+    tool: 'tool',
+  };
+
+  /** The verb a tool call's effect is; a call with none is a tool's. */
+  static act(effect: Stored<EffectKind> | null): Act {
+    return effect === null ? 'tool' : Steps.#effect(effect);
+  }
+
   /** The verb a step's row starts with. */
   static readonly VERBS: Record<Act, string> = {
     read: 'Read',
@@ -64,7 +96,11 @@ export class Steps {
    * steps between two things said as one group, keyed by its first step.
    * Thinking that finished shows nothing, so it parts no group.
    */
-  static blocks(entries: readonly Entry[], workdir: string | null): Block[] {
+  static blocks(
+    entries: readonly Entry[],
+    workdir: string | null,
+    spans: ReadonlyMap<ItemId, ItemSpan> = new Map(),
+  ): Block[] {
     const blocks: Block[] = [];
     for (const entry of entries) {
       if (entry.kind === 'reasoning' && entry.done) continue;
@@ -72,7 +108,7 @@ export class Steps {
         blocks.push({ kind: 'entry', entry });
         continue;
       }
-      const step = Steps.read(entry, workdir);
+      const step = Steps.read(entry, workdir, spans.get(entry.item) ?? null);
       const last = blocks.at(-1);
       if (last?.kind === 'steps') {
         last.steps.push(step);
@@ -90,8 +126,119 @@ export class Steps {
     return 'done';
   }
 
-  /** What one step did. */
-  static read(entry: StepEntry, workdir: string | null): Step {
+  /** What one step did, and when, when that is known. */
+  static read(entry: StepEntry, workdir: string | null, span: ItemSpan | null = null): Step {
+    return { ...Steps.#read(entry, workdir), span, took: span ? span.to - span.from : null };
+  }
+
+  /** The time `steps` ran over, from the first start to the last end of
+   * those whose span is known; null when none is. */
+  static window(steps: readonly Step[]): ItemSpan | null {
+    const spans = steps.flatMap((step) => (step.span ? [step.span] : []));
+    if (!spans.length) return null;
+    return {
+      from: Math.min(...spans.map((span) => span.from)) as ItemSpan['from'],
+      to: Math.max(...spans.map((span) => span.to)) as ItemSpan['to'],
+    };
+  }
+
+  /** Every step of a conversation's turns, in order. */
+  static all(turns: readonly (readonly Block[])[]): Step[] {
+    return turns.flatMap((blocks) => Steps.#of(blocks));
+  }
+
+  /** Where the step of `item` sits among `turns`; null when none is it. */
+  static place(turns: readonly (readonly Block[])[], item: ItemId): StepPlace | null {
+    for (const [index, blocks] of turns.entries()) {
+      const steps = Steps.#of(blocks);
+      const at = steps.findIndex((step) => step.entry.item === item);
+      if (at !== -1) return { turn: index + 1, index: at + 1, of: steps.length };
+    }
+    return null;
+  }
+
+  /** Traffic narrowed to the calls around `steps`: the session's
+   * `recording`, over the time they ran with a margin for the model calls
+   * that asked for them and read their results; null without a recording
+   * or steps. */
+  static calls(recording: RecordingId | null, steps: readonly Step[]): string | null {
+    if (!recording || !steps.length) return null;
+    const window = Steps.window(steps);
+    const query = new URLSearchParams({ recording });
+    if (window) {
+      query.set('from_ms', String(window.from - Steps.CALL_MARGIN_MS));
+      query.set('until_ms', String(window.to + Steps.CALL_MARGIN_MS));
+    }
+    return `/monitor/traffic?${query}`;
+  }
+
+  /** How far before and after its steps a model call still counts as theirs. */
+  static readonly CALL_MARGIN_MS = 30_000;
+
+  static #of(blocks: readonly Block[]): Step[] {
+    return blocks.flatMap((block) => (block.kind === 'steps' ? block.steps : []));
+  }
+
+  /** How long `steps` took together, counting those whose time is known;
+   * null when none is. */
+  static took(steps: readonly Step[]): number | null {
+    const known = steps.flatMap((step) => (step.took === null ? [] : [step.took]));
+    return known.length ? known.reduce((sum, ms) => sum + ms, 0) : null;
+  }
+
+  /** `steps` as a prompt can quote them: one line each, its verb, what it
+   * acted on, and how it ended unless it simply finished. */
+  static quote(steps: readonly Step[]): string {
+    const lines = steps.map((step) => {
+      const ended =
+        step.state === 'failed'
+          ? ` (failed${step.failure ? `, ${step.failure}` : ''})`
+          : step.state === 'declined'
+            ? ' (declined)'
+            : step.state === 'running'
+              ? ' (still running)'
+              : '';
+      return `- ${Steps.VERBS[step.act]} \`${step.targets.join(', ')}\`${ended}`;
+    });
+    return `About ${steps.length === 1 ? 'this step' : 'these steps'}:\n${lines.join('\n')}`;
+  }
+
+  /** `steps` as text to paste elsewhere: a command as run with its
+   * output, anything else as its verb and targets. */
+  static text(steps: readonly Step[]): string {
+    return steps
+      .map((step) => {
+        const entry = step.entry;
+        if (entry.kind === 'command')
+          return entry.output
+            ? `$ ${entry.command}\n${entry.output.trimEnd()}`
+            : `$ ${entry.command}`;
+        return `${Steps.VERBS[step.act]} ${step.targets.join(', ')}`;
+      })
+      .join('\n\n');
+  }
+
+  /** A command's output as lines, each marked when it reads as a failure
+   * (FAILED, error, panicked) or a pass (`... ok`, PASSED), so the failing
+   * lines stand out. A rough reading of common test and build output, not
+   * a parse: an unmarked line says nothing. */
+  static lines(output: string): { text: string; reads: 'failed' | 'passed' | null }[] {
+    return output
+      .replace(/\n$/, '')
+      .split('\n')
+      .map((text) => ({
+        text,
+        reads: /\btest result: ok\b/.test(text)
+          ? 'passed'
+          : /\b(FAILED|FAIL|panicked)\b|(?<!\b0 )\bfailed\b|\berror(\[|:)/.test(text)
+            ? 'failed'
+            : /\.\.\. ok$|\bPASS(ED)?\b/.test(text)
+              ? 'passed'
+              : null,
+      }));
+  }
+
+  static #read(entry: StepEntry, workdir: string | null): Omit<Step, 'took' | 'span'> {
     switch (entry.kind) {
       case 'command':
         return Steps.#command(entry, workdir);
@@ -208,7 +355,10 @@ export class Steps {
     return `“${text.length > 40 ? `${text.slice(0, 39)}…` : text}”`;
   }
 
-  static #command(entry: Extract<Entry, { kind: 'command' }>, workdir: string | null): Step {
+  static #command(
+    entry: Extract<Entry, { kind: 'command' }>,
+    workdir: string | null,
+  ): Omit<Step, 'took' | 'span'> {
     const status = Steps.#status(entry.status, entry.exit);
     const command = Board.shorten(entry.command, workdir);
     const intent = entry.intent;
@@ -298,7 +448,87 @@ export class Steps {
     if (status === 'in_progress') return { state: 'running', failure: null };
     if (status === 'declined') return { state: 'declined', failure: null };
     if (exit !== null && exit !== 0) return { state: 'failed', failure: `exit ${exit}` };
-    if (status === 'failed') return { state: 'failed', failure: 'failed' };
+    if (status === 'failed') return { state: 'failed', failure: null };
     return { state: 'done', failure: null };
+  }
+}
+
+/** One turn of a conversation at a glance: what was asked, how many steps
+ * it took and how many failed, how long they took, and how it stands. */
+export interface TurnLine {
+  index: number;
+  prompt: string;
+  steps: number;
+  failed: number;
+  /** From its first step's start to its last step's end; null without spans. */
+  ms: number | null;
+  state: GroupState;
+}
+
+/** A turn's bar on the ruler, in a 100-wide box `height` high. */
+export interface TurnBar {
+  index: number;
+  x: number;
+  width: number;
+  height: number;
+  state: GroupState;
+}
+
+export class TurnLines {
+  /** The turns as lines, oldest first. */
+  static of(turns: readonly Block[][]): TurnLine[] {
+    return turns.map((blocks, index): TurnLine => {
+      const steps = blocks.flatMap((block) => (block.kind === 'steps' ? block.steps : []));
+      const asked = blocks.find((block) => block.kind === 'entry' && block.entry.kind === 'prompt');
+      const prompt =
+        asked?.kind === 'entry' && asked.entry.kind === 'prompt'
+          ? (asked.entry.text.trim().split('\n')[0] ?? '')
+          : '';
+      const window = Steps.window(steps);
+      const failed = steps.filter((step) => step.state === 'failed').length;
+      return {
+        index,
+        prompt,
+        steps: steps.length,
+        failed,
+        ms: window ? window.to - window.from : Steps.took(steps),
+        state: steps.some((step) => step.state === 'running')
+          ? 'running'
+          : failed
+            ? 'failed'
+            : 'done',
+      };
+    });
+  }
+
+  /** The ruler: each turn as wide as its share of the time, as tall as its
+   * share of the steps; a turn with no time still shows as a sliver. */
+  static ruler(lines: readonly TurnLine[], height: number): TurnBar[] {
+    const MIN = 1.5;
+    const total = lines.reduce((sum, line) => sum + (line.ms ?? 0), 0);
+    const most = Math.max(1, ...lines.map((line) => line.steps));
+    const widths = lines.map((line) =>
+      total ? ((line.ms ?? 0) / total) * 100 : 100 / lines.length,
+    );
+    const grown = widths.map((width) => Math.max(MIN, width));
+    const scale =
+      100 /
+      Math.max(
+        1,
+        grown.reduce((sum, width) => sum + width, 0),
+      );
+    let x = 0;
+    return lines.map((line, index) => {
+      const width = (grown[index] ?? MIN) * scale;
+      const bar = {
+        index: line.index,
+        x,
+        width,
+        height: Math.max(2, (line.steps / most) * height),
+        state: line.state,
+      };
+      x += width;
+      return bar;
+    });
   }
 }
