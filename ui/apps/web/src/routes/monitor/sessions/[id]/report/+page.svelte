@@ -1,17 +1,10 @@
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
+  import SessionHead from '#lib/SessionHead.svelte';
   import { createArrival } from '#lib/snapshot.svelte.ts';
-  import { num, short, clock } from '#lib/api.ts';
-  import {
-    compact,
-    compactOrDash,
-    date,
-    percentOrDash,
-    span,
-    recordingTone,
-  } from '#lib/display.ts';
+  import { num, clock } from '#lib/api.ts';
+  import { compact, compactOrDash, date, percentOrDash, span } from '#lib/display.ts';
   import { ContextChart, findingLine, rowPrompt, turnHref, turnRows } from '#lib/activity.ts';
-  import RecordingName from '#lib/RecordingName.svelte';
   import FindingList from '#lib/FindingList.svelte';
   import HoverCard from '#lib/layer/HoverCard.svelte';
   import Glyph from '#lib/Glyph.svelte';
@@ -57,29 +50,17 @@
   size: 'text' | 'figure' = 'text',
 )}{#if text === undefined}<Skeleton {size} {width} />{:else}{text}{/if}{/snippet}
 
-{#snippet scope()}
-  <div class="scope-group scope-identity">
-    {#if recording}<RecordingName {recording} detail={current?.detail} />{:else}<span
-        class="recording-dot tone-{recordingTone(data.recordingId)}"
-      ></span><strong class="mono">{short(data.recordingId)}</strong>{/if}
-    <span class="muted">Context and cache report</span>
-  </div>
-  <span
-    class="scope-group usage-note"
-    title="Tokens are what providers report. They are not subscription allowance or charges."
-    ><Icon name="info" size={12} /> Provider-reported tokens</span
-  >
-  <div class="scope-group end">
-    <a class="text-button" href={`/monitor/sessions/${encodeURIComponent(data.recordingId)}`}
-      >Calls <Icon name="arrow" size={12} /></a
-    ><a class="text-button" href="/monitor/sessions">All sessions <Icon name="arrow" size={12} /></a
-    >
-  </div>
-{/snippet}
-
-<Toolbar {scope} />
+<Toolbar />
 <div class="usage-page">
   <div class="console">
+    <SessionHead
+      recordingId={data.recordingId}
+      {recording}
+      detail={current?.detail ?? null}
+      desk={data.desk}
+      view="report"
+      now={Date.now()}
+    />
     {#if !report && !pending}
       <div class="empty-state">
         <div class="empty-icon"><Icon name="alert" size={26} /></div>
@@ -149,7 +130,7 @@
           {#if pending}
             <section class="panel usage-panel" aria-labelledby="report-context-title">
               <header class="panel-heading">
-                <h2 id="report-context-title">Context per turn</h2>
+                <h2 id="report-context-title" class="cap">Context per turn</h2>
               </header>
               <div class="context-chart">
                 <div class="chart-outline"><Skeleton size="block" width="100%" /></div>
@@ -158,11 +139,8 @@
           {:else if chart.bars.length > 1}
             <section class="panel usage-panel" aria-labelledby="report-context-title">
               <header class="panel-heading">
-                <h2 id="report-context-title">Context per turn</h2>
-                <span class="muted"
-                  >Oldest to newest · each bar is the context a turn ended with, its tick where it
-                  started · the model's limit is not reported, so none is drawn</span
-                >
+                <h2 id="report-context-title" class="cap">Context per turn</h2>
+                <span class="muted mono">the model's limit is not reported, so none is drawn</span>
               </header>
               <div class="context-chart">
                 <span class="context-scale mono">{compact(chart.max)}</span>
@@ -202,10 +180,7 @@
 
           <section class="panel usage-panel" aria-labelledby="report-turns-title">
             <header class="panel-heading">
-              <h2 id="report-turns-title">Turns</h2>
-              <span class="muted"
-                >Newest first · one user prompt each, as the client grouped them</span
-              >
+              <h2 id="report-turns-title" class="cap">Turns · {rows.length}</h2>
             </header>
             {#if rows.length || pending}
               <div class="table-scroll">
@@ -275,18 +250,14 @@
                 </table>
               </div>
             {:else}
-              <p class="quiet-empty">
-                This recording has no turns. Turns come from the client's own grouping; Pi sends
-                none.
-              </p>
+              <p class="quiet-empty">No turns: this client reports none.</p>
             {/if}
           </section>
         </div>
         <aside class="report-aside">
           <section class="panel usage-panel" aria-labelledby="report-findings-title">
             <header class="panel-heading">
-              <h2 id="report-findings-title">Findings</h2>
-              <span class="muted">Measured against fixed thresholds; causes are not inferred</span>
+              <h2 id="report-findings-title" class="cap">Findings · {findings.length}</h2>
             </header>
             {#if pending}
               <ul class="finding-list">
@@ -312,6 +283,15 @@
 </div>
 
 <style>
+  .cap {
+    margin: 0;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.5px !important;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
   .tip-trigger {
     padding: 0;
     border: 0;
@@ -390,13 +370,13 @@
     vector-effect: non-scaling-stroke;
   }
   .bar {
-    fill: color-mix(in srgb, var(--chart) 45%, transparent);
+    fill: var(--cache-read);
   }
   a:hover .bar {
-    fill: var(--chart);
+    fill: color-mix(in srgb, var(--cache-read) 70%, var(--ink));
   }
   .flagged .bar {
-    fill: color-mix(in srgb, var(--warning) 60%, transparent);
+    fill: var(--error);
   }
   .start {
     fill: var(--ink);
