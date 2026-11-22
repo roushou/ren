@@ -241,8 +241,7 @@
           >Thinking hidden</span
         >{/if}
     </div>
-    {#if open}<!-- Still recording: the body's ending is not known yet. -->
-    {:else if preview.ending === 'unfinished'}<p class="callout">
+    {#if !open && preview.ending === 'unfinished'}<p class="callout">
         The body never finished. Only the captured bytes are shown; missing bytes are not
         reconstructed.
       </p>{/if}

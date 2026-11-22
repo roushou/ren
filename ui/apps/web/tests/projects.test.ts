@@ -104,20 +104,7 @@ test('the board puts Ren first, and gathers what waits on the operator', () => {
   assert.equal(new ProjectBoard([], []).waiting, 0);
 });
 
-test("a project's work groups by state, open first, and its open work reads in words", () => {
-  const groups = ProjectBoard.groups([
-    item('s', 'shipped'),
-    item('q', 'queued'),
-    item('l', 'landed'),
-  ]);
-  assert.deepEqual(
-    groups.map((group) => [group.state, group.items.length]),
-    [
-      ['queued', 1],
-      ['landed', 1],
-      ['shipped', 1],
-    ],
-  );
+test("a project's open work reads in words", () => {
   assert.equal(
     ProjectBoard.openWork(
       project('acme', {

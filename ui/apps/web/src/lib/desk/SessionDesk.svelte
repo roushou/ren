@@ -1335,9 +1335,9 @@
       case 'open':
         return '';
       case 'reconnecting':
-        return ' · updates reconnecting';
+        return 'updates reconnecting';
       case 'closed':
-        return ' · updates stopped, reload to resume';
+        return 'updates stopped';
       default: {
         const never: never = state;
         return never;
@@ -1350,7 +1350,7 @@
   <!-- The list beside says how many and what they are doing; the bar keeps
        only what concerns the feed. -->
   <div class="scope-group scope-identity">
-    <span class="muted">{feedNote(feed).replace(/^ · /, '')}</span>
+    <span class="muted">{feedNote(feed)}</span>
   </div>
 {/snippet}
 

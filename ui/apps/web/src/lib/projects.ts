@@ -49,15 +49,6 @@ export interface Queued {
   count: number;
 }
 
-/** One state's work items, in the order a project's page shows them. */
-export interface WorkGroup {
-  state: 'queued' | 'sent' | 'landed' | 'shipped' | 'dismissed';
-  label: string;
-  /** What the state means, in a few words. */
-  note: string;
-  items: WorkItem[];
-}
-
 /** A list the board reads beside the projects. */
 export type BoardList = 'work' | 'runs' | 'sessions' | 'clients';
 
@@ -332,7 +323,6 @@ export class ProjectBoard {
     );
   }
 
-  /** The name of the project with `id`; null for none, or one not listed. */
   /** The name of the project `item` belongs to: its own, or
    * Ren's for one from before projects. */
   homeOf(item: WorkItem): string | null {
@@ -352,28 +342,10 @@ export class ProjectBoard {
     return Sessions.within(this.sessions, { kind: 'scratch', projects: this.projects }).length;
   }
 
+  /** The name of the project with `id`; null for none, or one not listed. */
   nameOf(id: string | null): string | null {
     if (id === null) return null;
     return this.projects.find((project) => project.id === id)?.name ?? null;
-  }
-
-  /** `items` by state, open ones first; a state with none is left out. */
-  static groups(items: readonly WorkItem[]): WorkGroup[] {
-    const states = [
-      ['queued', 'Queued', 'marked, not sent yet'],
-      ['sent', 'Sent', 'an agent is on it'],
-      ['landed', 'Landed', 'on main, not in production'],
-      ['shipped', 'Shipped', 'in production'],
-      ['dismissed', 'Dismissed', 'left undone'],
-    ] as const;
-    return states
-      .map(([state, label, note]) => ({
-        state,
-        label,
-        note,
-        items: items.filter((item) => item.state === state),
-      }))
-      .filter((group) => group.items.length > 0);
   }
 
   /** Where a project opens: its sessions. */

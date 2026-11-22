@@ -786,11 +786,6 @@
 </div>
 
 <style>
-  .tally {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-  }
   .live-page {
     flex: 1;
     min-height: 0;
@@ -805,9 +800,6 @@
   .live-page > :global(*) {
     background: var(--surface);
   }
-  .live-page.reading {
-    overflow: hidden;
-  }
   .live-page > :global(.empty-state) {
     flex: 1;
     justify-content: center;
@@ -817,12 +809,6 @@
   }
   .live-pulse a.chip {
     cursor: pointer;
-  }
-  /* The count and the window it counts over read as one control. */
-  .live-active {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
   }
   .live-pulse :global(.glyph) {
     margin-right: 2px;
@@ -1146,9 +1132,6 @@
   .live-tile.quiet.highlighted,
   .live-rows tr.quiet:hover {
     opacity: 1;
-  }
-  .live-state.state-yours {
-    color: var(--success);
   }
   .live-tile.attention-warning {
     box-shadow: inset 0 2px 0 var(--warning);
@@ -1600,15 +1583,6 @@
   .live-state.neutral {
     color: var(--muted);
   }
-  .live-tile-foot .text-button {
-    flex: none;
-    font-size: 11px;
-  }
-  .live-quiet {
-    margin: 0;
-    padding: 8px 12px;
-    color: var(--muted);
-  }
 
   /* Rows: the same board, one line per recording. */
   .live-rows-wrap {
@@ -1637,10 +1611,6 @@
   .live-rows .numeric {
     text-align: right;
   }
-  .live-rows .pick-column {
-    width: 1%;
-    padding-right: 0;
-  }
   .live-rows .lane-column {
     width: 28%;
     min-width: 160px;
@@ -1649,7 +1619,6 @@
     max-width: 0;
     width: 40%;
   }
-
   @media (max-width: 1100px) {
     .live-wall {
       grid-template-columns: repeat(2, minmax(0, 1fr));

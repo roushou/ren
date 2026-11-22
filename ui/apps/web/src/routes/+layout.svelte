@@ -31,7 +31,7 @@
   import { Recipients } from '#lib/briefing.svelte.ts';
   import { Views } from '#lib/view.ts';
   import { BottomEdge } from '#lib/edge.ts';
-  import { Arrival } from '#lib/arrival.ts';
+  import { Arrival, type Arriving } from '#lib/arrival.ts';
   import '@fontsource/inter/latin-400.css';
   import '@fontsource/inter/latin-500.css';
   import '@fontsource/inter/latin-600.css';
@@ -198,17 +198,21 @@
     return search ? `${page.url.pathname}?${search}` : page.url.pathname;
   });
   /** The page's reads, as each comes in, for the status line and the error banner. */
-  const reads = createSettled(() => [
-    page.data.overview,
-    page.data.traffic,
-    page.data.live,
-    page.data.recordings,
-    page.data.usage,
-    page.data.recorder,
-    page.data.report,
-    page.data.turn,
-    page.data.search,
-  ]);
+  /** The pages' own reads, by the name their loads give them: any that
+   * failed is the bottom edge's to say. */
+  const PAGE_READS = [
+    'overview',
+    'traffic',
+    'live',
+    'recordings',
+    'usage',
+    'recorder',
+    'report',
+    'search',
+  ] as const;
+  const reads = createSettled(() =>
+    PAGE_READS.map((key) => page.data[key] as Arriving<unknown> | undefined),
+  );
   const pageTitle = $derived(page.error ? 'Page unavailable' : view ? Views.title(view) : 'Ren');
   const gatewayOrigin = $derived(page.data.gatewayUrl);
   // The header names where the gateway runs, not its address.
@@ -228,13 +232,9 @@
   let refreshError = $state('');
   const failure = $derived<SnapshotError | null>(
     gateway.snapshot?.error ??
-      reads.of(page.data.traffic)?.error ??
-      reads.of(page.data.live)?.error ??
-      reads.of(page.data.recordings)?.error ??
-      reads.of(page.data.recorder)?.error ??
-      reads.of(page.data.report)?.error ??
-      reads.of(page.data.turn)?.error ??
-      reads.of(page.data.search)?.error ??
+      PAGE_READS.map(
+        (key) => reads.of(page.data[key] as Arriving<unknown> | undefined)?.error,
+      ).find((error) => error) ??
       null,
   );
   const error = $derived(refreshError || failure?.message || '');
@@ -262,7 +262,6 @@
   async function reload() {
     // A navigation in flight loads fresh data itself.
     if (navigating.to) return;
-    workbench.refreshing = true;
     try {
       // Every load that read Ren reads it again; the server loads that only
       // hold settings (and the desk's and Packages', whose pages follow their
@@ -273,8 +272,6 @@
       workbench.refreshed++;
     } catch {
       refreshError = 'Unable to refresh this view.';
-    } finally {
-      workbench.refreshing = false;
     }
   }
   let live = $state<LiveConnection>();

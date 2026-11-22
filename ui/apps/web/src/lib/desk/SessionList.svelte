@@ -86,7 +86,6 @@
 
   /** How many of a folder's sessions show before the rest fold. */
   const SHOWN = 5;
-  /** Folders whose every session is shown. */
   /** What the listed sessions are doing, for the list's head. */
   const running = $derived(
     folders.reduce(

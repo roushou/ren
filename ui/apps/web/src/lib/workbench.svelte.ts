@@ -7,7 +7,6 @@ import { Streaming, type CallProgress } from './streaming.ts';
 export class Workbench {
   /** Follow `/api/live` and refresh when calls change. */
   automatic = $state(true);
-  refreshing = $state(false);
   /** Completed page refreshes; views that load their own data reload on change. */
   refreshed = $state(0);
   manual = $state(false);

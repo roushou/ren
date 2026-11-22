@@ -1,19 +1,6 @@
 import { untrack } from 'svelte';
-import { retainSnapshot, type Snapshot } from './snapshots.ts';
+import type { Snapshot } from './snapshots.ts';
 import { Arrival, type Arriving, type Shown } from './arrival.ts';
-
-export function createSnapshot<T>(read: () => Snapshot<T>) {
-  let previous = $state<Snapshot<T> | null>(null);
-  $effect(() => {
-    const next = read();
-    if (next.value !== null) previous = next;
-  });
-  return {
-    get current() {
-      return retainSnapshot(previous, read());
-    },
-  };
-}
 
 /**
  * A page's view of an arriving read (`Arrival`): the snapshot once it is

@@ -874,16 +874,6 @@ kbd {
   color: var(--on-accent);
   font-weight: 600;
 }
-/* On an accent fill, the key reads in the button's own ink. */
-.primary kbd {
-  border-color: color-mix(in srgb, var(--on-accent) 45%, transparent);
-  color: var(--on-accent);
-  font-weight: 600;
-}
-.provider-select {
-  max-width: 140px;
-  font-size: 11px;
-}
 .advanced-filters {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1766,10 +1756,6 @@ td > .chip {
 .drawer-chips {
   margin: 4px 0 2px;
 }
-.attempt-chips {
-  justify-content: flex-end;
-  margin: 0;
-}
 .jump-latest {
   margin-left: auto;
 }
@@ -1787,15 +1773,6 @@ td > .chip {
 }
 .tool-fields dd {
   margin: 0;
-}
-/* A zero reads as quiet, so the counters that moved stand out. */
-.health-list dd.zero {
-  color: var(--muted);
-  opacity: 0.55;
-}
-.health-list dd.warning {
-  color: var(--warning);
-  font-weight: 600;
 }
 .volume-chips {
   justify-content: flex-end;
@@ -2236,9 +2213,6 @@ td.zero {
   flex-wrap: nowrap;
   white-space: nowrap;
 }
-.scope-title {
-  font-weight: 600;
-}
 .scope-group {
   display: flex;
   align-items: center;
@@ -2266,15 +2240,6 @@ td.zero {
   min-width: 0;
 }
 .scope-identity strong {
-  font-weight: 600;
-}
-.scope-figures {
-  display: flex;
-  gap: 12px;
-  color: var(--muted);
-}
-.scope-figures b {
-  color: var(--ink);
   font-weight: 600;
 }
 /* Folded: the scope did not fit on one line (measured, not a fixed width).
@@ -2348,8 +2313,7 @@ td.zero {
 
 /* Turn activity and recording reports: rows and calls separated by 1px rules,
    square throughout, like the other consoles. */
-.finding-list,
-.effect-list {
+.finding-list {
   margin: 0;
   padding: 0;
   list-style: none;
@@ -2362,23 +2326,12 @@ td.zero {
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
 }
-.finding-list li:last-child,
-.effect-list li:last-child {
+.finding-list li:last-child {
   border-bottom: 0;
 }
 .finding-detail {
   flex: 1;
   min-width: 220px;
-}
-.effect-list {
-  max-height: 260px;
-  overflow: auto;
-}
-.effect-list li {
-  padding: 5px 12px;
-  border-bottom: 1px solid var(--line);
-  font-size: 11px;
-  overflow-wrap: anywhere;
 }
 .turn-table td {
   vertical-align: top;
@@ -2403,53 +2356,6 @@ td.zero {
 .turn-prompt .chip {
   margin-right: 4px;
 }
-.activity-text {
-  margin: 0;
-  padding: 10px 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.activity-omitted {
-  margin: 0;
-  padding: 0 12px 8px;
-  color: var(--muted);
-  font-size: 11px;
-}
-.activity-call {
-  border-bottom: 1px solid var(--control-border);
-}
-.activity-call:last-of-type {
-  border-bottom: 0;
-}
-.activity-call-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  background: var(--surface-subtle);
-  border-bottom: 1px solid var(--line);
-  font-size: 11px;
-}
-.activity-call-head .end {
-  margin-left: auto;
-}
-.activity-subprompt {
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-}
-.activity-reply {
-  color: var(--ink);
-  border-top: 1px solid var(--line);
-}
-.tool-table {
-  width: 100%;
-}
-.tool-table td {
-  vertical-align: top;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--line);
-}
 .tool-name {
   white-space: nowrap;
   font-weight: 600;
@@ -2465,9 +2371,6 @@ td.zero {
 }
 .tool-target .effect {
   display: block;
-}
-.tool-output {
-  width: 25%;
 }
 .activity-pre {
   max-height: 320px;
@@ -2504,9 +2407,6 @@ td.zero {
 .search-hero > p {
   max-width: 520px;
   margin: 0;
-}
-.search-hint {
-  font-size: 11px;
 }
 .search-form {
   display: flex;
