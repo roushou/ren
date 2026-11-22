@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Clock, Elapsed } from './time.ts';
   import ChipTag from './ChipTag.svelte';
   import Meter from './Meter.svelte';
   import type { GatewayData } from '#lib/loaders.ts';
@@ -16,7 +17,7 @@
     type CallView,
     type RecordingId,
   } from './api.ts';
-  import { num, short, title, bytes, clock, providerName, providerMark } from './api.ts';
+  import { num, short, title, bytes, providerName, providerMark } from './api.ts';
   import {
     attemptEnding,
     captureChip,
@@ -25,7 +26,6 @@
     messageCounts,
     modelChip,
     duration,
-    elapsed,
     isActive,
     streamChip,
     tokenSummary,
@@ -146,9 +146,8 @@
             >{providerMark(current.provider)}</span
           >{providerName(current.provider)}</span
         ><span class="divider"></span><span class="mono">{current.method} {current.endpoint}</span
-        ><span class="divider"></span><span class="mono">{clock(current.started_at)}</span><span
-          class="divider"
-        ></span><code>{short(current.id)}</code><CopyButton
+        ><span class="divider"></span><span class="mono">{Clock.second(current.started_at)}</span
+        ><span class="divider"></span><code>{short(current.id)}</code><CopyButton
           text={current.id}
           label="Copy call ID"
         />
@@ -172,7 +171,7 @@
       >{/if}{#if current.response}<span class="chip mono" title="Response body stored"
         >{bytes(current.response.stored_bytes)} back</span
       >{/if}<span class="chip mono" title="From the request to the response's end"
-      >{elapsed(duration(current))}</span
+      >{Elapsed.latency(duration(current))}</span
     >{#each [streamChip(current), captureChip(current, bodyLimit)].filter((chip) => chip.tone === 'warning' || chip.tone === 'error') as chip}<ChipTag
         {chip}
       />{/each}
@@ -314,7 +313,7 @@
                   height="6"
                 /></svg
               >
-              <span class="mono numeric">{elapsed(duration(bar.attempt))}</span>
+              <span class="mono numeric">{Elapsed.latency(duration(bar.attempt))}</span>
             {/each}
           </div>
           <p class="fine-print">
@@ -507,7 +506,7 @@
                     : ''}
                 </dt>
                 <dd class="mono" title={new Date(observation.at).toLocaleString()}>
-                  #{observation.seq} · {clock(observation.at)}
+                  #{observation.seq} · {Clock.second(observation.at)}
                 </dd>
               </div>{/each}
           </dl>{:else}<p class="quiet-empty">
@@ -529,7 +528,7 @@
         >Tokens <strong class="mono">{tokens.input}</strong> in
         <strong class="mono">{tokens.output}</strong> out</span
       >{:else}<span class="muted">No token usage reported</span>{/if}<span
-      >Duration <strong class="mono">{elapsed(duration(current))}</strong></span
+      >Duration <strong class="mono">{Elapsed.latency(duration(current))}</strong></span
     ><small>Provider reported · input includes cached context</small>
   </div>
 </aside>

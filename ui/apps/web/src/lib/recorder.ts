@@ -2,8 +2,10 @@
 // retention is to pruning, and which counters need a look. The layout's tab
 // marker and footer, and the overview, read capture health through it too.
 // No browser, no fetching; tested in tests/recorder.test.ts.
+import { Elapsed } from './time.ts';
 import type { FileUsage, RecorderMetrics, RetentionPolicy, StorageView } from './api.ts';
 import { bytes, num } from './api.ts';
+import { Shares } from './display.ts';
 import { assertNever } from './decode.ts';
 
 /**
@@ -189,7 +191,7 @@ export class RecorderReport {
       {
         key: 'queue',
         label: 'Queue',
-        value: RecorderReport.percent(queue),
+        value: Shares.percent(queue),
         tone: above(queue, RecorderReport.QUEUE_WARN, RecorderReport.QUEUE_ERROR),
         share: Math.min(1, queue),
       },
@@ -212,12 +214,6 @@ export class RecorderReport {
         share: null,
       },
     ];
-  }
-
-  /** `7%`, or `<1%` for a little that is not nothing. */
-  static percent(share: number): string {
-    if (share > 0 && share < 0.01) return '<1%';
-    return `${Math.round(share * 100)}%`;
   }
 
   static counters(recorder: RecorderMetrics): { amount: number; note: CounterNote }[] {
@@ -333,8 +329,8 @@ export class RecorderReport {
       },
       {
         label: 'History',
-        used: age === null ? '—' : RecorderReport.duration(age),
-        limit: on && policy ? RecorderReport.duration(policy.max_age_seconds * 1000) : 'no limit',
+        used: age === null ? '—' : Elapsed.span(age),
+        limit: on && policy ? Elapsed.span(policy.max_age_seconds * 1000) : 'no limit',
         share: share(age, policy ? policy.max_age_seconds * 1000 : undefined),
         binding: false,
       },
@@ -352,14 +348,5 @@ export class RecorderReport {
   /** A database file's in-use bytes: its pages less the free ones. */
   static live(file: FileUsage): number {
     return Math.max(0, file.page_count - file.freelist_count) * file.page_size;
-  }
-
-  /** `45 min`, `6 h`, `3.5 days`. */
-  static duration(ms: number): string {
-    const hours = ms / 3_600_000;
-    if (hours < 1) return `${Math.max(1, Math.round(ms / 60_000))} min`;
-    if (hours < 48) return `${Math.round(hours)} h`;
-    const days = hours / 24;
-    return `${Number.isInteger(days) ? days : days.toFixed(1)} days`;
   }
 }

@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { Clock, Elapsed } from '#lib/time.ts';
   import Toolbar from '#lib/Toolbar.svelte';
   import SessionHead from '#lib/SessionHead.svelte';
   import { createArrival } from '#lib/snapshot.svelte.ts';
-  import { num, clock } from '#lib/api.ts';
-  import { compact, compactOrDash, date, percentOrDash, span } from '#lib/display.ts';
+  import { num } from '#lib/api.ts';
+  import { compact, compactOrDash, date, percentOrDash } from '#lib/display.ts';
   import { ContextChart, findingLine, rowPrompt, turnHref, turnRows } from '#lib/activity.ts';
   import FindingList from '#lib/FindingList.svelte';
   import Glyph from '#lib/Glyph.svelte';
@@ -187,7 +188,7 @@
                       <tr>
                         <td
                           ><span>{date(metrics.started_at)}</span><small
-                            >{clock(metrics.started_at)}</small
+                            >{Clock.second(metrics.started_at)}</small
                           ></td
                         >
                         <td class="turn-prompt">
@@ -208,7 +209,7 @@
                         <td class="mono numeric"
                           >{metrics.idle_before_ms === null
                             ? '—'
-                            : span(metrics.idle_before_ms)}</td
+                            : Elapsed.span(metrics.idle_before_ms)}</td
                         >
                         <td class="mono numeric"
                           ><span class="range"

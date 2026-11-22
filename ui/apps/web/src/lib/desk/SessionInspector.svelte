@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Elapsed } from '#lib/time.ts';
   /*
     The session's inspector, beside its conversation: context turn by turn,
     what its calls add up to, where its time went, the files it touched, and
@@ -8,7 +9,7 @@
   import { ManagementApi, type RecordingId, type RecordingReport } from '#lib/api.ts';
   import type { SessionId } from '#lib/runs.ts';
   import { SessionInspector } from '#lib/inspector.ts';
-  import { span } from '#lib/display.ts';
+
   import { Work, WorkApi, type WorkItem } from '#lib/work.ts';
   import type { Step } from '#lib/steps.ts';
   import Glyph from '#lib/Glyph.svelte';
@@ -151,7 +152,7 @@
   {#if time.total >= 1000}
     <section class="block">
       <div class="head">
-        <span class="cap">Where time went</span><span class="meta">{span(time.total)}</span>
+        <span class="cap">Where time went</span><span class="meta">{Elapsed.span(time.total)}</span>
       </div>
       <svg class="time-strip" viewBox="0 0 100 1" preserveAspectRatio="none" aria-hidden="true">
         {#each strip as part (part.kind)}
@@ -167,7 +168,7 @@
         <div class="time-row">
           <span class="swatch time-{part.kind}"></span>
           <span>{part.label}</span>
-          <span class="meta">{span(part.ms)}</span>
+          <span class="meta">{Elapsed.span(part.ms)}</span>
           <span class="meta share">{Math.round(part.share * 100)}%</span>
         </div>
       {/each}

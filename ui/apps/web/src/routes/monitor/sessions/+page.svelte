@@ -1,12 +1,13 @@
 <script lang="ts">
+  import { Clock, Elapsed } from '#lib/time.ts';
   import Toolbar from '#lib/Toolbar.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { createArrival } from '#lib/snapshot.svelte.ts';
-  import { num, short, clock, providerName, providerMark } from '#lib/api.ts';
-  import { compactOrDash, span } from '#lib/display.ts';
+  import { num, short, providerName, providerMark } from '#lib/api.ts';
+  import { compactOrDash } from '#lib/display.ts';
   import { localDayStart } from '#lib/usage.ts';
-  import { ago } from '#lib/overview.ts';
+
   import { RecordingList, type RecordingRow } from '#lib/recordings.ts';
   import { Board } from '#lib/board.ts';
   import Icon from '#lib/Icon.svelte';
@@ -150,8 +151,10 @@
       {#if row.now.kind === 'open'}<span class="now-open state-{row.now.mark}"
           ><Glyph mark={row.now.mark} label={row.now.label} /></span
         >{:else if row.now.kind === 'recent'}<span class="now-recent"
-          ><span class="recent-dot"></span>active {ago(row.now.at, now)}</span
-        >{:else}<span class="muted" title={clock(row.now.at)}>{clock(row.now.at)}</span>{/if}
+          ><span class="recent-dot"></span>active {Elapsed.ago(row.now.at, now)}</span
+        >{:else}<span class="muted" title={Clock.second(row.now.at)}
+          >{Clock.second(row.now.at)}</span
+        >{/if}
     </td>
     <td class="day-cell"
       ><svg class="day-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"
@@ -185,7 +188,7 @@
         row.tokens,
       )}</td
     >
-    <td class="numeric mono muted">{span(recording.last_seen - recording.first_seen)}</td>
+    <td class="numeric mono muted">{Elapsed.span(recording.last_seen - recording.first_seen)}</td>
   </tr>
 {/snippet}
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Elapsed } from '#lib/time.ts';
   import Toolbar from '#lib/Toolbar.svelte';
   import Glyph from '#lib/Glyph.svelte';
   import { onMount, tick, untrack } from 'svelte';
@@ -6,9 +7,9 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { ManagementApi, short, type Shelf, type TokenTotals } from '#lib/api.ts';
-  import { ago } from '#lib/overview.ts';
+
   import { harnessLabel } from '#lib/activity.ts';
-  import { span, spentSummary } from '#lib/display.ts';
+  import { spentSummary } from '#lib/display.ts';
   import {
     decisions,
     Deletions,
@@ -1256,7 +1257,7 @@
           said: [
             harnessLabel(session.harness),
             ...Setup.words(session.settings),
-            ...(session.activeAt ? [ago(session.activeAt, now)] : []),
+            ...(session.activeAt ? [Elapsed.ago(session.activeAt, now)] : []),
           ].join(' · '),
           place: Runs.place(session.workdir, scratch, offered),
           recording: current?.recorded?.recording ?? null,
@@ -1746,7 +1747,7 @@
                     >{line.steps} steps{#if line.failed}{' '}·
                       <Glyph mark="failed" label="{line.failed} failed" />{line.failed}{/if}</span
                   >
-                  <span class="muted mono">{line.ms === null ? '' : span(line.ms)}</span>
+                  <span class="muted mono">{line.ms === null ? '' : Elapsed.span(line.ms)}</span>
                 </a>
               </li>
             {/each}

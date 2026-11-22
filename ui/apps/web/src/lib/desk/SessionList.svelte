@@ -22,6 +22,7 @@
 </script>
 
 <script lang="ts">
+  import { Elapsed } from '#lib/time.ts';
   import { tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { slide } from 'svelte/transition';
@@ -30,7 +31,7 @@
   import Glyph from '#lib/Glyph.svelte';
   import Icon from '#lib/Icon.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
-  import { ago } from '#lib/overview.ts';
+
   import {
     Deletions,
     Sessions,
@@ -225,8 +226,8 @@
     >
     <span
       class="run-when muted mono"
-      title={session.activeAt ? ago(session.activeAt, now) : undefined}
-      >{session.activeAt ? Sessions.age(session.activeAt, now) : 'now'}</span
+      title={session.activeAt ? Elapsed.ago(session.activeAt, now) : undefined}
+      >{session.activeAt ? Elapsed.ago(session.activeAt, now) : 'now'}</span
     >
   </button>
 {/snippet}

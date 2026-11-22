@@ -3,6 +3,7 @@
 // What needs them is the board's own (approvals, signed-out clients,
 // canaries, previews). Pure: no DOM, no clock, no storage.
 
+import { Elapsed } from './time.ts';
 import type { Mark } from './marks.ts';
 import type { ProjectBoard } from './projects.ts';
 import { Runs, Sessions, type SessionId } from './runs.ts';
@@ -121,8 +122,8 @@ export class Home {
   static looked(seen: number, now: number, day?: (ms: number) => string): string {
     const minutes = Math.floor(Math.max(0, now - seen) / 60_000);
     if (minutes < 1) return 'just now';
-    if (minutes < 24 * 60) return `${Sessions.age(seen, now, day)} ago`;
-    return `since ${Sessions.age(seen, now, day)}`;
+    if (minutes < 24 * 60) return `${Elapsed.ago(seen, now, day)} ago`;
+    return `since ${Elapsed.ago(seen, now, day)}`;
   }
 
   static counts(outcomes: readonly Outcome[]): OutcomeCounts {

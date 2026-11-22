@@ -3,6 +3,7 @@
 // utilization, Codex's used percent) or an API key's remaining requests and
 // tokens. The tightest one says it. Pure; tested in tests/allowance.test.ts.
 import type { LimitHeader } from './api.ts';
+import { compact } from './display.ts';
 
 /** What is left of one limit. */
 export interface Allowance {
@@ -70,7 +71,7 @@ export class Allowances {
         found.push({
           name: unit.replace('-', ' '),
           left: Math.min(1, Math.max(0, remaining / limit)),
-          text: `${Allowances.amount(remaining)} / ${Allowances.amount(limit)} ${unit.replace('-', ' ')}`,
+          text: `${compact(remaining)} / ${compact(limit)} ${unit.replace('-', ' ')}`,
         });
     return found;
   }
@@ -94,11 +95,5 @@ export class Allowances {
     if (minutes % 1440 === 0) return `${minutes / 1440} d`;
     if (minutes % 60 === 0) return `${minutes / 60} h`;
     return `${minutes} min`;
-  }
-
-  static amount(value: number): string {
-    if (value < 10_000) return value.toLocaleString();
-    if (value < 1_000_000) return `${Math.round(value / 1000)}k`;
-    return `${(value / 1_000_000).toFixed(1)}M`;
   }
 }

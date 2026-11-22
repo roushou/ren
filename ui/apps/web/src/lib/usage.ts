@@ -1,6 +1,7 @@
 // The Usage page's pure logic: the range, the time window it reads, the
 // contiguous buckets a chart draws, and clean axis ticks. No browser needed.
 import type { UsageBucket, UsageCounts } from './api.ts';
+import { Elapsed } from './time.ts';
 
 /** What the page shows: the last day by hour, the last week by day, or all retained calls by day. */
 export type UsageRange = '24h' | '7d' | 'all';
@@ -22,8 +23,7 @@ export function parseRange(text: string | null): UsageRange {
   }
 }
 
-const HOUR = 3_600_000;
-const DAY = 24 * HOUR;
+const { HOUR, DAY } = Elapsed;
 
 /** The start of a range, relative to `now`; none for everything retained. */
 export function rangeStart(range: UsageRange, now: number, dayStart: (ms: number) => number) {

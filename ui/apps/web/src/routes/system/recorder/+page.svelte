@@ -2,7 +2,7 @@
   import Toolbar from '#lib/Toolbar.svelte';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { num, bytes, type FileUsage } from '#lib/api.ts';
-  import { buildLabel } from '#lib/display.ts';
+  import { Shares, buildLabel } from '#lib/display.ts';
   import { RecorderReport } from '#lib/recorder.ts';
   import { Marks } from '#lib/marks.ts';
   import Glyph from '#lib/Glyph.svelte';
@@ -108,9 +108,7 @@
                 class="rec-binding"
                 title="Retention prunes for this limit first">prunes first</span
               >{/if}
-            <span class="mono end"
-              >{gauge.share === null ? '' : RecorderReport.percent(gauge.share)}</span
-            >
+            <span class="mono end">{gauge.share === null ? '' : Shares.percent(gauge.share)}</span>
           </div>
           <div class="mono rec-gauge-value">
             <strong>{gauge.used}</strong> <span class="muted">of {gauge.limit}</span>

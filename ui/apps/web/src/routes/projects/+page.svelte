@@ -6,6 +6,7 @@
   active, and the one thing to do about it. A row opens the project.
 -->
 <script lang="ts">
+  import { Elapsed } from '#lib/time.ts';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import Glyph from '#lib/Glyph.svelte';
@@ -15,7 +16,6 @@
   import { ApprovalAnswers } from '#lib/approvals.svelte.ts';
   import { ProjectBoard } from '#lib/projects.ts';
   import { Promotion, ReleasePage } from '#lib/release.ts';
-  import { Sessions } from '#lib/runs.ts';
   import { Home } from '#lib/home.ts';
   import { Work } from '#lib/work.ts';
   import { createArrival } from '#lib/snapshot.svelte.ts';
@@ -174,7 +174,7 @@
               /><path class="spark-line" d={spark.line} />{/if}</svg
           >
           <span class="muted mono right"
-            >{glance.active ? Sessions.age(glance.active, now) : '—'}</span
+            >{glance.active ? Elapsed.ago(glance.active, now) : '—'}</span
           >
           <span class="right">
             {#if glance.action?.kind === 'review'}{@const waiting = glance.action.approval}<button
@@ -214,7 +214,7 @@
             <Glyph mark={row.mark} label={row.doing} />
             <span class="item-title">{row.title}</span>
             <span class="chip mono">{row.project ?? 'Scratch'}</span>
-            <span class="muted mono">{row.since ? Sessions.age(row.since, now) : ''}</span>
+            <span class="muted mono">{row.since ? Elapsed.ago(row.since, now) : ''}</span>
           </a>
         {:else}<p class="quiet muted">No session is running.</p>{/each}
       </section>
@@ -226,7 +226,7 @@
             <Glyph mark={workMark(item.state)} label={Work.state(item.state)} />
             <span class="item-title">{item.title}</span>
             {#if home}<span class="chip mono">{home}</span>{/if}
-            <span class="muted mono">{Sessions.age(item.updated_at, now)}</span>
+            <span class="muted mono">{Elapsed.ago(item.updated_at, now)}</span>
           </a>
         {:else}<p class="quiet muted">No work is on its way.</p>{/each}
       </section>

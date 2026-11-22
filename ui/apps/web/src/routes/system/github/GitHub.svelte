@@ -3,11 +3,12 @@
   they stand and GitHub's newest answer, then the pull requests themselves.
 -->
 <script lang="ts">
+  import { Elapsed } from '#lib/time.ts';
   import Toolbar from '#lib/Toolbar.svelte';
   import Glyph from '#lib/Glyph.svelte';
   import Figures from '#lib/Figures.svelte';
   import Figure from '#lib/Figure.svelte';
-  import { ago } from '#lib/overview.ts';
+
   import { PullChips } from '#lib/release.ts';
   import { GitHubWatches, type PullGroup } from '#lib/github.ts';
   import type { Mark } from '#lib/marks.ts';
@@ -104,7 +105,7 @@
             <span class="num mono"
               >{row.state === 'seen' || row.pulls.length ? row.pulls.length : '—'}</span
             >
-            <span class="num mono meta">{row.at ? ago(row.at, now) : '—'}</span>
+            <span class="num mono meta">{row.at ? Elapsed.ago(row.at, now) : '—'}</span>
           </div>
         {/each}
         <div class="key meta">

@@ -1,10 +1,10 @@
 <script lang="ts">
+  import { Clock } from '#lib/time.ts';
   import Toolbar from '#lib/Toolbar.svelte';
   import { page as location } from '$app/state';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import {
     num,
-    clock,
     parseSearchField,
     searchFields,
     type SearchField,
@@ -89,7 +89,7 @@
               class="recording-dot tone-{recordingTone(hit.recording)}"
             ></span>{/if}{/if}
         <span class="field-name field-{hit.field}">{searchFieldLabel(hit.field)}</span>
-        <span class="muted">{date(hit.started_at)} {clock(hit.started_at)}</span>
+        <span class="muted">{date(hit.started_at)} {Clock.second(hit.started_at)}</span>
         <span class="muted end"
           >{hit.turn ? 'Open turn' : 'Open call'} <Icon name="arrow" size={12} /></span
         >

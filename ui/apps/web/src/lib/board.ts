@@ -1,6 +1,7 @@
 // The Live page's pure logic: which recordings are on the board, what each is
 // doing now, the recent calls drawn on its lane, and what needs a look.
 // No browser, no fetching; tested in tests/board.test.ts.
+import { Clock, Elapsed } from './time.ts';
 import type { Mark } from './marks.ts';
 import type {
   CallActivity,
@@ -16,10 +17,10 @@ import type {
   TurnActivity,
   TurnId,
 } from './api.ts';
-import { clock, harnesses, providerName, RecordingId } from './api.ts';
+import { harnesses, providerName, RecordingId } from './api.ts';
 import { findingLine, harnessLabel, resultBadge, turnHref } from './activity.ts';
 import { assertNever, unrecognised, type Stored } from './decode.ts';
-import { callStatus, recordingTone, span, statusBadge, type Tone } from './display.ts';
+import { callStatus, recordingTone, statusBadge, type Tone } from './display.ts';
 
 /**
  * What a recording is doing, as far as its recorded calls show. Only the
@@ -404,7 +405,7 @@ export class Board {
       case 'awaiting': {
         const slow = now - phase.since >= Board.slowHeadMs;
         return {
-          label: `Waiting for response · ${span(now - phase.since)}`,
+          label: `Waiting for response · ${Elapsed.span(now - phase.since)}`,
           tone: slow ? 'warning' : 'live',
           title: 'Sent upstream; no response head yet',
           mark: slow ? 'slow' : 'waiting',
@@ -412,21 +413,21 @@ export class Board {
       }
       case 'responding':
         return {
-          label: `Responding · ${span(now - phase.since)}`,
+          label: `Responding · ${Elapsed.span(now - phase.since)}`,
           tone: 'live',
           title: 'Response head received; the body is still streaming',
           mark: 'responding',
         };
       case 'client':
         return {
-          label: `Client's turn · ${span(now - phase.since)}`,
+          label: `Client's turn · ${Elapsed.span(now - phase.since)}`,
           tone: 'neutral',
           title: `The last call asked for ${phase.call.tool_names.join(', ')}; inferred, Ren does not see tools run`,
           mark: 'client',
         };
       case 'yours':
         return {
-          label: `Your turn · ${span(now - phase.since)}`,
+          label: `Your turn · ${Elapsed.span(now - phase.since)}`,
           tone: 'neutral',
           title:
             'The last call finished its turn without asking for tools; inferred, Ren does not see your terminal',
@@ -441,7 +442,7 @@ export class Board {
         };
       case 'idle':
         return {
-          label: `Idle · ${span(now - phase.since)}`,
+          label: `Idle · ${Elapsed.span(now - phase.since)}`,
           tone: 'neutral',
           title: 'No call open; the last one completed',
           mark: 'idle',
@@ -704,7 +705,7 @@ export class Board {
         recording,
         tone: 'warning',
         label: 'No response head',
-        detail: `waiting ${span(now - tile.phase.since)}`,
+        detail: `waiting ${Elapsed.span(now - tile.phase.since)}`,
         at: tile.phase.since,
         href: callHref(tile.phase.call),
       });
@@ -889,7 +890,7 @@ export class Feed {
           key: `${call.id}:waiting`,
           recording: of(call.recording),
           tone: waited >= Board.slowHeadMs ? 'warning' : 'neutral',
-          text: `no response head after ${span(waited)}`,
+          text: `no response head after ${Elapsed.span(waited)}`,
           detail: call.model,
           at: call.started_at,
           pinned: true,
@@ -943,7 +944,7 @@ export class Feed {
         recording: null,
         tone: 'warning',
         text: `${providerName(provider)}: ${calls.length} rate limit${calls.length > 1 ? 's' : ''} (429)`,
-        detail: `in the last ${span(Feed.limitMs)}`,
+        detail: `in the last ${Elapsed.span(Feed.limitMs)}`,
         at: newest.started_at,
         pinned: false,
         href: callHref(newest),
@@ -1170,7 +1171,7 @@ export class Band {
           key: call.id,
           at: (call.ended_at - from) / Band.spanMs,
           tone,
-          label: `${badge.label} at ${clock(call.ended_at)}`,
+          label: `${badge.label} at ${Clock.second(call.ended_at)}`,
         });
     }
     const ranked = [...groups]

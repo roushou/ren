@@ -3,24 +3,13 @@
 // No browser needed; tested in tests/overview.test.ts.
 import type { CallId, CallView, ModelUsage, UsageView } from './api.ts';
 import { num, providerName } from './api.ts';
-import { callStatus, statusBadge } from './display.ts';
+import { Shares, callStatus, compactOrDash, statusBadge } from './display.ts';
+import { Elapsed } from './time.ts';
 import type { Stored } from './decode.ts';
 import type { Mark } from './marks.ts';
 import type { Severity } from './recorder.ts';
 
-export function ago(ms: number, now: number): string {
-  const seconds = Math.max(0, Math.round((now - ms) / 1000));
-  if (seconds < 5) return 'just now';
-  if (seconds < 60) return `${seconds} s ago`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours} h ago`;
-  return `${Math.round(hours / 24)} days ago`;
-}
-
-const HOUR = 3_600_000;
-const DAY = 24 * HOUR;
+const { HOUR, DAY } = Elapsed;
 
 /** One kind of failure in the last day, its repeats folded into a count. */
 export interface FailureGroup {
@@ -248,36 +237,23 @@ export class DayChange {
       },
       {
         label: 'Failure rate',
-        value: DayChange.share(rateNow),
+        value: Shares.percent(rateNow),
         delta: DayChange.points(rateNow, rateWas),
         worse: rateNow !== null && rateWas !== null && rateNow > rateWas,
       },
       {
         label: 'Tokens in',
-        value: DayChange.compact(now.tokens.input),
+        value: compactOrDash(now.tokens.input),
         delta: DayChange.percent(now.tokens.input, was?.tokens.input ?? null),
         worse: false,
       },
       {
         label: 'Read from cache',
-        value: DayChange.share(cacheNow),
+        value: Shares.percent(cacheNow),
         delta: DayChange.points(cacheNow, cacheWas),
         worse: cacheNow !== null && cacheWas !== null && cacheNow < cacheWas,
       },
     ];
-  }
-
-  static share(value: number | null): string {
-    if (value === null) return '—';
-    const percent = value * 100;
-    return `${percent < 10 && percent > 0 ? percent.toFixed(1) : Math.round(percent)}%`;
-  }
-
-  static compact(value: number | null): string {
-    if (value === null) return '—';
-    if (value < 1000) return String(value);
-    if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}k`;
-    return `${(value / 1_000_000).toFixed(1)}M`;
   }
 
   /** The change as a percentage of the day before; null without one to compare. */

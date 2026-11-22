@@ -2002,8 +2002,6 @@ export function bytes(value: number) {
         ? `${(value / 1048576).toFixed(1)} MiB`
         : `${(value / 1073741824).toFixed(2)} GiB`;
 }
-export const clock = (time: number) =>
-  new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 const providerNames: Record<Provider, string> = {
   anthropic: 'Anthropic',

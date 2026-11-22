@@ -100,12 +100,6 @@ test('the limit nearest its end is the one retention prunes for first', () => {
       ['no limit', null, false],
     ],
   );
-  assert.deepEqual([30 * 60_000, 5 * 3_600_000, 3.5 * DAY].map(RecorderReport.duration), [
-    '30 min',
-    '5 h',
-    '3.5 days',
-  ]);
-  assert.deepEqual([0, 0.002, 0.07].map(RecorderReport.percent), ['0%', '<1%', '7%']);
 });
 
 test('the queue, commit time and lag are toned by their own limits', () => {

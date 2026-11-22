@@ -5,8 +5,9 @@
   so.
 -->
 <script lang="ts">
+  import { Clock } from './time.ts';
   import Glyph from '#lib/Glyph.svelte';
-  import { clock, type CallId, type RecordingId } from '#lib/api.ts';
+  import { type CallId, type RecordingId } from '#lib/api.ts';
   import { CallTimeline } from '#lib/timeline.ts';
   import type { CallView } from '#lib/api.ts';
 
@@ -56,7 +57,7 @@
           <span class="mono muted count">{lane.bars.length}</span>
         </span>
         <svg class="lane-track" viewBox="0 0 100 10" preserveAspectRatio="none">
-          {#each lane.bars as bar (bar.call.id)}{@const said = `${CallTimeline.mark(bar.call).label} · ${clock(bar.call.started_at)}`}<a
+          {#each lane.bars as bar (bar.call.id)}{@const said = `${CallTimeline.mark(bar.call).label} · ${Clock.second(bar.call.started_at)}`}<a
               href={href(bar.call.id)}
               aria-label={said}
               onclick={(event) => oncall(event, bar.call.id)}
@@ -76,7 +77,7 @@
         +{timeline.folded}
       </p>{/if}
     <div class="ticks mono muted" aria-hidden="true">
-      {#each ticks as tick, index (index)}<span>{clock(tick)}</span>{/each}
+      {#each ticks as tick, index (index)}<span>{Clock.second(tick)}</span>{/each}
     </div>
   </div>
 </section>

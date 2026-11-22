@@ -1,20 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ago, DayChange, Failures, Providers, type FailureInput } from '../src/lib/overview.ts';
+import { DayChange, Failures, Providers, type FailureInput } from '../src/lib/overview.ts';
 import type { ModelUsage, UsageView } from '../src/lib/api.ts';
 import { callId, finishedFixture } from './fixtures.ts';
 
 const HOUR = 3_600_000;
 const NOW = 100 * HOUR;
 const at = (hoursAgo: number) => (NOW - hoursAgo * HOUR) as never;
-
-test('relative times', () => {
-  const now = 10_000_000;
-  assert.deepEqual(
-    [now, now - 30_000, now - 12 * 60_000, now - 3 * 3_600_000].map((t) => ago(t, now)),
-    ['just now', '30 s ago', '12 min ago', '3 h ago'],
-  );
-});
 
 const failures = (overrides: Partial<FailureInput>): FailureInput => ({
   now: NOW,

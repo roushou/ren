@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Clock, Elapsed } from '#lib/time.ts';
   import Toolbar from '#lib/Toolbar.svelte';
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
@@ -8,9 +9,9 @@
   import { goto } from '$app/navigation';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
-  import { clock, num, providerName, short } from '#lib/api.ts';
+  import { num, providerName, short } from '#lib/api.ts';
   import { turnHref } from '#lib/activity.ts';
-  import { compactOrDash, span } from '#lib/display.ts';
+  import { compactOrDash } from '#lib/display.ts';
   import type { Excerpt } from '#lib/api.ts';
   import { Steps } from '#lib/steps.ts';
   import {
@@ -21,7 +22,6 @@
     type BandSeries,
     type Density,
     Feed,
-    type FeedItem,
     type LiveWindow,
     type Tile,
     type ResultMark,
@@ -122,17 +122,11 @@
   const longer = $derived(LivePlace.longer(view.window));
   /** The recording whose line in the Now strip is under the pointer. */
   let highlighted = $state<string | null>(null);
-  /** How long ago a feed item happened, as short as it gets. */
-  function ago(item: FeedItem, now: number): string {
-    const seconds = Math.max(0, Math.round((now - item.at) / 1000));
-    if (seconds < 3) return 'now';
-    return seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)}m`;
-  }
   /** The rows view's columns: its header and its outline rows are drawn from them. */
   const rowColumns: Column[] = [
     { label: 'Session' },
     { label: 'Now' },
-    { label: `Last ${span(Board.laneMs)}`, class: 'lane-column' },
+    { label: `Last ${Elapsed.span(Board.laneMs)}`, class: 'lane-column' },
     { label: 'Latest', class: 'live-latest' },
     { label: 'Context', numeric: true },
   ];
@@ -167,11 +161,11 @@
     if (call.state !== 'open') return 'finished · reading';
     const state =
       call.status === null ? 'waiting for response' : thinking ? 'thinking' : 'responding';
-    return `${state} · ${span(now - call.started_at)}`;
+    return `${state} · ${Elapsed.span(now - call.started_at)}`;
   }
   function callLabel(call: TurnCall): string {
     const parts = [`call ${call.index ?? '—'}`];
-    if (call.durationMs !== null) parts.push(span(call.durationMs));
+    if (call.durationMs !== null) parts.push(Elapsed.span(call.durationMs));
     if (call.output !== null) parts.push(`out ${compactOrDash(call.output)}`);
     return parts.join(' · ');
   }
@@ -310,7 +304,7 @@
     viewBox="0 0 1000 10"
     preserveAspectRatio="none"
     role="img"
-    aria-label="Calls in the last {span(Board.laneMs)}"
+    aria-label="Calls in the last {Elapsed.span(Board.laneMs)}"
   >
     <line class="live-lane-base" x1="0" y1="5" x2="1000" y2="5" />
     {#each tile.lane as mark (mark.call.id)}
@@ -322,7 +316,7 @@
         width={Math.max(3, (mark.end - mark.start) * 1000)}
         height="8"
         ><title
-          >{mark.call.model ?? mark.call.endpoint} · {clock(mark.call.started_at)}{mark.open
+          >{mark.call.model ?? mark.call.endpoint} · {Clock.second(mark.call.started_at)}{mark.open
             ? ' · open'
             : ''}</title
         ></rect
@@ -444,7 +438,7 @@
       <section class="live-band" aria-label="Output tokens by {view.by}">
         <div class="live-band-main">
           <div class="live-band-head">
-            <span class="cap">Output tokens per second · last {span(Band.spanMs)}</span>
+            <span class="cap">Output tokens per second · last {Elapsed.span(Band.spanMs)}</span>
             <span class="live-band-rate mono">{rate(bandRate)}</span>
             <span class="meta"
               >tok/s now · peak {view.band === 'ribbon' ? band.ribbonMax : band.max}</span
@@ -514,7 +508,7 @@
           </div>
         </div>
         <div class="live-band-side">
-          <span class="cap">By {view.by} · last {span(Band.spanMs)}</span>
+          <span class="cap">By {view.by} · last {Elapsed.span(Band.spanMs)}</span>
           {#each band.series as series (series.key)}
             <a
               class="live-legend-row {series.swatch}"
@@ -545,7 +539,7 @@
       </section>
     {:else if band}
       <section class="live-band empty" aria-label="Output tokens">
-        <span class="mono">No output in the last {span(Band.spanMs)}</span>
+        <span class="mono">No output in the last {Elapsed.span(Band.spanMs)}</span>
       </section>
     {/if}
     <section class="live-now" aria-label="Now" aria-live="off">
@@ -564,13 +558,13 @@
             ><i></i>{#if item.recording}<b>{short(item.recording.native_id)}</b>{/if}<span
               >{item.text}</span
             >{#if item.detail}<span class="muted">{item.detail}</span>{/if}{#if !item.pinned}<span
-                class="live-now-age">{ago(item, labelAt)}</span
+                class="live-now-age">{Elapsed.ago(item.at, labelAt)}</span
               >{/if}</a
           >
         {:else}
           <span class="live-now-item calm"
-            ><Glyph mark="idle" label="Nothing in the last {span(Feed.calmMs)}" /><span class="mono"
-              >0 · {span(Feed.calmMs)}</span
+            ><Glyph mark="idle" label="Nothing in the last {Elapsed.span(Feed.calmMs)}" /><span
+              class="mono">0 · {Elapsed.span(Feed.calmMs)}</span
             ></span
           >
         {/each}

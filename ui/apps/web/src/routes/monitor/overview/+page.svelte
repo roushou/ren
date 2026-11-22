@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Elapsed } from '#lib/time.ts';
   /*
     Overview: is model traffic healthy, and what went wrong in the last day.
     Each provider with its failures by hour and what is left of its
@@ -13,9 +14,10 @@
   import { page } from '$app/state';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { ManagementApi, num, providerName, type CallId } from '#lib/api.ts';
-  import { span } from '#lib/display.ts';
+
   import { Board, LivePlace } from '#lib/board.ts';
-  import { ago, DayChange, Failures, Providers } from '#lib/overview.ts';
+  import { DayChange, Failures, Providers } from '#lib/overview.ts';
+  import { Shares } from '#lib/display.ts';
   import { Allowances, type Allowance } from '#lib/allowance.ts';
   import { harnessLabel, searchFieldLabel, secretKindLabel } from '#lib/activity.ts';
   import ConnectClient from '#lib/ConnectClient.svelte';
@@ -138,7 +140,7 @@
         >{/if}
     </span>
     {#if totals}<span class="meta ov-sum"
-        >{num(totals.calls)} calls · {num(totals.errors)} failed · {DayChange.share(
+        >{num(totals.calls)} calls · {num(totals.errors)} failed · {Shares.percent(
           totals.calls ? totals.errors / totals.calls : null,
         )}</span
       >{/if}
@@ -197,7 +199,7 @@
                     >{row.failed ? num(row.failed) : '—'}</span
                   >
                   <span class="num" class:bad={row.state !== 'healthy' && row.failed > 0}
-                    >{row.failed ? DayChange.share(row.rate) : '—'}</span
+                    >{row.failed ? Shares.percent(row.rate) : '—'}</span
                   >
                   <span class="ov-hours" aria-label="Failures by hour, oldest first">
                     {#each row.hours as count, index (index)}<span
@@ -220,7 +222,9 @@
                     {/if}
                   </span>
                   <span class="meta num" class:bad={row.state !== 'healthy'}
-                    >{row.last ? `${row.last.ending} · ${ago(row.last.at, now)}` : '—'}</span
+                    >{row.last
+                      ? `${row.last.ending} · ${Elapsed.ago(row.last.at, now)}`
+                      : '—'}</span
                   >
                 </a>
               {:else}
@@ -273,7 +277,7 @@
                       height="8.5"
                     />{/each}
                 </svg>
-                <span class="meta num">{ago(group.at, now)}</span>
+                <span class="meta num">{Elapsed.ago(group.at, now)}</span>
               </a>
             {:else}
               <p class="ov-none meta">No failures in the last 24 hours.</p>
@@ -295,7 +299,7 @@
                 >{board ? num(board.tiles.length + board.overflow) : '—'}</Figure
               >
               <Figure label="Since last call"
-                >{lastCall ? span(Math.max(0, now - lastCall)) : '—'}</Figure
+                >{lastCall ? Elapsed.span(Math.max(0, now - lastCall)) : '—'}</Figure
               >
             </Figures>
           </div>
@@ -310,7 +314,7 @@
                         class="meta ellipsis">{call.model ?? providerName(call.provider)}</span
                       ></span
                     >
-                    <span class="meta">{span(Math.max(0, now - call.started_at))}</span>
+                    <span class="meta">{Elapsed.span(Math.max(0, now - call.started_at))}</span>
                   </a>
                 </li>
               {/each}
@@ -338,7 +342,7 @@
                         ).toLowerCase()}</span
                       >
                     </span>
-                    <span class="meta">{ago(secret.started_at, now)}</span>
+                    <span class="meta">{Elapsed.ago(secret.started_at, now)}</span>
                   </a>
                 </li>
               {/each}

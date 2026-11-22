@@ -1,5 +1,6 @@
 // What turns did and where a recording's tokens went, as the views show them.
 // Pure: no browser, no fetching; tested in tests/activity.test.ts.
+import { Elapsed } from './time.ts';
 import type {
   CallId,
   EffectKind,
@@ -18,7 +19,7 @@ import type {
 } from './api.ts';
 import { title } from './api.ts';
 import { assertNever, unrecognised, type Stored } from './decode.ts';
-import { compact, span, type Tone as DisplayTone } from './display.ts';
+import { compact, type Tone as DisplayTone } from './display.ts';
 
 /** Activity is read from finished records, so it has no live tone. */
 export type Tone = Exclude<DisplayTone, 'live'>;
@@ -44,7 +45,9 @@ export function findingLine(finding: Finding): FindingLine {
         detail:
           `Wrote ${tokens(finding.cache_written_tokens)} to the cache and read ` +
           `${compact(finding.cache_read_tokens)} of an earlier ${tokens(finding.earlier_peak_tokens)}` +
-          (finding.idle_before_ms === null ? '.' : `, after ${span(finding.idle_before_ms)} idle.`),
+          (finding.idle_before_ms === null
+            ? '.'
+            : `, after ${Elapsed.span(finding.idle_before_ms)} idle.`),
         call: finding.call,
         turn: finding.turn,
       };

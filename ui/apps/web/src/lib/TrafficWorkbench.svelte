@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Clock, Elapsed } from './time.ts';
   import type { GatewayData } from '#lib/loaders.ts';
   import Glyph from '#lib/Glyph.svelte';
   import SlideOver from '#lib/layer/SlideOver.svelte';
@@ -16,7 +17,7 @@
   import SkeletonRows from './SkeletonRows.svelte';
   import { offPageSelection, type OffPageSelection, type TrafficData } from './loaders.ts';
   import { CallId, type CallView, type RecordingId } from './api.ts';
-  import { num, short, title, clock, providerName, providerMark } from './api.ts';
+  import { num, short, title, providerName, providerMark } from './api.ts';
   import {
     isActive,
     captureChip,
@@ -52,7 +53,6 @@
   import ContextChart from './ContextChart.svelte';
   import HoverCard from './layer/HoverCard.svelte';
   import { CallTimeline } from './timeline.ts';
-  import { Steps } from './steps.ts';
   import Select, { type SelectOption } from './Select.svelte';
   import Segmented, { type SegmentedOption } from './Segmented.svelte';
   import ConnectClient from './ConnectClient.svelte';
@@ -134,7 +134,7 @@
   const updated = $derived(retained?.updated ?? null);
   const today = date(Date.now());
   const liveStatus = $derived(
-    LiveFollow.summary(workbench.live, updated ? `Updated ${clock(updated)}` : null),
+    LiveFollow.summary(workbench.live, updated ? `Updated ${Clock.second(updated)}` : null),
   );
   const loading = $derived(workbench.manual || !!navigating.to);
   /** The daemon's per-body capture limit, to tell a trimmed body from lost bytes. */
@@ -293,7 +293,7 @@
     ...recordingChoices.map((choice) => ({
       value: choice.id,
       label: short(choice.native_id),
-      hint: `${providerName(choice.provider)} · ${date(choice.last_seen)} ${clock(choice.last_seen)}`,
+      hint: `${providerName(choice.provider)} · ${date(choice.last_seen)} ${Clock.second(choice.last_seen)}`,
     })),
   ]);
   const clientOptions: SegmentedOption<string>[] = [
@@ -652,7 +652,7 @@
                           mark="failed"
                           label={true}
                         />{/if}<span class="muted mono"
-                        >{group.rows.length} call{group.rows.length === 1 ? '' : 's'} · {clock(
+                        >{group.rows.length} call{group.rows.length === 1 ? '' : 's'} · {Clock.second(
                           group.rows[0]?.started_at ?? 0,
                         )}</span
                       ></th
@@ -668,7 +668,7 @@
                     onclick={(event) => selectRow(event, c.id)}
                   >
                     <td class="col-time mono" title={new Date(c.started_at).toLocaleString()}
-                      >{clock(c.started_at)}{#if date(c.started_at) !== today}<small
+                      >{Clock.second(c.started_at)}{#if date(c.started_at) !== today}<small
                           >{date(c.started_at)}</small
                         >{/if}</td
                     >
@@ -791,7 +791,7 @@
                                   ? 'warning'
                                   : 'muted'}
                             /></span
-                          >{/if}{took === null ? '' : Steps.time(took)}</span
+                          >{/if}{took === null ? '' : Elapsed.stopwatch(took)}</span
                       ></td
                     >
                     <td class="col-http numeric mono"

@@ -193,16 +193,6 @@ export class Steps {
       }));
   }
 
-  /** A step's time at a glance: tenths under ten seconds (`2.5 s`), whole
-   * seconds under a minute, then minutes and seconds (`1:04`). */
-  static time(ms: number): string {
-    const seconds = Math.max(0, ms) / 1000;
-    if (seconds < 10) return `${seconds.toFixed(1)} s`;
-    if (seconds < 60) return `${Math.round(seconds)} s`;
-    const whole = Math.round(seconds);
-    return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
-  }
-
   static #read(entry: StepEntry, workdir: string | null): Omit<Step, 'took' | 'span'> {
     switch (entry.kind) {
       case 'command':

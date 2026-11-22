@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Clock, Elapsed } from './time.ts';
   /*
     A session's head in Monitor, over its calls and over its report: where
     it sits (Sessions / its ID), what it is (its newest prompt), and its
@@ -7,7 +8,7 @@
   */
   import { short, providerName, type RecordingId, type RecordingView } from './api.ts';
   import { Board } from './board.ts';
-  import { span } from './display.ts';
+
   import type { RecordingDetail } from './recordings.ts';
   import RecordingActions from './RecordingActions.svelte';
   import { page } from '$app/state';
@@ -32,8 +33,6 @@
   const base = $derived(`/monitor/sessions/${encodeURIComponent(recordingId)}`);
   /** Seen this recently, the session reads as going on now. */
   const RECENT = 2 * 60_000;
-  const clock = (ms: number) =>
-    new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const title = $derived(
     detail?.prompt?.text.trim().split('\n')[0] ||
       (recording ? Board.clientName(Board.harness(recording.source)) : short(recordingId)),
@@ -45,8 +44,8 @@
       Board.clientName(Board.harness(recording.source)).toLowerCase(),
       providerName(recording.provider).toLowerCase(),
       ...(detail?.workdir ? [Board.folder(detail.workdir)] : []),
-      `${clock(recording.first_seen)} – ${live ? 'now' : clock(recording.last_seen)}`,
-      span((live ? now : recording.last_seen) - recording.first_seen),
+      `${Clock.minute(recording.first_seen)} – ${live ? 'now' : Clock.minute(recording.last_seen)}`,
+      Elapsed.span((live ? now : recording.last_seen) - recording.first_seen),
     ];
   });
 </script>

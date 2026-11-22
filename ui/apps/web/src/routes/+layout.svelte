@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Clock } from '#lib/time.ts';
   import Glyph from '#lib/Glyph.svelte';
   import { Marks } from '#lib/marks.ts';
   import { harnessLabel } from '#lib/activity.ts';
@@ -14,7 +15,7 @@
   import { createArrival, createSettled } from '#lib/snapshot.svelte.ts';
   import { Workbench, setWorkbench } from '#lib/workbench.svelte.ts';
   import { LiveConnection } from '#lib/live.svelte.ts';
-  import { ManagementApi, clock } from '#lib/api.ts';
+  import { ManagementApi } from '#lib/api.ts';
   import type { SnapshotError } from '#lib/snapshots.ts';
   import Icon, { type IconName } from '#lib/Icon.svelte';
   import ThemeControl from '#lib/ThemeControl.svelte';
@@ -524,7 +525,7 @@
         {#if strip.kind === 'unreachable'}<Glyph mark="failed" /><span
             ><b>Ren isn't answering.</b>
             {strip.readAt
-              ? `Showing what was read at ${clock(strip.readAt)}.`
+              ? `Showing what was read at ${Clock.second(strip.readAt)}.`
               : 'Nothing has been read yet.'}</span
           ><span class="strip-acts"
             >{#if loading}<span class="muted mono">retrying…</span>{/if}<button

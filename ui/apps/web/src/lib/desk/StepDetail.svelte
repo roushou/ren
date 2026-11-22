@@ -5,6 +5,7 @@
   ↑ and ↓ move to the conversation's step before or after.
 -->
 <script lang="ts">
+  import { Elapsed } from '#lib/time.ts';
   import Glyph from '#lib/Glyph.svelte';
   import Icon from '#lib/Icon.svelte';
   import { Steps, type Step } from '#lib/steps.ts';
@@ -54,7 +55,7 @@
       {[
         place ? `step ${place.index} of ${place.of}` : null,
         step.failure,
-        step.took === null ? null : Steps.time(step.took),
+        step.took === null ? null : Elapsed.stopwatch(step.took),
       ]
         .filter((part) => part !== null)
         .join(' · ')}

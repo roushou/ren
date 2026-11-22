@@ -1,4 +1,5 @@
-import { clock, harnesses, type CallId, type CallView } from './api.ts';
+import { Clock } from './time.ts';
+import { harnesses, type CallId, type CallView } from './api.ts';
 import { harnessLabel } from './activity.ts';
 import { changed, picked, type Query } from './query.ts';
 import type { RawCallQuery } from './wire/RawCallQuery.ts';
@@ -188,7 +189,7 @@ export function turnGroups(calls: CallView[]): TurnGroup[] {
       // first call, which is unique.
       id: `${key ?? 'outside'}-${call.id}`,
       // A turn is named by when it started: its first call here.
-      label: key ? `Turn · ${clock(call.started_at)}` : 'Outside a turn',
+      label: key ? `Turn · ${Clock.second(call.started_at)}` : 'Outside a turn',
       turn: key,
       rows: [call],
     });

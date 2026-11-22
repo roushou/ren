@@ -7,6 +7,7 @@
   the others away.
 -->
 <script lang="ts">
+  import { Clock, Elapsed } from '#lib/time.ts';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import Glyph from '#lib/Glyph.svelte';
@@ -17,9 +18,9 @@
   import Toolbar from '#lib/Toolbar.svelte';
   import ApprovalModal from '#lib/ApprovalModal.svelte';
   import { ApprovalAnswers } from '#lib/approvals.svelte.ts';
-  import { ManagementApi, clock, type UsageCounts } from '#lib/api.ts';
+  import { ManagementApi, type UsageCounts } from '#lib/api.ts';
   import { harnessLabel } from '#lib/activity.ts';
-  import { compactOrDash } from '#lib/display.ts';
+  import { Shares, compactOrDash } from '#lib/display.ts';
   import { Home } from '#lib/home.ts';
   import { ProjectBoard } from '#lib/projects.ts';
   import { RecorderReport } from '#lib/recorder.ts';
@@ -119,7 +120,7 @@
     const query = new URLSearchParams({ new: '1', prompt: text });
     void goto(`${Sessions.deskHref(target)}?${query}`);
   }
-  const age = (at: number | null) => (at === null ? '' : Sessions.age(at, now));
+  const age = (at: number | null) => (at === null ? '' : Elapsed.ago(at, now));
 </script>
 
 <Toolbar />
@@ -212,7 +213,7 @@
             <article class="card">
               <Glyph mark="warning" label="Needs a look" />
               <div class="body">
-                <strong>Recorder storage is at {RecorderReport.percent(crowded.share ?? 0)}</strong>
+                <strong>Recorder storage is at {Shares.percent(crowded.share ?? 0)}</strong>
                 <span class="from muted"
                   >System · {crowded.used} of {crowded.limit} · the oldest calls go first at the limit</span
                 >
@@ -350,7 +351,7 @@
             <Glyph mark={one.mark} label={one.happened} />
             <span class="title">{one.title}</span>
             <span class="chip mono">{one.project ?? 'Scratch'}</span>
-            <span class="muted mono when" title={clock(one.at)}>{age(one.at)}</span>
+            <span class="muted mono when" title={Clock.second(one.at)}>{age(one.at)}</span>
           </svelte:element>
         {:else}
           <p class="quiet muted">Nothing ended or moved on since then.</p>

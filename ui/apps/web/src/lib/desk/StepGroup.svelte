@@ -8,6 +8,7 @@
   operator opens the group; it never opens itself.
 -->
 <script lang="ts">
+  import { Elapsed } from '#lib/time.ts';
   import Meter from '../Meter.svelte';
   import Glyph from '#lib/Glyph.svelte';
   import Icon from '#lib/Icon.svelte';
@@ -67,7 +68,7 @@
       {#if passed}<span class="count"><Glyph mark="passed" label={`${passed} done`} />{passed}</span
         >{/if}
     </span>
-    <span class="time mono muted">{took === null ? '' : Steps.time(took)}</span>
+    <span class="time mono muted">{took === null ? '' : Elapsed.stopwatch(took)}</span>
   </button>
   {#if open}
     <ol class="step-list">
@@ -110,7 +111,9 @@
                     : 'muted'}
               /></span
             >
-            <span class="time mono muted">{step.took === null ? '' : Steps.time(step.took)}</span>
+            <span class="time mono muted"
+              >{step.took === null ? '' : Elapsed.stopwatch(step.took)}</span
+            >
           </button>
         </li>
       {/each}

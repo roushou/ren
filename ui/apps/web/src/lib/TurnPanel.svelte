@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Clock, Elapsed } from './time.ts';
   import Figures from './Figures.svelte';
   import Figure from './Figure.svelte';
   /*
@@ -8,7 +9,7 @@
     report, and the turn's own page.
   */
   import { ManagementApi, type TurnActivity, type TurnId, type TurnMetrics } from './api.ts';
-  import { compact, span } from './display.ts';
+  import { compact } from './display.ts';
   import { findingLine } from './activity.ts';
   import Glyph from './Glyph.svelte';
   import Icon from './Icon.svelte';
@@ -40,8 +41,6 @@
   const activity = $derived(read && read.turn === turn ? read.activity : null);
   const pending = $derived(!read || read.turn !== turn);
 
-  const clock = (ms: number) =>
-    new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const title = $derived(activity?.prompt?.text.trim().split('\n')[0] ?? 'Turn');
   const files = $derived(
     activity
@@ -62,12 +61,12 @@
   <header>
     <h2>{title}</h2>
     <p class="meta">
-      {#if metrics}{clock(metrics.started_at)}{metrics.ended_at
-          ? ` – ${clock(metrics.ended_at)}`
+      {#if metrics}{Clock.minute(metrics.started_at)}{metrics.ended_at
+          ? ` – ${Clock.minute(metrics.ended_at)}`
           : ' – now'} · {metrics.call_count} call{metrics.call_count === 1
           ? ''
           : 's'}{#if metrics.idle_before_ms}{' '}·
-          <Glyph mark="idle" label="idle" />{span(metrics.idle_before_ms)} before{/if}{/if}
+          <Glyph mark="idle" label="idle" />{Elapsed.span(metrics.idle_before_ms)} before{/if}{/if}
     </p>
   </header>
 

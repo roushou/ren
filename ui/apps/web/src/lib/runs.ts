@@ -2337,30 +2337,6 @@ export class Sessions {
     };
   }
 
-  /** How long ago a session was active, at a glance: `now`, minutes,
-   * hours, then the weekday within the week, then the date (`day` names
-   * a day; it is the browser's locale in the view). */
-  static age(
-    at: number,
-    now: number,
-    day: (ms: number) => string = (ms) => Sessions.#day(ms, now),
-  ): string {
-    const minutes = Math.floor(Math.max(0, now - at) / 60_000);
-    if (minutes < 1) return 'now';
-    if (minutes < 60) return `${minutes}m`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h`;
-    return day(at);
-  }
-
-  static #day(ms: number, now: number): string {
-    const within = now - ms < 6 * 86_400_000;
-    return new Date(ms).toLocaleDateString(
-      [],
-      within ? { weekday: 'short' } : { month: 'short', day: 'numeric' },
-    );
-  }
-
   /** Whether the session's process is running now. */
   static running(session: DeskSession): boolean {
     return session.state !== null && !['ended', 'unrecognized'].includes(session.state.phase);
