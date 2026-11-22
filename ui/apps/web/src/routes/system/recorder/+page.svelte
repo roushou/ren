@@ -6,6 +6,7 @@
   import { RecorderReport } from '#lib/recorder.ts';
   import { Marks } from '#lib/marks.ts';
   import Glyph from '#lib/Glyph.svelte';
+  import Meter, { type MeterTone } from '#lib/Meter.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
@@ -42,9 +43,11 @@
   /** The limits' gauges, labelled, for their outline. */
   const gaugeOutline = $derived(RecorderReport.gauges(null, policy ?? null, null, Date.now()));
   const verdict = $derived(report?.verdict ?? null);
-  /** The share of a queue limit in use, for its meter. */
-  const share = (used: number, capacity: number) =>
-    capacity > 0 ? Math.min(1, used / capacity) : 0;
+  /** A capacity's meter: its own colour while fine, else how it stands. */
+  const fullnessTone = (share: number): MeterTone => {
+    const fullness = RecorderReport.fullness(share);
+    return fullness === 'fine' ? 'chart' : fullness;
+  };
   const free = (file: FileUsage) => file.freelist_count * file.page_size;
   const ratio = (numerator: number, denominator: number) =>
     denominator > 0 ? `${(numerator / denominator).toFixed(2)}×` : '—';
@@ -74,17 +77,7 @@
         <div class="rec-indicator {one.tone}">
           <span class="cap">{one.label}</span>
           <span class="value mono"><Glyph mark={Marks.ofTone(one.tone)} />{one.value}</span>
-          {#if one.share !== null}<svg
-              class="meter"
-              viewBox="0 0 100 4"
-              preserveAspectRatio="none"
-              aria-hidden="true"
-              ><rect class="track" width="100" height="4" /><rect
-                class="fill"
-                width={Math.max(one.share * 100, one.share > 0 ? 2 : 0)}
-                height="4"
-              /></svg
-            >{/if}
+          {#if one.share !== null}<Meter share={one.share} tone={one.tone} least={0.02} />{/if}
         </div>
       {/each}
       {#if usage}
@@ -101,9 +94,7 @@
         <div class="rec-gauge">
           <div class="rec-gauge-head"><span>{gauge.label}</span></div>
           <div class="mono rec-gauge-value"><Skeleton size="figure" width="9em" /></div>
-          <svg class="rec-meter" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"
-            ><rect class="track" x="0" y="0" width="100" height="6" /></svg
-          >
+          <Meter share={0} size="bar" />
         </div>
       {/each}
     </section>
@@ -124,23 +115,7 @@
           <div class="mono rec-gauge-value">
             <strong>{gauge.used}</strong> <span class="muted">of {gauge.limit}</span>
           </div>
-          <svg class="rec-meter" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"
-            ><rect
-              class="track"
-              x="0"
-              y="0"
-              width="100"
-              height="6"
-            />{#if gauge.share !== null}<rect
-                class="fill"
-                class:high={gauge.share >= 0.9}
-                class:mid={gauge.share >= 0.7 && gauge.share < 0.9}
-                x="0"
-                y="0"
-                height="6"
-                width={Math.min(1, gauge.share) * 100}
-              />{/if}</svg
-          >
+          <Meter share={gauge.share ?? 0} size="bar" tone={fullnessTone(gauge.share ?? 0)} />
         </div>
       {/each}
     </section>
@@ -302,22 +277,12 @@
           {#each [{ label: 'Records', used: recorder.queue.items, capacity: recorder.queue.capacity, text: `${num(recorder.queue.items)} / ${num(recorder.queue.capacity)}` }, { label: 'Bytes', used: recorder.queue.bytes, capacity: recorder.queue.byte_capacity, text: `${bytes(recorder.queue.bytes)} / ${bytes(recorder.queue.byte_capacity)}` }] as meter (meter.label)}
             <div class="queue">
               <span>{meter.label}</span><span class="mono">{meter.text}</span>
-              <svg
-                class="rec-meter"
-                viewBox="0 0 100 6"
-                preserveAspectRatio="none"
-                aria-hidden="true"
-                ><rect class="track" x="0" y="0" width="100" height="6" /><rect
-                  class="fill"
-                  class:high={share(meter.used, meter.capacity) >= 0.9}
-                  class:mid={share(meter.used, meter.capacity) >= 0.7 &&
-                    share(meter.used, meter.capacity) < 0.9}
-                  x="0"
-                  y="0"
-                  height="6"
-                  width={Math.max(0.5, share(meter.used, meter.capacity) * 100)}
-                /></svg
-              >
+              <Meter
+                share={meter.capacity > 0 ? meter.used / meter.capacity : 0}
+                size="bar"
+                least={0.005}
+                tone={fullnessTone(meter.capacity > 0 ? meter.used / meter.capacity : 0)}
+              />
             </div>
           {/each}
         {:else}<Skeleton width="100%" />{/if}
@@ -492,16 +457,6 @@
   .rec-indicator.error .value {
     color: var(--tone);
   }
-  .rec-indicator .meter {
-    width: 100%;
-    height: 4px;
-  }
-  .rec-indicator .meter .track {
-    fill: var(--surface-inset);
-  }
-  .rec-indicator .meter .fill {
-    fill: var(--tone);
-  }
   .rec-verdict.error {
     --state: var(--error);
   }
@@ -556,23 +511,6 @@
   .rec-gauge-value strong {
     font-size: 18px;
     font-weight: 500;
-  }
-  .rec-meter {
-    display: block;
-    width: 100%;
-    height: 6px;
-  }
-  .rec-meter .track {
-    fill: var(--line);
-  }
-  .rec-meter .fill {
-    fill: var(--chart);
-  }
-  .rec-meter .fill.mid {
-    fill: var(--warning);
-  }
-  .rec-meter .fill.high {
-    fill: var(--error);
   }
   .rec-note strong {
     font-weight: 500;
@@ -689,7 +627,7 @@
     margin-bottom: 10px;
     font-size: 12.5px;
   }
-  .queue .rec-meter {
+  .queue :global(.meter) {
     grid-column: 1 / -1;
   }
   .commit-scale {

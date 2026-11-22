@@ -17,6 +17,7 @@
   import UsageChart from '#lib/UsageChart.svelte';
   import Icon from '#lib/Icon.svelte';
   import Glyph from '#lib/Glyph.svelte';
+  import Meter from '#lib/Meter.svelte';
   import RecordingName from '#lib/RecordingName.svelte';
   import Segmented, { type SegmentedOption } from '#lib/Segmented.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
@@ -214,16 +215,8 @@
                     totals?.tokens.input ?? null,
                   )}{/if}</strong
               ><small class="sub" title="Read from cache"
-                >{#if pending}<Skeleton width="8em" />{:else if share === null}—{:else}<svg
-                    class="meter"
-                    viewBox="0 0 100 4"
-                    preserveAspectRatio="none"
-                    aria-hidden="true"
-                    ><rect class="track" width="100" height="4" /><rect
-                      class="fill cached"
-                      width={share * 100}
-                      height="4"
-                    /></svg
+                >{#if pending}<Skeleton width="8em" />{:else if share === null}—{:else}<span
+                    class="sub-meter"><Meter {share} tone="cache" /></span
                   >{Math.round(share * 100)}%{/if}</small
               >
             </div>
@@ -308,16 +301,8 @@
                         >{providerMark(model.provider)}</span
                       ><span class="model-name">{model.model ?? 'No model reported'}</span></span
                     >
-                    <svg
-                      class="usage-meter"
-                      viewBox="0 0 100 4"
-                      preserveAspectRatio="none"
-                      aria-hidden="true"
-                      ><rect class="usage-meter-track" width="100" height="4" /><rect
-                        class="usage-bar"
-                        width={(100 * (model.tokens.input ?? 0)) / topModelInput}
-                        height="4"
-                      /></svg
+                    <span class="model-meter"
+                      ><Meter share={(model.tokens.input ?? 0) / topModelInput} /></span
                     >
                   </td>
                   <td class="mono numeric">{num(model.calls)}</td>
@@ -525,5 +510,13 @@
   .chart-outline {
     height: 224px;
     padding: 12px;
+  }
+  .sub-meter {
+    display: inline-block;
+    width: 64px;
+  }
+  .model-meter {
+    display: block;
+    margin-top: 5px;
   }
 </style>

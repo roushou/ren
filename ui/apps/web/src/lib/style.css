@@ -2012,16 +2012,6 @@ td.zero {
   align-items: center;
   gap: 5px;
 }
-.usage-tile > small.sub .meter {
-  width: 64px;
-  height: 4px;
-}
-.usage-tile > small.sub .meter .track {
-  fill: var(--surface-inset);
-}
-.usage-tile > small.sub .meter .fill {
-  fill: var(--cache-read);
-}
 .usage-panel {
   min-width: 0;
   background: var(--surface);
@@ -2135,15 +2125,6 @@ td.zero {
 .usage-table td.numeric,
 .usage-table th.numeric {
   text-align: right;
-}
-.usage-meter {
-  display: block;
-  width: 100%;
-  height: 4px;
-  margin-top: 5px;
-}
-.usage-meter-track {
-  fill: var(--surface-inset);
 }
 .usage-list .row-link {
   display: inline-flex;

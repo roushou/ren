@@ -26,6 +26,7 @@
 </script>
 
 <script lang="ts">
+  import Meter from '../Meter.svelte';
   import Glyph from '#lib/Glyph.svelte';
   import Icon from '#lib/Icon.svelte';
   import type { ItemId } from '#lib/runs.ts';
@@ -116,20 +117,16 @@
               >
             </span>
             <span class="outcome">{@render outcome(step)}</span>
-            <svg class="track" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"
-              ><rect
-                class="whole"
-                x="0"
-                y="0"
-                width="100"
-                height="4"
-              />{#if step.took !== null && longest > 0}<rect
-                  class="share state-{step.state}"
-                  x="0"
-                  y="0"
-                  height="4"
-                  width={Math.max(2, (step.took / longest) * 100)}
-                />{/if}</svg
+            <span class="track"
+              ><Meter
+                share={step.took !== null && longest > 0 ? step.took / longest : 0}
+                least={0.02}
+                tone={step.state === 'failed'
+                  ? 'error'
+                  : step.state === 'running'
+                    ? 'live'
+                    : 'muted'}
+              /></span
             >
             <span class="time mono muted">{step.took === null ? '' : Steps.time(step.took)}</span>
           </button>
@@ -279,20 +276,9 @@
     justify-content: center;
   }
   .track {
+    display: block;
     width: 100%;
-    height: 4px;
-  }
-  .whole {
-    fill: var(--line);
-  }
-  .share {
-    fill: var(--muted);
-  }
-  .share.state-failed {
-    fill: var(--error);
-  }
-  .share.state-running {
-    fill: var(--live);
+    --meter-track: var(--line);
   }
   @media (max-width: 760px) {
     .steps {

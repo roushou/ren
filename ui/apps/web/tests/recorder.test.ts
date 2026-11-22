@@ -121,3 +121,9 @@ test('the queue, commit time and lag are toned by their own limits', () => {
   assert.equal(tones.commit, 'warning');
   assert.equal(tones.lag, 'error');
 });
+
+test('fullness reads a share against the queue limits', () => {
+  assert.equal(RecorderReport.fullness(0.5), 'fine');
+  assert.equal(RecorderReport.fullness(RecorderReport.QUEUE_WARN), 'warning');
+  assert.equal(RecorderReport.fullness(0.95), 'error');
+});

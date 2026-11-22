@@ -10,6 +10,7 @@
   import { getWorkbench } from './workbench.svelte.ts';
   import { createArrival } from './snapshot.svelte.ts';
   import { Arrival, type Arriving } from './arrival.ts';
+  import Meter from './Meter.svelte';
   import type { Column } from './columns.ts';
   import SkeletonRows from './SkeletonRows.svelte';
   import { offPageSelection, type OffPageSelection, type TrafficData } from './loaders.ts';
@@ -770,12 +771,8 @@
                           title="{context.tokens.toLocaleString()} tokens of prompt, {Math.round(
                             context.cached * 100,
                           )}% read from the cache"
-                          ><svg class="meter" viewBox="0 0 100 4" preserveAspectRatio="none"
-                            ><rect class="meter-whole" width="100" height="4" /><rect
-                              class="meter-cached"
-                              width={context.cached * 100}
-                              height="4"
-                            /></svg
+                          ><span class="cell-meter"
+                            ><Meter share={context.cached} tone="success" /></span
                           >{compactOrDash(context.tokens)}</span
                         >{:else}<span class="muted">—</span>{/if}</td
                     >
@@ -784,15 +781,16 @@
                     >
                     <td class="col-duration numeric mono"
                       ><span class="figure"
-                        >{#if took !== null && longest > 0}<svg
-                            class="meter"
-                            viewBox="0 0 100 4"
-                            preserveAspectRatio="none"
-                            ><rect class="meter-whole" width="100" height="4" /><rect
-                              class="meter-took state-{said.mark}"
-                              width={Math.max(2, (took / longest) * 100)}
-                              height="4"
-                            /></svg
+                        >{#if took !== null && longest > 0}<span class="cell-meter"
+                            ><Meter
+                              share={took / longest}
+                              least={0.02}
+                              tone={said.mark === 'failed'
+                                ? 'error'
+                                : said.mark === 'warning' || said.mark === 'unknown'
+                                  ? 'warning'
+                                  : 'muted'}
+                            /></span
                           >{/if}{took === null ? '' : Steps.time(took)}</span
                       ></td
                     >
@@ -1011,27 +1009,6 @@
     gap: 6px;
     width: 100%;
   }
-  .meter {
-    flex: 1;
-    max-width: 52px;
-    height: 4px;
-  }
-  .meter-whole {
-    fill: var(--line);
-  }
-  .meter-cached {
-    fill: var(--success);
-  }
-  .meter-took {
-    fill: var(--muted);
-  }
-  .meter-took.state-failed {
-    fill: var(--error);
-  }
-  .meter-took.state-warning,
-  .meter-took.state-unknown {
-    fill: var(--warning);
-  }
   @media (max-width: 960px) {
     .calls-table .col-tools,
     .calls-table .col-out,
@@ -1044,5 +1021,10 @@
     .calls-table .col-model {
       display: none;
     }
+  }
+  .cell-meter {
+    flex: 1;
+    max-width: 52px;
+    --meter-track: var(--line);
   }
 </style>

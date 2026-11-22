@@ -14,6 +14,9 @@ export interface Allowance {
 }
 
 export class Allowances {
+  /** Less than this share of a limit left needs a look. */
+  static readonly LOW = 0.2;
+
   /** The tightest limit the headers state; null when they state none. */
   static read(headers: readonly LimitHeader[]): Allowance | null {
     return Allowances.all(headers).reduce<Allowance | null>(

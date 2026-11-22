@@ -122,6 +122,14 @@ export class RecorderReport {
   /** Queue use past these shares needs a look, then is trouble. */
   static readonly QUEUE_WARN = 0.7;
   static readonly QUEUE_ERROR = 0.9;
+
+  /** How full something with a capacity is: fine, past the queue's warning
+   * share, or past its error share. Retention limits read the same way. */
+  static fullness(share: number): 'fine' | 'warning' | 'error' {
+    if (share >= RecorderReport.QUEUE_ERROR) return 'error';
+    if (share >= RecorderReport.QUEUE_WARN) return 'warning';
+    return 'fine';
+  }
   /** A commit slower than these, in ms, needs a look, then is trouble. */
   static readonly COMMIT_WARN_MS = 250;
   static readonly COMMIT_ERROR_MS = 1000;

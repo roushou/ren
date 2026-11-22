@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Meter from './Meter.svelte';
   import type { GatewayData } from '#lib/loaders.ts';
   import { Arrival } from '#lib/arrival.ts';
   import { Allowances } from './allowance.ts';
@@ -339,14 +340,11 @@
             <div class="allowances">
               {#each allowances as allowance (allowance.name)}
                 <span class="allowance-name">{allowance.name}</span>
-                <svg viewBox="0 0 100 1" preserveAspectRatio="none" aria-hidden="true"
-                  ><rect class="track" width="100" height="1" /><rect
-                    class="left"
-                    class:low={allowance.left < 0.2}
-                    width={allowance.left * 100}
-                    height="1"
-                  /></svg
-                >
+                <Meter
+                  share={allowance.left}
+                  size="bar"
+                  tone={allowance.left < Allowances.LOW ? 'warning' : 'success'}
+                />
                 <span class="mono allowance-text">{allowance.text}</span>
               {/each}
             </div>
@@ -584,19 +582,6 @@
     align-items: center;
     margin-bottom: 10px;
     font-size: 12px;
-  }
-  .allowances svg {
-    width: 100%;
-    height: 6px;
-  }
-  .allowances .track {
-    fill: var(--surface-inset);
-  }
-  .allowances .left {
-    fill: var(--success);
-  }
-  .allowances .left.low {
-    fill: var(--warning);
   }
   .allowance-name::first-letter {
     text-transform: uppercase;

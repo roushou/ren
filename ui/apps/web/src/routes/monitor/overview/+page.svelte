@@ -20,6 +20,7 @@
   import { harnessLabel, searchFieldLabel, secretKindLabel } from '#lib/activity.ts';
   import ConnectClient from '#lib/ConnectClient.svelte';
   import Glyph from '#lib/Glyph.svelte';
+  import Meter from '#lib/Meter.svelte';
   import Figures from '#lib/Figures.svelte';
   import Figure from '#lib/Figure.svelte';
   import Icon from '#lib/Icon.svelte';
@@ -208,15 +209,11 @@
                     {#if allowance === 'reading'}
                       <Skeleton width="9em" />
                     {:else if allowance}
-                      <svg viewBox="0 0 100 1" preserveAspectRatio="none" aria-hidden="true">
-                        <rect class="track" width="100" height="1" />
-                        <rect
-                          class:low={allowance.left < 0.2}
-                          class="left"
-                          width={allowance.left * 100}
-                          height="1"
-                        />
-                      </svg>
+                      <Meter
+                        share={allowance.left}
+                        size="thin"
+                        tone={allowance.left < Allowances.LOW ? 'warning' : 'success'}
+                      />
                       <span class="meta">{allowance.text}</span>
                     {:else}
                       <span class="meta">not reported</span>
@@ -481,19 +478,6 @@
     flex-direction: column;
     gap: 3px;
     min-width: 0;
-  }
-  .ov-allowance svg {
-    width: 100%;
-    height: 4px;
-  }
-  .ov-allowance .track {
-    fill: var(--surface-inset);
-  }
-  .ov-allowance .left {
-    fill: var(--success);
-  }
-  .ov-allowance .left.low {
-    fill: var(--warning);
   }
   .ov-failure {
     display: grid;
