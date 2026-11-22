@@ -797,7 +797,7 @@ directly.
 | Crate                                      | Primary type                                        | Depends on        |
 | ------------------------------------------ | --------------------------------------------------- | ----------------- |
 | `ren-protocol`                             | `CallInspector`                                     | none of ours      |
-| `ren-depot`                                | `Depot`, with its `ProgramHost` port                   | none of ours      |
+| `ren-depot`                                | `Depot`, with its `ProgramHost` port                | none of ours      |
 | `ren-git`                                  | `Git`                                               | none of ours      |
 | `ren-release`                              | `Release`                                           | protocol          |
 | `ren-github`                               | `Client`                                            | none of ours      |

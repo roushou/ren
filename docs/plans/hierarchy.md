@@ -28,7 +28,7 @@ the data. It is never invented in the view.
 | Ren's release         | `<data>/release.json`, written by `cargo xtask canary`    | nothing: there is one                                                                   |
 | A project's release   | `<data>/projects/<folder>/release.json`, by `ren project` | a repository's folder name                                                              |
 | A project's contract  | `.ren/project.toml` in its repository                     | the repository                                                                          |
-| Package set               | `<data>/tools`                                            | the host                                                                                |
+| Package set           | `<data>/tools`                                            | the host                                                                                |
 
 So the links that exist are **run → session** and **work item → session**,
 and **call → run** through the client's conversation. Nothing points up from
