@@ -7,7 +7,7 @@ use crate::{
     host::HostEnv,
     opencode::{OpenCodeAcp, OpenCodeModels},
     pi::{PiCache, PiCacheError, PiModels, PiRpc},
-    profile::{ClientProfile, DefaultModel, LaunchNotice, TokenCarrier},
+    profile::{ClientProfile, DefaultModel, HomeEntry, LaunchNotice, TokenCarrier},
 };
 use ren_depot::package::Requirement;
 use serde::Serialize;
@@ -111,6 +111,9 @@ pub struct LaunchPlan {
     /// What Ren tells the operator when it runs the client itself.
     #[serde(skip)]
     notices: &'static [LaunchNotice],
+    /// What the client keeps under the home, which a run of it must see.
+    #[serde(skip)]
+    keeps: &'static [HomeEntry],
 }
 
 impl Harness {
@@ -233,6 +236,7 @@ impl LaunchPlan {
             environment,
             token: profile.token,
             notices: profile.notices,
+            keeps: profile.keeps,
         }
     }
 
@@ -245,7 +249,14 @@ impl LaunchPlan {
             environment: BTreeMap::new(),
             token: TokenCarrier::None,
             notices: &[],
+            keeps: &[],
         }
+    }
+
+    /// What the client keeps under the home: its sign-in, settings, and
+    /// sessions. None for a program that is not a client's run.
+    pub fn keeps(&self) -> &'static [HomeEntry] {
+        self.keeps
     }
 
     /// The plan with `token` sent to the gateway on every request. Claude

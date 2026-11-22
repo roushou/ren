@@ -10,7 +10,7 @@ use super::OpenCodeTool;
 use crate::{
     attachment::{Delivery, Takes},
     launch::LaunchPlan,
-    profile::{ClientProfile, DefaultModel, LaunchNotice, TokenCarrier, sign_ins},
+    profile::{ClientProfile, DefaultModel, HomeEntry, LaunchNotice, TokenCarrier, sign_ins},
     settings::{ApprovalPolicy, Midway},
 };
 use ren_depot::package::PackageId;
@@ -45,6 +45,11 @@ impl ClientProfile {
             OpenaiApiKey => Terminal, EnterKey, || LaunchPlan::opencode_auth_login("openai", "key");
         },
         login_prompt: None,
+        keeps: &[
+            HomeEntry::new(".config/opencode"),
+            HomeEntry::new(".local/share/opencode"),
+            HomeEntry::new(".local/state/opencode"),
+        ],
         user_context: OpenCodeTool::CONTEXT,
     };
 }

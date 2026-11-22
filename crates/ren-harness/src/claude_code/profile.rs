@@ -8,7 +8,7 @@ use super::{ClaudeAuth, ClaudeCodeTool};
 use crate::{
     attachment::{Delivery, Takes},
     launch::LaunchPlan,
-    profile::{ClientProfile, DefaultModel, TokenCarrier, sign_ins},
+    profile::{ClientProfile, DefaultModel, HomeEntry, TokenCarrier, sign_ins},
     settings::{ApprovalPolicy, Midway},
 };
 use ren_depot::package::PackageId;
@@ -30,6 +30,7 @@ impl ClientProfile {
             AnthropicConsole => Pipes, PasteCode, || LaunchPlan::claude_auth_login("--console");
         },
         login_prompt: Some(ClaudeAuth::PROMPT),
+        keeps: &[HomeEntry::new(".claude"), HomeEntry::new(".claude.json")],
         user_context: ClaudeCodeTool::CONTEXT,
     };
 }
