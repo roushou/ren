@@ -184,7 +184,7 @@
       };
     return null;
   });
-  /** The project an Inspect page is narrowed to, when it can be. */
+  /** The project a Monitor page is narrowed to, when it can be. */
   const scope = $derived(Views.scoped(tab) ? page.url.searchParams.get('project') : null);
   /** The same page, for every project. */
   const unscoped = $derived.by(() => {

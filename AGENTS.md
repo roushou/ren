@@ -686,10 +686,15 @@ dependencies under "Crates" below. Read the code for current module ownership.
   server, with the browser's Tailscale login and never its cookies, so the
   page renders as it will stay. The desk (`src/lib/desk/SessionDesk.svelte`)
   is one component held by a project's Sessions page
-  (`src/routes/projects/[name]/sessions`) and by Scratch (`src/routes/scratch`),
-  each with its scope (`SessionScope`: a project's sessions, or those of no
-  project). The old `/work` and `/sessions` addresses lead to where an item or
-  session now is (`src/lib/server/oldAddress.ts`).
+  (`src/routes/projects/[name]/sessions/[[session]]`) and by Scratch
+  (`src/routes/scratch/[[session]]`), each with its scope (`SessionScope`: a
+  project's sessions, or those of no project). `src/lib/view.ts` is the
+  navigation's pure core (`Views`: which place and page a route is, and each
+  place's pages), `src/lib/layer/` the overlays (hover card, popover,
+  slide-over, floating bar, modal, toasts, the ⌘K palette), `src/lib/marks.ts`
+  the glyphs states are drawn with, and `src/lib/arrival.ts` how a page's
+  read arrives (`Arrival`: within a grace period, or pending while the page
+  draws its outline or the newest read the browser kept).
 - `ui/packages/redline`: Redline, a Bun workspace package of the UI with
   `Redline` as its primary type (`src/redline.ts`: what a mark points at,
   and the Markdown brief its marks make, with the lines a host adds as a

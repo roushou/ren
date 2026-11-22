@@ -1,7 +1,7 @@
 # Plan: hierarchy
 
 Ren's domain has no hierarchy, so its UI has none either. The topbar has 11
-links (Overview, Live, Sessions, Traffic, Recordings (now Monitor's Sessions), Search, Usage, Tools,
+links (Overview, Live, Sessions, Traffic, Recordings, Search, Usage, Tools,
 Work, Release, Recorder), each a flat list of one kind of record, because
 the API serves flat lists and nothing in the model says what owns what. The
 factory built in [self-build.md](self-build.md) runs a loop (a project's
@@ -153,96 +153,42 @@ Records outside the tree stay, and each says why it is outside:
      declared break (`feat!` and a `BREAKING CHANGE:` footer). The Release
      view and `ren release` read it.
    - Wire types are generated for the UI as today.
-4. **The UI.** Under way. The audit:
+4. **The UI.** Built. Home (`/`, under the wordmark) is where the
+   operator lands: what needs them anywhere, what each agent is doing, and
+   what happened since they looked. Its bar leads to three places that
+   never show each other (`lib/view.ts`: `Views.place`, `Views.pages`):
 
-   | The operator's task                     | Today                                       | In the tree                                                                  |
-   | --------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------- |
-   | See what is in flight and what waits    | nowhere: Overview is the gateway's traffic  | **Projects** (home): each project's work, runs, and release; what is pending |
-   | Mark what is wrong (Redline)            | any page                                    | any page; the item is queued for Ren's project                               |
-   | Send work, check a preview, see it land | Work                                        | Work, under Projects; a project's page lists its items by state              |
-   | Watch and steer an agent                | Sessions                                    | Sessions, under Projects; a project's page lists its runs                    |
-   | Check a canary and promote              | Release (Ren's); the CLI for other projects | Release (Ren's), and every project's release on its page                     |
-   | Find out why a call or run went wrong   | Live, Traffic, Recordings, Search, Overview | **Inspect**: those five                                                      |
-   | Keep the host                           | Tools, Usage, Recorder                      | **Host**: those three                                                        |
+   | Place    | Pages                                                                                                                                  |
+   | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+   | Projects | `/projects`; a project's Sessions (`/projects/{name}/sessions[/{session}]`) and Release; a work item; Scratch (`/scratch[/{session}]`) |
+   | Monitor  | Overview, Live, Traffic, Sessions (`/monitor/sessions[/{recording}[/report]]`), Search, Usage                                          |
+   | System   | Packages, GitHub, Recorder                                                                                                             |
 
-   Built in this round: the header names Projects, Inspect, and Host, and
-   a row under it lists the current one's pages (`lib/view.ts`,
-   `Views.destination` and `Views.pages`). Projects (`/`) lists each
-   project with its release, open work, and runs, beside what is pending:
-   a canary to promote, a preview to check, work still queued. A project's
-   page (`/projects/{name}`) shows its release (lanes and checks), its
-   work by state, and its runs, each opening in Work, Sessions, or
-   Release. Overview, the gateway's traffic, moves to `/overview` under
-   Inspect.
+   Inside a place the bar holds only its name and its pages. Pending
+   sits in Projects alone, and System's warnings reach Home's list.
 
-   Since the redesign, Home (`/`, the wordmark) is where the operator
-   lands: what needs them anywhere, what each agent is doing, and what
-   happened since they looked. Its bar leads to three places that never
-   show each other: **Projects** (the list, then a project's Sessions and
-   Release, and Scratch), **Monitor** (Inspect renamed: Overview, Live,
-   Traffic, Recordings, Search, and Usage, which moves from Host), and
-   **System** (Host renamed: Packages, once Tools, GitHub, and Recorder). Inside a place the bar
-   holds only its name and its pages (`Views.place`, `Views.pages`);
-   Pending sits in Projects alone, and System's warnings reach Home's list.
-   Monitor's pages live under `/monitor/…` and System's under
-   `/system/…`. Old addresses are not redirected: Ren has one operator.
+   Approvals are among what is pending: when this UI drives sessions, it
+   reads the daemon's live runs (`/control/v1/runs`) and the current
+   sessions, and lists each approval a working run waits on with its
+   project and the session's first prompt.
 
-   Approvals are among what is pending: when this UI drives sessions, the
-   Projects view reads the daemon's live runs (`/control/v1/runs`) and the
-   current sessions, and lists each approval a working run waits on with
-   its project and the session's first prompt, to approve, decline, or
-   open. A UI that only reads shows none.
-
-   A work item opens in a drawer over its project's page (`?item=` in the
-   address: Escape, the scrim, or Back close it), with the same detail the
-   project's Work page shows beside its list (`WorkItemDetail`).
+   The session desk is one component with a scope: a project's desk holds
+   the sessions working for it and starts new ones in its repository;
+   Scratch holds those that work for no project (scratch folders, and
+   folders no project is registered for). A session open on a desk is the
+   address's last part. A worktree is a property of its session
+   (`worktree` on a session body), not a list of its own.
 
    A work item's brief names its own project: Ren's (and every item from
    before projects) names its route's file and build and previews with
    `cargo xtask preview`; another project's says whose page it is and
-   previews with `ren project preview`. Work sends a batch to a new session
-   in its project's repository (`"project"` on session create), one
-   project's items at a time.
+   previews with `ren project preview`.
 
-   Every Inspect page is scoped to a project by `?project=`: Overview,
-   Live, Traffic, Recordings, and Search (`/api/calls`, `/api/recordings`,
-   `/api/usage`, `/api/search`, and `/api/exposures` take `project`: a call
-   is a project's when its recording's conversation is the thread of a run
-   of a session working for it); a row under the pages names the scope and
-   clears it, and moving between them keeps it. A project's Overview links
-   them.
-
-   A project's page lists its current sessions, each with the worktree it
-   works in (or its folder), the worktree's ports, whether it runs, and
-   the work items it took up, which open in the drawer. A worktree is a
-   property of its session (`worktree` on a session body), not a list of
-   its own: a project holds sessions, and a session works in a worktree.
-   Deviation: the plan named them the project's workspaces; "workspace"
-   usually means something bigger than a project, so the concept is
-   renamed to worktree, in its own change after this one.
-
-   Work and Sessions are folded into each project: inside a project the
-   row under the header holds its own pages, Overview, Work
-   (`/projects/{name}/work`) and Sessions (`/projects/{name}/sessions`).
-   The session desk is one component with a scope: a project's desk holds
-   the sessions working for it and starts new ones in its repository;
-   Scratch (`/scratch`), beside Projects and Release, holds those that work
-   for no project (scratch folders, and folders no project is registered
-   for). Ren's Work holds the items from before projects, as their briefs
-   name Ren. A session open on a desk is the address's last part
-   (`/projects/{name}/sessions/{session}`, `/scratch/{session}`).
-
-   Release is a project's fourth page (`/projects/{name}/release`): its
-   builds, the canary's checks, and the work its production build shipped
-   and the work waiting on main; Ren's adds the pages its canary captured
-   and Promote. `/release` leads to Ren's.
-
-   A project's Overview is a summary of the pages beside it: its release
-   in one line, its work not yet shipped (opening in the drawer), its
-   sessions running with their worktrees, links into Inspect, and,
-   beside them, what waits on the operator in it (`PendingPanel`, the
-   Projects view's own, on a board of the one project: its sessions'
-   approvals to answer, its previews, a canary to promote).
+   Monitor's pages that read calls are scoped to a project by
+   `?project=` (`/api/calls`, `/api/recordings`, `/api/usage`,
+   `/api/search`, and `/api/exposures` take `project`: a call is a
+   project's when its recording's conversation is the thread of a run of
+   a session working for it).
 
 Each phase is verified in the dev slot, whose fake projects are registered
 as projects (and the slot's checkout as `Ren`), and by the compatibility
@@ -254,17 +200,14 @@ gate against `main`.
   contract cannot say "check against a replica of production's data".
   Teaching it that, so Ren is a `Contract` project like any other, would
   remove the variant. It is not needed for the tree.
-- **Where sessions with no project live.** Sessions with no project are
-  listed apart. Whether that list sits under Inspect or Host is decided by
-  the UI audit.
 - **One repository per project.** A project spanning several repositories,
   or several projects in one monorepo, is not modelled. The repository
   path is unique per project until a case asks otherwise.
 - **Renames.** Whether a project's name can change, given that it keys its
   release folder and appears in URLs. It cannot change until a case asks.
 - **Per-project usage.** Usage could be attributed to a project through
-  run → session → project. Host keeps the global view until the UI audit
-  asks for more.
+  run → session → project. Monitor's Usage keeps the global view until a
+  case asks for more.
 
 ## Deviations
 
@@ -335,18 +278,14 @@ gate against `main`.
   `--project` lookups for `canary` and `promote`, which build a repository
   on this host, still read the store beside the daemon. `ren release`
   takes `--project`, Ren's by default.
-- **Phase 4: Work, Sessions, and Release moved inside each project in
-  later rounds.** Decision 6 put them inside a project. The first round
-  kept them as pages listing every project's, linked from a project's
-  page; later rounds moved each, whole, under its project, so nothing they
-  do was lost. Sessions of no project needed a home the decision did not
-  give: Scratch, beside Projects. Release is every project's page now;
-  Ren's alone has the canary's pages and a Promote, since its canary
-  captures them and the control route promotes Ren.
-- **Phase 4: a project's pages are Overview, Work, Sessions, and Release.** The
-  mockups had tabs and the first round one page of sections; with Work and
-  Sessions whole pages (a list beside its detail, and the session desk),
-  they are pages of their own, and the overview keeps the sections.
-- **Phase 4: Overview stays, under Inspect.** It is the gateway's traffic
-  at a glance, not the factory's, so `/` became Projects and Overview moved
-  to `/overview`.
+- **Phase 4: Home, then three places.** Decision 6 named three top-level
+  destinations, Projects first. Projects, every project at a glance, is
+  not where the operator starts: what needs them is. Home was added above
+  the places, and Inspect and Host became Monitor and System.
+- **Phase 4: a project's pages are Sessions and Release.** Decision 6 put
+  work items, sessions, and release inside a project. Work items have no
+  page of their own: a project's sessions and release list them, and each
+  opens on its own page. Sessions of no project needed a home the decision
+  did not give: Scratch.
+- **Phase 4: Overview is Monitor's.** It is the gateway's traffic at a
+  glance, not the factory's.

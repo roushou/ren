@@ -1,5 +1,4 @@
-/* The brand face: Google Fonts' current cut of Doto (v3, latin, 900), the one
-   the boards draw with; its dots sit closer than Fontsource's older cut.
+/* The brand face: Doto (v3, latin, 900), whose dots sit close.
    OFL: ./fonts/Doto-OFL.txt. */
 @font-face {
   font-family: Doto;
@@ -113,7 +112,7 @@
   -webkit-font-smoothing: antialiased;
 }
 :root[data-theme='dark'] {
-  /* The mockups' dark: near-black and neutral, one warm accent. */
+  /* Near-black and neutral, one warm accent. */
   color-scheme: dark;
   --on-accent: #17110e;
   --canvas: #0f1013;
@@ -323,8 +322,8 @@ pre {
   border-top-color: var(--accent);
   background: var(--canvas);
 }
-/* The wordmark, in the brand face, solid as the boards show it: a hairline
-   stroke closes the gaps Doto leaves between its dots. */
+/* The wordmark, in the brand face, solid: a hairline stroke closes the
+   gaps Doto leaves between its dots. */
 .wordmark {
   font: 900 22px/1 var(--brand);
   letter-spacing: 0.06em;
@@ -433,8 +432,8 @@ pre {
     background: var(--surface);
   }
 }
-/* The header's right side, by weight: ⌘K and Pending first, then Inspect
-   and Host, quieter than Projects on the left. */
+/* The header's right side: ⌘K and Pending first, then the gateway, Live,
+   refresh, Redline, and the theme. */
 .command-open {
   display: inline-flex;
   align-items: center;
@@ -504,7 +503,7 @@ pre {
     display: none;
   }
 }
-/* An Inspect page narrowed to one project, under the header. */
+/* A Monitor page narrowed to one project, under the header. */
 .scope-row {
   display: flex;
   flex-shrink: 0;
