@@ -54,14 +54,15 @@ prompt, and its folder, what it is doing now, and its size against the rest, gro
 day, with single-call recordings that have no turn folded away; a session Ren drives links
 to its desk, and its desk's inspector links back to its calls; `/monitor/sessions/:id`, each session's context and
 cache report at `/monitor/sessions/:id/report` (with each turn's context drawn oldest to newest,
-from where it started to where it ended), and what a turn did at `/monitor/turns/:id`: its prompt,
-tool calls with their effects and reported results, files, commands (one row each,
-opening to the whole command), and findings, with paths shown relative to the folder the
-turn works in), Search
+from where it started to where it ended); a turn opens beside its session's calls, with its
+context and cache, its prompt, the files and commands its calls named, and its findings
+(`/monitor/turns/:id` leads there)), Search
 (`/monitor/search`: full-text search over prompts, replies, and tool input and output), Usage
 (`/monitor/usage`: calls, failed work calls (with failed bookkeeping counted apart), and tokens
-over the last day by hour, the last week, or all retained calls by local day, by model,
-and the busiest recordings), and Recorder
+over the last day or the last week by hour, or all retained calls by local day, by model,
+and the busiest sessions), Integrations (`/system/integrations`: each project's watched
+GitHub repository, its open pull requests by where they stand, and GitHub's newest answer),
+and Recorder
 (`/system/recorder`: whether recording is healthy, how close storage, calls, and history are to
 their retention limits with the nearest marked as the one pruned for first, and only the
 loss and error counters that are not zero; bytes past the capture policy are noted as
