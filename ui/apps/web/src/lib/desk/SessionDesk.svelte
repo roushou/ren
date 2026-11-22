@@ -2156,7 +2156,7 @@
         </form>
       {/if}
       {#if inspected}
-        <SlideOver label="Step details" size="wide" pin="step" onclose={() => (inspecting = null)}>
+        <SlideOver label="Step details" pin="step" onclose={() => (inspecting = null)}>
           <StepDetail step={inspected} place={inspectedPlace} calls={inspectedCalls} />
         </SlideOver>
       {/if}

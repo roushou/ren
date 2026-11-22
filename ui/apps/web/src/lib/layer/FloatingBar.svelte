@@ -29,4 +29,14 @@
     font-size: 12px;
     white-space: nowrap;
   }
+  /* Beside an open slide-over (layer 3), it centres in the room the panel
+     leaves, so the panel never covers it. */
+  :global(:has(> .slide-over.narrow:not(.pinned))) .floating-bar {
+    left: calc((100% - min(440px, 100%)) / 2);
+    max-width: calc(100% - min(440px, 100%) - 32px);
+  }
+  :global(:has(> .slide-over.wide:not(.pinned))) .floating-bar {
+    left: calc((100% - min(560px, 100%)) / 2);
+    max-width: calc(100% - min(560px, 100%) - 32px);
+  }
 </style>
