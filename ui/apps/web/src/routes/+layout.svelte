@@ -179,6 +179,10 @@
       : null,
   );
   const hostVerdict = $derived(hostReport?.verdict ?? null);
+  const storageGauge = $derived(
+    hostReport?.gauges.find((gauge) => gauge.label === 'Storage') ?? null,
+  );
+  const callsGauge = $derived(hostReport?.gauges.find((gauge) => gauge.label === 'Calls') ?? null);
   /** The project an Inspect page is narrowed to, when it can be. */
   const scope = $derived(Views.scoped(tab) ? page.url.searchParams.get('project') : null);
   /** The same page, for every project. */
@@ -405,7 +409,8 @@
         aria-label="Host health: {hostVerdict?.headline ?? 'not read yet'}"
         title={hostVerdict?.headline ?? 'Host health'}
         ><Glyph
-          mark={board.signedOut.length && hostVerdict?.tone === 'success'
+          mark={(board.signedOut.length || (storageGauge?.share ?? 0) > 0.8) &&
+          hostVerdict?.tone === 'success'
             ? 'warning'
             : hostVerdict
               ? Marks.ofTone(hostVerdict.tone)
@@ -415,47 +420,82 @@
     </nav>
     <Popover id="host-popover" label="Host health">
       <div class="host-card">
-        {#if hostReport && hostVerdict}
-          <p class="host-verdict">
-            <Glyph mark={Marks.ofTone(hostVerdict.tone)} label={true} /><strong
-              >{hostVerdict.headline}</strong
-            >
-          </p>
-          {#if hostVerdict.facts.length}<p class="muted">{hostVerdict.facts.join(' · ')}</p>{/if}
-          <dl class="host-gauges">
-            {#each hostReport.gauges.filter((gauge) => gauge.share !== null) as gauge (gauge.label)}
-              <div>
-                <dt>
-                  {gauge.label}{#if gauge.binding}<Glyph
-                      mark="warning"
-                      label="Retention prunes for this limit first"
-                    />{/if}
-                </dt>
-                <dd>
-                  <svg viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"
-                    ><rect class="gauge-whole" width="100" height="4" /><rect
-                      class="gauge-used"
-                      class:high={(gauge.share ?? 0) > 0.8}
-                      width={Math.min(100, (gauge.share ?? 0) * 100)}
-                      height="4"
-                    /></svg
-                  ><span class="mono">{gauge.used} of {gauge.limit}</span>
-                </dd>
-              </div>
-            {/each}
-          </dl>
-        {:else}<p class="muted">The gateway's health has not been read yet.</p>{/if}
-        {#each board.signedOut as client (client.harness)}
-          <p class="host-verdict">
-            <Glyph mark="warning" label="Signed out" /><span
-              >{harnessLabel(client.harness)} is signed out on this host</span
-            >
-          </p>
-        {/each}
-        <p class="host-links">
-          <a href="/recorder">Recorder <Icon name="arrow" size={11} /></a>
-          <a href="/tools">Tools <Icon name="arrow" size={11} /></a>
+        <p class="host-head">
+          <span class="cap"
+            >Host · {place.node ??
+              (place.network === 'loopback'
+                ? 'this machine'
+                : GatewayPlace.networkLabel(place.network))}</span
+          >
         </p>
+        <ul class="host-rows">
+          <li>
+            <Glyph
+              mark={hostVerdict ? Marks.ofTone(hostVerdict.tone) : 'waiting'}
+              label={hostVerdict?.headline ?? 'Not read yet'}
+            />
+            <span title={hostVerdict?.facts.join(' · ')}>Recording</span>
+            <a class="muted" href="/recorder">{hostVerdict?.headline ?? 'not read yet'} →</a>
+          </li>
+          {#each [storageGauge, callsGauge] as gauge (gauge?.label)}
+            {#if gauge && gauge.share !== null}
+              <li>
+                <!-- Calls kept sit at their cap by design (the oldest go first);
+                     storage near its limit is what needs a look. -->
+                <Glyph
+                  mark={gauge.label === 'Storage' && gauge.share > 0.8 ? 'warning' : 'passed'}
+                  label={gauge.label === 'Storage' && gauge.share > 0.8
+                    ? 'Near its limit'
+                    : 'Within its limit'}
+                />
+                <span
+                  >{gauge.label === 'Storage'
+                    ? 'Recorder storage'
+                    : 'Calls kept'}{#if gauge.binding}<span class="muted sep">· prunes first</span
+                    >{/if}</span
+                >
+                <a class="muted mono" href="/recorder">{Math.round(gauge.share * 100)}% →</a>
+              </li>
+            {/if}
+          {/each}
+          <li>
+            <Glyph
+              mark={board.signedOut.length ? 'warning' : 'passed'}
+              label={board.signedOut.length ? 'Signed out' : 'Signed in'}
+            />
+            <span
+              >Clients{#if board.signedOut.length}<span class="muted mono sep"
+                  >· {board.signedOut
+                    .map((client) => harnessLabel(client.harness))
+                    .join(', ')}</span
+                >{/if}</span
+            >
+            <a class="muted" href="/tools">Tools →</a>
+          </li>
+          <li>
+            <Glyph
+              mark={error ? 'failed' : 'passed'}
+              label={error ? 'Not answering' : 'Answering'}
+            />
+            <span>Gateway</span>
+            <span class="muted">{error ? 'not answering' : 'reachable'}</span>
+          </li>
+        </ul>
+        {#if storageGauge && storageGauge.share !== null}
+          <div class="host-storage">
+            <svg viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"
+              ><rect class="gauge-whole" width="100" height="4" /><rect
+                class="gauge-used"
+                class:high={storageGauge.share > 0.8}
+                width={Math.min(100, storageGauge.share * 100)}
+                height="4"
+              /></svg
+            >
+            <span class="muted mono"
+              >{storageGauge.used} of {storageGauge.limit} · oldest calls go first</span
+            >
+          </div>
+        {/if}
       </div>
     </Popover>
     <button

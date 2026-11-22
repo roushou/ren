@@ -413,39 +413,52 @@ pre {
 .host-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
+  font-size: 12.5px;
 }
-.host-card p {
+.host-head {
   margin: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
 }
-.host-verdict {
-  display: flex;
+.host-head .cap {
+  color: var(--muted);
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.host-rows {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+}
+.host-rows li {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  column-gap: 10px;
+  min-height: 32px;
+  padding: 0 14px;
 }
-.host-gauges {
+.host-rows .sep {
+  margin-left: 6px;
+}
+.host-rows a {
+  font-size: 11.5px;
+  text-decoration: none;
+}
+.host-rows a:hover {
+  color: var(--ink);
+}
+.host-storage {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin: 4px 0 0;
-}
-.host-gauges dt {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
+  gap: 4px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--line);
   font-size: 11px;
 }
-.host-gauges dd {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 8px;
-  margin: 2px 0 0;
-  font-size: 11px;
-}
-.host-gauges svg {
+.host-storage svg {
   width: 100%;
   height: 4px;
 }
@@ -457,17 +470,6 @@ pre {
 }
 .gauge-used.high {
   fill: var(--warning);
-}
-.host-links {
-  display: flex;
-  gap: 14px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-}
-.host-links a {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
 }
 /* Narrower than the header's one line holds: where you are drops to a row
    of its own under the header's controls, scrolling sideways if it must. */
