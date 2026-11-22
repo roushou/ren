@@ -71,7 +71,8 @@ export function usagePoints(
   now: number,
   dayStart: (ms: number) => number = localDayStart,
 ): UsagePoint[] {
-  const byHour = range === '24h';
+  // A day and a week are drawn by the hour; everything retained, by the day.
+  const byHour = range !== 'all';
   const key = (ms: number) => (byHour ? Math.floor(ms / HOUR) * HOUR : dayStart(ms));
   const first = rangeStart(range, now, dayStart) ?? (hours.length ? key(hours[0].start) : key(now));
   const last = key(now);

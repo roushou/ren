@@ -7,6 +7,7 @@
   import {
     cacheShare,
     HourGrid,
+    measureValue,
     parseRange,
     usageMeasures,
     usagePoints,
@@ -37,7 +38,14 @@
     { label: 'Tokens in', numeric: true },
     { label: 'Out', numeric: true },
   ];
-  const modelColumns: Column[] = [{ label: 'Model' }, ...figures];
+  const modelColumns: Column[] = [
+    { label: 'Model' },
+    { label: 'Calls', numeric: true },
+    { label: 'Errors', numeric: true },
+    { label: 'Share', numeric: true },
+    { label: 'Tokens in', numeric: true },
+    { label: 'Out', numeric: true },
+  ];
   const recordingColumns: Column[] = [{ label: 'Session', class: 'fill' }, ...figures];
   const userColumns: Column[] = [{ label: 'User' }, ...figures];
   const totals = $derived(current?.usage.totals);
@@ -50,12 +58,15 @@
   const measureLabel = $derived(
     usageMeasures.find((item) => item.measure === measure)?.label ?? 'Tokens in',
   );
-  const byHour = $derived(range === '24h');
+  const byHour = $derived(range !== 'all');
   function period(start: number) {
     const date = new Date(start);
     return byHour
       ? {
-          short: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          short:
+            range === '24h'
+              ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              : `${date.toLocaleDateString([], { weekday: 'short' })} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
           long: `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
         }
       : {
@@ -64,6 +75,19 @@
         };
   }
   const share = $derived(totals ? cacheShare(totals) : null);
+  /** The measure over the range, and its busiest point. */
+  const measureTotal = $derived(
+    points.reduce((sum, point) => sum + measureValue(point, measure), 0),
+  );
+  const peak = $derived(
+    points.reduce<(typeof points)[number] | null>(
+      (best, point) =>
+        measureValue(point, measure) > (best ? measureValue(best, measure) : 0) ? point : best,
+      null,
+    ),
+  );
+  const measureShort = (value: number) =>
+    measure === 'input' || measure === 'output' ? compactOrDash(value) : num(value);
   /** Calls by local hour of day over the last week. */
   const grid = $derived(current ? HourGrid.of(current.usage.hours, current.now) : null);
   const errorRate = $derived(totals && totals.calls ? totals.errors / totals.calls : null);
@@ -79,7 +103,9 @@
     (current?.recordings ?? [])
       .filter(
         (s) =>
-          !current || range === 'all' || s.last_seen >= current.now - (byHour ? 864e5 : 7 * 864e5),
+          !current ||
+          range === 'all' ||
+          s.last_seen >= current.now - (range === '24h' ? 864e5 : 7 * 864e5),
       )
       .sort((a, b) => (b.tokens.input ?? 0) - (a.tokens.input ?? 0))
       .slice(0, 5),
@@ -120,180 +146,197 @@
         <p>{snapshot?.error?.message ?? 'Loading…'}</p>
       </div>
     {:else}
-      <section class="usage-tiles" aria-label="Totals" aria-busy={pending}>
-        <div class="usage-tile">
-          <span>Calls</span><strong class="mono"
-            >{#if pending}<Skeleton size="figure" width="5em" />{:else}{num(
-                totals?.calls,
-              )}{/if}</strong
-          ><small
-            >{#if !pending && totals && points.length}{num(
-                Math.round(totals.calls / points.length),
-              )} / {byHour ? 'hour' : 'day'}{/if}</small
-          >
-        </div>
-        <div class="usage-tile">
-          <span>Failed work calls</span><strong class="mono failed-figure"
-            >{#if totals?.errors}<Glyph mark="failed" label={true} />{/if}{#if pending}<Skeleton
-                size="figure"
-                width="3em"
-              />{:else}{num(totals?.errors)}{/if}</strong
-          ><small
-            >{#if pending}<Skeleton width="7em" />{:else}{errorRate === null
-                ? '—'
-                : `${(errorRate * 100).toFixed(1)}% of calls`}{#if current?.bookkeepingErrors}{SEPARATOR}{num(
-                  current.bookkeepingErrors,
-                )}{current.bookkeepingErrors >= 100 ? '+' : ''} failed bookkeeping{/if}{/if}</small
-          >
-        </div>
-        <div class="usage-tile">
-          <span>Tokens in</span><strong class="mono"
-            >{#if pending}<Skeleton size="figure" width="4em" />{:else}{compactOrDash(
-                totals?.tokens.input ?? null,
-              )}{/if}</strong
-          ><small
-            >{#if pending}<Skeleton width="8em" />{:else}{share === null
-                ? '—'
-                : `${Math.round(share * 100)}% read from cache`}{/if}</small
-          >
-        </div>
-        <div class="usage-tile">
-          <span>Tokens out</span><strong class="mono"
-            >{#if pending}<Skeleton size="figure" width="4em" />{:else}{compactOrDash(
-                totals?.tokens.output ?? null,
-              )}{/if}</strong
-          ><small
-            >{#if !pending && totals?.calls && totals.tokens.output !== null}{compactOrDash(
-                Math.round(totals.tokens.output / totals.calls),
-              )} / call{/if}</small
-          >
-        </div>
-      </section>
-
-      <section class="panel usage-panel" aria-labelledby="usage-chart-title">
-        <header class="panel-heading">
-          <h2 id="usage-chart-title">{measureLabel} per {byHour ? 'hour' : 'day'}</h2>
-          <Segmented label="Measure" options={measureOptions} bind:value={measure} />
-        </header>
-        {#if pending}
-          <div class="chart-outline"><Skeleton size="block" width="100%" /></div>
-        {:else if totals?.calls}
-          <UsageChart
-            {points}
-            {measure}
-            label={measureLabel}
-            {period}
-            cached={measure === 'input'
-              ? points.map((point) => point.tokens.cache_read ?? 0)
-              : null}
-          />
-          {#if measure === 'input'}<p class="chart-key muted">
-              <span><span class="swatch cached"></span>read from cache</span>
-              <span><span class="swatch fresh"></span>uncached input</span>
-            </p>{/if}
-        {:else}
-          <p class="quiet-empty">No calls in this range.</p>
-        {/if}
-      </section>
-
-      {#if grid && grid.busiest > 0}
-        <section class="panel usage-panel" aria-labelledby="usage-hours-title">
+      <div class="usage-top">
+        <section class="panel usage-panel" aria-labelledby="usage-chart-title">
           <header class="panel-heading">
-            <h2 id="usage-hours-title">Calls by hour of day</h2>
-            <span class="muted">the last seven days · local time</span>
+            <div class="chart-title">
+              <h2 id="usage-chart-title" class="cap">
+                {measureLabel} per {byHour ? 'hour' : 'day'}
+              </h2>
+              {#if !pending && totals?.calls}<span class="big mono"
+                  >{measureShort(measureTotal)}</span
+                >{#if peak}<span class="muted mono"
+                    >peak {measureShort(measureValue(peak, measure))} · {period(peak.start)
+                      .long}</span
+                  >{/if}{/if}
+            </div>
+            <Segmented label="Measure" options={measureOptions} bind:value={measure} />
           </header>
-          <div class="hour-grid">
-            {#each grid.rows as row (row.day)}
-              <span class="muted mono day"
-                >{new Date(row.day).toLocaleDateString([], { weekday: 'short' })}</span
-              >
-              <svg viewBox="0 0 240 10" preserveAspectRatio="none" aria-hidden="true"
-                >{#each row.cells as calls, hour (hour)}<rect
-                    class="cell"
-                    x={hour * 10 + 0.5}
-                    y="0"
-                    width="9"
-                    height="10"
-                    fill-opacity={calls ? 0.15 + 0.85 * (calls / grid.busiest) : 0.04}
-                    ><title>{hour}:00 · {calls} calls</title></rect
-                  >{/each}</svg
-              >
-            {/each}
-            <span></span>
-            <span class="hours muted mono"
-              ><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></span
-            >
-          </div>
+          {#if pending}
+            <div class="chart-outline"><Skeleton size="block" width="100%" /></div>
+          {:else if totals?.calls}
+            <UsageChart
+              {points}
+              {measure}
+              label={measureLabel}
+              {period}
+              cached={measure === 'input'
+                ? points.map((point) => point.tokens.cache_read ?? 0)
+                : null}
+            />
+            {#if measure === 'input'}<p class="chart-key muted">
+                <span><span class="swatch cached"></span>read from cache</span>
+                <span><span class="swatch fresh"></span>uncached input</span>
+              </p>{/if}
+          {:else}
+            <p class="quiet-empty">No calls in this range.</p>
+          {/if}
         </section>
-      {/if}
+        <div class="usage-side">
+          <section class="usage-tiles" aria-label="Totals" aria-busy={pending}>
+            <div class="usage-tile">
+              <span>Calls</span><strong class="mono"
+                >{#if pending}<Skeleton size="figure" width="5em" />{:else}{num(
+                    totals?.calls,
+                  )}{/if}</strong
+              ><small
+                >{#if !pending && totals && points.length}{num(
+                    Math.round(totals.calls / points.length),
+                  )} / {byHour ? 'hour' : 'day'}{/if}</small
+              >
+            </div>
+            <div class="usage-tile">
+              <span>Failed work calls</span><strong class="mono failed-figure"
+                >{#if totals?.errors}<Glyph mark="failed" label={true} />{/if}{#if pending}<Skeleton
+                    size="figure"
+                    width="3em"
+                  />{:else}{num(totals?.errors)}{/if}</strong
+              ><small
+                >{#if pending}<Skeleton width="7em" />{:else}{errorRate === null
+                    ? '—'
+                    : `${(errorRate * 100).toFixed(1)}% of calls`}{#if current?.bookkeepingErrors}{SEPARATOR}{num(
+                      current.bookkeepingErrors,
+                    )}{current.bookkeepingErrors >= 100 ? '+' : ''} failed bookkeeping{/if}{/if}</small
+              >
+            </div>
+            <div class="usage-tile">
+              <span>Tokens in</span><strong class="mono"
+                >{#if pending}<Skeleton size="figure" width="4em" />{:else}{compactOrDash(
+                    totals?.tokens.input ?? null,
+                  )}{/if}</strong
+              ><small
+                >{#if pending}<Skeleton width="8em" />{:else}{share === null
+                    ? '—'
+                    : `${Math.round(share * 100)}% read from cache`}{/if}</small
+              >
+            </div>
+            <div class="usage-tile">
+              <span>Tokens out</span><strong class="mono"
+                >{#if pending}<Skeleton size="figure" width="4em" />{:else}{compactOrDash(
+                    totals?.tokens.output ?? null,
+                  )}{/if}</strong
+              ><small
+                >{#if !pending && totals?.calls && totals.tokens.output !== null}{compactOrDash(
+                    Math.round(totals.tokens.output / totals.calls),
+                  )} / call{/if}</small
+              >
+            </div>
+          </section>
+          {#if grid && grid.busiest > 0}
+            <section class="panel usage-panel" aria-labelledby="usage-hours-title">
+              <header class="panel-heading">
+                <h2 id="usage-hours-title" class="cap">Calls by hour of day</h2>
+                <span class="muted mono">local time</span>
+              </header>
+              <div class="hour-grid">
+                {#each grid.rows as row (row.day)}
+                  <span class="muted mono day"
+                    >{new Date(row.day).toLocaleDateString([], { weekday: 'short' })}</span
+                  >
+                  <svg viewBox="0 0 240 10" preserveAspectRatio="none" aria-hidden="true"
+                    >{#each row.cells as calls, hour (hour)}<rect
+                        class="cell"
+                        x={hour * 10 + 0.5}
+                        y="0"
+                        width="9"
+                        height="10"
+                        fill-opacity={calls ? 0.15 + 0.85 * (calls / grid.busiest) : 0.04}
+                        ><title>{hour}:00 · {calls} calls</title></rect
+                      >{/each}</svg
+                  >
+                {/each}
+                <span></span>
+                <span class="hours muted mono"
+                  ><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></span
+                >
+              </div>
+            </section>
+          {/if}
+        </div>
+      </div>
+      <section class="panel usage-panel models" aria-labelledby="usage-models-title">
+        <header class="panel-heading">
+          <h2 id="usage-models-title" class="cap">By model · share of tokens in</h2>
+          <span class="muted mono">{models.length} models</span>
+        </header>
+        {#if modelInput > 0}<svg
+            class="model-share"
+            viewBox="0 0 100 6"
+            preserveAspectRatio="none"
+            aria-label="Each model's share of tokens in"
+            >{#each models as model, index (`${model.provider}-${model.model}`)}<rect
+                class="share-{index % 5}"
+                x={(models.slice(0, index).reduce((sum, one) => sum + (one.tokens.input ?? 0), 0) /
+                  modelInput) *
+                  100}
+                width={((model.tokens.input ?? 0) / modelInput) * 100}
+                height="6"
+                ><title
+                  >{model.model ?? 'No model reported'}: {Math.round(
+                    ((model.tokens.input ?? 0) / modelInput) * 100,
+                  )}%</title
+                ></rect
+              >{/each}</svg
+          >{/if}
+        {#if models.length || pending}
+          <table class="usage-list">
+            {@render head(modelColumns)}
+            <tbody>
+              {#if pending}<SkeletonRows columns={modelColumns} rows={6} />{/if}
+              {#each models as model (`${model.provider}-${model.model}`)}
+                <tr>
+                  <td>
+                    <span class="model-line"
+                      ><span class="provider-mark tiny {model.provider}"
+                        >{providerMark(model.provider)}</span
+                      ><span class="model-name">{model.model ?? 'No model reported'}</span></span
+                    >
+                    <svg
+                      class="usage-meter"
+                      viewBox="0 0 100 4"
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
+                      ><rect class="usage-meter-track" width="100" height="4" /><rect
+                        class="usage-bar"
+                        width={(100 * (model.tokens.input ?? 0)) / topModelInput}
+                        height="4"
+                      /></svg
+                    >
+                  </td>
+                  <td class="mono numeric">{num(model.calls)}</td>
+                  <td
+                    class="mono numeric"
+                    class:error-count={!!model.errors}
+                    class:zero={!model.errors}>{num(model.errors)}</td
+                  >
+                  <td class="mono numeric"
+                    >{modelInput
+                      ? `${Math.round(((model.tokens.input ?? 0) / modelInput) * 100)}%`
+                      : '—'}</td
+                  >
+                  <td class="mono numeric">{compactOrDash(model.tokens.input)}</td>
+                  <td class="mono numeric">{compactOrDash(model.tokens.output)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {:else}<p class="quiet-empty">No calls in this range.</p>{/if}
+      </section>
 
       <div class="usage-columns usage-fill">
-        <section class="panel usage-panel" aria-labelledby="usage-models-title">
-          <header class="panel-heading"><h2 id="usage-models-title">By model</h2></header>
-          {#if modelInput > 0}<svg
-              class="model-share"
-              viewBox="0 0 100 6"
-              preserveAspectRatio="none"
-              aria-label="Each model's share of tokens in"
-              >{#each models as model, index (`${model.provider}-${model.model}`)}<rect
-                  class="share-{index % 5}"
-                  x={(models
-                    .slice(0, index)
-                    .reduce((sum, one) => sum + (one.tokens.input ?? 0), 0) /
-                    modelInput) *
-                    100}
-                  width={((model.tokens.input ?? 0) / modelInput) * 100}
-                  height="6"
-                  ><title
-                    >{model.model ?? 'No model reported'}: {Math.round(
-                      ((model.tokens.input ?? 0) / modelInput) * 100,
-                    )}%</title
-                  ></rect
-                >{/each}</svg
-            >{/if}
-          {#if models.length || pending}
-            <table class="usage-list">
-              {@render head(modelColumns)}
-              <tbody>
-                {#if pending}<SkeletonRows columns={modelColumns} rows={6} />{/if}
-                {#each models as model (`${model.provider}-${model.model}`)}
-                  <tr>
-                    <td>
-                      <span class="model-line"
-                        ><span class="provider-mark tiny {model.provider}"
-                          >{providerMark(model.provider)}</span
-                        ><span class="model-name">{model.model ?? 'No model reported'}</span></span
-                      >
-                      <svg
-                        class="usage-meter"
-                        viewBox="0 0 100 4"
-                        preserveAspectRatio="none"
-                        aria-hidden="true"
-                        ><rect class="usage-meter-track" width="100" height="4" /><rect
-                          class="usage-bar"
-                          width={(100 * (model.tokens.input ?? 0)) / topModelInput}
-                          height="4"
-                        /></svg
-                      >
-                    </td>
-                    <td class="mono numeric">{num(model.calls)}</td>
-                    <td
-                      class="mono numeric"
-                      class:error-count={!!model.errors}
-                      class:zero={!model.errors}>{num(model.errors)}</td
-                    >
-                    <td class="mono numeric">{compactOrDash(model.tokens.input)}</td>
-                    <td class="mono numeric">{compactOrDash(model.tokens.output)}</td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          {:else}<p class="quiet-empty">No calls in this range.</p>{/if}
-        </section>
-
         <section class="panel usage-panel" aria-labelledby="usage-recordings-title">
           <header class="panel-heading">
-            <h2 id="usage-recordings-title">Busiest sessions</h2>
+            <h2 id="usage-recordings-title" class="cap">Busiest sessions</h2>
           </header>
           {#if recordings.length || pending}
             <table class="usage-list">
@@ -326,8 +369,7 @@
 
         {#if named}<section class="panel usage-panel" aria-labelledby="usage-users-title">
             <header class="panel-heading">
-              <h2 id="usage-users-title">By user</h2>
-              <span class="subtle-label">Who made the calls, as the gateway identified them</span>
+              <h2 id="usage-users-title" class="cap">By user</h2>
             </header>
             <table class="usage-list">
               {@render head(userColumns)}
@@ -364,6 +406,50 @@
 </div>
 
 <style>
+  .usage-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 1px;
+    background: var(--line);
+  }
+  .usage-side {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .usage-side .usage-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .usage-side .usage-panel {
+    flex: 1;
+  }
+  .chart-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .cap {
+    margin: 0;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.5px !important;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .big {
+    font-size: 22px;
+  }
+  .models {
+    border-top: 1px solid var(--line);
+  }
+  @media (max-width: 1000px) {
+    .usage-top {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
   .failed-figure {
     display: flex;
     align-items: center;

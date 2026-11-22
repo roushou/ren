@@ -51,7 +51,7 @@ test('a day by the hour has 24 bars, empty hours included', () => {
   assert.equal(points[0].tokens.input, null);
 });
 
-test('a week folds hours into seven days', () => {
+test('a week is drawn by the hour, from the start of its first day', () => {
   const points = usagePoints(
     [
       hour(Date.UTC(2026, 10, 6, 1), 1, 10),
@@ -64,14 +64,10 @@ test('a week folds hours into seven days', () => {
     now,
     utcDay,
   );
-  assert.equal(points.length, 7);
-  const today = points.at(-1)!;
-  assert.deepEqual(
-    [today.calls, today.errors, today.tokens.input, today.tokens.cache_read],
-    [4, 1, 40, 20],
-  );
-  const nov2 = points.find((p) => p.start === Date.UTC(2026, 10, 2))!;
-  assert.deepEqual([nov2.calls, nov2.tokens.input], [2, null]);
+  assert.equal(points[0]?.start, rangeStart('7d', now, utcDay));
+  assert.ok(points.every((p, i) => i === 0 || p.start - points[i - 1]!.start === 3_600_000));
+  const at3 = points.find((p) => p.start === Date.UTC(2026, 10, 6, 15))!;
+  assert.deepEqual([at3.calls, at3.errors, at3.tokens.input], [3, 1, 30]);
   assert.equal(
     points.reduce((sum, p) => sum + p.calls, 0),
     6,
