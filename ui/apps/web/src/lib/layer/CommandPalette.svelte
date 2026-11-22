@@ -245,11 +245,6 @@
   .cap {
     display: block;
     padding: 6px 14px 2px;
-    color: var(--muted);
-    font-size: 10.5px;
-    font-weight: 500;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
   }
   .row {
     display: grid;

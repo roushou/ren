@@ -1,0 +1,66 @@
+<!--
+  One figure of a `Figures` row: its caption, its value (with a glyph when
+  its state has one), and an optional quiet line under it. A figure that
+  needs a look is tinted (`tone`).
+-->
+<script lang="ts">
+  import type { Snippet } from 'svelte';
+  import Glyph from './Glyph.svelte';
+  import type { Mark } from './marks.ts';
+
+  let {
+    label,
+    mark = null,
+    tone = null,
+    title,
+    children,
+    sub,
+  }: {
+    label: string;
+    /** The value's state, drawn before it. */
+    mark?: Mark | null;
+    tone?: 'warning' | 'error' | null;
+    /** What the value counts, on hover. */
+    title?: string;
+    children: Snippet;
+    sub?: Snippet;
+  } = $props();
+</script>
+
+<div class="figure {tone ?? ''}" {title}>
+  <span class="cap">{label}</span>
+  <span class="figure-value mono"
+    >{#if mark}<Glyph {mark} />{/if}{@render children()}</span
+  >
+  {#if sub}<span class="meta">{@render sub()}</span>{/if}
+</div>
+
+<style>
+  .figure {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 12px 16px;
+    background: var(--figure-surface, var(--surface));
+  }
+  .figure-value {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    min-width: 0;
+    font-size: 22px;
+  }
+  .warning {
+    background: color-mix(in srgb, var(--warning) 8%, var(--figure-surface, var(--surface)));
+  }
+  .error {
+    background: color-mix(in srgb, var(--error) 10%, var(--figure-surface, var(--surface)));
+  }
+  .warning .figure-value {
+    color: var(--warning);
+  }
+  .error .figure-value {
+    color: var(--error);
+  }
+</style>

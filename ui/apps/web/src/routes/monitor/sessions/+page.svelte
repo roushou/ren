@@ -295,9 +295,6 @@
 </section>
 
 <style>
-  .muted {
-    color: var(--muted);
-  }
   /* Fixed columns, so the folded table lines up with the one above it. */
   .recordings-table {
     width: 100%;
@@ -430,13 +427,6 @@
   }
   .clients {
     border-right: 0;
-  }
-  .cap {
-    color: var(--muted);
-    font-size: 10.5px;
-    font-weight: 500;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
   }
   .big {
     display: flex;

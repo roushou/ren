@@ -103,13 +103,6 @@
     gap: 12px;
     margin-bottom: 6px;
   }
-  .cap {
-    color: var(--muted);
-    font-size: 10.5px;
-    font-weight: 500;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-  }
   .lane {
     display: grid;
     grid-template-columns: 260px minmax(0, 1fr);

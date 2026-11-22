@@ -5,6 +5,8 @@
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
   import Glyph from '#lib/Glyph.svelte';
+  import Figures from '#lib/Figures.svelte';
+  import Figure from '#lib/Figure.svelte';
   import { ago } from '#lib/overview.ts';
   import { PullChips } from '#lib/release.ts';
   import { GitHubWatches, type PullGroup } from '#lib/github.ts';
@@ -52,32 +54,20 @@
     {#if data.failed}
       <p class="error" role="alert">{data.failed}</p>
     {:else}
-      <div class="figures">
-        <div>
-          <span class="cap">Answering</span>
-          <span class="figure status"
-            ><Glyph
-              mark={summary.failing ? 'failed' : summary.watched ? 'passed' : 'idle'}
-            />{summary.watched - summary.failing}<span class="muted">/{summary.watched}</span></span
-          >
-        </div>
-        <div>
-          <span class="cap">Repositories</span>
-          <span class="figure">{summary.watched}</span>
-        </div>
-        <div>
-          <span class="cap">Open pull requests</span>
-          <span class="figure">{summary.open}</span>
-        </div>
-        <div>
-          <span class="cap">Checks failing</span>
-          <span class="figure">{summary.checksFailing}</span>
-        </div>
-        <div>
-          <span class="cap">Ready to merge</span>
-          <span class="figure">{summary.ready}</span>
-        </div>
-      </div>
+      <Figures label="GitHub at a glance">
+        <Figure
+          label="Answering"
+          mark={summary.failing ? 'failed' : summary.watched ? 'passed' : 'idle'}
+          tone={summary.failing ? 'error' : null}
+          >{summary.watched - summary.failing}<span class="muted">/{summary.watched}</span></Figure
+        >
+        <Figure label="Repositories">{summary.watched}</Figure>
+        <Figure label="Open pull requests">{summary.open}</Figure>
+        <Figure label="Checks failing" tone={summary.checksFailing ? 'error' : null}
+          >{summary.checksFailing}</Figure
+        >
+        <Figure label="Ready to merge">{summary.ready}</Figure>
+      </Figures>
 
       <section class="block" aria-labelledby="repos-title">
         <header>
@@ -187,61 +177,11 @@
     gap: 1px;
     min-width: 0;
   }
-  .cap {
-    margin: 0;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 10.5px;
-    font-weight: 400;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  .meta {
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 11px;
-  }
-  .mono {
-    font-family: var(--mono);
-  }
-  .num {
-    text-align: right;
-  }
-  .ellipsis {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
   .error {
     margin: 0;
     padding: 16px;
     background: var(--surface);
     color: var(--error);
-  }
-  .figures {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 1px;
-  }
-  .figures > div {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-    padding: 12px 16px;
-    background: var(--surface);
-  }
-  .figure {
-    font-family: var(--mono);
-    font-size: 22px;
-  }
-  .status {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-  .muted {
-    color: var(--muted);
   }
   .block {
     background: var(--surface);
@@ -334,10 +274,5 @@
   }
   .quiet {
     padding: 8px 16px 14px;
-  }
-  @media (max-width: 1000px) {
-    .figures {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
   }
 </style>

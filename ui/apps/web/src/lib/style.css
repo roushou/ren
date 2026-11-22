@@ -270,6 +270,30 @@ pre {
 .muted {
   color: var(--muted);
 }
+/* A section's caption: its name and figures, small and uppercase. */
+.cap {
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+/* A quiet line of figures under a value. */
+.meta {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.num {
+  text-align: right;
+}
+.ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .warning {
   color: var(--warning);
 }
@@ -2013,7 +2037,6 @@ td.zero {
 }
 .usage-panel .panel-heading h2 {
   margin: 0;
-  font-size: 13px;
 }
 .usage-columns {
   display: grid;

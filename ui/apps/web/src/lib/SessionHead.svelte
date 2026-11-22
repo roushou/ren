@@ -96,11 +96,6 @@
     white-space: nowrap;
     text-overflow: ellipsis;
   }
-  .meta {
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 11px;
-  }
   .meta a {
     color: var(--muted);
     text-decoration: underline;

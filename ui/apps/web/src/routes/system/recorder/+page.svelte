@@ -420,13 +420,6 @@
     white-space: nowrap;
     text-align: right;
   }
-  .muted {
-    color: var(--muted);
-  }
-  .mono {
-    font-family: var(--mono);
-    font-variant-numeric: tabular-nums;
-  }
   .disk-bar {
     display: block;
     width: calc(100% - 24px);
@@ -587,20 +580,6 @@
   .rec-note.error strong,
   .rec-note small {
     color: var(--muted);
-    font-size: 11px;
-  }
-  .cap {
-    margin: 0;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 10.5px;
-    font-weight: 400;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  .meta {
-    color: var(--muted);
-    font-family: var(--mono);
     font-size: 11px;
   }
   .meta.ok {

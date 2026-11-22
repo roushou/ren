@@ -29,6 +29,8 @@
     type PullMode,
   } from '#lib/release.ts';
   import Glyph from '#lib/Glyph.svelte';
+  import Figures from '#lib/Figures.svelte';
+  import Figure from '#lib/Figure.svelte';
   import { Work } from '#lib/work.ts';
   import type { ReleaseData } from './+page.ts';
 
@@ -238,15 +240,12 @@
         </div>
       </div>
 
-      <div class="figures">
-        {#each figures as item (item.label)}
-          <div>
-            <span class="cap">{item.label}</span>
-            <span class="figure-value"
-              >{#if item.mark}<Glyph mark={item.mark} />{/if}{item.value}</span
-            >
-          </div>
-        {/each}
+      <div class="flow-figures">
+        <Figures label="Release at a glance" size="small">
+          {#each figures as item (item.label)}
+            <Figure label={item.label} mark={item.mark}>{item.value}</Figure>
+          {/each}
+        </Figures>
       </div>
     </section>
 
@@ -397,36 +396,24 @@
     title="Promote {commit.slice(0, 7)} to production?"
     onclose={() => (confirming = null)}
   >
-    <dl class="promote-figures">
-      <div>
-        <dt class="cap">Production</dt>
-        <dd class="mono">{ReleasePage.short(view.production).slice(0, 7)}</dd>
-      </div>
-      <div>
-        <dt class="cap">Behind</dt>
-        <dd class="mono">
-          {#if release.behind === null}<Glyph
-              mark="unknown"
-              label="Production is {view.behind}"
-            />—{:else}↓{release.behind}{/if}
-        </dd>
-      </div>
-      {#if release.canary}
-        <div>
-          <dt class="cap">Canary</dt>
-          <dd class="mono">
-            <Glyph
-              mark={release.canary.passed ? 'passed' : 'failed'}
-              label={release.canary.passed ? 'Passed' : 'Failed'}
-            />{release.canary.checks.filter((c) => c.passed).length}/{release.canary.checks.length}
-          </dd>
-        </div>
-      {/if}
-      <div>
-        <dt class="cap">Policy</dt>
-        <dd class="mono">{release.policy}</dd>
-      </div>
-    </dl>
+    <div class="promote-figures">
+      <Figures label="What promoting takes" size="small">
+        <Figure label="Production">{ReleasePage.short(view.production).slice(0, 7)}</Figure>
+        <Figure
+          label="Behind"
+          mark={release.behind === null ? 'unknown' : null}
+          title={release.behind === null ? `Production is ${view.behind}` : undefined}
+          >{release.behind === null ? '—' : `↓${release.behind}`}</Figure
+        >
+        {#if release.canary}
+          <Figure label="Canary" mark={release.canary.passed ? 'passed' : 'failed'}
+            >{release.canary.checks.filter((c) => c.passed).length}/{release.canary.checks
+              .length}</Figure
+          >
+        {/if}
+        <Figure label="Policy">{release.policy}</Figure>
+      </Figures>
+    </div>
     {#if waiting.length}
       <ul class="promoting">
         {#each waiting as item (item.id)}<li>{item.title}</li>{/each}
@@ -448,25 +435,6 @@
     flex-direction: column;
     background: var(--line);
     gap: 1px;
-  }
-  .cap {
-    margin: 0;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 10.5px;
-    font-weight: 400;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  .meta {
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 11px;
-  }
-  .ellipsis {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
   }
   .error,
   .empty {
@@ -612,8 +580,7 @@
     font-size: 10.5px;
   }
   .decided,
-  .figure,
-  .figure-value {
+  .figure {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -642,23 +609,13 @@
   .link.ahead {
     border-top: 2px dashed var(--accent);
   }
-  .figures {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 1px;
+  .promote-figures {
+    margin: 0 0 12px;
+    border: 1px solid var(--line);
+  }
+  .flow-figures {
     margin-top: 12px;
     border-top: 1px solid var(--line);
-    background: var(--line);
-  }
-  .figures > div {
-    display: flex;
-    flex-direction: column;
-    padding: 10px 16px;
-    background: var(--surface);
-  }
-  .figure-value {
-    font-family: var(--mono);
-    font-size: 14px;
   }
 
   .panels {
@@ -794,28 +751,6 @@
     margin: 0 0 8px;
     padding-left: 18px;
   }
-  .promote-figures {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 1px;
-    margin: 0 0 12px;
-    border: 1px solid var(--line);
-    background: var(--line);
-  }
-  .promote-figures > div {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px 10px;
-    background: var(--surface);
-  }
-  .promote-figures dd {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    margin: 0;
-    font-size: 14px;
-  }
 
   @media (max-width: 1100px) {
     .flow {
@@ -828,9 +763,6 @@
     .edges,
     .link {
       display: none;
-    }
-    .figures {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .work-columns {
       grid-template-columns: 1fr;

@@ -50,7 +50,7 @@
       {/if}
     </span>
   </div>
-  <p class="meta">
+  <p class="quiet-line">
     {item.order.marks.length} mark{item.order.marks.length === 1 ? '' : 's'} · made on
     <a class="mono" href={item.order.page.path}>{item.order.page.path}</a> ·
     <span class="mono"
@@ -68,7 +68,7 @@
         <Glyph mark={step.mark} label={true} />
         <span class="way-text">
           <span class="way-label">{step.label}</span>
-          {#if step.detail}<span class="meta">{step.detail}</span>{/if}
+          {#if step.detail}<span class="quiet-line">{step.detail}</span>{/if}
         </span>
       </li>
     {/each}
@@ -93,7 +93,7 @@
                 target="_blank"
                 rel="noopener">Open <Icon name="arrow" size={11} /></a
               >{:else}<span
-                class="meta"
+                class="quiet-line"
                 title="The agent starts one with `cargo xtask preview up --publish` in its worktree"
                 >No preview yet</span
               >{/if}
@@ -116,8 +116,8 @@
             <span class="mark-number mono">{index + 1}</span>
             <span class="mark-text">
               <span class="note">{mark.note}</span>
-              <span class="mono meta">{mark.selector}</span>
-              {#if mark.text || mark.source}<span class="meta"
+              <span class="mono quiet-line">{mark.selector}</span>
+              {#if mark.text || mark.source}<span class="quiet-line"
                   >{mark.text ? `“${mark.text}”` : ''}{mark.text && mark.source
                     ? ' · '
                     : ''}{#if mark.source}<span class="mono">{mark.source}</span>{/if}</span
@@ -133,7 +133,7 @@
                   height={Math.max(2, mark.height * scale)}
                 /></svg
               >
-              <span class="meta mono">{mark.width}×{mark.height}</span>
+              <span class="quiet-line mono">{mark.width}×{mark.height}</span>
             </span>
           </li>
         {/each}
@@ -146,12 +146,12 @@
       <h3>Its session</h3>
       {#if desk}<a class="session-link" href={desk}
           ><Icon name="sessions" size={12} />Open its session <Icon name="arrow" size={11} /></a
-        >{:else}<p class="meta">Not sent to a session yet.</p>{/if}
+        >{:else}<p class="quiet-line">Not sent to a session yet.</p>{/if}
     </section>
     {#if pulls.length}
       <section>
         <h3>
-          Its pull requests · {pulls.length}{#if repository}<span class="meta repo"
+          Its pull requests · {pulls.length}{#if repository}<span class="quiet-line repo"
               >{repository}</span
             >{/if}
         </h3>
@@ -162,9 +162,9 @@
             <li>
               <Glyph mark={chip.mark} label={chip.label} />
               <a href={pull.url} target="_blank" rel="noopener"
-                ><span class="meta">#{pull.number}</span> {pull.title}</a
+                ><span class="quiet-line">#{pull.number}</span> {pull.title}</a
               >
-              <span class="meta"><Glyph mark={checks.mark} label={checks.label} /></span>
+              <span class="quiet-line"><Glyph mark={checks.mark} label={checks.label} /></span>
             </li>
           {/each}
         </ul>
@@ -251,7 +251,7 @@
     letter-spacing: 0.05em;
     text-transform: uppercase;
   }
-  .meta {
+  .quiet-line {
     margin: 0;
     color: var(--muted);
     font-size: 11.5px;

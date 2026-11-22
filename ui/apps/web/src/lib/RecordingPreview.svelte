@@ -5,6 +5,8 @@
   read when the preview opens.
 -->
 <script lang="ts">
+  import Figures from './Figures.svelte';
+  import Figure from './Figure.svelte';
   import Glyph from '#lib/Glyph.svelte';
   import FindingList from '#lib/FindingList.svelte';
   import { ManagementApi, num, short, type RecordingReport } from '#lib/api.ts';
@@ -78,22 +80,17 @@
     <p class="error pad" role="alert">{read.reason}</p>
   {:else}
     {@const totals = read.report.totals}
-    <dl class="figures">
-      <div>
-        <dt>Peak context</dt>
-        <dd class="mono">{compactOrDash(totals.peak_context_tokens)}</dd>
-      </div>
-      <div>
-        <dt>Cache hit</dt>
-        <dd class="mono">
-          {totals.cache_hit_percent === null ? '—' : `${Math.round(totals.cache_hit_percent)}%`}
-        </dd>
-      </div>
-      <div>
-        <dt>Output</dt>
-        <dd class="mono">{compactOrDash(totals.output_tokens)}</dd>
-      </div>
-    </dl>
+    <div class="figures">
+      <Figures label="The session at a glance" size="small">
+        <Figure label="Peak context">{compactOrDash(totals.peak_context_tokens)}</Figure>
+        <Figure label="Cache hit"
+          >{totals.cache_hit_percent === null
+            ? '—'
+            : `${Math.round(totals.cache_hit_percent)}%`}</Figure
+        >
+        <Figure label="Output">{compactOrDash(totals.output_tokens)}</Figure>
+      </Figures>
+    </div>
 
     <section>
       <h3>Context per turn</h3>
@@ -185,27 +182,8 @@
     padding: 12px 16px;
   }
   .figures {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    margin: 0;
+    --figure-surface: var(--popover);
     border-bottom: 1px solid var(--line);
-  }
-  .figures > div {
-    padding: 10px 16px;
-    border-right: 1px solid var(--line);
-  }
-  .figures > div:last-child {
-    border-right: 0;
-  }
-  dt {
-    color: var(--muted);
-    font-size: 10.5px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-  }
-  dd {
-    margin: 4px 0 0;
-    font-size: 17px;
   }
   section {
     padding: 12px 16px;

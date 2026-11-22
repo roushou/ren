@@ -92,13 +92,6 @@
     gap: 4px 14px;
     margin-bottom: 8px;
   }
-  .cap {
-    color: var(--muted);
-    font-size: 10.5px;
-    font-weight: 500;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-  }
   .key {
     display: inline-flex;
     align-items: center;

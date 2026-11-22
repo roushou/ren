@@ -238,18 +238,6 @@
     justify-content: space-between;
     align-items: baseline;
   }
-  .cap {
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  .meta {
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 11px;
-  }
   .figure {
     display: flex;
     align-items: baseline;

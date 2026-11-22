@@ -165,7 +165,4 @@
     margin: 0;
     padding: 14px 16px;
   }
-  .muted {
-    color: var(--muted);
-  }
 </style>

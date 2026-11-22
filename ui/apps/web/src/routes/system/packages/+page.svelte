@@ -1,5 +1,7 @@
 <script lang="ts">
   import Glyph from '#lib/Glyph.svelte';
+  import Figures from '#lib/Figures.svelte';
+  import Figure from '#lib/Figure.svelte';
   import SlideOver from '#lib/layer/SlideOver.svelte';
   import FloatingBar from '#lib/layer/FloatingBar.svelte';
   import Modal from '#lib/layer/Modal.svelte';
@@ -239,32 +241,21 @@
     <div class="packages-body">
       <div class="packages-left">
         {#if tally}
-          <section class="figures" aria-label="Packages at a glance">
-            <div>
-              <span class="cap">Managed</span>
-              <span class="figure"><Glyph mark="passed" />{tally.managed}</span>
-            </div>
-            <div>
-              <span class="cap">Generation</span>
-              <span class="figure">{listing.generation}</span>
-            </div>
-            <div>
-              <span class="cap">Updates</span>
-              <span class="figure"
-                >{#if updates.length}<Glyph mark="warning" />{/if}{updates.length}</span
-              >
-            </div>
-            <div>
-              <span class="cap">Missing</span>
-              <span class="figure"
-                >{#if missing.length}<Glyph mark="failed" />{/if}{missing.length}</span
-              >
-            </div>
-            <div>
-              <span class="cap">On PATH</span>
-              <span class="figure">{tally.system}</span>
-            </div>
-            <div class="generation-actions">
+          <Figures label="Packages at a glance">
+            <Figure label="Managed" mark="passed">{tally.managed}</Figure>
+            <Figure label="Generation">{listing.generation}</Figure>
+            <Figure
+              label="Updates"
+              mark={updates.length ? 'warning' : null}
+              tone={updates.length ? 'warning' : null}>{updates.length}</Figure
+            >
+            <Figure
+              label="Missing"
+              mark={missing.length ? 'failed' : null}
+              tone={missing.length ? 'error' : null}>{missing.length}</Figure
+            >
+            <Figure label="On PATH">{tally.system}</Figure>
+            {#snippet actions()}
               {#if previous}<button
                   class="button small"
                   disabled={applying.kind === 'applying'}
@@ -274,8 +265,8 @@
                 >{/if}
               <button class="button small" onclick={collect}>Clean up</button>
               {#if collecting}<span class="meta">{collecting}</span>{/if}
-            </div>
-          </section>
+            {/snippet}
+          </Figures>
           <div class="filters">
             <label class="search-input search">
               <Icon name="search" size={12} />
@@ -727,19 +718,6 @@
     white-space: nowrap;
     text-overflow: ellipsis;
   }
-  .meta {
-    color: var(--muted);
-    font-size: 11px;
-  }
-  .cap {
-    margin: 0;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 10.5px;
-    font-weight: 400;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
   .packages-body {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 320px;
@@ -752,37 +730,8 @@
     min-width: 0;
     min-height: 0;
   }
-  .figures {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
-    gap: 1px;
+  .packages-left > :global(.figures) {
     border-bottom: 1px solid var(--line);
-    background: var(--line);
-  }
-  .figures > div {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-    padding: 10px 16px;
-    background: var(--surface);
-  }
-  .figure {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    font-family: var(--mono);
-    font-size: 22px;
-  }
-  .figure .meta {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  .generation-actions {
-    flex-direction: row !important;
-    align-items: center;
-    gap: 6px !important;
   }
   .filters {
     display: flex;
@@ -818,9 +767,6 @@
     .clients {
       border-top: 1px solid var(--line);
       border-left: 0;
-    }
-    .figures {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
   td,

@@ -437,15 +437,6 @@
     align-items: baseline;
     gap: 10px;
   }
-  .cap {
-    margin: 0;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 10.5px !important;
-    font-weight: 400;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
   .big {
     font-size: 22px;
   }

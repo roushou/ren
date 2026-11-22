@@ -307,14 +307,6 @@
   .glance {
     gap: 14px;
   }
-  .cap {
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 10.5px;
-    font-weight: 500;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
   .pair {
     display: inline-flex;
     align-items: center;

@@ -913,11 +913,6 @@
     color: var(--muted);
     text-align: right;
   }
-  .ellipsis {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
   .live-band.empty {
     display: flex;
     align-items: center;

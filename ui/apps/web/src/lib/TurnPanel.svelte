@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Figures from './Figures.svelte';
+  import Figure from './Figure.svelte';
   /*
     One turn of a session, beside its calls: when it ran and how many calls
     it made, its context and cache against the report, what it was asked,
@@ -70,27 +72,17 @@
   </header>
 
   {#if metrics}
-    <div class="figures">
-      <div>
-        <span class="cap">Context</span><span class="figure"
-          >{compact(metrics.context_start_tokens ?? 0)}→{compact(
-            metrics.context_end_tokens ?? metrics.context_start_tokens ?? 0,
-          )}</span
-        >
-      </div>
-      <div>
-        <span class="cap">From cache</span><span
-          class="figure"
-          class:low={cacheHit !== null && cacheHit < 50}
-          >{cacheHit === null ? '—' : `${Math.round(cacheHit)}%`}</span
-        >
-      </div>
-      <div>
-        <span class="cap">Written</span><span class="figure"
-          >{compact(metrics.cache_written_tokens)}</span
-        >
-      </div>
-    </div>
+    <Figures label="The turn's context" size="small">
+      <Figure label="Context"
+        >{compact(metrics.context_start_tokens ?? 0)}→{compact(
+          metrics.context_end_tokens ?? metrics.context_start_tokens ?? 0,
+        )}</Figure
+      >
+      <Figure label="From cache" tone={cacheHit !== null && cacheHit < 50 ? 'warning' : null}
+        >{cacheHit === null ? '—' : `${Math.round(cacheHit)}%`}</Figure
+      >
+      <Figure label="Written">{compact(metrics.cache_written_tokens)}</Figure>
+    </Figures>
   {/if}
 
   {#if pending}
@@ -153,44 +145,13 @@
   }
   .meta {
     margin: 3px 0 0;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 11px;
   }
   .pad {
     padding: 12px 16px;
   }
-  .cap {
-    margin: 0 0 8px;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 10.5px;
-    font-weight: 400;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  .figures {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 1px;
+  .turn-panel :global(.figures) {
+    --figure-surface: var(--popover);
     border-bottom: 1px solid var(--line);
-    background: var(--line);
-  }
-  .figures > div {
-    display: flex;
-    flex-direction: column;
-    padding: 10px 14px;
-    background: var(--popover);
-  }
-  .figures .cap {
-    margin: 0;
-  }
-  .figure {
-    font-family: var(--mono);
-    font-size: 15px;
-  }
-  .figure.low {
-    color: var(--warning);
   }
   section {
     padding: 12px 16px;

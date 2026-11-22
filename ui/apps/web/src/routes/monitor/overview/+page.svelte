@@ -20,6 +20,8 @@
   import { harnessLabel, searchFieldLabel, secretKindLabel } from '#lib/activity.ts';
   import ConnectClient from '#lib/ConnectClient.svelte';
   import Glyph from '#lib/Glyph.svelte';
+  import Figures from '#lib/Figures.svelte';
+  import Figure from '#lib/Figure.svelte';
   import Icon from '#lib/Icon.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
@@ -290,19 +292,15 @@
             <a class="meta ov-link" href="/monitor/live">Live →</a>
           </header>
           <div class="ov-now">
-            <div>
-              <span class="ov-figure">{board ? num(board.inFlight) : '—'}</span><span class="meta"
-                >in flight</span
+            <Figures label="Now">
+              <Figure label="In flight">{board ? num(board.inFlight) : '—'}</Figure>
+              <Figure label="Sessions active"
+                >{board ? num(board.tiles.length + board.overflow) : '—'}</Figure
               >
-            </div>
-            <div>
-              <span class="ov-figure">{board ? num(board.tiles.length + board.overflow) : '—'}</span
-              ><span class="meta">sessions active</span>
-            </div>
-            <div>
-              <span class="ov-figure">{lastCall ? span(Math.max(0, now - lastCall)) : '—'}</span
-              ><span class="meta">since last call</span>
-            </div>
+              <Figure label="Since last call"
+                >{lastCall ? span(Math.max(0, now - lastCall)) : '—'}</Figure
+              >
+            </Figures>
           </div>
           {#if open.length}
             <ul class="ov-open">
@@ -383,34 +381,14 @@
   .ov-sum {
     margin-left: 16px;
   }
-  .cap {
-    margin: 0;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 10.5px;
-    font-weight: 400;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
   .cap.strong {
     color: var(--ink);
   }
-  .meta {
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 11px;
-  }
   .num {
     font-family: var(--mono);
-    text-align: right;
   }
   .bad {
     color: var(--error);
-  }
-  .ellipsis {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
   }
   .ov-grid {
     display: grid;
@@ -561,19 +539,8 @@
     fill: var(--muted);
   }
   .ov-now {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-    margin-top: 10px;
-  }
-  .ov-now > div {
-    display: flex;
-    flex-direction: column;
-  }
-  .ov-figure {
-    font-family: var(--mono);
-    font-size: 22px;
-    font-weight: 500;
+    margin: 10px -16px 0;
+    border-block: 1px solid var(--line);
   }
   .ov-open,
   .ov-secrets {

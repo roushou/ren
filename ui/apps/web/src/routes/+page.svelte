@@ -10,6 +10,8 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import Glyph from '#lib/Glyph.svelte';
+  import Figures from '#lib/Figures.svelte';
+  import Figure from '#lib/Figure.svelte';
   import Skeleton from '#lib/Skeleton.svelte';
   import Icon from '#lib/Icon.svelte';
   import Toolbar from '#lib/Toolbar.svelte';
@@ -328,34 +330,20 @@
           ></span
         >
       </header>
-      <dl class="tiles">
-        <div>
-          <dt class="cap">Sessions ended</dt>
-          <dd class="mono"><Glyph mark="passed" />{counts.ended}</dd>
-        </div>
-        <div>
-          <dt class="cap">Work landed</dt>
-          <dd class="mono"><Glyph mark="passed" />{counts.landed}</dd>
-        </div>
-        <div>
-          <dt class="cap">Shipped</dt>
-          <dd class="mono">{counts.shipped}</dd>
-        </div>
-        <div>
-          <dt class="cap">Ended short</dt>
-          <dd class="mono">
-            {#if counts.failed}<Glyph mark="failed" />{/if}{counts.failed}
-          </dd>
-        </div>
-        <div>
-          <dt class="cap">Tokens in</dt>
-          <dd class="mono">{spent ? compactOrDash(spent.tokens.input) : '—'}</dd>
-        </div>
-        <div>
-          <dt class="cap">Tokens out</dt>
-          <dd class="mono">{spent ? compactOrDash(spent.tokens.output) : '—'}</dd>
-        </div>
-      </dl>
+      <div class="tiles">
+        <Figures label="Since you looked" size="small">
+          <Figure label="Sessions ended" mark="passed">{counts.ended}</Figure>
+          <Figure label="Work landed" mark="passed">{counts.landed}</Figure>
+          <Figure label="Shipped">{counts.shipped}</Figure>
+          <Figure
+            label="Ended short"
+            mark={counts.failed ? 'failed' : null}
+            tone={counts.failed ? 'error' : null}>{counts.failed}</Figure
+          >
+          <Figure label="Tokens in">{spent ? compactOrDash(spent.tokens.input) : '—'}</Figure>
+          <Figure label="Tokens out">{spent ? compactOrDash(spent.tokens.output) : '—'}</Figure>
+        </Figures>
+      </div>
       <div class="scroll">
         {#each outcomes as one (one.key)}
           {#if one.href}<a class="row outcome" href={one.href}>
@@ -490,15 +478,6 @@
     border-bottom: 1px solid var(--line);
     font-size: 11px;
   }
-  .cap {
-    margin: 0;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
   .scroll {
     flex: 1;
     min-height: 0;
@@ -598,32 +577,8 @@
     gap: 8px;
   }
   .tiles {
-    display: grid;
     flex: none;
-    grid-template-columns: 1fr 1fr;
-    margin: 0;
     border-bottom: 1px solid var(--line);
-  }
-  .tiles > div {
-    padding: 10px 14px;
-    border-right: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-  }
-  .tiles > div:nth-child(2n) {
-    border-right: 0;
-  }
-  .tiles > div:nth-last-child(-n + 2) {
-    border-bottom: 0;
-  }
-  .tiles dt {
-    font-size: 9.5px;
-  }
-  .tiles dd {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin: 4px 0 0;
-    font-size: 17px;
   }
   .quiet {
     display: flex;
