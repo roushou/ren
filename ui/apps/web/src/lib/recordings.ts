@@ -57,7 +57,6 @@ export interface RecordingSummary {
 
 /** One turn's context, against the recording's peak (0–1). */
 export interface TurnContext {
-  label: string;
   start: number;
   end: number;
   /** Its cache was written afresh more than it was read. */
@@ -148,21 +147,20 @@ export class RecordingList {
     };
   }
 
-  /** A report's turns as context ranges against its peak, numbered. */
+  /** A report's turns as context ranges against its peak, oldest first. */
   static turnContext(report: RecordingReport): TurnContext[] {
     const peak = Math.max(1, report.totals.peak_context_tokens);
-    return report.turns.map((turn, index) => {
+    return report.turns.map((turn) => {
       const start = turn.context_start_tokens ?? 0;
       const end = turn.context_end_tokens ?? start;
       return {
-        label: `T${index + 1}`,
         start: start / peak,
         end: end / peak,
         rebuilt:
           turn.cache_hit_percent !== null &&
           turn.cache_hit_percent < 50 &&
           turn.cache_written_tokens > 0,
-        title: `T${index + 1}: ${start.toLocaleString()} → ${end.toLocaleString()} tokens${
+        title: `${start.toLocaleString()} → ${end.toLocaleString()} tokens${
           turn.cache_hit_percent === null
             ? ''
             : ` · ${Math.round(turn.cache_hit_percent)}% cache hit`

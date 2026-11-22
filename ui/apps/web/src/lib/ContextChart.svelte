@@ -11,14 +11,11 @@
 
   let {
     calls,
-    labels,
     selected,
     href,
     oncall,
   }: {
     calls: readonly CallView[];
-    /** A turn's label, as the list below names it. */
-    labels: ReadonlyMap<string, string>;
     selected: CallId | null;
     href: (call: CallId) => string;
     oncall: (event: MouseEvent, call: CallId) => void;
@@ -50,9 +47,7 @@
           y="0"
           width={(band.to - band.from) * SLOT}
           height="112"
-        />{#if band.to - band.from >= 2}<text class="band-label" x={band.from * SLOT + 2} y="9"
-            >{labels.get(band.turn) ?? ''}</text
-          >{/if}{/each}
+        />{/each}
       {#each chart.bars as bar, index (bar.call.id)}{@const x = index * SLOT + 1.5}<a
           href={href(bar.call.id)}
           onclick={(event) => oncall(event, bar.call.id)}
@@ -130,11 +125,6 @@
   }
   .band.odd {
     fill: color-mix(in srgb, var(--ink) 4%, transparent);
-  }
-  .band-label {
-    fill: var(--muted);
-    font-family: var(--mono, monospace);
-    font-size: 7px;
   }
   .hit {
     fill: transparent;

@@ -169,10 +169,10 @@ test('a report’s turns read as context ranges against its peak; a cold cache i
     omitted_calls: 0,
   });
   assert.deepEqual(
-    bars.map((bar) => [bar.label, bar.start, bar.end, bar.rebuilt]),
+    bars.map((bar) => [bar.start, bar.end, bar.rebuilt]),
     [
-      ['T1', 0.1, 0.5, false],
-      ['T2', 0.5, 1, true],
+      [0.1, 0.5, false],
+      [0.5, 1, true],
     ],
   );
 });

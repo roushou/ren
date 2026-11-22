@@ -53,7 +53,6 @@
     </span>
     <span class="facts muted mono">
       {[
-        place ? `T${place.turn}` : null,
         place ? `step ${place.index} of ${place.of}` : null,
         step.failure,
         step.took === null ? null : Steps.time(step.took),

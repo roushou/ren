@@ -568,9 +568,6 @@
     {/if}
     {#if recordingId && !outlined && calls.length}<ContextChart
         {calls}
-        labels={new Map(
-          groups.flatMap((group) => (group.turn ? [[group.turn, group.label] as const] : [])),
-        )}
         selected={selectedId}
         href={callHref}
         oncall={selectCall}

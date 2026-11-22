@@ -1,4 +1,4 @@
-import { harnesses, type CallId, type CallView } from './api.ts';
+import { clock, harnesses, type CallId, type CallView } from './api.ts';
 import { harnessLabel } from './activity.ts';
 import { changed, picked, type Query } from './query.ts';
 import type { RawCallQuery } from './wire/RawCallQuery.ts';
@@ -176,7 +176,6 @@ export interface TurnGroup {
 export function turnGroups(calls: CallView[]): TurnGroup[] {
   const groups: TurnGroup[] = [];
   // Turns are numbered in the order they first appear on the page.
-  const numbers = new Map<string, number>();
   for (const call of calls) {
     const last = groups.at(-1);
     const key = call.turn ?? null;
@@ -184,12 +183,12 @@ export function turnGroups(calls: CallView[]): TurnGroup[] {
       last.rows.push(call);
       continue;
     }
-    if (key !== null && !numbers.has(key)) numbers.set(key, numbers.size + 1);
     groups.push({
       // A turn can recur after calls outside it, so a group is keyed by its
       // first call, which is unique.
       id: `${key ?? 'outside'}-${call.id}`,
-      label: key ? `T${numbers.get(key)}` : 'Outside a turn',
+      // A turn is named by when it started: its first call here.
+      label: key ? `Turn · ${clock(call.started_at)}` : 'Outside a turn',
       turn: key,
       rows: [call],
     });

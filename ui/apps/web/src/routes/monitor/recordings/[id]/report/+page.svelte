@@ -39,7 +39,6 @@
   /** The chart's height in SVG units, drawn at the same height in pixels. */
   const CHART = 120;
   const turnColumns: Column[] = [
-    { label: '', class: 'turn-number' },
     { label: 'Started' },
     { label: 'Prompt', class: 'turn-prompt' },
     { label: 'Calls', numeric: true },
@@ -221,12 +220,11 @@
                   >
                   <tbody>
                     {#if pending}<SkeletonRows columns={turnColumns} rows={8} />{/if}
-                    {#each rows as row, index (row.metrics.turn)}
+                    {#each rows as row (row.metrics.turn)}
                       {@const metrics = row.metrics}
                       {@const start = metrics.context_start_tokens ?? 0}
                       {@const end = metrics.context_end_tokens ?? start}
                       <tr>
-                        <td class="turn-number mono muted">T{rows.length - index}</td>
                         <td
                           ><span>{date(metrics.started_at)}</span><small
                             >{clock(metrics.started_at)}</small
@@ -347,9 +345,6 @@
       position: static;
       border-left: 0;
     }
-  }
-  .turn-number {
-    width: 36px;
   }
   .errors {
     display: inline-flex;

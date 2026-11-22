@@ -1717,7 +1717,6 @@
               <!-- The whole conversation, every turn open, as one scroll. -->
               {#each turnBlocks as blocks, index (index)}
                 <section class="turn" aria-label="Turn {index + 1}">
-                  <span class="turn-number mono" aria-hidden="true">T{index + 1}</span>
                   {#each blocks as block, at (at)}
                     {#if block.kind === 'steps'}
                       <StepGroup
@@ -2278,17 +2277,7 @@
      the page. */
   .turn {
     position: relative;
-    padding-left: 32px;
     border-bottom: 1px solid var(--line);
-  }
-  .turn-number {
-    position: absolute;
-    top: 10px;
-    left: 0;
-    width: 36px;
-    color: var(--muted);
-    font-size: 10.5px;
-    text-align: center;
   }
   .entry.asked {
     display: flex;
