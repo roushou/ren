@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RecordingList, type RecordingListInput } from '../src/lib/recordings.ts';
+import { RecordingList, TurnContexts, type RecordingListInput } from '../src/lib/recordings.ts';
 import { Board } from '../src/lib/board.ts';
 import type { RecordingId, RecordingView, UnixMillis } from '../src/lib/api.ts';
 import { callFixture, callId, uuid } from './fixtures.ts';
@@ -149,7 +149,7 @@ test('the list adds up its recordings, and each row knows its span within its da
 });
 
 test('a report’s turns read as context ranges against its peak; a cold cache is a rebuild', () => {
-  const turn = (start: number, end: number, hit: number | null, written: number) => ({
+  const turn = (start: number | null, end: number | null, hit: number | null, written: number) => ({
     turn: 't' as never,
     started_at: 0 as never,
     ended_at: null,
@@ -161,18 +161,18 @@ test('a report’s turns read as context ranges against its peak; a cold cache i
     cache_written_tokens: written,
     output_tokens: 0,
   });
-  const bars = RecordingList.turnContext({
-    recording: sid(1),
-    totals: { peak_context_tokens: 100_000 } as never,
-    turns: [turn(10_000, 50_000, 90, 100), turn(50_000, 100_000, 10, 40_000)],
-    findings: [],
-    omitted_calls: 0,
-  });
+  const bars = TurnContexts.of([
+    turn(10_000, 50_000, 90, 100),
+    turn(50_000, 100_000, 10, 40_000),
+    turn(null, null, null, 0),
+  ]);
+  // A turn that reported no context is left out; the rest stand against the
+  // largest context any of them reached.
   assert.deepEqual(
-    bars.map((bar) => [bar.start, bar.end, bar.rebuilt]),
+    bars.map((bar) => [bar.start, bar.end, bar.hit, bar.rebuilt]),
     [
-      [0.1, 0.5, false],
-      [0.5, 1, true],
+      [0.1, 0.5, 0.9, false],
+      [0.5, 1, 0.1, true],
     ],
   );
 });

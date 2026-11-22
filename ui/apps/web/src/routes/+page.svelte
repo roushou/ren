@@ -23,6 +23,7 @@
   import { Shares, compactOrDash } from '#lib/display.ts';
   import { Home } from '#lib/home.ts';
   import { ProjectBoard } from '#lib/projects.ts';
+  import { ReleasePage } from '#lib/release.ts';
   import { RecorderReport } from '#lib/recorder.ts';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { Runs, Sessions } from '#lib/runs.ts';
@@ -229,7 +230,7 @@
               <div class="body">
                 <strong>{project.name}</strong>
                 <span class="facts">
-                  <span class="chip mono">{canary?.commit.slice(0, 7)}</span>
+                  <span class="chip mono">{ReleasePage.short(canary?.commit ?? null)}</span>
                   <span class="chip mono" title="Canary checks"
                     ><Glyph mark="passed" />{checks.filter((check) => check.passed)
                       .length}/{checks.length}</span

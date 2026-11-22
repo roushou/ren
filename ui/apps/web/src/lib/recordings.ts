@@ -6,8 +6,9 @@ import type {
   Excerpt,
   Harness,
   RecordingId,
-  RecordingReport,
   RecordingView,
+  TurnId,
+  TurnMetrics,
 } from './api.ts';
 import { providerName } from './api.ts';
 import { Board } from './board.ts';
@@ -56,12 +57,55 @@ export interface RecordingSummary {
 }
 
 /** One turn's context, against the recording's peak (0–1). */
+/** One turn's context, against the largest any of the turns reached. */
 export interface TurnContext {
+  turn: TurnId;
+  /** The tokens it started and ended with. */
+  startTokens: number;
+  endTokens: number;
+  /** Those against the peak, 0–1. */
   start: number;
   end: number;
+  /** The share of its context read from cache, 0–1; null when not reported. */
+  hit: number | null;
   /** Its cache was written afresh more than it was read. */
   rebuilt: boolean;
+  /** Its tokens, start to end, and its cache share, in words. */
   title: string;
+}
+
+/** Turns' context as one scale: every chart of context per turn draws these. */
+export class TurnContexts {
+  /** A turn whose cache was read for less than this share was rebuilt. */
+  static readonly REBUILT_BELOW = 0.5;
+
+  /** `turns` oldest first, those that reported any context, against the
+   * largest context any of them started or ended with. */
+  static of(turns: readonly TurnMetrics[]): TurnContext[] {
+    const reported = turns.filter(
+      (turn) => turn.context_start_tokens !== null || turn.context_end_tokens !== null,
+    );
+    const sized = reported.map((turn) => {
+      const startTokens = turn.context_start_tokens ?? turn.context_end_tokens ?? 0;
+      return { turn, startTokens, endTokens: turn.context_end_tokens ?? startTokens };
+    });
+    const peak = Math.max(1, ...sized.flatMap((one) => [one.startTokens, one.endTokens]));
+    return sized.map(({ turn, startTokens, endTokens }) => {
+      const hit = turn.cache_hit_percent === null ? null : turn.cache_hit_percent / 100;
+      return {
+        turn: turn.turn,
+        startTokens,
+        endTokens,
+        start: startTokens / peak,
+        end: endTokens / peak,
+        hit,
+        rebuilt: hit !== null && hit < TurnContexts.REBUILT_BELOW && turn.cache_written_tokens > 0,
+        title: `${startTokens.toLocaleString()} → ${endTokens.toLocaleString()} tokens${
+          hit === null ? '' : ` · ${Math.round(hit * 100)}% from cache`
+        }`,
+      };
+    });
+  }
 }
 
 export interface DayGroup {
@@ -145,28 +189,6 @@ export class RecordingList {
         }))
         .toSorted((a, b) => b.requests - a.requests),
     };
-  }
-
-  /** A report's turns as context ranges against its peak, oldest first. */
-  static turnContext(report: RecordingReport): TurnContext[] {
-    const peak = Math.max(1, report.totals.peak_context_tokens);
-    return report.turns.map((turn) => {
-      const start = turn.context_start_tokens ?? 0;
-      const end = turn.context_end_tokens ?? start;
-      return {
-        start: start / peak,
-        end: end / peak,
-        rebuilt:
-          turn.cache_hit_percent !== null &&
-          turn.cache_hit_percent < 50 &&
-          turn.cache_written_tokens > 0,
-        title: `${start.toLocaleString()} → ${end.toLocaleString()} tokens${
-          turn.cache_hit_percent === null
-            ? ''
-            : ` · ${Math.round(turn.cache_hit_percent)}% cache hit`
-        }`,
-      };
-    });
   }
 
   /** One call and no turn: a check or a count, not a recording of work. */

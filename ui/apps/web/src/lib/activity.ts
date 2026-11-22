@@ -1,5 +1,6 @@
 // What turns did and where a recording's tokens went, as the views show them.
 // Pure: no browser, no fetching; tested in tests/activity.test.ts.
+import { TurnContexts } from './recordings.ts';
 import { Elapsed } from './time.ts';
 import type {
   CallId,
@@ -195,32 +196,21 @@ export class ContextChart {
   readonly max: number;
 
   constructor(rows: TurnRow[]) {
-    const turns = [...rows]
-      .reverse()
-      .filter(
-        (row) =>
-          row.metrics.context_start_tokens !== null || row.metrics.context_end_tokens !== null,
-      );
-    this.max = Math.max(
-      1,
-      ...turns.flatMap((row) => [
-        row.metrics.context_start_tokens ?? 0,
-        row.metrics.context_end_tokens ?? 0,
-      ]),
-    );
+    const oldest = [...rows].reverse();
+    const turns = TurnContexts.of(oldest.map((row) => row.metrics));
+    this.max = Math.max(1, ...turns.flatMap((turn) => [turn.startTokens, turn.endTokens]));
     const step = 1000 / Math.max(1, turns.length);
     const gap = Math.min(2, step / 6);
-    this.bars = turns.map((row, index) => {
-      const start = row.metrics.context_start_tokens ?? row.metrics.context_end_tokens ?? 0;
-      const end = row.metrics.context_end_tokens ?? start;
+    this.bars = turns.map((turn, index) => {
+      const row = oldest.find((each) => each.metrics.turn === turn.turn);
       return {
-        turn: row.metrics.turn,
+        turn: turn.turn,
         x: index * step + gap,
         width: Math.max(1, step - 2 * gap),
-        start: start / this.max,
-        end: end / this.max,
-        flagged: row.findings.length > 0,
-        title: `${rowPrompt(row)} · ${compact(start)} → ${compact(end)}`,
+        start: turn.start,
+        end: turn.end,
+        flagged: (row?.findings.length ?? 0) > 0,
+        title: `${row ? rowPrompt(row) : 'Turn'} · ${compact(turn.startTokens)} → ${compact(turn.endTokens)}`,
       };
     });
   }

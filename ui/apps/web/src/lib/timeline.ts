@@ -51,7 +51,7 @@ export interface TokenSplit {
 }
 
 /** One call's prompt as a stacked bar, in shares of the chart's peak. */
-export interface ContextBar {
+export interface CallContextBar {
   call: CallView;
   read: number;
   written: number;
@@ -138,15 +138,7 @@ export class CallTimeline {
       case 'http_complete':
         return { mark: 'passed', label: 'HTTP complete' };
       case 'error':
-        return {
-          mark: 'failed',
-          label:
-            status.cause === 'http_status'
-              ? `Failed, HTTP ${call.status ?? ''}`.trim()
-              : status.cause === 'transport'
-                ? 'Failed in transport'
-                : 'The model failed',
-        };
+        return { mark: 'failed', label: CallTimeline.#failure(status.cause, call.status) };
       case 'rejected':
         return { mark: 'warning', label: `Refused by Ren: ${status.rejection}` };
       case 'interrupted':
@@ -162,6 +154,20 @@ export class CallTimeline {
         return { mark: 'unknown', label: 'Unknown' };
       default:
         return assertNever(status);
+    }
+  }
+
+  /** Why a call failed, in words. */
+  static #failure(cause: 'http_status' | 'transport' | 'model', status: number | null): string {
+    switch (cause) {
+      case 'http_status':
+        return `Failed, HTTP ${status ?? ''}`.trim();
+      case 'transport':
+        return 'Failed in transport';
+      case 'model':
+        return 'The model failed';
+      default:
+        return assertNever(cause);
     }
   }
 
@@ -228,7 +234,7 @@ export class CallTimeline {
    * the runs of each turn as bands; calls without usage are left out. */
   static contextChart(calls: readonly CallView[]): {
     peak: number;
-    bars: ContextBar[];
+    bars: CallContextBar[];
     bands: TurnBand[];
   } {
     const split = calls.flatMap((call) => {

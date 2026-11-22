@@ -234,7 +234,7 @@
               class="button primary small"
               disabled={asking || !control}
               title={control ? undefined : 'Read only'}
-              onclick={() => (confirming = commit)}>Promote {commit.slice(0, 7)}</button
+              onclick={() => (confirming = commit)}>Promote {ReleasePage.short(commit)}</button
             >
           {/if}
         </div>
@@ -368,7 +368,7 @@
           {#each waiting as item (item.id)}
             <a class="row work-row" href={Work.href(data.project.name, item.id)}>
               <span class="ellipsis">{item.title}</span>
-              <span class="meta">{ReleasePage.short(item.landed).slice(0, 7)}</span>
+              <span class="meta">{ReleasePage.short(item.landed)}</span>
             </a>
           {:else}<p class="none meta">None.</p>{/each}
         </div>
@@ -378,7 +378,9 @@
             <a class="row work-row shipped" href={Work.href(data.project.name, item.id)}>
               <span class="ellipsis">{item.title}</span>
               <span class="meta"
-                >{item.shipped?.kind === 'commit' ? item.shipped.commit.slice(0, 7) : ''}</span
+                >{item.shipped?.kind === 'commit'
+                  ? ReleasePage.short(item.shipped.commit)
+                  : ''}</span
               >
             </a>
           {:else}<p class="none meta">None.</p>{/each}
@@ -393,12 +395,12 @@
   {@const release = view.release}
   <Modal
     eyebrow="Promote · {data.project.name} production"
-    title="Promote {commit.slice(0, 7)} to production?"
+    title="Promote {ReleasePage.short(commit)} to production?"
     onclose={() => (confirming = null)}
   >
     <div class="promote-figures">
       <Figures label="What promoting takes" size="small">
-        <Figure label="Production">{ReleasePage.short(view.production).slice(0, 7)}</Figure>
+        <Figure label="Production">{ReleasePage.short(view.production)}</Figure>
         <Figure
           label="Behind"
           mark={release.behind === null ? 'unknown' : null}

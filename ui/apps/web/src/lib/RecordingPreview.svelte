@@ -5,6 +5,7 @@
   read when the preview opens.
 -->
 <script lang="ts">
+  import { TurnContexts } from './recordings.ts';
   import Figures from './Figures.svelte';
   import Figure from './Figure.svelte';
   import Glyph from '#lib/Glyph.svelte';
@@ -13,7 +14,7 @@
   import { findingLine } from '#lib/activity.ts';
   import { compactOrDash } from '#lib/display.ts';
   import { Board } from '#lib/board.ts';
-  import { RecordingList, type RecordingRow } from '#lib/recordings.ts';
+  import type { RecordingRow } from '#lib/recordings.ts';
   import { snapshotError } from '#lib/snapshots.ts';
 
   let {
@@ -49,7 +50,7 @@
       });
     return () => controller.abort();
   });
-  const turns = $derived(read.state === 'read' ? RecordingList.turnContext(read.report) : []);
+  const turns = $derived(read.state === 'read' ? TurnContexts.of(read.report.turns) : []);
 </script>
 
 <div class="preview">

@@ -438,7 +438,7 @@ export class ReleaseFigures {
         label: 'Next',
         value:
           view.promotable && canary && !view.asked
-            ? `Promote ${ReleasePage.short(canary.commit).slice(0, 7)}`
+            ? `Promote ${ReleasePage.short(canary.commit)}`
             : promotion.word,
         mark: promotion.mark,
       },

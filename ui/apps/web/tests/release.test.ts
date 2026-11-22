@@ -250,7 +250,7 @@ test('the figures under the flow', async () => {
       ['Canary', `${release.canary?.checks.length}/${release.canary?.checks.length}`],
       ['Policy', 'manual'],
       ['Open pull requests', '0'],
-      ['Next', `Promote ${release.canary?.commit.slice(0, 7)}`],
+      ['Next', `Promote ${release.canary?.commit.slice(0, 12)}`],
     ],
   );
 });

@@ -6,17 +6,18 @@ import type { RecordingReport } from './api.ts';
 import { compact } from './display.ts';
 import type { Act, Step } from './steps.ts';
 import { assertNever } from './decode.ts';
+import { TurnContexts } from './recordings.ts';
 
 /** One turn's context: the part read from cache and the rest, against the
  * tallest turn shown (0–1). */
-export interface ContextBar {
+export interface TurnContextBar {
   cached: number;
   fresh: number;
   title: string;
 }
 
 export interface ContextView {
-  bars: ContextBar[];
+  bars: TurnContextBar[];
   /** The newest turn's context at its last call, in tokens. */
   last: number | null;
   /** The share of the recording's context read from cache. */
@@ -57,22 +58,14 @@ export class SessionInspector {
   static readonly TURNS = 16;
 
   static context(report: RecordingReport): ContextView {
-    const turns = report.turns.slice(-SessionInspector.TURNS);
-    const sizes = turns.map((turn) => {
-      const end = turn.context_end_tokens ?? turn.context_start_tokens ?? 0;
-      const cached = turn.cache_hit_percent === null ? 0 : (end * turn.cache_hit_percent) / 100;
-      return { end, cached, hit: turn.cache_hit_percent };
-    });
-    const peak = Math.max(1, ...sizes.map((size) => size.end));
+    const turns = TurnContexts.of(report.turns.slice(-SessionInspector.TURNS));
     return {
-      bars: sizes.map((size) => ({
-        cached: size.cached / peak,
-        fresh: (size.end - size.cached) / peak,
-        title: `${size.end.toLocaleString()} tokens${
-          size.hit === null ? '' : ` · ${Math.round(size.hit)}% from cache`
-        }`,
+      bars: turns.map((turn) => ({
+        cached: turn.end * (turn.hit ?? 0),
+        fresh: turn.end * (1 - (turn.hit ?? 0)),
+        title: turn.title,
       })),
-      last: sizes.length ? sizes[sizes.length - 1].end : null,
+      last: turns.at(-1)?.endTokens ?? null,
       cacheHit: report.totals.cache_hit_percent,
     };
   }
