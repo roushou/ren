@@ -6,7 +6,6 @@
   import { compact, compactOrDash, date, percentOrDash, span } from '#lib/display.ts';
   import { ContextChart, findingLine, rowPrompt, turnHref, turnRows } from '#lib/activity.ts';
   import FindingList from '#lib/FindingList.svelte';
-  import HoverCard from '#lib/layer/HoverCard.svelte';
   import Glyph from '#lib/Glyph.svelte';
   import { Marks } from '#lib/marks.ts';
   import Icon from '#lib/Icon.svelte';
@@ -77,20 +76,9 @@
     {:else}
       <section class="usage-tiles" aria-label="Totals" aria-busy={pending}>
         <div class="usage-tile">
-          <span
-            ><HoverCard label="What peak context counts"
-              >{#snippet trigger()}<button type="button" class="tip-trigger">Peak context</button
-                >{/snippet}
-              <strong>The largest prompt one call sent</strong>
-              <span
-                >Tokens of prompt in the session's biggest call, as the provider reported them: new
-                input plus the cache read and written. The model's limit is not reported, so none is
-                compared.</span
-              ></HoverCard
-            ></span
-          ><strong class="mono"
+          <span>Peak context</span><strong class="mono"
             >{@render value(totals && compact(totals.peak_context_tokens), '4em', 'figure')}</strong
-          ><small>tokens in one call</small>
+          >
         </div>
         <div class="usage-tile">
           <span>Read from cache</span><strong class="mono"
@@ -147,7 +135,6 @@
             <section class="panel usage-panel" aria-labelledby="report-context-title">
               <header class="panel-heading">
                 <h2 id="report-context-title" class="cap">Context per turn</h2>
-                <span class="muted mono">the model's limit is not reported, so none is drawn</span>
               </header>
               <div class="context-chart">
                 <span class="context-scale mono">{compact(chart.max)}</span>
@@ -298,16 +285,6 @@
     font-weight: 400;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-  }
-  .tip-trigger {
-    padding: 0;
-    border: 0;
-    border-bottom: 1px dotted currentColor;
-    border-radius: 0;
-    background: none;
-    color: inherit;
-    font: inherit;
-    cursor: help;
   }
   .report-body {
     display: grid;

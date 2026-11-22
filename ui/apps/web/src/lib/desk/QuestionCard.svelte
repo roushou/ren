@@ -112,8 +112,6 @@
             oninput={(event) => set(at, { form: 'text', text: event.currentTarget.value })}
           />
         {/if}
-        {#if Questions.hidden(form)}<span class="muted">Sent to the client and kept nowhere.</span
-          >{/if}
       {:else if form.form === 'number' && draft.form === 'number'}
         <label class="number">
           <input
@@ -157,7 +155,6 @@
     </fieldset>
   {/each}
   <div class="questions-actions">
-    {#if questions.length > 1}<span class="muted">Questions left blank are skipped.</span>{/if}
     <button class="button primary small" type="submit" disabled={busy || !answered}>Send</button>
     <button
       class="button small"
@@ -302,8 +299,5 @@
     gap: 6px;
     flex-wrap: wrap;
     justify-content: flex-end;
-  }
-  .questions-actions > .muted {
-    margin-right: auto;
   }
 </style>

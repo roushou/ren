@@ -63,10 +63,7 @@ test('each watch counts its pull requests by where they stand', () => {
   assert.equal(rows[1]?.error, 'timeout');
   const summary = GitHubWatches.summary(rows);
   assert.deepEqual([summary.watched, summary.failing, summary.open, summary.ready], [3, 2, 4, 1]);
-  assert.deepEqual(
-    summary.checksFailing.map((row) => row.pull.number),
-    [2],
-  );
+  assert.equal(summary.checksFailing, 1);
   // Failing first, then waiting on review, then ready, then drafts.
   assert.deepEqual(
     GitHubWatches.pulls(rows).map((row) => row.pull.number),

@@ -1631,10 +1631,6 @@
       {:else if data.runsControl}
         <div class="empty-state">
           <h2>{chosen ? 'This session is not listed' : 'No session open'}</h2>
-          <p>
-            Open one from the list, or start a new one: write its first prompt, and its client
-            starts with it.
-          </p>
           <button
             class="button primary"
             type="button"
@@ -1806,17 +1802,6 @@
               >
                 <Glyph mark="responding" /> Working…
               </div>{/if}
-            {#if transcript?.read && !transcript.entries.length && runState?.phase === 'idle'}
-              <p class="quiet-empty">The conversation is open. Say what to do.</p>
-            {:else if !current && outgoing.length === 0}
-              <p class="quiet-empty">
-                Write the first prompt: {harnessLabel(session.harness)} starts with it, in {Runs.place(
-                  session.workdir,
-                  scratch,
-                  offered,
-                )}.
-              </p>
-            {/if}
           </div>
         </div>
         {#if pickedSteps.length}

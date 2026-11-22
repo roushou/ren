@@ -30,14 +30,12 @@
 {#if chart.bars.length}
   <section class="context-chart" aria-label="Context per call">
     <div class="head">
-      <span class="cap">Context per call · turns shaded</span>
+      <span class="cap">Context per call</span>
       <span class="key"><span class="swatch read"></span>from cache</span>
       <span class="key"><span class="swatch written"></span>written to cache</span>
       <span class="key"><span class="swatch fresh"></span>new input</span>
       <span class="key"><span class="swatch failed"></span>failed</span>
-      <span class="muted peak"
-        >peak <span class="mono">{compactOrDash(chart.peak)}</span> · model limit not reported</span
-      >
+      <span class="muted peak">peak <span class="mono">{compactOrDash(chart.peak)}</span></span>
     </div>
     <svg viewBox="0 0 {width} 112" preserveAspectRatio="none" class="plot">
       {#each chart.bands as band, index (index)}<rect

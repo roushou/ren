@@ -150,15 +150,8 @@
     </div>
   {:else if firstRun}
     <section class="ov-first" aria-labelledby="first-title">
-      <h2 id="first-title">Connect a client to start recording</h2>
-      <p class="muted">
-        Nothing passed through Ren in the last 24 hours. Start a session through this gateway; its
-        calls show up here, on Live, and in Traffic as they happen.
-      </p>
+      <h2 id="first-title">No calls in the last 24 hours</h2>
       <ConnectClient layout="box" gatewayOrigin={page.data.gatewayUrl} />
-      <span class="empty-footnote"
-        ><Icon name="shield" size={12} /> Uses your client’s existing sign-in</span
-      >
     </section>
   {:else}
     <div class="ov-grid">

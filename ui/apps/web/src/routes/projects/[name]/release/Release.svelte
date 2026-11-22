@@ -121,17 +121,7 @@
   {#if data.failed}
     <p class="error" role="alert">{data.failed}</p>
   {:else if !view}
-    <p class="empty">
-      {#if data.project.factory === 'ren'}
-        Nothing checked yet. A canary pass (<code>cargo xtask canary run</code>, or on its timer
-        with <code>cargo xtask canary enable</code>) builds main, checks it on a copy of
-        production's history, and writes what it found here.
-      {:else}
-        Nothing checked yet. A canary pass (<code
-          >ren project canary --project {data.project.name}</code
-        >) builds main, runs the project's checks, and writes what it found here.
-      {/if}
-    </p>
+    <p class="empty">Nothing checked yet.</p>
   {:else}
     {@const release = view.release}
     {@const promotion = Promotion.of(release.decision)}
@@ -139,12 +129,7 @@
       <header class="flow-head">
         <span class="flow-icon" aria-hidden="true"><Icon name="branch" size={14} /></span>
         <div>
-          <h1 id="flow-title">Where a change moves</h1>
-          <p class="meta">
-            {repository ?? data.project.name} · {pulls.length} open pull request{pulls.length === 1
-              ? ''
-              : 's'} → main → canary → production
-          </p>
+          <h1 id="flow-title">{repository ?? data.project.name}</h1>
         </div>
         {#if pulls.length}<span class="flow-modes"
             ><Segmented label="What the chips say" options={modes} bind:value={mode} /></span
@@ -501,9 +486,6 @@
     margin: 0;
     font-size: 14px;
     font-weight: 600;
-  }
-  .flow-head p {
-    margin: 0;
   }
   .flow-icon {
     display: grid;

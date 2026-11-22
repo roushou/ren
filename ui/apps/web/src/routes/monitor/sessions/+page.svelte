@@ -275,10 +275,6 @@
     {:else if data.shelf === 'archived' && !query}<div class="empty-state">
         <div class="empty-icon"><Icon name="archive" size={25} /></div>
         <h2>Nothing archived</h2>
-        <p>
-          Archive a recording from its page, or a run from Runs. A recording with new traffic is
-          listed with the current ones again.
-        </p>
         <a class="button" href="/monitor/sessions"
           >Current sessions <Icon name="arrow" size={14} /></a
         >
@@ -286,11 +282,6 @@
     {:else}<div class="empty-state">
         <div class="empty-icon"><Icon name="sessions" size={25} /></div>
         <h2>{query ? 'No matching sessions' : 'No sessions yet'}</h2>
-        <p>
-          {query
-            ? 'Try a different prompt, folder, client, or session ID.'
-            : 'Sessions appear when clients send session identifiers through Ren.'}
-        </p>
         {#if query}<button class="button" onclick={() => (query = '')}>Clear search</button
           >{:else}<button class="button" onclick={() => goto('/monitor/traffic')}
             >Go to request logs <Icon name="arrow" size={14} /></button

@@ -185,7 +185,7 @@
     {/if}
     <section>
       <details class="brief-fold">
-        <summary><h3>Brief · what the session is sent</h3></summary>
+        <summary><h3>Brief</h3></summary>
         <div class="brief"><Markdown text={brief} /></div>
       </details>
     </section>

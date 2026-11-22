@@ -384,19 +384,7 @@
     ><tr
       >{#each callColumns as column (column.class)}<th
           class={column.class}
-          class:numeric={column.numeric}
-          >{#if column.class === 'col-context'}<HoverCard label="What context counts"
-              >{#snippet trigger()}<button type="button" class="tip-trigger">{column.label}</button
-                >{/snippet}
-              <strong>The prompt the model saw</strong>
-              <span
-                >As the provider reported it: new input, plus what was read from the cache and
-                written to it. The bar is the share read from the cache.</span
-              >
-              <span class="muted"
-                >Provider-reported tokens, not subscription allowance or charges.</span
-              ></HoverCard
-            >{:else}{column.label}{/if}</th
+          class:numeric={column.numeric}>{column.label}</th
         >{/each}</tr
     ></thead
   >
@@ -573,10 +561,7 @@
               ><input type="checkbox" bind:checked={filters.has_tools} /> Has observed tool calls</label
             >
             <div class="filter-note">
-              <span>Model and tool filters use observations from finished responses.</span><button
-                class="button small"
-                type="button"
-                onclick={resetFilters}>Reset</button
+              <button class="button small" type="button" onclick={resetFilters}>Reset</button
               ><button class="button primary small" type="submit">Apply filters</button>
             </div>
           </div>{/if}
@@ -619,9 +604,6 @@
               : "Can't reach Ren"}
           </h2>
           <p>{retained.error.message}</p>
-          <p class="muted">
-            Nothing is shown because nothing could be read, not because nothing was recorded.
-          </p>
           <button class="button" onclick={() => void invalidateAll()}
             ><Icon name="refresh" size={14} /> Retry</button
           >
@@ -640,25 +622,13 @@
                   ? 'No requests on this page'
                   : 'No recorded traffic'}
           </h2>
-          <p>
-            {loading
-              ? 'Reading captured traffic from your gateway.'
-              : filterCount || !!after
-                ? 'Try a broader search or adjust your filters.'
-                : recordingId
-                  ? 'Refresh to check for new activity in this session.'
-                  : 'Point a client at Ren or use a launch command below.'}
-          </p>
           {#if !loading && (filterCount || !!after)}<button class="button" onclick={resetFilters}
-              >Clear filters & return to first page</button
+              >Clear filters</button
             >
           {:else if !loading && !recordingId}<ConnectClient
               layout="box"
               gatewayOrigin={page.data.gatewayUrl}
-            />
-            <span class="empty-footnote"
-              ><Icon name="shield" size={12} /> Uses your client’s existing sign-in</span
-            >{/if}
+            />{/if}
         </div>
       {:else}
         <div class="attempt-list">
@@ -948,16 +918,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .tip-trigger {
-    padding: 0;
-    border: 0;
-    border-bottom: 1px dotted currentColor;
-    border-radius: 0;
-    background: none;
-    color: inherit;
-    font: inherit;
-    cursor: help;
   }
   .card-figures {
     display: flex;

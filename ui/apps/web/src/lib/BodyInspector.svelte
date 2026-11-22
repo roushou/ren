@@ -241,11 +241,7 @@
           >Thinking hidden</span
         >{/if}
     </div>
-    {#if open}<p class="callout">
-        {following
-          ? 'Streaming captured output. Totals arrive when recording ends.'
-          : 'Recording in progress. Enable Follow live to watch output arrive.'}
-      </p>
+    {#if open}<!-- Still recording: the body's ending is not known yet. -->
     {:else if preview.ending === 'unfinished'}<p class="callout">
         The body never finished. Only the captured bytes are shown; missing bytes are not
         reconstructed.
@@ -277,11 +273,7 @@
             class="body-card {card.kind}"
             open={!folded(card)}
           >
-            <summary
-              title={card.kind === 'tool_call'
-                ? 'Requested by the model. Whether it ran is up to your client.'
-                : undefined}
-            >
+            <summary>
               <span class="card-icon"><Icon name={icon(card.kind)} size={13} /></span><span
                 class="card-label">{card.label}</span
               >{#if card.detail}<code class="card-detail">{card.detail}</code>{/if}
@@ -314,8 +306,5 @@
         No readable text: the body is binary, or compressed with an encoding the preview cannot
         decode. Raw shows the captured bytes.
       </p>{/if}
-  {:else if !busy && !error}<p class="fine-print">
-      Load a body to inspect messages, tool arguments, and results. Content stays in this view and
-      is not saved in browser storage.
-    </p>{/if}
+  {/if}
 </section>

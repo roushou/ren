@@ -36,8 +36,8 @@ export interface WatchSummary {
   watched: number;
   failing: number;
   open: number;
-  /** Pull requests whose checks fail, by project and number. */
-  checksFailing: PullRow[];
+  /** Pull requests whose checks fail. */
+  checksFailing: number;
   ready: number;
 }
 
@@ -133,7 +133,7 @@ export class GitHubWatches {
       open: pulls.length,
       checksFailing: pulls.filter(
         (row) => row.pull.checks === 'failing' || row.pull.checks === 'errored',
-      ),
+      ).length,
       ready: pulls.filter((row) => row.standing === 'ready').length,
     };
   }

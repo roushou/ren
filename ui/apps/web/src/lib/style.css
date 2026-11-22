@@ -1131,13 +1131,6 @@ tr.selected .row-link {
   overflow-wrap: anywhere;
   min-width: 0;
 }
-.empty-footnote {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--muted);
-  font-size: 11px;
-}
 .notice {
   display: flex;
   align-items: center;

@@ -25,7 +25,6 @@
     Pending{#if board.waiting}<span class="count">·</span><span class="count">{board.waiting}</span
       >{/if}
   </h2>
-  <span class="muted mono">across all projects</span>
 </header>
 {#if !board.pending}
   <p class="quiet muted"><Glyph mark="passed" label={true} /> Nothing waits on you.</p>
@@ -125,9 +124,6 @@
   }
   .count {
     color: var(--muted);
-  }
-  .head .muted {
-    font-size: 11px;
   }
   ul {
     margin: 0;

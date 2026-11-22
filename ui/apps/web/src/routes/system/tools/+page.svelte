@@ -592,18 +592,7 @@
                 Sign-in
                 {#if shown}<span class="chip {shown.tone}">{shown.text}</span>{/if}
               </h3>
-              <p class="muted">
-                {#if entry.sign_in.kind === 'signed_out'}
-                  {harnessLabel(harness)} is signed out here: its sessions can’t send until it is signed
-                  in.
-                {:else if entry.sign_in.kind === 'unknown'}
-                  {entry.sign_in.reason}
-                {:else if entry.sign_in.kind === 'signed_in'}
-                  As {harnessLabel(harness)}’s own status command says.
-                {:else}
-                  Not read yet.
-                {/if}
-              </p>
+              {#if entry.sign_in.kind === 'unknown'}<p class="muted">{entry.sign_in.reason}</p>{/if}
               <div class="change-actions">
                 <button
                   class="button small"

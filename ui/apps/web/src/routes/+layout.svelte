@@ -448,7 +448,6 @@
             />{/if}<CopyButton text={gatewayOrigin} label="Copy the gateway address" />
         </header>
         <ConnectClient layout="list" {gatewayOrigin} />
-        <p><Icon name="shield" size={12} /> Each client keeps its own sign-in; Ren forwards it.</p>
       </div>
     {/if}
     <!-- Live updates and refresh: the whole workbench's, so they sit in its bar. -->

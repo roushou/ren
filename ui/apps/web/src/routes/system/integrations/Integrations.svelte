@@ -51,13 +51,9 @@
   <aside class="services" aria-label="Integrations">
     <div class="service">
       <span class="service-icon" aria-hidden="true"><Icon name="branch" size={16} /></span>
-      <div>
-        <strong>GitHub</strong>
-        <span class="cap">repositories · pull requests · checks</span>
-      </div>
+      <strong>GitHub</strong>
       {#if summary.failing}<Glyph mark="warning" label="{summary.failing} watches failing" />{/if}
     </div>
-    <p class="meta">{watched.length} repos · {summary.open} open pull requests</p>
   </aside>
 
   <section class="main">
@@ -66,13 +62,11 @@
     {:else}
       <div class="figures">
         <div>
-          <span class="cap">Status</span>
-          <span class="meta"
-            >{summary.failing
-              ? `${summary.failing} of ${summary.watched} watches failing`
-              : summary.watched
-                ? 'every watch answering'
-                : 'nothing watched'}</span
+          <span class="cap">Answering</span>
+          <span class="figure status"
+            ><Glyph
+              mark={summary.failing ? 'failed' : summary.watched ? 'passed' : 'idle'}
+            />{summary.watched - summary.failing}<span class="muted">/{summary.watched}</span></span
           >
         </div>
         <div>
@@ -85,12 +79,7 @@
         </div>
         <div>
           <span class="cap">Checks failing</span>
-          <span class="figure">{summary.checksFailing.length}</span>
-          <span class="meta ellipsis"
-            >{summary.checksFailing
-              .map((row) => `${row.project} #${row.pull.number}`)
-              .join(' · ')}</span
-          >
+          <span class="figure">{summary.checksFailing}</span>
         </div>
         <div>
           <span class="cap">Ready to merge</span>
@@ -210,10 +199,6 @@
     gap: 10px;
     align-items: center;
   }
-  .service > div {
-    display: flex;
-    flex-direction: column;
-  }
   .service-icon {
     display: grid;
     width: 32px;
@@ -274,6 +259,14 @@
   .figure {
     font-family: var(--mono);
     font-size: 22px;
+  }
+  .status {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .muted {
+    color: var(--muted);
   }
   .block {
     background: var(--surface);

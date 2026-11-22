@@ -315,9 +315,7 @@
       </section>
     {:else}
       <p class="note">
-        {shelf === 'archived'
-          ? 'Nothing is archived.'
-          : 'No sessions yet. Start one with New session.'}
+        {shelf === 'archived' ? 'Nothing is archived.' : 'No sessions yet.'}
       </p>
     {/each}
   {/if}

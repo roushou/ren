@@ -595,7 +595,6 @@
       <div class="empty-state">
         <div class="empty-icon"><Icon name="pulse" size={26} /></div>
         <h2>No session active in the {LivePlace.windows[view.window].label}</h2>
-        <p>Sessions appear here as soon as a client sends a call through Ren.</p>
         {#if longer}<a class="button" href={LivePlace.href({ ...view, window: longer })}
             >Look back {LivePlace.windows[longer].label.replace('last ', '')}</a
           >{/if}
@@ -762,13 +761,6 @@
                   {/if}
                 {/if}
               {/each}
-              {#if !tile.prompt && !tile.lines.length && !tile.unread.some((unread) => unread.call.state === 'open' || workbench.streamed.get(unread.call.id)?.reply)}
-                <p class="live-wait">
-                  {tile.turnId
-                    ? 'Text appears once a call finishes and is read.'
-                    : 'This client reports no turns, so only a reply as it streams shows here.'}
-                </p>
-              {/if}
             </div>
             <footer class="live-tile-foot mono">
               {@render lane(tile)}
@@ -1530,12 +1522,6 @@
   .live-step-reply :global(.md-heading) {
     margin: 6px 0 3px;
     font-size: 12.5px;
-  }
-  .live-wait {
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 11.5px;
-    opacity: 0.7;
   }
   .live-target,
   .live-latest {

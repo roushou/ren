@@ -96,10 +96,7 @@
       {/each}
     </div>
   {:else if !board.projects.length}
-    <p class="empty">
-      No project is registered. <code>ren project add --dir ~/dev/acme</code> registers one;
-      <code>cargo xtask install-vps</code> registers Ren itself.
-    </p>
+    <p class="empty">No project is registered.</p>
   {:else}
     <div class="table" role="table" aria-label="Projects">
       <div class="row head" role="row">
@@ -254,7 +251,7 @@
     </div>
     {#if board.archived.length}
       <p class="archived muted">
-        Archived: {board.archived.map((project) => project.name).join(', ')}
+        Archived · {board.archived.length}
       </p>
     {/if}
   {/if}

@@ -144,16 +144,7 @@
   {:else if pending ? !q : !page}
     <div class="list-content">
       <div class="search-hero">
-        <h2>Search recorded history</h2>
-        <p class="muted">
-          Find what your agents' prompts, replies, and tool calls said: a command, a file path, an
-          error message.
-        </p>
         {@render searchForm(true)}
-        <p class="search-hint muted">
-          All words must match. Put a phrase in quotes. Punctuation separates words, so search
-          <span class="mono">"install-vps"</span> as a phrase.
-        </p>
       </div>
     </div>
   {:else}
@@ -284,23 +275,12 @@
                 </div>
               {/each}
             </section>
-            <section>
-              <h3>How search reads</h3>
-              <ul class="tips muted">
-                <li>All words must match.</li>
-                <li>Put a phrase in quotes.</li>
-                <li>
-                  Punctuation separates words: search <span class="mono">"install-vps"</span> as a phrase.
-                </li>
-              </ul>
-            </section>
           </aside>
         </div>
       {:else}
         <div class="empty-state">
           <div class="empty-icon"><Icon name="search" size={25} /></div>
           <h2>No matches for “{q}”</h2>
-          <p>Try fewer words, search everything, or put a phrase in quotes.</p>
         </div>
       {/if}
     </div>
@@ -429,10 +409,6 @@
   }
   .facet span.mono {
     text-align: right;
-  }
-  .tips {
-    margin: 0;
-    padding-left: 16px;
   }
   @media (max-width: 960px) {
     .results {

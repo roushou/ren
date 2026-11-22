@@ -417,9 +417,7 @@
                 >
               </div>
             </div>{/each}
-          <p class="fine-print">
-            Requested by the model. Execution is tracked by your client.
-          </p>{:else if !inspection && current.tool_names.length}{#each current.tool_names as name}<div
+        {:else if !inspection && current.tool_names.length}{#each current.tool_names as name}<div
               class="tool-item"
             >
               <span class="tool-icon"><Icon name="tool" size={14} /></span>
