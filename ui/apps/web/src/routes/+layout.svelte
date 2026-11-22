@@ -393,7 +393,6 @@
                 ></a
               >
             </li>
-            <li class="all"><a href="/projects">All projects</a></li>
           </ul>
         </Popover>
       {/if}

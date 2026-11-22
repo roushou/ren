@@ -393,6 +393,15 @@ pre {
 .project-pick:hover {
   background: var(--surface-hover);
 }
+/* Its chevron points at the list it opens: down, and up while open. */
+.project-pick > svg:last-child {
+  color: var(--muted);
+  transform: rotate(90deg);
+  transition: transform 120ms ease;
+}
+.project-pick:has(+ #project-picker:popover-open) > svg:last-child {
+  transform: rotate(-90deg);
+}
 .project-list {
   margin: 0;
   padding: 4px 0;
@@ -409,13 +418,6 @@ pre {
 .project-list a:hover,
 .project-list a[aria-current='page'] {
   background: var(--surface-hover);
-}
-.project-list .all {
-  margin-top: 4px;
-  border-top: 1px solid var(--line);
-}
-.project-list .all a {
-  color: var(--muted);
 }
 /* Narrower than the header's one line holds: where you are drops to a row
    of its own under the header's controls, scrolling sideways if it must. */
