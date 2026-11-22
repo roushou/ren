@@ -9,25 +9,42 @@ import { toasts } from './layer/toasts.svelte.ts';
 import type { Approval } from './projects.ts';
 import { RunCommandError, Runs, RunsClient, Sessions, type Decision } from './runs.ts';
 
+/** Where answering stands: nothing under review, one under review, its
+ * answer on its way, or why the last one did not go. */
+export type Answering =
+  | { kind: 'idle' }
+  | { kind: 'reviewing'; approval: Approval }
+  | { kind: 'answering'; approval: Approval }
+  | { kind: 'failed'; approval: Approval; why: string };
+
 export class ApprovalAnswers {
-  /** The approval under review; null when none is. */
-  reviewing = $state<Approval | null>(null);
-  answering = $state(false);
-  failed = $state<string | null>(null);
+  state = $state.raw<Answering>({ kind: 'idle' });
   readonly #runs = new RunsClient();
 
+  /** The approval under review, answering or failed; null when none is. */
+  get reviewing(): Approval | null {
+    return this.state.kind === 'idle' ? null : this.state.approval;
+  }
+
+  get answering(): boolean {
+    return this.state.kind === 'answering';
+  }
+
+  /** Why the last answer did not go. */
+  get failed(): string | null {
+    return this.state.kind === 'failed' ? this.state.why : null;
+  }
+
   review(waiting: Approval): void {
-    this.failed = null;
-    this.reviewing = waiting;
+    this.state = { kind: 'reviewing', approval: waiting };
   }
 
   close(): void {
-    this.reviewing = null;
+    this.state = { kind: 'idle' };
   }
 
   async answer(waiting: Approval, decision: Decision): Promise<void> {
-    this.answering = true;
-    this.failed = null;
+    this.state = { kind: 'answering', approval: waiting };
     try {
       await this.#runs.toSession(waiting.session, {
         kind: 'answer',
@@ -46,12 +63,14 @@ export class ApprovalAnswers {
           href: Sessions.deskHref(waiting.project, waiting.session),
         },
       });
-      this.reviewing = null;
+      this.state = { kind: 'idle' };
       await invalidateAll();
     } catch (failure) {
-      this.failed = failure instanceof RunCommandError ? failure.message : 'The answer did not go.';
-    } finally {
-      this.answering = false;
+      this.state = {
+        kind: 'failed',
+        approval: waiting,
+        why: failure instanceof RunCommandError ? failure.message : 'The answer did not go.',
+      };
     }
   }
 

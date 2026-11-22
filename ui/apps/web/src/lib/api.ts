@@ -130,6 +130,8 @@ export type ChannelId = Brand<string, 'ChannelId'>;
 export type RecordingId = Brand<string, 'RecordingId'>;
 export type TurnId = Brand<string, 'TurnId'>;
 export type NativeSessionId = Brand<string, 'NativeSessionId'>;
+/** A registered project's id: not its name, which pages and filters use. */
+export type ProjectId = Brand<string, 'ProjectId'>;
 export type NativeTurnId = Brand<string, 'NativeTurnId'>;
 export type NativeThreadId = Brand<string, 'NativeThreadId'>;
 /** An opaque call-listing position; pass back unchanged as `after`. */
@@ -838,7 +840,7 @@ export interface Previews {
 }
 /** One registered project: what it is, what is under way, and its release. */
 export interface Project {
-  id: string;
+  id: ProjectId;
   name: string;
   repository: string;
   factory: Stored<Factory>;
@@ -1277,7 +1279,7 @@ const previews = object<Previews, WirePreviewsBody>({
   requested: array(string),
 });
 const project = object<Project, WireProjectBody>({
-  id: string,
+  id: branded<'ProjectId'>(),
   name: string,
   repository: string,
   factory: label(factories),

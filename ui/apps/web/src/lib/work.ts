@@ -5,8 +5,16 @@
  * view lists them and sends queued ones together. Pure but for `WorkApi`,
  * which reads and writes through a capability-supplied `fetch`.
  */
-import { API_VERSION, revision, type Project, type Revision, type Shelf } from './api.ts';
 import {
+  API_VERSION,
+  revision,
+  type Project,
+  type ProjectId,
+  type Revision,
+  type Shelf,
+} from './api.ts';
+import {
+  branded,
   Uuid,
   array,
   count,
@@ -84,7 +92,7 @@ export interface WorkItem {
   order: WorkOrder;
   state: Stored<WorkState>;
   /** The project it is for, by id; null when none was named, or from before projects. */
-  project: string | null;
+  project: ProjectId | null;
   session: SessionId | null;
   landed: string | null;
   shipped: Revision | null;
@@ -138,7 +146,7 @@ const workItem = object<WorkItem, WireWorkItem>({
     evidence: object<Evidence, WireEvidence>({ console: array(string), reads: array(string) }),
   }),
   state: label(workStates),
-  project: nullable(string),
+  project: nullable(branded<'ProjectId'>()),
   session: nullable(SessionId.decode),
   landed: nullable(string),
   shipped: nullable(revision),

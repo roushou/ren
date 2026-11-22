@@ -6,6 +6,7 @@
   back as it was. The page that holds it is `position: relative`.
 -->
 <script lang="ts">
+  import type { SlideKind } from './pins.svelte.ts';
   import type { Snippet } from 'svelte';
   import Icon from '#lib/Icon.svelte';
   import { pins } from './pins.svelte.ts';
@@ -25,7 +26,7 @@
     size?: 'narrow' | 'wide';
     /** Its kind, when it can be pinned: pinned, it stands beside the page
      * as a column of its own, and the page makes room for it. */
-    pin?: string | null;
+    pin?: SlideKind | null;
     children: Snippet;
   } = $props();
 

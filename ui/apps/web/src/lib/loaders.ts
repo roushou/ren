@@ -721,7 +721,7 @@ export interface ProjectsData {
 
 export async function projectsData(
   fetcher: typeof fetch,
-  runsControl: boolean,
+  control: 'drives' | 'reads',
 ): Promise<ProjectsData> {
   const api = new ManagementApi(fetcher);
   const runs = new RunsClient(fetcher);
@@ -743,9 +743,9 @@ export async function projectsData(
       }),
     ),
     settle(new WorkApi(fetcher).list('current')),
-    runsControl ? settle(runs.live()) : none<RunSnapshot>(),
-    runsControl ? settle(runs.sessions('current')) : none<SessionBody>(),
-    runsControl ? settle(runs.clients()) : none<RunClient>(),
+    control === 'drives' ? settle(runs.live()) : none<RunSnapshot>(),
+    control === 'drives' ? settle(runs.sessions('current')) : none<SessionBody>(),
+    control === 'drives' ? settle(runs.clients()) : none<RunClient>(),
   ]);
   return { ...listed, work, live, sessions, clients };
 }

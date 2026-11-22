@@ -1,3 +1,4 @@
+import type { ProjectId } from '../src/lib/api.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -241,8 +242,8 @@ test('a session in a worktree Ren made carries it, with its ports', async () => 
 });
 
 test("a desk holds its project's sessions, and Scratch those of none", async () => {
-  const acme = { id: 'p-acme', name: 'acme', repository: '/work/acme' };
-  const web = { id: 'p-web', name: 'acme-web', repository: '/work/acme-web' };
+  const acme = { id: 'p-acme' as ProjectId, name: 'acme', repository: '/work/acme' };
+  const web = { id: 'p-web' as ProjectId, name: 'acme-web', repository: '/work/acme-web' };
   const bodies = await sessions();
   const owned = bodies.map((body) =>
     body.session === sessionA && body.stored

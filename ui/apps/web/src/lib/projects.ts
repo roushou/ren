@@ -2,7 +2,7 @@
 // registered projects with what is under way for each, and what waits on
 // the operator across them: a canary to promote, a preview to check, work
 // still queued. Read from `/api/projects` and `/api/work`.
-import type { Project } from './api.ts';
+import type { Project, ProjectId } from './api.ts';
 import {
   Runs,
   Sessions,
@@ -343,7 +343,7 @@ export class ProjectBoard {
   }
 
   /** The name of the project with `id`; null for none, or one not listed. */
-  nameOf(id: string | null): string | null {
+  nameOf(id: ProjectId | null): string | null {
     if (id === null) return null;
     return this.projects.find((project) => project.id === id)?.name ?? null;
   }

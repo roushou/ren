@@ -43,7 +43,7 @@
   /** The page's hits grouped, and counted for the side column. */
   const results = $derived(page ? new SearchResults(page.hits, localDayStart) : null);
   /** Hits grouped by recording, or one flat list. */
-  let grouped = $state(true);
+  let layout = $state<'recording' | 'flat'>('recording');
   const groupOptions: SegmentedOption<'recording' | 'flat'>[] = [
     { value: 'recording', label: 'By session' },
     { value: 'flat', label: 'Flat' },
@@ -174,11 +174,11 @@
               <Segmented
                 label="Group hits"
                 options={groupOptions}
-                value={grouped ? 'recording' : 'flat'}
-                onchange={(value) => (grouped = value === 'recording')}
+                value={layout}
+                onchange={(value) => (layout = value)}
               />
             </div>
-            {#if grouped}
+            {#if layout === 'recording'}
               {#each results.groups as group (group.recording ?? '')}
                 <section class="group">
                   <div class="group-head">

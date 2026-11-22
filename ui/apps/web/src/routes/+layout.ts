@@ -9,7 +9,7 @@ import type { LayoutLoad } from './$types';
 export const load: LayoutLoad = async ({ fetch, data }) => {
   const [gateway, board] = await Promise.all([
     gatewaySnapshot(fetch),
-    Arrival.read('board', () => projectsData(fetch, data.runsControl)),
+    Arrival.read('board', () => projectsData(fetch, data.runsControl ? 'drives' : 'reads')),
   ]);
   return { ...data, gateway, board };
 };

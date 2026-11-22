@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { ManagementApi, type Project } from '../src/lib/api.ts';
+import { ManagementApi, type Project, type ProjectId } from '../src/lib/api.ts';
 import { ProjectBoard } from '../src/lib/projects.ts';
 import type { WorkItem } from '../src/lib/work.ts';
 
@@ -10,8 +10,10 @@ const pinned: typeof fetch = async () =>
     JSON.parse(readFileSync(new URL('./fixtures/api/projects.json', import.meta.url), 'utf8')),
   );
 
+/** A project id, as the API's would read. */
+const pid = (id: string) => id as ProjectId;
 const project = (name: string, overrides: Partial<Project> = {}): Project => ({
-  id: `id-${name}`,
+  id: pid(`id-${name}`),
   name,
   repository: `/home/op/dev/${name}`,
   factory: 'contract',
@@ -64,12 +66,12 @@ test('the board puts Ren first, and gathers what waits on the operator', () => {
     [
       project('zeta', { release: release('awaiting_operator') }),
       project('ren', { factory: 'ren', release: release('current') }),
-      project('acme', { id: 'acme-id' }),
+      project('acme', { id: pid('acme-id') }),
       project('old', { archived_at: 5 }),
     ],
     [
-      item('a', 'queued', { project: 'acme-id' }),
-      item('b', 'queued', { project: 'acme-id' }),
+      item('a', 'queued', { project: pid('acme-id') }),
+      item('b', 'queued', { project: pid('acme-id') }),
       item('c', 'queued'),
       item('d', 'sent', {
         preview: { ui: 'https://acme.example:20100', revision: { kind: 'unknown' } },
@@ -154,13 +156,13 @@ test('approvals come from working runs, each named by its session and project', 
       served: null,
       stored: {
         id: 'session-1' as never,
-        project: 'acme-id',
+        project: pid('acme-id'),
         first_prompt: 'Fix the pricing table',
       },
     },
   ] as never;
   const board = new ProjectBoard(
-    [project('acme-web', { id: 'acme-id' })],
+    [project('acme-web', { id: pid('acme-id') })],
     [],
     [working, idle] as never,
     sessions,
@@ -179,8 +181,8 @@ test('approvals come from working runs, each named by its session and project', 
   // A run whose session is not listed still asks, for no project.
   assert.equal(new ProjectBoard([], [], [working] as never, []).approvals[0]?.project, null);
   // A project's own board holds its sessions' approvals alone, and its work.
-  const acme = project('acme-web', { id: 'acme-id' });
-  const other = project('acme-api', { id: 'api-id' });
+  const acme = project('acme-web', { id: pid('acme-id') });
+  const other = project('acme-api', { id: pid('api-id') });
   assert.equal(ProjectBoard.of(acme, [], [working] as never, sessions).approvals.length, 1);
   assert.equal(ProjectBoard.of(other, [], [working] as never, sessions).approvals.length, 0);
   const item = (id: string, owner: string | null) =>
@@ -218,7 +220,7 @@ test('news is what newly waits: a new approval, a newly passed canary; nothing a
     {
       session: 'session-1',
       served: null,
-      stored: { id: 'session-1', project: 'acme-id', first_prompt: 'Ship the fix' },
+      stored: { id: 'session-1', project: pid('acme-id'), first_prompt: 'Ship the fix' },
     },
   ] as never;
   const canary = (commit: string | null) =>
@@ -238,7 +240,7 @@ test('news is what newly waits: a new approval, a newly passed canary; nothing a
     }) as unknown as Project['release'];
   const board = (approval: string | null, commit: string | null) =>
     new ProjectBoard(
-      [project('acme-web', { id: 'acme-id', release: canary(commit) })],
+      [project('acme-web', { id: pid('acme-id'), release: canary(commit) })],
       [],
       approval ? [asking(approval)] : [],
       sessions,
@@ -334,7 +336,7 @@ test('a project at a glance: waiting on you first, then a failed canary, then ru
 
 test('work in flight: queued, in a session, or landed, the most recently changed first', () => {
   const board = new ProjectBoard(
-    [project('acme', { id: 'acme-id' })],
+    [project('acme', { id: pid('acme-id') })],
     [
       item('a', 'queued', { updated_at: 10 }),
       item('b', 'shipped', { updated_at: 50 }),
@@ -350,7 +352,7 @@ test('work in flight: queued, in a session, or landed, the most recently changed
 });
 
 test('a project is unknown only when the board read and has none by that name', () => {
-  const acme = project('acme-web', { id: 'acme-id' });
+  const acme = project('acme-web', { id: pid('acme-id') });
   const read = { projects: [acme], failed: null };
   assert.equal(ProjectBoard.unknown(read, acme.name), false);
   assert.equal(ProjectBoard.unknown(read, 'nowhere'), true);

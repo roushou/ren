@@ -16,6 +16,7 @@ import {
   type Shelf,
   type ToolEffect,
   type UnixMillis,
+  type ProjectId,
 } from './api.ts';
 import {
   checkedSignIn,
@@ -723,7 +724,7 @@ export interface StoredSession {
   harness: Stored<Harness>;
   workdir: string;
   /** The project it works for, by id; null outside every project. */
-  project: string | null;
+  project: ProjectId | null;
   created_at: UnixMillis;
   model: ModelId | null;
   effort: Stored<Effort> | null;
@@ -773,7 +774,7 @@ const storedSession = object<StoredSession, WireSessionView>({
   id: SessionId.decode,
   harness: label(harnesses),
   workdir: string,
-  project: nullable(string),
+  project: nullable(branded<'ProjectId'>()),
   created_at: brandedCount<'UnixMillis'>(),
   model: nullable(branded<'ModelId'>()),
   effort: nullable(label(EFFORTS)),
