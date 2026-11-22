@@ -8,7 +8,7 @@
   import { ManagementApi, short, type Shelf, type TokenTotals } from '#lib/api.ts';
   import { ago } from '#lib/overview.ts';
   import { harnessLabel } from '#lib/activity.ts';
-  import { spentSummary } from '#lib/display.ts';
+  import { span, spentSummary } from '#lib/display.ts';
   import {
     decisions,
     Deletions,
@@ -72,7 +72,7 @@
   import SlideOver from '#lib/layer/SlideOver.svelte';
   import FloatingBar from '#lib/layer/FloatingBar.svelte';
   import { toasts } from '#lib/layer/toasts.svelte.ts';
-  import { Steps, type Block, type Step } from '#lib/steps.ts';
+  import { Steps, TurnLines, type Block, type Step } from '#lib/steps.ts';
   import Icon from '#lib/Icon.svelte';
   import Markdown from 'markdown/Markdown.svelte';
   import ActionMenu, { type ActionItem } from '#lib/ActionMenu.svelte';
@@ -571,6 +571,17 @@
       Steps.blocks(turn, session?.workdir ?? null, transcript?.spans),
     ),
   );
+  /** Each turn at a glance, for the ruler and the outline above the conversation. */
+  const turnLines = $derived(TurnLines.of(turnBlocks));
+  const RULER = 36;
+  /** Scroll the conversation to a turn, keeping the address as it is. */
+  function toTurn(event: MouseEvent, index: number) {
+    event.preventDefault();
+    document
+      .getElementById(`turn-${index}`)
+      ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    following = false;
+  }
   /** Every step of the conversation, in order: ↑ and ↓ move along it. */
   const allSteps = $derived(
     turnBlocks.flatMap((blocks) =>
@@ -1704,6 +1715,53 @@
         {/if}
       </header>
 
+      {#if turnLines.length > 1}
+        {@const bars = TurnLines.ruler(turnLines, RULER)}
+        {@const failed = turnLines.reduce((sum, line) => sum + line.failed, 0)}
+        <section class="turn-ruler" aria-label="Turns">
+          <div class="ruler-head">
+            <span class="cap">Turns</span>
+            <span class="muted mono"
+              >{turnLines.length} turns · {turnLines.reduce((sum, line) => sum + line.steps, 0)} steps{#if failed}{' '}·
+                <Glyph mark="failed" label="{failed} failed" />{failed}{/if}</span
+            >
+          </div>
+          <svg
+            viewBox="0 0 100 {RULER}"
+            preserveAspectRatio="none"
+            role="img"
+            aria-label="Turns by time"
+          >
+            {#each bars as bar (bar.index)}
+              <a href="#turn-{bar.index}" onclick={(event) => toTurn(event, bar.index)}
+                ><title
+                  >{turnLines[bar.index]?.prompt || 'Turn'} · {turnLines[bar.index]?.steps} steps</title
+                ><rect
+                  class="ruler-bar {bar.state}"
+                  x={bar.x + 0.1}
+                  width={Math.max(0.2, bar.width - 0.2)}
+                  y={RULER - bar.height}
+                  height={bar.height}
+                /></a
+              >
+            {/each}
+          </svg>
+          <ol class="turn-outline">
+            {#each turnLines as line (line.index)}
+              <li>
+                <a href="#turn-{line.index}" onclick={(event) => toTurn(event, line.index)}>
+                  <span class="outline-prompt">{line.prompt || 'Turn'}</span>
+                  <span class="muted mono"
+                    >{line.steps} steps{#if line.failed}{' '}·
+                      <Glyph mark="failed" label="{line.failed} failed" />{line.failed}{/if}</span
+                  >
+                  <span class="muted mono">{line.ms === null ? '' : span(line.ms)}</span>
+                </a>
+              </li>
+            {/each}
+          </ol>
+        </section>
+      {/if}
       <!-- Scrolled from its end, so it opens on the newest entry from the
              first paint, before the page's scripts run. -->
       <div class="conversation-frame">
@@ -1723,7 +1781,7 @@
                 </p>{/if}
               <!-- The whole conversation, every turn open, as one scroll. -->
               {#each turnBlocks as blocks, index (index)}
-                <section class="turn" aria-label="Turn {index + 1}">
+                <section class="turn" id="turn-{index}" aria-label="Turn {index + 1}">
                   {#each blocks as block, at (at)}
                     {#if block.kind === 'steps'}
                       <StepGroup
@@ -2138,6 +2196,73 @@
 {/if}
 
 <style>
+  .turn-ruler {
+    flex: none;
+    padding: 8px 16px 6px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .ruler-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+    font-size: 11px;
+  }
+  .ruler-head .cap {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .turn-ruler svg {
+    display: block;
+    width: 100%;
+    height: 36px;
+    background: var(--surface-inset);
+  }
+  .ruler-bar.done {
+    fill: color-mix(in srgb, var(--muted) 55%, transparent);
+  }
+  .ruler-bar.failed {
+    fill: var(--error);
+  }
+  .ruler-bar.running {
+    fill: var(--accent);
+  }
+  .turn-ruler a:hover .ruler-bar {
+    fill: var(--ink);
+  }
+  .turn-outline {
+    max-height: 104px;
+    margin: 6px 0 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+  }
+  .turn-outline a {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto 90px;
+    column-gap: 12px;
+    align-items: center;
+    height: 24px;
+    white-space: nowrap;
+    color: inherit;
+    font-size: 12px;
+  }
+  .turn-outline a:hover {
+    color: var(--accent);
+  }
+  .turn-outline .mono {
+    font-size: 11px;
+    text-align: right;
+  }
+  .outline-prompt {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
   .runs-page {
     flex: 1;
     min-height: 0;

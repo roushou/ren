@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { CommandIntent, Entry, ItemId } from '../src/lib/runs.ts';
-import { Steps } from '../src/lib/steps.ts';
+import { Steps, TurnLines, type Block, type Step } from '../src/lib/steps.ts';
 
 const WORK = '/work/acme';
 const id = (text: string) => text as ItemId;
@@ -211,4 +211,42 @@ test('a command’s output marks its failing and passing lines, and leaves the r
     lines.map((line) => line.reads),
     [null, 'passed', 'failed', 'failed', 'failed', 'failed', 'passed', 'failed'],
   );
+});
+
+test('turns at a glance: prompt, steps, failures, time, and a ruler by time and steps', () => {
+  const step = (state: 'done' | 'failed' | 'running', from: number, to: number) =>
+    ({ state, span: { from, to }, took: to - from }) as unknown as Step;
+  const prompt = (text: string): Block => ({
+    kind: 'entry',
+    entry: { kind: 'prompt', item: 'i' as never, text, images: [] },
+  });
+  const steps = (key: string, list: Step[]): Block => ({
+    kind: 'steps',
+    key,
+    steps: list,
+    state: 'done',
+  });
+  const lines = TurnLines.of([
+    [
+      prompt('Find it\nthen fix it'),
+      steps('a', [step('done', 0, 1000), step('failed', 1000, 3000)]),
+    ],
+    [prompt('Run the suite'), steps('b', [step('running', 5000, 6000)])],
+  ]);
+  assert.deepEqual(
+    lines.map((line) => [line.prompt, line.steps, line.failed, line.ms, line.state]),
+    [
+      ['Find it', 2, 1, 3000, 'failed'],
+      ['Run the suite', 1, 0, 1000, 'running'],
+    ],
+  );
+  const bars = TurnLines.ruler(lines, 40);
+  assert.deepEqual(
+    bars.map((bar) => [Math.round(bar.width), bar.height]),
+    [
+      [75, 40],
+      [25, 20],
+    ],
+  );
+  assert.equal(bars[1]?.x, bars[0]?.width);
 });

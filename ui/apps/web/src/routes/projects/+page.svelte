@@ -16,6 +16,8 @@
   import { ProjectBoard } from '#lib/projects.ts';
   import { Promotion, ReleasePage } from '#lib/release.ts';
   import { Sessions } from '#lib/runs.ts';
+  import { Home } from '#lib/home.ts';
+  import { Work } from '#lib/work.ts';
   import { usagePoints } from '#lib/usage.ts';
   import type { PageProps } from './$types';
 
@@ -25,6 +27,11 @@
   );
   const running = $derived(board.active.reduce((sum, project) => sum + project.running, 0));
   const answers = new ApprovalAnswers();
+  const underWay = $derived(Home.underWay(board));
+  const inFlight = $derived(board.inFlight);
+  /** A work item's glyph: queued, in a session, or landed. */
+  const workMark = (state: string) =>
+    state === 'queued' ? 'queued' : state === 'sent' ? 'running' : 'passed';
   let now = $state(Date.now());
 
   /** Each project's calls by hour over the last day, as a sparkline path. */
@@ -205,6 +212,33 @@
         </div>
       {/if}
     </div>
+    <div class="below">
+      <section class="part" aria-labelledby="underway-title">
+        <header>
+          <h2 id="underway-title" class="cap">Sessions under way · {underWay.length}</h2>
+        </header>
+        {#each underWay as row (row.session)}
+          <a class="item" href={row.href}>
+            <Glyph mark={row.mark} label={row.doing} />
+            <span class="item-title">{row.title}</span>
+            <span class="chip mono">{row.project ?? 'Scratch'}</span>
+            <span class="muted mono">{row.since ? Sessions.age(row.since, now) : ''}</span>
+          </a>
+        {:else}<p class="quiet muted">No session is running.</p>{/each}
+      </section>
+      <section class="part" aria-labelledby="inflight-title">
+        <header><h2 id="inflight-title" class="cap">Work in flight · {inFlight.length}</h2></header>
+        {#each inFlight as item (item.id)}
+          {@const home = board.homeOf(item)}
+          <a class="item" href={home ? Work.href(home, item.id) : '/projects'}>
+            <Glyph mark={workMark(item.state)} label={Work.state(item.state)} />
+            <span class="item-title">{item.title}</span>
+            {#if home}<span class="chip mono">{home}</span>{/if}
+            <span class="muted mono">{Sessions.age(item.updated_at, now)}</span>
+          </a>
+        {:else}<p class="quiet muted">No work is on its way.</p>{/each}
+      </section>
+    </div>
     {#if board.archived.length}
       <p class="archived muted">
         Archived: {board.archived.map((project) => project.name).join(', ')}
@@ -215,6 +249,63 @@
 <ApprovalModal {answers} />
 
 <style>
+  .below {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    margin-top: 24px;
+    border-top: 1px solid var(--line);
+    background: var(--line);
+  }
+  .part {
+    min-width: 0;
+    background: var(--surface);
+  }
+  .part header {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .part .cap {
+    margin: 0;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .item {
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr) auto 48px;
+    column-gap: 10px;
+    align-items: center;
+    height: 30px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--line-subtle);
+    color: inherit;
+  }
+  .item:hover {
+    background: var(--row-hover);
+  }
+  .item-title {
+    overflow: hidden;
+    font-weight: 500;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .item .mono:last-child {
+    text-align: right;
+    font-size: 11px;
+  }
+  .quiet {
+    margin: 0;
+    padding: 10px 12px;
+  }
+  @media (max-width: 900px) {
+    .below {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
   .projects-view {
     flex: 1;
     min-height: 0;

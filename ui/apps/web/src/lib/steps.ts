@@ -399,3 +399,83 @@ export class Steps {
     return { state: 'done', failure: null };
   }
 }
+
+/** One turn of a conversation at a glance: what was asked, how many steps
+ * it took and how many failed, how long they took, and how it stands. */
+export interface TurnLine {
+  index: number;
+  prompt: string;
+  steps: number;
+  failed: number;
+  /** From its first step's start to its last step's end; null without spans. */
+  ms: number | null;
+  state: GroupState;
+}
+
+/** A turn's bar on the ruler, in a 100-wide box `height` high. */
+export interface TurnBar {
+  index: number;
+  x: number;
+  width: number;
+  height: number;
+  state: GroupState;
+}
+
+export class TurnLines {
+  /** The turns as lines, oldest first. */
+  static of(turns: readonly Block[][]): TurnLine[] {
+    return turns.map((blocks, index): TurnLine => {
+      const steps = blocks.flatMap((block) => (block.kind === 'steps' ? block.steps : []));
+      const asked = blocks.find((block) => block.kind === 'entry' && block.entry.kind === 'prompt');
+      const prompt =
+        asked?.kind === 'entry' && asked.entry.kind === 'prompt'
+          ? (asked.entry.text.trim().split('\n')[0] ?? '')
+          : '';
+      const window = Steps.window(steps);
+      const failed = steps.filter((step) => step.state === 'failed').length;
+      return {
+        index,
+        prompt,
+        steps: steps.length,
+        failed,
+        ms: window ? window.to - window.from : Steps.took(steps),
+        state: steps.some((step) => step.state === 'running')
+          ? 'running'
+          : failed
+            ? 'failed'
+            : 'done',
+      };
+    });
+  }
+
+  /** The ruler: each turn as wide as its share of the time, as tall as its
+   * share of the steps; a turn with no time still shows as a sliver. */
+  static ruler(lines: readonly TurnLine[], height: number): TurnBar[] {
+    const MIN = 1.5;
+    const total = lines.reduce((sum, line) => sum + (line.ms ?? 0), 0);
+    const most = Math.max(1, ...lines.map((line) => line.steps));
+    const widths = lines.map((line) =>
+      total ? ((line.ms ?? 0) / total) * 100 : 100 / lines.length,
+    );
+    const grown = widths.map((width) => Math.max(MIN, width));
+    const scale =
+      100 /
+      Math.max(
+        1,
+        grown.reduce((sum, width) => sum + width, 0),
+      );
+    let x = 0;
+    return lines.map((line, index) => {
+      const width = (grown[index] ?? MIN) * scale;
+      const bar = {
+        index: line.index,
+        x,
+        width,
+        height: Math.max(2, (line.steps / most) * height),
+        state: line.state,
+      };
+      x += width;
+      return bar;
+    });
+  }
+}

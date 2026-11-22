@@ -39,6 +39,8 @@
       ? { kind: 'ren' }
       : { kind: 'other', name: data.project.name }}
     ondismiss={(item) => void dismiss(item)}
+    pulls={data.pulls}
+    repository={data.repository}
   />
 </section>
 

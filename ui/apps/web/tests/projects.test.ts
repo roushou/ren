@@ -344,3 +344,20 @@ test('a project at a glance: waiting on you first, then a failed canary, then ru
   });
   assert.equal(glance({}).active, null);
 });
+
+test('work in flight: queued, in a session, or landed, the most recently changed first', () => {
+  const board = new ProjectBoard(
+    [project('acme', { id: 'acme-id' })],
+    [
+      item('a', 'queued', { updated_at: 10 }),
+      item('b', 'shipped', { updated_at: 50 }),
+      item('c', 'landed', { updated_at: 30 }),
+      item('d', 'sent', { updated_at: 20 }),
+      item('e', 'dismissed', { updated_at: 40 }),
+    ],
+  );
+  assert.deepEqual(
+    board.inFlight.map((work) => work.id),
+    ['c', 'd', 'a'],
+  );
+});

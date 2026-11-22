@@ -11,13 +11,21 @@
   import Markdown from 'markdown/Markdown.svelte';
   import { Work, type WorkItem } from '#lib/work.ts';
   import type { BriefProject } from '#lib/briefing.ts';
+  import type { Pull } from '#lib/api.ts';
+  import { PullChips } from '#lib/release.ts';
 
   let {
     item,
     project,
     ondismiss,
+    pulls = [],
+    repository = null,
   }: {
     item: WorkItem;
+    /** The open pull requests that name it. */
+    pulls?: readonly Pull[];
+    /** The repository they are on. */
+    repository?: string | null;
     /** Whose page it is about, for its brief. */
     project: BriefProject;
     /** Dismiss it; offered while it is queued or sent. */
@@ -137,6 +145,28 @@
           ><Icon name="sessions" size={12} />Open its session <Icon name="arrow" size={11} /></a
         >{:else}<p class="meta">Not sent to a session yet.</p>{/if}
     </section>
+    {#if pulls.length}
+      <section>
+        <h3>
+          Its pull requests · {pulls.length}{#if repository}<span class="meta repo"
+              >{repository}</span
+            >{/if}
+        </h3>
+        <ul class="pulls">
+          {#each pulls as pull (pull.number)}
+            {@const chip = PullChips.status(pull)}
+            {@const checks = PullChips.checks(pull)}
+            <li>
+              <Glyph mark={chip.mark} label={chip.label} />
+              <a href={pull.url} target="_blank" rel="noopener"
+                ><span class="meta">#{pull.number}</span> {pull.title}</a
+              >
+              <span class="meta"><Glyph mark={checks.mark} label={checks.label} /></span>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
     {#if item.order.evidence.console.length}
       <section>
         <h3>Errors on the page · {item.order.evidence.console.length}</h3>
@@ -163,6 +193,30 @@
 </div>
 
 <style>
+  .repo {
+    float: right;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .pulls {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .pulls li {
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    min-height: 26px;
+  }
+  .pulls a {
+    overflow: hidden;
+    color: inherit;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
   .detail-head {
     display: flex;
     flex-direction: column;

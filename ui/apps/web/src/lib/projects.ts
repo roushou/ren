@@ -284,6 +284,14 @@ export class ProjectBoard {
     return Work.home(item, this.projects)?.name ?? null;
   }
 
+  /** Work on its way across projects, the most recently changed first:
+   * queued, in a session, or landed and waiting for production. */
+  get inFlight(): WorkItem[] {
+    return this.work
+      .filter((item) => item.state === 'queued' || item.state === 'sent' || item.state === 'landed')
+      .toSorted((a, b) => b.updated_at - a.updated_at);
+  }
+
   /** How many current sessions work for no project: Scratch's. */
   get scratch(): number {
     return Sessions.within(this.sessions, { kind: 'scratch', projects: this.projects }).length;
