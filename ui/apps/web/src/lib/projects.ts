@@ -22,6 +22,8 @@ export interface Approval {
   session: SessionId;
   approval: ApprovalId;
   ask: ApprovalAsk;
+  /** The client that asks. */
+  harness: RunSnapshot['harness'];
   /** The project's name; null when the session works for none. */
   project: string | null;
   /** The first line of the session's first prompt, to know it by. */
@@ -99,6 +101,7 @@ export class ProjectBoard {
         session: run.session,
         approval: waiting.approval,
         ask: waiting.ask,
+        harness: run.harness,
         project: this.nameOf(stored?.project ?? null),
         prompt: stored?.first_prompt ?? null,
       }));

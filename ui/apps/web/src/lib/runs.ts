@@ -1872,25 +1872,54 @@ export class Runs {
   } {
     switch (decision) {
       case 'accept':
-        return { label: 'Allow', hint: 'Allow this once', mark: 'passed', done: 'Allowed' };
+        return {
+          label: 'Allow once',
+          hint: 'Allow this, and ask again next time',
+          mark: 'passed',
+          done: 'Allowed once',
+        };
       case 'accept_for_session':
         return {
-          label: 'Allow for this run',
+          label: 'Allow for this session',
           hint: 'Allow this, and the same kind of action for the rest of the session',
           mark: 'passed',
-          done: 'Allowed for this run',
+          done: 'Allowed for this session',
         };
       case 'decline':
-        return { label: 'Deny', hint: 'Refuse it; the turn goes on', mark: 'idle', done: 'Denied' };
+        return {
+          label: 'Decline',
+          hint: 'Refuse it; the turn goes on',
+          mark: 'idle',
+          done: 'Declined',
+        };
       case 'cancel':
         return {
-          label: 'Deny and stop',
+          label: 'Decline and stop',
           hint: 'Refuse it and end the turn',
           mark: 'idle',
-          done: 'Denied, and the turn stopped',
+          done: 'Declined, and the turn stopped',
         };
       default:
         return assertNever(decision);
+    }
+  }
+
+  /** An approval as the question it puts to the operator, naming the
+   * client that asks. */
+  static question(ask: ApprovalAsk, client: string): string {
+    switch (ask.kind) {
+      case 'command':
+        return `Allow ${client} to run this command?`;
+      case 'file_change':
+        return `Allow ${client} to change these files?`;
+      case 'tool':
+        return `Allow ${client} to use ${ask.tool}?`;
+      case 'questions':
+        return ask.title ?? `${client} asks a question`;
+      case 'unrecognized':
+        return `Allow ${client} to ${ask.text}?`;
+      default:
+        return assertNever(ask);
     }
   }
 

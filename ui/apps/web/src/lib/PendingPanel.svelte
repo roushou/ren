@@ -152,10 +152,14 @@
 {#if reviewing}
   {@const waiting = reviewing}
   {@const said = Runs.ask(waiting.ask)}
-  <Modal title={said.action} eyebrow={origin(waiting)} onclose={() => (reviewing = null)}>
+  <Modal
+    title={Runs.question(waiting.ask, harnessLabel(waiting.harness))}
+    eyebrow="Approval · {origin(waiting)}"
+    onclose={() => (reviewing = null)}
+  >
     {#if said.detail}<pre class="detail mono">{said.detail}</pre>{/if}
     {#if waiting.ask.kind === 'command' && waiting.ask.cwd}<span class="muted mono"
-        >in {waiting.ask.cwd}</span
+        >runs in {waiting.ask.cwd}</span
       >{/if}
     {#if said.reason}<p class="reason">{said.reason}</p>{/if}
     {#if failed}<p class="error quiet" role="alert">{failed}</p>{/if}
@@ -169,6 +173,9 @@
           title={words.hint}
           onclick={() => void answer(waiting, decision)}>{words.label}</button
         >
+        {#if decision === 'decline'}<kbd class="esc" title="Escape closes without answering"
+            >esc</kbd
+          >{/if}
       {/each}
     {/snippet}
   </Modal>
@@ -187,6 +194,17 @@
   }
   .reason {
     margin: 0;
+  }
+  .esc {
+    align-self: center;
+    margin-right: auto;
+    padding: 0 4px;
+    border: 1px solid var(--control-border);
+    border-bottom-width: 2px;
+    border-radius: 2px;
+    color: var(--muted);
+    font-family: var(--mono, monospace);
+    font-size: 10px;
   }
   .head {
     display: flex;

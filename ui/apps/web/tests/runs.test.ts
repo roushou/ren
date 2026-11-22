@@ -1134,3 +1134,18 @@ test('a stored item keeps when it ran; a step reads how long, and a group adds i
   assert.deepEqual(Steps.window(group.steps), { from: 1_000, to: 3_500 });
   assert.equal(Steps.window(group.steps.slice(1)), null);
 });
+
+test('an approval asks its question by its client and what it asks for', () => {
+  assert.equal(
+    Runs.question({ kind: 'command', command: 'git push', cwd: null, reason: null }, 'Codex'),
+    'Allow Codex to run this command?',
+  );
+  assert.equal(
+    Runs.question({ kind: 'tool', tool: 'WebFetch', detail: null }, 'Claude Code'),
+    'Allow Claude Code to use WebFetch?',
+  );
+  assert.deepEqual(
+    decisions.map((decision) => Runs.decision(decision).label),
+    ['Allow once', 'Allow for this session', 'Decline', 'Decline and stop'],
+  );
+});
