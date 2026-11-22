@@ -411,7 +411,7 @@
   }
   kbd {
     margin-left: 4px;
-    font-family: var(--mono, monospace);
+    font-family: var(--mono);
     font-size: 10px;
     opacity: 0.8;
   }
@@ -474,7 +474,7 @@
   .cap {
     margin: 0;
     color: var(--muted);
-    font-family: var(--mono, monospace);
+    font-family: var(--mono);
     font-size: 11px;
     font-weight: 500;
     letter-spacing: 0.08em;

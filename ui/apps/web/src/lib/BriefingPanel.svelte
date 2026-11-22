@@ -578,10 +578,7 @@
     font-size: 12px;
   }
   .unset code {
-    font:
-      11px 'SFMono-Regular',
-      Consolas,
-      monospace;
+    font: 11px var(--mono);
   }
   .error {
     margin: 0;

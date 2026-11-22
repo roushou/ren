@@ -81,7 +81,7 @@
   .eyebrow {
     display: block;
     margin-bottom: 4px;
-    font-family: var(--mono, monospace);
+    font-family: var(--mono);
     font-size: 11px;
     letter-spacing: 0.06em;
     text-transform: uppercase;

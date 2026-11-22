@@ -130,16 +130,16 @@
     fill: transparent;
   }
   .read {
-    fill: var(--success);
-    background: var(--success);
+    fill: var(--cache-read);
+    background: var(--cache-read);
   }
   .written {
-    fill: var(--warning);
-    background: var(--warning);
+    fill: var(--cache-written);
+    background: var(--cache-written);
   }
   .fresh {
-    fill: var(--chart);
-    background: var(--chart);
+    fill: var(--input-fresh);
+    background: var(--input-fresh);
   }
   .failed {
     fill: var(--error);

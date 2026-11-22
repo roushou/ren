@@ -125,7 +125,7 @@
     box-shadow: inset 2px 0 var(--accent);
   }
   .name {
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+    font-family: var(--mono);
     color: var(--ink);
     white-space: nowrap;
     overflow: hidden;

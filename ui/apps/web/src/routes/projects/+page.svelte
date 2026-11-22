@@ -226,7 +226,7 @@
   }
   .cap {
     color: var(--muted);
-    font-family: var(--mono, monospace);
+    font-family: var(--mono);
     font-size: 10.5px;
     font-weight: 500;
     letter-spacing: 0.06em;
@@ -236,7 +236,7 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-family: var(--mono, monospace);
+    font-family: var(--mono);
     font-size: 11.5px;
   }
   .pairs {
@@ -310,7 +310,7 @@
     padding: 0 7px;
     border: 1px solid var(--line);
     background: var(--surface);
-    font-family: var(--mono, monospace);
+    font-family: var(--mono);
     font-size: 10.5px;
     white-space: nowrap;
   }

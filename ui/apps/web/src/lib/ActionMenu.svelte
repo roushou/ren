@@ -182,7 +182,7 @@
     border-bottom: 1px solid var(--popover-border);
     background: var(--surface-inset);
     color: var(--muted);
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+    font-family: var(--mono);
     font-size: 11px;
     line-height: 1.5;
   }

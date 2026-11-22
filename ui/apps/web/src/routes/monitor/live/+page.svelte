@@ -889,10 +889,6 @@
     margin-right: 2px;
   }
 
-  .live-page {
-    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-  }
-
   /* Providers and models take a slot's colour; clients keep their own. */
   .series-0 {
     --harness: var(--accent);

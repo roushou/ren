@@ -69,7 +69,7 @@
     border-bottom-width: 2px;
     border-radius: 2px;
     color: var(--muted);
-    font-family: var(--mono, monospace);
+    font-family: var(--mono);
     font-size: 10px;
   }
   .error {

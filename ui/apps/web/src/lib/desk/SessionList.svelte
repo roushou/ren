@@ -375,7 +375,7 @@
   }
   .cap {
     color: var(--muted);
-    font-family: var(--mono, monospace);
+    font-family: var(--mono);
     font-size: 11px;
     letter-spacing: 0.08em;
     text-transform: uppercase;

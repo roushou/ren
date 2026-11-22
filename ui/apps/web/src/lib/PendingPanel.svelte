@@ -113,7 +113,7 @@
   }
   h2 {
     margin: 0;
-    font-family: var(--mono, monospace);
+    font-family: var(--mono);
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.06em;

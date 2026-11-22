@@ -16,6 +16,9 @@
     "start": "HOST=${HOST:-127.0.0.1} PORT=${PORT:-3000} node build"
   },
   "devDependencies": {
+    "@fontsource/doto": "5.3.0",
+    "@fontsource/inter": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0",
     "@sveltejs/adapter-node": "6.0.1",
     "@sveltejs/kit": "3.1.1",
     "@sveltejs/vite-plugin-svelte": "7.3.1",

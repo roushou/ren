@@ -8,9 +8,10 @@
     { value: 'dark', icon: 'moon', label: 'Dark theme' },
     { value: 'system', icon: 'monitor', label: 'System theme' },
   ] as const;
+  /** Dark unless the operator chose otherwise. */
   const parse = (value: string | null | undefined): Preference =>
-    value === 'light' || value === 'dark' ? value : 'system';
-  let preference = $state<Preference>('system');
+    value === 'light' || value === 'system' ? value : 'dark';
+  let preference = $state<Preference>('dark');
 
   const index = $derived(options.findIndex((option) => option.value === preference));
   const current = $derived(options[index]);

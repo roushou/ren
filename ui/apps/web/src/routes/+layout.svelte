@@ -32,6 +32,12 @@
   import { Views } from '#lib/view.ts';
   import { BottomEdge } from '#lib/edge.ts';
   import { Arrival } from '#lib/arrival.ts';
+  import '@fontsource/inter/latin-400.css';
+  import '@fontsource/inter/latin-500.css';
+  import '@fontsource/inter/latin-600.css';
+  import '@fontsource/jetbrains-mono/latin-400.css';
+  import '@fontsource/jetbrains-mono/latin-500.css';
+  import '@fontsource/doto/latin-900.css';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
   let { data, children }: LayoutProps = $props();
@@ -335,9 +341,8 @@
       aria-current={view === 'home' ? 'page' : undefined}
       aria-label={marked ? `Home, ${marked.tag} gateway` : 'Home'}
       title={marked?.what ?? 'Home: what needs you, what is moving, what happened'}
-      ><span class="flaps" aria-hidden="true"
-        ><span class="flap">R</span><span class="flap">E</span><span class="flap">N</span
-        >{#if marked}<span class="instance-badge">{marked.tag}</span>{/if}</span
+      ><span class="wordmark" aria-hidden="true"
+        >REN{#if marked}<span class="instance-badge">{marked.tag}</span>{/if}</span
       ></a
     >
     <nav class="workbench-context" aria-label="Where you are" bind:this={tabs}>

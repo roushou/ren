@@ -360,7 +360,7 @@
     padding: 0 5px;
     border: 1px solid currentColor;
     border-radius: 2px;
-    font-family: var(--mono, monospace);
+    font-family: var(--mono);
     font-size: 10.5px;
   }
   .field-prompt {

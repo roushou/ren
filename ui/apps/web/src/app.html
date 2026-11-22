@@ -12,10 +12,11 @@
     <script id="theme-init" nonce="%sveltekit.nonce%">
       // Run before styles paint, without relaxing the server's script policy.
       (() => {
-        let preference = 'system';
+        // Dark unless the operator chose otherwise.
+        let preference = 'dark';
         try {
           const saved = localStorage.getItem('ren.theme');
-          if (saved === 'light' || saved === 'dark') preference = saved;
+          if (saved === 'light' || saved === 'dark' || saved === 'system') preference = saved;
         } catch {
           // Storage can be unavailable in restricted browser contexts.
         }

@@ -436,7 +436,7 @@
   }
   dd {
     margin: 0;
-    font-family: 'SFMono-Regular', Consolas, monospace;
+    font-family: var(--mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
     text-align: right;
@@ -445,7 +445,7 @@
     color: var(--muted);
   }
   .mono {
-    font-family: 'SFMono-Regular', Consolas, monospace;
+    font-family: var(--mono);
     font-variant-numeric: tabular-nums;
   }
   .disk-bar {
