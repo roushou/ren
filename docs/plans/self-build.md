@@ -444,9 +444,11 @@ spec (phase 7):
     - Each rule is data in `ren-release`; a rule that cannot run fails, as
       every check does now.
 
-11. **Production in a pod, each run in a container.** Planned. Every
-    instance runs the same way, so the canary checks what production runs,
-    and a run sees only what it works on.
+11. **Production in a pod, each run in a container.** In progress: runs in
+    containers are built (`[runs] hold = "container"`); production in a pod,
+    the swap, and the dev slot pod are not. Every instance runs the same
+    way, so the canary checks what production runs, and a run sees only
+    what it works on.
     - Runs first, while production is still a host install. A run host
       starts in a container of its own, `ren-run-<run>`, from the instance
       image: `Launcher::Container`, beside `Systemd` and `Direct`. It sees,
@@ -476,6 +478,21 @@ spec (phase 7):
       closes phase 7.
     - `install-vps` stays the host install a laptop uses. Whether the VPS
       keeps it as a fallback is decided once the pod swap is verified.
+    - Built: `Launcher::Container` (`ren-daemon`'s `host/held/container.rs`)
+      starts `ren run-host` as its container's entrypoint, from a transient
+      scope of its own (`ren-run-<run>.scope`), so its monitor outlives the
+      daemon's unit. Each client's profile declares what it keeps under the
+      home (`ren-harness`'s `HomeEntry`). The client's program is the file
+      found on the run's path; anything else a run starts must be under
+      `[runs.container]`'s paths. `cargo xtask dev up --hold container` holds
+      the dev slot's runs this way.
+    - Verified in the dev slot: a Codex run in a worktree saw its worktree,
+      the repository's git folder, `.codex`, and the SSH agent, and not
+      `~/.config` or the main checkout; it was taken up again through a
+      daemon restart; stopping it removed its container and its scope.
+    - Not yet: inside the container the operator's uid is named for the
+      image's user (`node`), not the operator's name; a real client's run in
+      a container has not been driven.
 
 Phases 1 and 2 come first: without them, upgrading automatically only breaks
 things faster. Each phase is useful on its own. Phases 7 and 8 do not depend
