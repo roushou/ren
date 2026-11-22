@@ -2,8 +2,10 @@
   Layer 2: a look without leaving, anchored under the control that opens it
   (a button with `popovertarget={id}`). The browser's popover keeps it in
   the top layer and closes it on Escape or a click elsewhere. It lines an
-  edge up with its trigger's (`align`), and is placed by script when it opens:
+  edge up with its trigger's (`align`), and is placed by script as it opens:
   the CSP refuses an inline style in the markup, not one set from script.
+  It is placed on `beforetoggle`, which runs before the browser shows it;
+  `toggle` runs after, so a first open would paint one frame unplaced.
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte';
@@ -45,7 +47,7 @@
   popover="auto"
   role="dialog"
   aria-label={label}
-  ontoggle={place}
+  onbeforetoggle={place}
 >
   {@render children()}
 </div>
