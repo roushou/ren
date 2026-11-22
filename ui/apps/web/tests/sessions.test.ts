@@ -279,3 +279,14 @@ test("a desk holds its project's sessions, and Scratch those of none", async () 
   );
   assert.equal(Sessions.deskHref(null), '/scratch');
 });
+
+test('a session’s age reads short: now, minutes, hours, then its day', () => {
+  const now = 10 * 86_400_000;
+  const day = () => 'Tue';
+  assert.deepEqual(
+    [now - 20_000, now - 18 * 60_000, now - 3 * 3_600_000, now - 2 * 86_400_000].map((at) =>
+      Sessions.age(at, now, day),
+    ),
+    ['now', '18m', '3h', 'Tue'],
+  );
+});

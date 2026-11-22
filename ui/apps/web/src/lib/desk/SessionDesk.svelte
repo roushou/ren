@@ -194,8 +194,6 @@
     return marked.label === '' ? null : marked;
   });
   const transcript = $derived(selected ? (transcripts.get(selected) ?? new Transcript()) : null);
-  const waiting = $derived(folders.reduce((sum, folder) => sum + folder.waiting, 0));
-  const liveCount = $derived(live.filter((run) => run.state.phase !== 'ended').length);
 
   /** The selected run's stored conversation: on its way, read, or why it
    * could not be. */
@@ -1321,13 +1319,13 @@
 </script>
 
 {#snippet toolbarScope()}
+  <!-- The list beside says how many and what they are doing; the bar keeps
+       only what concerns the feed. -->
   <div class="scope-group scope-identity">
-    <span class="scope-title">{scope.kind === 'project' ? 'Sessions' : 'Scratch'}</span>
-    <span class="muted"
-      >{liveCount} running{waiting ? ` · ${waiting} waiting for you` : ''}{data.runsControl
-        ? feedNote(feed)
-        : ''}</span
-    >
+    {#if scope.kind === 'scratch'}<span class="scope-title">Scratch</span>{/if}
+    {#if data.runsControl && feedNote(feed)}<span class="muted"
+        >{feedNote(feed).replace(/^ · /, '')}</span
+      >{/if}
   </div>
 {/snippet}
 

@@ -87,6 +87,14 @@
   /** How many of a folder's sessions show before the rest fold. */
   const SHOWN = 5;
   /** Folders whose every session is shown. */
+  /** What the listed sessions are doing, for the list's head. */
+  const running = $derived(
+    folders.reduce(
+      (sum, folder) => sum + folder.sessions.filter((session) => Sessions.running(session)).length,
+      0,
+    ),
+  );
+  const waiting = $derived(folders.reduce((sum, folder) => sum + folder.waiting, 0));
   const unfolded = new SvelteSet<string>();
 
   /** No fold for those who asked for less motion. */
@@ -216,7 +224,11 @@
     <span class="run-name" class:unused
       >{asked ?? (unused ? 'New session' : `${harnessLabel(session.harness)} session`)}</span
     >
-    <span class="run-when muted">{session.activeAt ? ago(session.activeAt, now) : 'now'}</span>
+    <span
+      class="run-when muted mono"
+      title={session.activeAt ? ago(session.activeAt, now) : undefined}
+      >{session.activeAt ? Sessions.age(session.activeAt, now) : 'now'}</span
+    >
   </button>
 {/snippet}
 
@@ -227,9 +239,21 @@
       <span class="muted back">Back to sessions</span>
     </button>
   {:else}
-    <button class="new-run" onclick={onnew}>
-      <Icon name="spark" size={13} /> New session
-    </button>
+    <header class="list-head">
+      <span class="cap"
+        >Sessions<span class="count"
+          >· {folders.reduce((sum, folder) => sum + folder.sessions.length, 0)}</span
+        ></span
+      >
+      {#if running || waiting}<span class="doing mono"
+          >{#if running}<span title="{running} running"
+              ><Glyph mark="responding" label="Running" />{running}</span
+            >{/if}{#if waiting}<span title="{waiting} waiting for you"
+              ><Glyph mark="yours" label="Waiting for you" />{waiting}</span
+            >{/if}</span
+        >{/if}
+      <button class="button small" onclick={onnew}>New</button>
+    </header>
   {/if}
   {#if listing === 'pending'}
     <section class="folder" aria-busy="true" aria-label="Sessions, on their way">
@@ -257,8 +281,8 @@
             (session, index) =>
               index < SHOWN || session.session === selected || Sessions.running(session),
           )}
-      <section class="folder">
-        <header title={folder.workdir}>
+      <section class="folder" class:single={folders.length === 1}>
+        <header title={folder.workdir} class:hidden={folders.length === 1}>
           <Icon name="file" size={12} />
           <strong>{folder.name}</strong>
           {#if folder.waiting}<span class="waiting mono"
@@ -342,9 +366,45 @@
   .new-run:hover {
     background: var(--row-hover);
   }
+  /* The list's head: how many, and a new one. */
+  .list-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+  }
+  .cap {
+    color: var(--muted);
+    font-family: var(--mono, monospace);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .count {
+    margin-left: 6px;
+  }
+  .doing {
+    display: inline-flex;
+    gap: 10px;
+    margin-left: auto;
+    margin-right: 10px;
+    font-size: 11px;
+  }
+  .doing > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
   .folder {
     border-bottom: 1px solid var(--line);
     padding-bottom: 4px;
+  }
+  /* One folder needs no heading: the project names it. */
+  .folder.single {
+    border-bottom: 0;
+  }
+  .folder header.hidden {
+    display: none;
   }
   .folder header {
     display: flex;
@@ -398,16 +458,20 @@
   }
   .run-row {
     display: grid;
-    grid-template-columns: 8px minmax(0, 1fr) auto;
-    column-gap: 8px;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    column-gap: 10px;
     align-items: center;
     width: 100%;
-    padding: 5px 12px 5px 18px;
+    min-height: 34px;
+    padding: 6px 12px;
     border: 0;
+    border-bottom: 1px solid var(--line-subtle);
+    box-shadow: inset 2px 0 transparent;
     background: none;
     color: var(--ink);
     font: inherit;
-    font-size: 12px;
+    font-size: 12.5px;
+    font-weight: 500;
     text-align: left;
     cursor: pointer;
   }
@@ -422,6 +486,7 @@
   }
   .run-row.selected {
     background: var(--row-selected);
+    box-shadow: inset 2px 0 var(--accent);
   }
   /* A row and its trash control, which stands where its time does. */
   .run-item {
