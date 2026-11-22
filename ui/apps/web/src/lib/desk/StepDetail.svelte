@@ -9,9 +9,34 @@
   import Icon from '#lib/Icon.svelte';
   import { Steps, type Step } from '#lib/steps.ts';
   import { STEP_ICONS } from './StepGroup.svelte';
+  import { toasts } from '#lib/layer/toasts.svelte.ts';
 
-  let { step }: { step: Step } = $props();
+  let {
+    step,
+    place,
+    calls,
+  }: {
+    step: Step;
+    /** Where it sits: its turn's number, and its place among the turn's
+     * steps. */
+    place: { turn: number; index: number; of: number } | null;
+    /** Traffic narrowed to the calls around it, when its session has a
+     * recording. */
+    calls: string | null;
+  } = $props();
   const entry = $derived(step.entry);
+  /** Which of a command's parts shows: its output first. */
+  let showing = $state<'output' | 'command'>('output');
+
+  async function copyOutput() {
+    if (entry.kind !== 'command') return;
+    try {
+      await navigator.clipboard.writeText(entry.output ?? entry.command);
+      toasts.show({ mark: 'passed', text: 'Copied the output', detail: null });
+    } catch {
+      toasts.show({ mark: 'failed', text: 'The browser refused the copy', detail: null });
+    }
+  }
 </script>
 
 <div class="detail">
@@ -26,24 +51,33 @@
       >
       <span class="target mono">{step.targets.join(', ')}</span>
     </span>
-    <span class="facts muted">
-      {#if step.said}<span>{step.said}</span>{/if}
-      {#if step.failure}<span class="mono">{step.failure}</span>{/if}
-      {#if step.took !== null}<span class="mono">{Steps.time(step.took)}</span>{/if}
-      <span class="keys"><kbd>↑</kbd> <kbd>↓</kbd> steps</span>
+    <span class="facts muted mono">
+      {[
+        place ? `T${place.turn}` : null,
+        place ? `step ${place.index} of ${place.of}` : null,
+        step.failure,
+        step.took === null ? null : Steps.time(step.took),
+      ]
+        .filter((part) => part !== null)
+        .join(' · ')}
     </span>
+    {#if step.said}<span class="said">{step.said}</span>{/if}
   </header>
 
   {#if entry.kind === 'command'}
-    <section>
-      <h3>Command</h3>
-      <pre class="mono">{entry.command}</pre>
-    </section>
+    <nav class="tabs" aria-label="What of the command shows">
+      <button aria-pressed={showing === 'output'} onclick={() => (showing = 'output')}
+        >Output</button
+      ><button aria-pressed={showing === 'command'} onclick={() => (showing = 'command')}
+        >Command</button
+      >
+    </nav>
     <section class="grow">
-      <h3>Output</h3>
-      {#if entry.output}<pre
-          class="mono output"
-          class:failed={step.state === 'failed'}>{entry.output}</pre>
+      {#if showing === 'command'}<pre class="mono">{entry.command}</pre>
+      {:else if entry.output}<pre
+          class="mono output">{#each Steps.lines(entry.output) as line, index (index)}<span
+              class="line {line.reads ?? ''}">{line.text || ' '}</span
+            >{/each}</pre>
       {:else}<p class="muted">{step.state === 'running' ? 'Still running.' : 'No output.'}</p>{/if}
     </section>
   {:else if entry.kind === 'file_change'}
@@ -66,6 +100,13 @@
       {:else}<p class="muted">Its client said nothing of what it acted on.</p>{/if}
     </section>
   {/if}
+  <footer>
+    {#if entry.kind === 'command'}<button class="button small" onclick={() => void copyOutput()}
+        >Copy output</button
+      >{/if}
+    {#if calls}<a class="button small" href={calls}>Open its calls in Traffic</a>{/if}
+    <span class="keys muted"><kbd>↑</kbd> <kbd>↓</kbd> other steps</span>
+  </footer>
 </div>
 
 <style>
@@ -105,8 +146,48 @@
     gap: 4px 12px;
     font-size: 11.5px;
   }
+  .said {
+    font-size: 12px;
+  }
   .keys {
     margin-left: auto;
+    font-size: 11px;
+  }
+  .tabs {
+    display: flex;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .tabs button {
+    padding: 8px 12px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .tabs button[aria-pressed='true'] {
+    border-bottom-color: var(--accent);
+    color: var(--ink);
+  }
+  .line {
+    display: block;
+  }
+  .line.failed {
+    background: color-mix(in srgb, var(--error) 14%, transparent);
+    color: var(--error);
+  }
+  .line.passed {
+    color: var(--success);
+  }
+  footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--line);
   }
   kbd {
     padding: 0 4px;
@@ -140,9 +221,6 @@
     font-size: 11.5px;
     white-space: pre-wrap;
     word-break: break-word;
-  }
-  pre.output.failed {
-    box-shadow: inset 2px 0 var(--error);
   }
   ul {
     display: flex;

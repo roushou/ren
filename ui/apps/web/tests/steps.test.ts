@@ -192,3 +192,23 @@ test('picked steps quote as a prompt’s list, and copy as commands with their o
   assert.equal(Steps.quote(steps.slice(1)), 'About this step:\n- Read `src/lib.rs`');
   assert.equal(Steps.text(steps), '$ cargo test\n\nRead src/lib.rs');
 });
+
+test('a command’s output marks its failing and passing lines, and leaves the rest', () => {
+  const lines = Steps.lines(
+    [
+      'running 2 tests',
+      'test backoff::caps ... ok',
+      'test backoff::doubles ... FAILED',
+      'error[E0308]: mismatched types',
+      "thread 'main' panicked at src/lib.rs",
+      'test result: FAILED. 1 passed; 1 failed',
+      'test result: ok. 12 passed; 0 failed',
+      'build failed: 0 failed jobs',
+      '',
+    ].join('\n'),
+  );
+  assert.deepEqual(
+    lines.map((line) => line.reads),
+    [null, 'passed', 'failed', 'failed', 'failed', 'failed', 'passed', 'failed'],
+  );
+});

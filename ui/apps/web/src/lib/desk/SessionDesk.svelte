@@ -71,7 +71,7 @@
   import SlideOver from '#lib/layer/SlideOver.svelte';
   import FloatingBar from '#lib/layer/FloatingBar.svelte';
   import { toasts } from '#lib/layer/toasts.svelte.ts';
-  import { Steps, type Block } from '#lib/steps.ts';
+  import { Steps, type Block, type Step } from '#lib/steps.ts';
   import Icon from '#lib/Icon.svelte';
   import Markdown from 'markdown/Markdown.svelte';
   import ActionMenu, { type ActionItem } from '#lib/ActionMenu.svelte';
@@ -583,6 +583,19 @@
   const inspected = $derived(
     inspecting === null ? null : (allSteps.find((step) => step.entry.item === inspecting) ?? null),
   );
+  /** Where the open step sits: its turn's number and its place among the
+   * turn's steps. */
+  const inspectedPlace = $derived.by(() => {
+    if (inspecting === null) return null;
+    for (const [index, blocks] of turnBlocks.entries()) {
+      const steps = blocks.flatMap((block) => (block.kind === 'steps' ? block.steps : []));
+      const at = steps.findIndex((step) => step.entry.item === inspecting);
+      if (at !== -1) return { turn: index + 1, index: at + 1, of: steps.length };
+    }
+    return null;
+  });
+  /** Traffic narrowed to the calls around the open step. */
+  const inspectedCalls = $derived(inspected ? callsAround([inspected]) : null);
   /** The steps picked to act on together, by item. */
   const picked = new SvelteSet<ItemId>();
   const pickedSteps = $derived(allSteps.filter((step) => picked.has(step.entry.item)));
@@ -604,20 +617,21 @@
       toasts.show({ mark: 'failed', text: 'The browser refused the copy', detail: null });
     }
   }
-  /** Traffic narrowed to the calls around the picked steps: the session's
-   * recording, over the time they ran with a margin for the model calls
-   * that asked for them and read their results. */
-  const pickedCalls = $derived.by(() => {
+  /** Traffic narrowed to the calls around `steps`: the session's recording,
+   * over the time they ran with a margin for the model calls that asked for
+   * them and read their results; null when the session has no recording. */
+  function callsAround(steps: readonly Step[]): string | null {
     const recording = current?.recorded?.recording;
-    if (!recording || !pickedSteps.length) return null;
-    const window = Steps.window(pickedSteps);
+    if (!recording || !steps.length) return null;
+    const window = Steps.window(steps);
     const query = new URLSearchParams({ recording });
     if (window) {
       query.set('from_ms', String(window.from - 30_000));
       query.set('until_ms', String(window.to + 30_000));
     }
     return `/traffic?${query}`;
-  });
+  }
+  const pickedCalls = $derived(callsAround(pickedSteps));
   /** Quote the picked steps in the composer, to ask about them. */
   function askPicked() {
     const target = chosen;
@@ -2078,7 +2092,7 @@
       {/if}
       {#if inspected}
         <SlideOver label="Step details" size="wide" pin="step" onclose={() => (inspecting = null)}>
-          <StepDetail step={inspected} />
+          <StepDetail step={inspected} place={inspectedPlace} calls={inspectedCalls} />
         </SlideOver>
       {/if}
     {/if}

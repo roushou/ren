@@ -155,6 +155,26 @@ export class Steps {
       .join('\n\n');
   }
 
+  /** A command's output as lines, each marked when it reads as a failure
+   * (FAILED, error, panicked) or a pass (`... ok`, PASSED), so the failing
+   * lines stand out. A rough reading of common test and build output, not
+   * a parse: an unmarked line says nothing. */
+  static lines(output: string): { text: string; reads: 'failed' | 'passed' | null }[] {
+    return output
+      .replace(/\n$/, '')
+      .split('\n')
+      .map((text) => ({
+        text,
+        reads: /\btest result: ok\b/.test(text)
+          ? 'passed'
+          : /\b(FAILED|FAIL|panicked)\b|(?<!\b0 )\bfailed\b|\berror(\[|:)/.test(text)
+            ? 'failed'
+            : /\.\.\. ok$|\bPASS(ED)?\b/.test(text)
+              ? 'passed'
+              : null,
+      }));
+  }
+
   /** A step's time at a glance: tenths under ten seconds (`2.5 s`), whole
    * seconds under a minute, then minutes and seconds (`1:04`). */
   static time(ms: number): string {
