@@ -373,12 +373,17 @@ impl HeldRuns {
                 let mut podman = std::process::Command::new(program);
                 podman.args(args);
                 if container.through_socket() {
-                    // In a container, the home's folders are made for its
-                    // mounts and are not the operator's, which the Podman
-                    // client refuses: it keeps its settings here instead.
+                    // In a container, the home's folders and the runtime
+                    // folder are made for its mounts and are not the
+                    // operator's, which the Podman client refuses: it keeps
+                    // its settings and runtime files here instead.
                     let settings = self.root.join(Self::PODMAN_SETTINGS);
+                    let runtime = settings.join("run");
                     Self::private_dir(&settings)?;
-                    podman.env("XDG_CONFIG_HOME", settings);
+                    Self::private_dir(&runtime)?;
+                    podman
+                        .env("XDG_CONFIG_HOME", settings)
+                        .env("XDG_RUNTIME_DIR", runtime);
                 }
                 let output = podman.stdin(std::process::Stdio::null()).output()?;
                 if output.status.success() {
