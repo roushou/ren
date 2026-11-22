@@ -298,17 +298,13 @@
             <div>
               <span class="cap">Updates</span>
               <span class="figure"
-                >{#if updates.length}<Glyph mark="warning" />{/if}{updates.length}<span class="meta"
-                  >{updates.join(' · ')}</span
-                ></span
+                >{#if updates.length}<Glyph mark="warning" />{/if}{updates.length}</span
               >
             </div>
             <div>
               <span class="cap">Missing</span>
               <span class="figure"
-                >{#if missing.length}<Glyph mark="failed" />{/if}{missing.length}<span class="meta"
-                  >{missing.join(' · ')}</span
-                ></span
+                >{#if missing.length}<Glyph mark="failed" />{/if}{missing.length}</span
               >
             </div>
             <div>
