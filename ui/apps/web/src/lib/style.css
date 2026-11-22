@@ -1,3 +1,13 @@
+/* The brand face: Google Fonts' current cut of Doto (v3, latin, 900), the one
+   the boards draw with; its dots sit closer than Fontsource's older cut.
+   OFL: ./fonts/Doto-OFL.txt. */
+@font-face {
+  font-family: Doto;
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url('./fonts/doto-latin-900.woff2') format('woff2');
+}
 :root {
   color-scheme: light;
   --on-accent: #fff;
@@ -306,11 +316,13 @@ pre {
   border-top-color: var(--accent);
   background: var(--canvas);
 }
-/* The wordmark, in the brand face. */
+/* The wordmark, in the brand face, solid as the boards show it: a hairline
+   stroke closes the gaps Doto leaves between its dots. */
 .wordmark {
   font: 900 22px/1 var(--brand);
   letter-spacing: 0.06em;
   color: var(--ink);
+  -webkit-text-stroke: 0.4px currentColor;
 }
 .workbench-context {
   display: flex;

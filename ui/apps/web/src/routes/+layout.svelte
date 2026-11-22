@@ -37,7 +37,6 @@
   import '@fontsource/inter/latin-600.css';
   import '@fontsource/jetbrains-mono/latin-400.css';
   import '@fontsource/jetbrains-mono/latin-500.css';
-  import '@fontsource/doto/latin-900.css';
   import '#lib/style.css';
   import type { LayoutProps } from './$types';
   let { data, children }: LayoutProps = $props();
