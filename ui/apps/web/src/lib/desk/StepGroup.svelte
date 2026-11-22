@@ -7,24 +7,6 @@
   (`onopen`); its box picks it to act on with others (`onpick`). The
   operator opens the group; it never opens itself.
 -->
-<script module lang="ts">
-  import type { IconName } from '#lib/Icon.svelte';
-  import type { Act } from '#lib/steps.ts';
-
-  /** Each verb's icon, here and beside the transcript. */
-  const ICONS: Record<Act, IconName> = {
-    read: 'file',
-    search: 'search',
-    list: 'rows',
-    edit: 'pencil',
-    run: 'terminal',
-    delegate: 'spark',
-    fetch: 'globe',
-    tool: 'tool',
-  };
-  export { ICONS as STEP_ICONS };
-</script>
-
 <script lang="ts">
   import Meter from '../Meter.svelte';
   import Glyph from '#lib/Glyph.svelte';
@@ -108,7 +90,7 @@
               class="verb"
               title={Steps.VERBS[step.act]}
               aria-label={Steps.VERBS[step.act]}
-              role="img"><Icon name={ICONS[step.act]} size={12} /></span
+              role="img"><Icon name={Steps.ICONS[step.act]} size={12} /></span
             >
             <span class="what">
               {#if step.said}<span class="said">{step.said}</span>{/if}

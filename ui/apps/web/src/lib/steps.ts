@@ -6,6 +6,7 @@
 // between two things said gather into one group, folded to a line. Pure: no
 // DOM, no fetches.
 
+import type { IconName } from './Icon.svelte';
 import type { EffectKind } from './api.ts';
 import { Board } from './board.ts';
 import { assertNever } from './decode.ts';
@@ -49,6 +50,23 @@ export type Block =
   | { kind: 'steps'; key: string; steps: Step[]; state: GroupState };
 
 export class Steps {
+  /** Each verb's icon, wherever a step or a tool call is drawn. */
+  static readonly ICONS: Record<Act, IconName> = {
+    read: 'file',
+    search: 'search',
+    list: 'rows',
+    edit: 'pencil',
+    run: 'terminal',
+    delegate: 'spark',
+    fetch: 'globe',
+    tool: 'tool',
+  };
+
+  /** The verb a tool call's effect is; a call with none is a tool's. */
+  static act(effect: Stored<EffectKind> | null): Act {
+    return effect === null ? 'tool' : Steps.#effect(effect);
+  }
+
   /** The verb a step's row starts with. */
   static readonly VERBS: Record<Act, string> = {
     read: 'Read',

@@ -11,6 +11,7 @@
   import { createArrival } from './snapshot.svelte.ts';
   import { Arrival, type Arriving } from './arrival.ts';
   import Meter from './Meter.svelte';
+  import ChipTag from './ChipTag.svelte';
   import type { Column } from './columns.ts';
   import SkeletonRows from './SkeletonRows.svelte';
   import { offPageSelection, type OffPageSelection, type TrafficData } from './loaders.ts';
@@ -680,10 +681,9 @@
                         onclick={(event) => selectCall(event, c.id)}
                         aria-label={`Inspect call ${c.id}`}
                         aria-current={selectedId === c.id ? 'true' : undefined}>{short(c.id)}</a
-                      >{#if stream.tone !== 'success' && stream.tone !== 'live'}<span
-                          class="chip {stream.tone}"
-                          title={stream.title}>{stream.label}</span
-                        >{/if}{#if capture.tone === 'warning'}<span
+                      >{#if stream.tone !== 'success' && stream.tone !== 'live'}<ChipTag
+                          chip={stream}
+                        />{/if}{#if capture.tone === 'warning'}<span
                           class="chip warning"
                           title={capture.title}>{capture.label}</span
                         >{/if}{#if !recordingId}{@const previous = group.rows[index - 1]}<small

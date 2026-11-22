@@ -346,17 +346,12 @@
       </div>
       <div class="scroll">
         {#each outcomes as one (one.key)}
-          {#if one.href}<a class="row outcome" href={one.href}>
-              <Glyph mark={one.mark} label={one.happened} />
-              <span class="title">{one.title}</span>
-              <span class="chip mono">{one.project ?? 'Scratch'}</span>
-              <span class="muted mono when" title={clock(one.at)}>{age(one.at)}</span>
-            </a>{:else}<div class="row outcome">
-              <Glyph mark={one.mark} label={one.happened} />
-              <span class="title">{one.title}</span>
-              <span class="chip mono">{one.project ?? 'Scratch'}</span>
-              <span class="muted mono when" title={clock(one.at)}>{age(one.at)}</span>
-            </div>{/if}
+          <svelte:element this={one.href ? 'a' : 'div'} class="row outcome" href={one.href}>
+            <Glyph mark={one.mark} label={one.happened} />
+            <span class="title">{one.title}</span>
+            <span class="chip mono">{one.project ?? 'Scratch'}</span>
+            <span class="muted mono when" title={clock(one.at)}>{age(one.at)}</span>
+          </svelte:element>
         {:else}
           <p class="quiet muted">Nothing ended or moved on since then.</p>
         {/each}

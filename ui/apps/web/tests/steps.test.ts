@@ -250,3 +250,11 @@ test('turns at a glance: prompt, steps, failures, time, and a ruler by time and 
   );
   assert.equal(bars[1]?.x, bars[0]?.width);
 });
+
+test('a tool call is drawn with the verb its effect is', () => {
+  assert.equal(Steps.act('read_file'), 'read');
+  assert.equal(Steps.act('write_file'), 'edit');
+  assert.equal(Steps.act('delegate'), 'delegate');
+  assert.equal(Steps.act(null), 'tool');
+  assert.equal(Steps.ICONS[Steps.act('delegate')], 'spark');
+});

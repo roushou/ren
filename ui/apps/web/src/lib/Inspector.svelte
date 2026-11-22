@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ChipTag from './ChipTag.svelte';
   import Meter from './Meter.svelte';
   import type { GatewayData } from '#lib/loaders.ts';
   import { Arrival } from '#lib/arrival.ts';
@@ -172,10 +173,9 @@
         >{bytes(current.response.stored_bytes)} back</span
       >{/if}<span class="chip mono" title="From the request to the response's end"
       >{elapsed(duration(current))}</span
-    >{#each [streamChip(current), captureChip(current, bodyLimit)].filter((chip) => chip.tone === 'warning' || chip.tone === 'error') as chip}<span
-        class="chip {chip.tone}"
-        title={chip.title}>{chip.label}</span
-      >{/each}
+    >{#each [streamChip(current), captureChip(current, bodyLimit)].filter((chip) => chip.tone === 'warning' || chip.tone === 'error') as chip}<ChipTag
+        {chip}
+      />{/each}
   </div>
   {#if current.outcome === 'completed' && current.terminal === 'interrupted'}<p
       class="inspector-notice"
@@ -226,17 +226,13 @@
           <div>
             <dt>Model outcome</dt>
             <dd>
-              {#each [modelChip(current)] as chip}<span class="chip {chip.tone}" title={chip.title}
-                  >{chip.label}</span
-                >{/each}
+              <ChipTag chip={modelChip(current)} />
             </dd>
           </div>
           <div>
             <dt>Response stream</dt>
             <dd>
-              {#each [streamChip(current)] as chip}<span class="chip {chip.tone}" title={chip.title}
-                  >{chip.label}</span
-                >{/each}
+              <ChipTag chip={streamChip(current)} />
             </dd>
           </div>
           <div>
@@ -455,9 +451,7 @@
             >
               <dt>{name}</dt>
               <dd class="chip-row volume-chips">
-                {#each volume(body) as chip}<span class="chip {chip.tone}" title={chip.title}
-                    >{chip.label}</span
-                  >{/each}
+                {#each volume(body) as chip}<ChipTag {chip} />{/each}
               </dd>
             </div>{/each}
         </dl>

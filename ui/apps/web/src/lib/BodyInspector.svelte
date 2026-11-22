@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ChipTag from './ChipTag.svelte';
   import type { GatewayData } from '#lib/loaders.ts';
   import { Arrival } from '#lib/arrival.ts';
   import Glyph from '#lib/Glyph.svelte';
@@ -234,8 +235,7 @@
     </p>{/if}
   {#if preview}
     <div class="chip-row" aria-label="Capture of this body">
-      {#each chips as chip}<span class="chip {chip.tone}" title={chip.title}>{chip.label}</span
-        >{/each}{#if mode === 'readable' && hiddenThinking}<span
+      {#each chips as chip}<ChipTag {chip} />{/each}{#if mode === 'readable' && hiddenThinking}<span
           class="chip thinking-chip"
           title="The model thought before answering; the provider sent only a signature, not the text"
           >Thinking hidden</span

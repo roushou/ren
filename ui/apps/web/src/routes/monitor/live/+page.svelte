@@ -11,8 +11,8 @@
   import { clock, num, providerName, short } from '#lib/api.ts';
   import { turnHref } from '#lib/activity.ts';
   import { compactOrDash, span } from '#lib/display.ts';
-  import { unrecognised, type Stored } from '#lib/decode.ts';
-  import type { EffectKind, Excerpt } from '#lib/api.ts';
+  import type { Excerpt } from '#lib/api.ts';
+  import { Steps } from '#lib/steps.ts';
   import {
     Band,
     Board,
@@ -29,7 +29,7 @@
     type TurnCall,
     type UnreadCall,
   } from '#lib/board.ts';
-  import Icon, { type IconName } from '#lib/Icon.svelte';
+  import Icon from '#lib/Icon.svelte';
   import Glyph from '#lib/Glyph.svelte';
   import { Marks } from '#lib/marks.ts';
   import Segmented, { type SegmentedOption } from '#lib/Segmented.svelte';
@@ -161,27 +161,6 @@
       return;
     goto(LivePlace.href({ ...view, focus: null }));
   }
-  function effectIcon(effect: Stored<EffectKind> | null): IconName {
-    switch (effect) {
-      case null:
-        return 'tool';
-      case 'read_file':
-        return 'file';
-      case 'write_file':
-        return 'pencil';
-      case 'run_command':
-        return 'terminal';
-      case 'search':
-        return 'search';
-      case 'delegate':
-        return 'branch';
-      case 'fetch':
-        return 'globe';
-      default:
-        unrecognised(effect);
-        return 'tool';
-    }
-  }
   /** A call not read yet: open (waiting for its head, or responding), or just finished. */
   function unreadLabel(unread: UnreadCall, now: number, thinking: boolean): string {
     const { call } = unread;
@@ -258,7 +237,8 @@
 
 {#snippet toolLine(tool: ToolLine, count: number, result: ResultMark)}
   <div class="live-tool effect-{tool.effect ?? 'none'}">
-    <span class="live-tool-icon"><Icon name={effectIcon(tool.effect)} size={12} /></span>
+    <span class="live-tool-icon"><Icon name={Steps.ICONS[Steps.act(tool.effect)]} size={12} /></span
+    >
     <b
       >{tool.name}{#if count > 1}<span class="live-count"> ×{count}</span>{/if}</b
     >

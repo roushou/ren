@@ -8,7 +8,6 @@
   import Glyph from '#lib/Glyph.svelte';
   import Icon from '#lib/Icon.svelte';
   import { Steps, type Step } from '#lib/steps.ts';
-  import { STEP_ICONS } from './StepGroup.svelte';
   import { toasts } from '#lib/layer/toasts.svelte.ts';
 
   let {
@@ -47,7 +46,7 @@
       {:else if step.state === 'declined'}<Glyph mark="idle" label="Declined" />
       {:else}<Glyph mark="passed" label="Done" />{/if}
       <span class="verb" title={Steps.VERBS[step.act]} aria-label={Steps.VERBS[step.act]} role="img"
-        ><Icon name={STEP_ICONS[step.act]} size={13} /></span
+        ><Icon name={Steps.ICONS[step.act]} size={13} /></span
       >
       <span class="target mono">{step.targets.join(', ')}</span>
     </span>
