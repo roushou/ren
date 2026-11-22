@@ -139,6 +139,19 @@ retries any. `hold = "systemd"` holds runs wherever `systemd-run` works;
 `hold = "off"`, and every host without systemd (macOS), ends runs with the
 daemon as above. `ren runs ls` says which: each run's `tenure` is `held` or
 `bound`.
+
+`hold = "container"` holds each run the same way, but starts its run host in a
+rootless Podman container of its own, `ren-run-<run>`, as the operator
+(`--userns=keep-id`), on the host's network, and removed once the host exits.
+The container sees, each at its host path: the run's folder; its workdir and
+the repository's git folder (a worktree's common one); this `ren`; the client's
+program as found on the run's path; what the client keeps under the home
+(`.claude` and `.claude.json`, `.codex`, `.pi`, opencode's config, data, and
+state folders), where it exists; and the SSH agent's socket. Nothing else of
+the home, Ren's configuration and data, or other runs. `[runs.container]` names
+the image (the instance image) and adds what every run sees: the host's
+programs (`/usr`) and toolchains read-only, shared caches read-write. A program
+the run starts that is in none of these is not found in its container.
 Systemd limits repeated startup failures to five in a minute; fix the cause and
 run `systemctl --user reset-failed ren` before restarting if it hits that limit.
 Launchd throttles respawns to at most once every 10 seconds. Neither manager's

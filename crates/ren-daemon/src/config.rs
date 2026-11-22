@@ -89,6 +89,10 @@ pub enum ConfigError {
         "[runs] worktree_env names must be non-empty, without `=`, and not REN_WORKTREE* or REN_WORKSPACE*"
     )]
     WorktreeEnv,
+    #[error("[runs] hold = \"container\" needs [runs.container] image")]
+    RunImageMissing,
+    #[error("[runs] hold = \"container\" needs HOME, the home a run's container takes")]
+    RunHomeMissing,
     #[error("[github] endpoint: {0}")]
     GithubEndpoint(ren_github::EndpointError),
     #[error("the GitHub client could not be built")]
@@ -301,6 +305,25 @@ pub struct RunsOptions {
     /// `workspace_env` too, for configs written before the rename.
     #[serde(alias = "workspace_env")]
     pub worktree_env: std::collections::BTreeMap<String, String>,
+    /// What a run's container is, under `hold = "container"`.
+    pub container: RunContainerOptions,
+}
+
+/// `[runs.container]`: what a run's container runs, and what every run
+/// sees besides what it works on and what its client keeps. Paths are
+/// absolute, or under the home as `~/…`, and mounted at the same path.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RunContainerOptions {
+    /// The image a run host starts in: the instance image
+    /// (`deploy/instance/Containerfile`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// Seen read-only: the host's programs (`/usr`), toolchains
+    /// (`~/.rustup`).
+    pub read_only: Vec<PathBuf>,
+    /// Seen and written: caches runs share (`~/.cargo`).
+    pub read_write: Vec<PathBuf>,
 }
 
 /// Whether a run's client process outlives the daemon that started it.
@@ -325,17 +348,26 @@ pub enum RunHold {
     Auto,
     /// Always held in systemd user units.
     Systemd,
+    /// Held in rootless Podman containers, one per run, that see only what
+    /// the run works on and what its client keeps (`[runs.container]`).
+    Container,
     /// Bound to the daemon: drained as it stops.
     Off,
 }
 
 impl RunHold {
-    /// How run hosts are started on a host whose environment is `env`, or
-    /// `None` when runs are bound to the daemon.
-    pub fn launcher(self, env: &HostEnv) -> Option<crate::host::Launcher> {
-        match self {
+    /// How run hosts are started on a host whose environment is `env`, with
+    /// `container` for runs in containers, or `None` when runs are bound to
+    /// the daemon.
+    pub fn launcher(
+        self,
+        env: &HostEnv,
+        container: &RunContainerOptions,
+    ) -> Result<Option<crate::host::Launcher>, ConfigError> {
+        Ok(match self {
             Self::Off => None,
             Self::Systemd => Some(crate::host::Launcher::Systemd),
+            Self::Container => Some(crate::host::Launcher::Container(container.containers(env)?)),
             Self::Auto => {
                 let systemd = cfg!(target_os = "linux")
                     // Set by systemd for the services it runs.
@@ -346,7 +378,39 @@ impl RunHold {
                         .any(|dir| dir.join("systemd-run").is_file());
                 systemd.then_some(crate::host::Launcher::Systemd)
             }
-        }
+        })
+    }
+}
+
+impl RunContainerOptions {
+    /// How run hosts start in containers on a host whose environment is
+    /// `env`: its home, and its SSH agent's socket when it has one.
+    fn containers(&self, env: &HostEnv) -> Result<crate::host::RunContainers, ConfigError> {
+        use crate::host::Mount;
+        let image = self.image.clone().ok_or(ConfigError::RunImageMissing)?;
+        let home = env
+            .absolute_path("HOME")
+            .ok_or(ConfigError::RunHomeMissing)?;
+        let anchored = |path: &PathBuf| match path.strip_prefix("~") {
+            Ok(rest) => home.join(rest),
+            Err(_) => path.clone(),
+        };
+        let shared = self
+            .read_only
+            .iter()
+            .map(|path| Mount::read_only(anchored(path)))
+            .chain(
+                self.read_write
+                    .iter()
+                    .map(|path| Mount::read_write(anchored(path))),
+            )
+            .collect();
+        Ok(crate::host::RunContainers::new(
+            image,
+            home.clone(),
+            shared,
+            env.absolute_path("SSH_AUTH_SOCK"),
+        ))
     }
 }
 
@@ -372,7 +436,13 @@ impl RunsOptions {
             return Err(ConfigError::WorktreeEnv);
         }
         if self.roots.iter().all(|root| root.is_absolute())
-            && self.places.iter().chain(&self.scratch).all(anchored)
+            && self
+                .places
+                .iter()
+                .chain(&self.scratch)
+                .chain(&self.container.read_only)
+                .chain(&self.container.read_write)
+                .all(anchored)
         {
             Ok(())
         } else {
@@ -596,7 +666,7 @@ impl Config {
                 Keys::Unchecked => Vec::new(),
             },
             run_hold: match keys {
-                Keys::Env(env) => self.runs.hold.launcher(env),
+                Keys::Env(env) => self.runs.hold.launcher(env, &self.runs.container)?,
                 Keys::Unchecked => None,
             },
             depot,
@@ -739,8 +809,8 @@ impl RuntimeConfig {
         &self.agent_path
     }
     /// How run hosts are started; `None` binds runs to the daemon.
-    pub fn run_hold(&self) -> Option<crate::host::Launcher> {
-        self.run_hold
+    pub fn run_hold(&self) -> Option<&crate::host::Launcher> {
+        self.run_hold.as_ref()
     }
     pub fn depot(&self) -> &Depot {
         &self.depot
@@ -923,6 +993,42 @@ mod tests {
         let homeless = config.runs.places_in(&HostEnv::from_pairs([]));
         assert_eq!(homeless.places, [PathBuf::from("/srv/dotfiles")]);
         let relative: Config = toml::from_str("[runs]\nplaces = [\"dotfiles\"]\n").unwrap();
+        assert!(relative.runs.validate().is_err());
+    }
+
+    #[test]
+    fn runs_in_containers_need_an_image_and_see_paths_under_the_home() {
+        let env = HostEnv::from_pairs([("HOME", "/home/op"), ("SSH_AUTH_SOCK", "/run/agent")]);
+        let without: Config = toml::from_str("[runs]\nhold = \"container\"\n").unwrap();
+        assert!(matches!(
+            without.runs.hold.launcher(&env, &without.runs.container),
+            Err(ConfigError::RunImageMissing)
+        ));
+        let config: Config = toml::from_str(
+            "[runs]\nhold = \"container\"\n[runs.container]\nimage = \"localhost/ren-instance:abc\"\nread_only = [\"/usr\", \"~/.rustup\"]\nread_write = [\"~/.cargo\"]\n",
+        )
+        .unwrap();
+        assert!(config.runs.validate().is_ok());
+        let Ok(Some(crate::host::Launcher::Container(containers))) =
+            config.runs.hold.launcher(&env, &config.runs.container)
+        else {
+            panic!("runs are held in containers");
+        };
+        use crate::host::{Mount, RunContainers};
+        assert_eq!(
+            containers,
+            RunContainers::new(
+                "localhost/ren-instance:abc".into(),
+                "/home/op".into(),
+                vec![
+                    Mount::read_only("/usr"),
+                    Mount::read_only("/home/op/.rustup"),
+                    Mount::read_write("/home/op/.cargo"),
+                ],
+                Some("/run/agent".into()),
+            )
+        );
+        let relative: Config = toml::from_str("[runs.container]\nread_only = [\"usr\"]\n").unwrap();
         assert!(relative.runs.validate().is_err());
     }
 

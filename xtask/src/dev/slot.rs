@@ -247,6 +247,7 @@ impl Slot {
                 // of the slot leaves its runs going.
                 hold: RunHold::Auto,
                 worktree_env: Default::default(),
+                container: Default::default(),
             },
             packages: toml::from_str::<Config>(Self::PACKAGES)
                 .map_err(|_| DevError::Config)?
@@ -667,7 +668,7 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
     }
 
     /// Stop the slot's units, then its runs' run hosts, which outlive its
-    /// daemon: each in a unit of its own, named for the run.
+    /// daemon: each in a unit or a container of its own, named for the run.
     pub fn down(&self) -> Result<(), DevError> {
         for unit in Unit::ALL {
             Progress(&format!("Stopping {}", unit.name())).show();
@@ -682,6 +683,14 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
             Invocation::new("systemctl")
                 .args(["--user", "reset-failed", &unit])
                 .succeeds(Echo::Hide)?;
+            // A run host in a container: removing it stops it. Without
+            // Podman there is no container to remove.
+            if let Err(error) = Invocation::new("podman")
+                .args(["rm", "--force", "--ignore", &HeldRuns::unit(run)])
+                .succeeds(Echo::Hide)
+            {
+                println!("warning: run {run}'s container was not removed: {error}");
+            }
         }
         Ok(())
     }

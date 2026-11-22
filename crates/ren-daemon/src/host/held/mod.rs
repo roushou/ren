@@ -16,11 +16,16 @@
 //!
 //! The daemon's side is [`HeldRuns`]; the host's is [`RunHost`].
 
+mod container;
 pub mod frame;
 mod link;
 mod serve;
 
+pub use container::{Access, Mount, RunContainers};
 pub use serve::RunHost;
+
+use container::RunNeeds;
+use ren_harness::profile::HomeEntry;
 
 use ren_recorder::id::RunId;
 use ren_supervisor::{AgentProcess, HeldRun, ProcessExit, Tenure};
@@ -31,7 +36,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// How a run host is started.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Launcher {
     /// In a transient systemd user unit of its own, `ren-run-<run>`, so the
     /// daemon's unit stopping leaves it be.
@@ -40,6 +45,9 @@ pub enum Launcher {
     /// the daemon's process, not its service's stop: for tests, and hosts
     /// without a user manager.
     Direct,
+    /// In a rootless Podman container of its own, `ren-run-<run>`, that
+    /// sees only what the run works on and what its client keeps.
+    Container(RunContainers),
 }
 
 /// The runs this daemon holds through run hosts: their folders, and how a
@@ -85,6 +93,52 @@ impl Spec {
                 .map(Path::to_path_buf)
                 .ok_or_else(|| io::Error::other("a run's command has no folder"))?,
         })
+    }
+}
+
+impl Spec {
+    /// The program's file: as given when it is a path, else the first on
+    /// the search path the command sets (a held run's always sets one).
+    fn program(&self) -> io::Result<PathBuf> {
+        let given = Path::new(&self.program);
+        if given.components().count() > 1 {
+            return std::fs::canonicalize(given);
+        }
+        let path = self
+            .env
+            .iter()
+            .find(|(key, _)| key == "PATH")
+            .map(|(_, value)| std::ffi::OsString::from(value))
+            .unwrap_or_default();
+        std::env::split_paths(&path)
+            .map(|dir| dir.join(given))
+            .find(|candidate| candidate.is_file())
+            .map(std::fs::canonicalize)
+            .unwrap_or_else(|| {
+                Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{} is not on the run's path", self.program),
+                ))
+            })
+    }
+
+    /// The git folder of the repository `workdir` is in, where it is not
+    /// under `workdir` itself: a worktree's common folder, or the folder of
+    /// a repository `workdir` is a subfolder of.
+    fn git_folder(workdir: &Path) -> Option<PathBuf> {
+        let (root, dot_git) = workdir
+            .ancestors()
+            .map(|dir| (dir, dir.join(".git")))
+            .find(|(_, dot_git)| dot_git.exists())?;
+        if dot_git.is_dir() {
+            return (root != workdir).then_some(dot_git);
+        }
+        // A worktree's `.git` names its folder in the common one, which
+        // names the common folder relative to itself.
+        let text = std::fs::read_to_string(&dot_git).ok()?;
+        let own = root.join(text.trim().strip_prefix("gitdir:")?.trim());
+        let common = std::fs::read_to_string(own.join("commondir")).ok()?;
+        std::fs::canonicalize(own.join(common.trim())).ok()
     }
 }
 
@@ -138,17 +192,67 @@ impl HeldRuns {
     }
 
     /// Start `command`, `run`'s client, under a run host, and attach to it.
-    pub fn start(&self, run: RunId, command: &std::process::Command) -> io::Result<AgentProcess> {
-        let spec = Spec::of(command)?;
+    /// `keeps` is what the client keeps under the home, which a run host
+    /// in a container is given.
+    pub fn start(
+        &self,
+        run: RunId,
+        command: &std::process::Command,
+        keeps: &[HomeEntry],
+    ) -> io::Result<AgentProcess> {
+        let mut spec = Spec::of(command)?;
         let folder = self.folder(run);
         Self::private_dir(&self.root)?;
         Self::private_dir(&folder)?;
+        let needs = match &self.launcher {
+            Launcher::Container(containers) => {
+                // The container sees the program's file, not the folders on
+                // the path: it is started by the path it was found at.
+                let program = spec.program()?;
+                spec.program = program.display().to_string();
+                Some(self.needs(containers, &spec, &folder, keeps))
+            }
+            Launcher::Systemd | Launcher::Direct => None,
+        };
         let json = serde_json::to_vec(&spec).map_err(io::Error::other)?;
         Self::private_file(&folder.join(Self::SPEC))?;
         std::fs::write(folder.join(Self::SPEC), json)?;
-        self.launch(run, &folder)?;
+        self.launch(run, &folder, needs.as_ref())?;
         let stream = Self::reach(&folder.join(Self::SOCKET))?;
         link::Link::open(stream, 0, self.journal(&folder)?)
+    }
+
+    /// What `spec`'s run needs to see in its container: its folder, its
+    /// workdir and the repository's git folder, this `ren`, the files its
+    /// command reads, and what its client keeps that exists.
+    fn needs(
+        &self,
+        containers: &RunContainers,
+        spec: &Spec,
+        folder: &Path,
+        keeps: &[HomeEntry],
+    ) -> RunNeeds {
+        let reads = std::iter::once(PathBuf::from(&spec.program))
+            .chain(
+                spec.args
+                    .iter()
+                    .map(Path::new)
+                    .filter(|arg| arg.is_absolute() && arg.is_file())
+                    .map(Path::to_path_buf),
+            )
+            .collect();
+        RunNeeds {
+            folder: folder.to_path_buf(),
+            workdir: spec.cwd.clone(),
+            git: Spec::git_folder(&spec.cwd),
+            host: self.program.clone(),
+            reads,
+            keeps: keeps
+                .iter()
+                .map(|entry| entry.under(containers.home()))
+                .filter(|path| path.exists())
+                .collect(),
+        }
     }
 
     /// The runs whose folders are here: each held by a host still running,
@@ -232,8 +336,8 @@ impl HeldRuns {
         clippy::disallowed_methods,
         reason = "the one sanctioned place that starts run hosts"
     )]
-    fn launch(&self, run: RunId, folder: &Path) -> io::Result<()> {
-        match self.launcher {
+    fn launch(&self, run: RunId, folder: &Path, needs: Option<&RunNeeds>) -> io::Result<()> {
+        match &self.launcher {
             Launcher::Systemd => {
                 let output = std::process::Command::new("systemd-run")
                     .args(["--user", "--quiet", "--collect"])
@@ -252,6 +356,25 @@ impl HeldRuns {
                 } else {
                     Err(io::Error::other(format!(
                         "systemd-run could not start the run host: {}",
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    )))
+                }
+            }
+            Launcher::Container(containers) => {
+                let needs = needs.ok_or_else(|| {
+                    io::Error::other("a run host in a container was started without its needs")
+                })?;
+                let container = containers.container(run, needs);
+                let output = std::process::Command::new("podman")
+                    .args(container.run_args())
+                    .stdin(std::process::Stdio::null())
+                    .output()?;
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    Err(io::Error::other(format!(
+                        "podman could not start the run host {}: {}",
+                        container.name(),
                         String::from_utf8_lossy(&output.stderr).trim()
                     )))
                 }
@@ -304,5 +427,71 @@ impl HeldRuns {
             .mode(0o600)
             .open(path)
             .map(drop)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Spec;
+    use std::{fs, path::Path};
+
+    #[test]
+    fn a_workdir_at_its_repositorys_root_needs_no_other_git_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        assert_eq!(Spec::git_folder(dir.path()), None);
+    }
+
+    #[test]
+    fn a_subfolder_needs_its_repositorys_git_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        let sub = dir.path().join("crates/app");
+        fs::create_dir_all(&sub).unwrap();
+        assert_eq!(Spec::git_folder(&sub), Some(dir.path().join(".git")));
+    }
+
+    #[test]
+    fn a_worktree_needs_its_repositorys_common_git_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("app");
+        let own = repo.join(".git/worktrees/fix");
+        fs::create_dir_all(&own).unwrap();
+        fs::write(own.join("commondir"), "../..\n").unwrap();
+        let worktree = dir.path().join("fix");
+        fs::create_dir(&worktree).unwrap();
+        fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", own.display()),
+        )
+        .unwrap();
+        assert_eq!(
+            Spec::git_folder(&worktree),
+            Some(fs::canonicalize(repo.join(".git")).unwrap())
+        );
+    }
+
+    #[test]
+    fn a_program_is_found_on_the_path_the_command_sets() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        fs::write(bin.join("client"), "").unwrap();
+        let spec = Spec {
+            program: "client".into(),
+            args: Vec::new(),
+            env: vec![("PATH".into(), bin.display().to_string())],
+            cwd: dir.path().into(),
+        };
+        assert_eq!(
+            spec.program().unwrap(),
+            fs::canonicalize(bin.join("client")).unwrap()
+        );
+        let missing = Spec {
+            program: "absent".into(),
+            ..spec
+        };
+        assert!(missing.program().is_err());
+        assert!(Path::new(&missing.program).is_relative());
     }
 }

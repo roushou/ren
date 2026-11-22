@@ -83,7 +83,11 @@ roots = []
 # user unit of its own (ren-run-<run>) when the daemon itself runs under
 # systemd on Linux, so restarting or upgrading the daemon leaves runs working,
 # mid-turn; the next daemon takes them up. "systemd" always holds them; "off"
-# ends them with the daemon.
+# ends them with the daemon. "container" holds each in a rootless Podman
+# container of its own (ren-run-<run>) that sees only the run's folder, its
+# workdir and the repository's git folder, its client's program and what the
+# client keeps under the home (its sign-in, settings, and sessions), the SSH
+# agent, and what [runs.container] adds.
 hold = "auto"
 # Variables every run in a worktree gets (a session made with
 # `--checkout worktree`, or by a Redline brief): each worktree is a checkout
@@ -94,6 +98,16 @@ hold = "auto"
 # old name, workspace_env, still reads. `ren packages install sccache` installs
 # the cache.
 # worktree_env = { RUSTC_WRAPPER = "sccache" }
+
+# Under hold = "container": the image a run host starts in (the instance image,
+# deploy/instance/Containerfile, as `podman images` names it), and what every
+# run sees besides its own. Paths are absolute or ~/..., mounted at the same
+# path: the host's programs and toolchains read-only, caches runs share
+# read-write.
+# [runs.container]
+# image = "localhost/ren-instance:<digest>"
+# read_only = ["/usr", "~/.rustup", "~/.bun"]
+# read_write = ["~/.cargo"]
 
 [attachments]
 # Images uploaded to a session to go with a prompt (PNG, JPEG, GIF, WebP),
