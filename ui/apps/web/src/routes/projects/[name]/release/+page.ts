@@ -1,4 +1,5 @@
 import { error } from '@sveltejs/kit';
+import { Arrival } from '#lib/arrival.ts';
 import {
   ApiError,
   ManagementApi,
@@ -7,6 +8,8 @@ import {
   type Pulls,
   type ReleaseBody,
 } from '#lib/api.ts';
+import type { ProjectsData } from '#lib/loaders.ts';
+import { ProjectBoard } from '#lib/projects.ts';
 import { Work, WorkApi, type WorkItem } from '#lib/work.ts';
 import type { PageLoad } from './$types';
 
@@ -26,34 +29,42 @@ export interface ReleaseData {
   previews: Previews;
 }
 
-export const load: PageLoad = async ({ fetch, params, parent }): Promise<ReleaseData> => {
-  await parent();
+/** The release arrives like any page's read: within the grace period, or
+ * pending while the page draws its outline. */
+export const load: PageLoad = async ({ fetch, params, parent }) => {
+  const { board } = await parent();
+  if (ProjectBoard.unknown(Arrival.value<ProjectsData>(board), params.name)) {
+    error(404, `No project is named ${params.name}.`);
+  }
   const api = new ManagementApi(fetch);
   const work = new WorkApi(fetch);
-  const [project, release, current, archived, pulls, previews] = await Promise.all([
-    api.project(params.name).catch((failure: unknown) => {
-      if (failure instanceof ApiError && failure.status === 404) {
-        error(404, `No project is named ${params.name}.`);
-      }
-      throw failure;
-    }),
-    api.projectRelease(params.name).then(
-      (body) => ({ body, failed: null }),
-      (failure: unknown) => ({
-        body: null,
-        failed: failure instanceof Error ? failure.message : 'The release did not read.',
+  const release = await Arrival.read(`release:${params.name}`, async (): Promise<ReleaseData> => {
+    const [project, read, current, archived, pulls, previews] = await Promise.all([
+      api.project(params.name).catch((failure: unknown) => {
+        if (failure instanceof ApiError && failure.status === 404) {
+          throw new Error(`No project is named ${params.name}.`);
+        }
+        throw failure;
       }),
-    ),
-    work.list('current').catch(() => []),
-    work.list('archived').catch(() => []),
-    api.projectPulls(params.name).catch(() => null),
-    api.projectPreviews(params.name).catch((): Previews => ({ previews: [], requested: [] })),
-  ]);
-  return {
-    project,
-    ...release,
-    work: Work.of([...current, ...archived], project),
-    pulls,
-    previews,
-  };
+      api.projectRelease(params.name).then(
+        (body) => ({ body, failed: null }),
+        (failure: unknown) => ({
+          body: null,
+          failed: failure instanceof Error ? failure.message : 'The release did not read.',
+        }),
+      ),
+      work.list('current').catch(() => []),
+      work.list('archived').catch(() => []),
+      api.projectPulls(params.name).catch(() => null),
+      api.projectPreviews(params.name).catch((): Previews => ({ previews: [], requested: [] })),
+    ]);
+    return {
+      project,
+      ...read,
+      work: Work.of([...current, ...archived], project),
+      pulls,
+      previews,
+    };
+  });
+  return { release };
 };

@@ -361,3 +361,14 @@ test('work in flight: queued, in a session, or landed, the most recently changed
     ['c', 'd', 'a'],
   );
 });
+
+test('a project is unknown only when the board read and has none by that name', () => {
+  const acme = project('acme-web', { id: 'acme-id' });
+  const read = { projects: [acme], failed: null };
+  assert.equal(ProjectBoard.unknown(read, acme.name), false);
+  assert.equal(ProjectBoard.unknown(read, 'nowhere'), true);
+  assert.equal(ProjectBoard.unknown({ projects: [], failed: 'down' }, 'nowhere'), false);
+  assert.equal(ProjectBoard.unknown(null, 'nowhere'), false);
+  assert.equal(ProjectBoard.known(read, acme.name), acme);
+  assert.equal(ProjectBoard.known(null, acme.name), null);
+});

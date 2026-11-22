@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { GatewayData } from '#lib/loaders.ts';
   import Glyph from '#lib/Glyph.svelte';
   import SlideOver from '#lib/layer/SlideOver.svelte';
   import Toolbar from './Toolbar.svelte';
@@ -8,7 +9,7 @@
   import { page, navigating } from '$app/state';
   import { getWorkbench } from './workbench.svelte.ts';
   import { createArrival } from './snapshot.svelte.ts';
-  import type { Arriving } from './arrival.ts';
+  import { Arrival, type Arriving } from './arrival.ts';
   import type { Column } from './columns.ts';
   import SkeletonRows from './SkeletonRows.svelte';
   import { offPageSelection, type OffPageSelection, type TrafficData } from './loaders.ts';
@@ -135,7 +136,9 @@
   );
   const loading = $derived(workbench.manual || !!navigating.to);
   /** The daemon's per-body capture limit, to tell a trimmed body from lost bytes. */
-  const bodyLimit = $derived(page.data.gateway?.value?.storage.capture?.body_limit_bytes ?? null);
+  const bodyLimit = $derived(
+    Arrival.value<GatewayData>(page.data.gateway)?.storage.capture?.body_limit_bytes ?? null,
+  );
   const after = $derived(page.url.searchParams.get('after'));
   const appliedQuery = $derived(
     new URLSearchParams(

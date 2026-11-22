@@ -92,6 +92,37 @@ export class ProjectBoard {
     return this.clients.filter((client) => SignIns.signedOut(client.sign_in));
   }
 
+  /** The board of every project from the layout's read; empty before it
+   * is in. */
+  static read(
+    read: {
+      projects: readonly Project[];
+      work: readonly WorkItem[];
+      live: readonly RunSnapshot[];
+      sessions: readonly SessionBody[];
+      clients: readonly RunClient[];
+    } | null,
+  ): ProjectBoard {
+    return read
+      ? new ProjectBoard(read.projects, read.work, read.live, read.sessions, null, read.clients)
+      : new ProjectBoard([], []);
+  }
+
+  /** Whether the layout's read of every project says no project is named
+   * `name`: false when it did not read, so a page reads the project itself. */
+  static unknown(
+    read: { projects: readonly Project[]; failed: string | null } | null,
+    name: string,
+  ): boolean {
+    return read !== null && read.failed === null && !read.projects.some((p) => p.name === name);
+  }
+
+  /** The project named `name`, as the layout's read of every project has
+   * it; null when it did not read or has none by that name. */
+  static known(read: { projects: readonly Project[] } | null, name: string): Project | null {
+    return read?.projects.find((project) => project.name === name) ?? null;
+  }
+
   /** The board of `project` alone: its work (Ren's holds the items from
    * before projects), and the approvals its sessions wait on. */
   static of(

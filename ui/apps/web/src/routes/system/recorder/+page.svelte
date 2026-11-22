@@ -1,6 +1,6 @@
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
-  import { createArrival, createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { createArrival } from '#lib/snapshot.svelte.ts';
   import { num, bytes, type FileUsage } from '#lib/api.ts';
   import { buildLabel, SEPARATOR } from '#lib/display.ts';
   import { RecorderReport } from '#lib/recorder.ts';
@@ -9,24 +9,24 @@
   import Skeleton from '#lib/Skeleton.svelte';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
-  const gateway = createSnapshot(() => data.gateway);
+  const gateway = createArrival(() => data.gateway);
   const arrival = createArrival(() => data.recorder);
   const shown = $derived(arrival.current);
   /** The counters are on their way: the page draws its outline. */
   const pending = $derived(shown.state === 'pending');
   const snapshot = $derived(shown.state === 'ready' ? shown.snapshot : null);
-  const policy = $derived(gateway.current.value?.storage.policy);
+  const policy = $derived(gateway.snapshot?.value?.storage.policy);
   // `/api/metrics` is fresher; `/health` keeps counters visible if storage reads fail.
   // While the metrics are on their way, their places are outlined instead.
   const recorder = $derived(
     pending
       ? undefined
-      : (snapshot?.value?.metrics.recorder ?? gateway.current.value?.health.recorder),
+      : (snapshot?.value?.metrics.recorder ?? gateway.snapshot?.value?.health.recorder),
   );
   const usage = $derived(
     pending
       ? undefined
-      : (snapshot?.value?.metrics.storage ?? gateway.current.value?.storage.usage),
+      : (snapshot?.value?.metrics.storage ?? gateway.snapshot?.value?.storage.usage),
   );
   const report = $derived(
     recorder
@@ -53,7 +53,7 @@
 {#snippet scope()}
   <div class="scope-group">
     <span class="meta"
-      >daemon build {buildLabel(gateway.current.value?.health.build ?? null)} · counters since start</span
+      >daemon build {buildLabel(gateway.snapshot?.value?.health.build ?? null)} · counters since start</span
     >
   </div>
 {/snippet}

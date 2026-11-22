@@ -21,7 +21,14 @@ import {
   type UsageView,
   type Project,
 } from './api.ts';
-import { RunsClient, type RunClient, type RunSnapshot, type SessionBody } from './runs.ts';
+import {
+  RunsClient,
+  Sessions,
+  type RunClient,
+  type RunSnapshot,
+  type SessionBody,
+  type SessionId,
+} from './runs.ts';
 import { WorkApi, type WorkItem } from './work.ts';
 import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
 import { listingQuery } from './traffic.ts';
@@ -72,7 +79,7 @@ const callFilters: readonly (keyof RawCallQuery & string)[] = [
 
 export function gatewaySnapshot(fetcher: typeof fetch) {
   const api = new ManagementApi(fetcher);
-  return readSnapshot('gateway', async (): Promise<GatewayData> => {
+  return Arrival.read('gateway', async (): Promise<GatewayData> => {
     // Health reads recorder counters, not storage, so the two run together.
     const [health, storage, release] = await Promise.all([
       api.health(),
@@ -725,4 +732,13 @@ export async function projectsData(
     runsControl ? runs.clients().catch(() => []) : Promise.resolve([]),
   ]);
   return { ...listed, work, live, sessions, clients };
+}
+
+/** Which recordings are sessions Ren drives, for the links between Monitor
+ * and their desks: none when it drives none here, or they did not read. It
+ * arrives like any page's read, so the page never waits on the links. */
+export function deskLinks(fetcher: typeof fetch): Promise<Arriving<Map<RecordingId, SessionId>>> {
+  return Arrival.read('desks', () =>
+    new RunsClient(fetcher).sessions().then(Sessions.byRecording, () => new Map()),
+  );
 }

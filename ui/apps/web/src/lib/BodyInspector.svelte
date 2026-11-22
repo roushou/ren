@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { GatewayData } from '#lib/loaders.ts';
+  import { Arrival } from '#lib/arrival.ts';
   import Glyph from '#lib/Glyph.svelte';
   import { onMount, untrack } from 'svelte';
   import {
@@ -62,7 +64,9 @@
   );
   const open = $derived(preview?.ending === 'open');
   /** The daemon's per-body capture limit, to tell a trimmed body from lost bytes. */
-  const bodyLimit = $derived(page.data.gateway?.value?.storage.capture?.body_limit_bytes ?? null);
+  const bodyLimit = $derived(
+    Arrival.value<GatewayData>(page.data.gateway)?.storage.capture?.body_limit_bytes ?? null,
+  );
   const chips = $derived(preview ? previewChips(preview, bodyLimit) : []);
   /** Thinking the provider withheld is a fact about the response, not a
    * message: it becomes a chip instead of an empty card. */

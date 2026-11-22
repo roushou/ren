@@ -10,6 +10,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import Glyph from '#lib/Glyph.svelte';
+  import Skeleton from '#lib/Skeleton.svelte';
   import Icon from '#lib/Icon.svelte';
   import Toolbar from '#lib/Toolbar.svelte';
   import ApprovalModal from '#lib/ApprovalModal.svelte';
@@ -20,20 +21,21 @@
   import { Home } from '#lib/home.ts';
   import { ProjectBoard } from '#lib/projects.ts';
   import { RecorderReport } from '#lib/recorder.ts';
-  import { createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { createArrival } from '#lib/snapshot.svelte.ts';
   import { Runs, Sessions } from '#lib/runs.ts';
   import { Work } from '#lib/work.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
-  const board = $derived(
-    new ProjectBoard(data.projects, data.work, data.live, data.sessions, null, data.clients),
-  );
+  const boardRead = createArrival(() => data.board);
+  /** The board is on its way, and this browser has none yet: outlines. */
+  const pending = $derived(boardRead.current.state === 'pending');
+  const board = $derived(ProjectBoard.read(boardRead.snapshot?.value ?? null));
   const answers = new ApprovalAnswers();
   /** The machine's recording, for System's card when storage is near its limit. */
-  const gateway = createSnapshot(() => data.gateway);
+  const gateway = createArrival(() => data.gateway);
   const crowded = $derived.by(() => {
-    const read = gateway.current.value;
+    const read = gateway.snapshot?.value;
     return read
       ? new RecorderReport(
           read.health.recorder,
@@ -276,7 +278,8 @@
               </div>
             </article>
           {/each}
-          {#if !needs}<p class="quiet muted">
+          {#if pending}<p class="quiet" aria-hidden="true"><Skeleton width="14em" /></p>
+          {:else if !needs}<p class="quiet muted">
               <Glyph mark="passed" label={true} /> Nothing needs you.
             </p>{/if}
         </div>
@@ -296,7 +299,8 @@
               <span class="muted mono when">{age(row.since)}</span>
             </a>
           {:else}
-            <p class="quiet muted">No session is running.</p>
+            {#if pending}<p class="quiet" aria-hidden="true"><Skeleton width="18em" /></p>
+            {:else}<p class="quiet muted">No session is running.</p>{/if}
           {/each}
         </div>
       </section>

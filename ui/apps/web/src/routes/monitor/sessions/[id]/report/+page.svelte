@@ -13,9 +13,16 @@
   import Skeleton from '#lib/Skeleton.svelte';
   import SkeletonRows from '#lib/SkeletonRows.svelte';
   import type { Column } from '#lib/columns.ts';
+  import { Sessions } from '#lib/runs.ts';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
   const arrival = createArrival(() => data.report);
+  const desks = createArrival(() => data.desks);
+  /** Where the session opens on its desk, when Ren drives it. */
+  const desk = $derived.by(() => {
+    const session = desks.snapshot?.value?.get(data.recordingId);
+    return session ? Sessions.href(session) : null;
+  });
   const arrived = $derived(arrival.current);
   /** The report is on its way: the page draws its outline. */
   const pending = $derived(arrived.state === 'pending');
@@ -57,7 +64,7 @@
       recordingId={data.recordingId}
       {recording}
       detail={current?.detail ?? null}
-      desk={data.desk}
+      {desk}
       view="report"
       now={Date.now()}
     />

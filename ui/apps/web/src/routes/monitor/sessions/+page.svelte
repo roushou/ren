@@ -21,6 +21,9 @@
 
   let { data }: PageProps = $props();
   const arrival = createArrival(() => data.recordings);
+  const desks = createArrival(() => data.desks);
+  /** The sessions Ren drives, by recording; none until they are in. */
+  const driven = $derived(desks.snapshot?.value ?? new Map());
   const arrived = $derived(arrival.current);
   /** The listing is on its way: the page draws its outline. */
   const pending = $derived(arrived.state === 'pending');
@@ -116,7 +119,7 @@
 
 {#snippet row(row: RecordingRow)}
   {@const recording = row.recording}
-  {@const desk = data.desks.get(recording.id) ?? null}
+  {@const desk = driven.get(recording.id) ?? null}
   <tr class="call-row recording-row" onclick={(event) => open(event, row)}>
     <!-- The edge sits on the cell: on a row, its ::before would become a cell of its own. -->
     <td class="recording-cell state-edge {row.now.kind === 'open' ? `state-${row.now.mark}` : ''}">
@@ -296,7 +299,7 @@
   </div>
   {#if previewing}
     <SlideOver label="Session report" pin="report" onclose={() => (previewing = null)}>
-      <RecordingPreview row={previewing} desk={data.desks.get(previewing.recording.id) ?? null} />
+      <RecordingPreview row={previewing} desk={driven.get(previewing.recording.id) ?? null} />
     </SlideOver>
   {/if}
 </section>

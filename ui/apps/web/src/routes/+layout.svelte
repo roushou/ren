@@ -9,9 +9,9 @@
   import PendingPanel from '#lib/PendingPanel.svelte';
   import { ProjectBoard } from '#lib/projects.ts';
   import { onMount, untrack } from 'svelte';
-  import { beforeNavigate, preloadCode, refreshAll } from '$app/navigation';
+  import { beforeNavigate, invalidate, preloadCode } from '$app/navigation';
   import { page, navigating } from '$app/state';
-  import { createSettled, createSnapshot } from '#lib/snapshot.svelte.ts';
+  import { createArrival, createSettled } from '#lib/snapshot.svelte.ts';
   import { Workbench, setWorkbench } from '#lib/workbench.svelte.ts';
   import { LiveConnection } from '#lib/live.svelte.ts';
   import { clock } from '#lib/api.ts';
@@ -82,8 +82,8 @@
       console.error = log;
     };
   });
-  const gateway = createSnapshot(() => data.gateway);
-  const health = $derived(gateway.current.value?.health);
+  const gateway = createArrival(() => data.gateway);
+  const health = $derived(gateway.snapshot?.value?.health);
   /** The tag on the wordmark of an instance that is not production: the
    * gateway says what kind of instance it is; the UI only shows it. */
   const marked = $derived.by(() => {
@@ -101,7 +101,7 @@
         return null;
     }
   });
-  const storage = $derived(gateway.current.value?.storage);
+  const storage = $derived(gateway.snapshot?.value?.storage);
   /** The tab row, which scrolls sideways on a phone. */
   let tabs = $state<HTMLElement>();
   // Keep the current view's tab in sight when the row is narrower than its tabs.
@@ -125,22 +125,16 @@
   /** The place's own entry: its name, and where that leads. */
   const here = $derived(Views.places.find((each) => each.place === where) ?? null);
   /** What waits on the operator, across every project: the top bar's Pending. */
-  const board = $derived(
-    new ProjectBoard(
-      data.board.projects,
-      data.board.work,
-      data.board.live,
-      data.board.sessions,
-      null,
-      data.board.clients,
-    ),
-  );
+  const boardRead = createArrival(() => data.board);
+  const board = $derived(ProjectBoard.read(boardRead.snapshot?.value ?? null));
   /** What newly waits on the operator, said as a toast as it arrives:
    * unless the page that says it is the one on screen. The first board says
    * nothing; it is where the operator starts. */
   let lastBoard: ProjectBoard | null = null;
   $effect(() => {
     const now = board;
+    // Not before the board is in: an empty board is not news.
+    if (!boardRead.snapshot) return;
     const before = lastBoard;
     lastBoard = now;
     if (!before) return;
@@ -230,7 +224,7 @@
   const loading = $derived(workbench.manual || !!navigating.to);
   let refreshError = $state('');
   const failure = $derived<SnapshotError | null>(
-    gateway.current.error ??
+    gateway.snapshot?.error ??
       reads.of(page.data.traffic)?.error ??
       reads.of(page.data.live)?.error ??
       reads.of(page.data.recordings)?.error ??
@@ -242,7 +236,7 @@
   );
   const error = $derived(refreshError || failure?.message || '');
   const incompatible = $derived(failure?.kind === 'incompatible');
-  const updated = $derived(gateway.current.updated);
+  const updated = $derived(gateway.snapshot?.updated);
   /** Recorder notices the operator dismissed this visit, by their words. */
   let dismissed = $state<string[]>([]);
   /** Whether every strip shows, not just the worst. */
@@ -267,7 +261,11 @@
     if (navigating.to) return;
     workbench.refreshing = true;
     try {
-      await refreshAll();
+      // Every load that read Ren reads it again; the server loads that only
+      // hold settings (and the desk's and Tools', whose pages follow their
+      // own feeds) do not. A refresh a click interrupts then leaves only
+      // those reads to redo, not a round trip to this server first.
+      await invalidate(() => true, true);
       refreshError = '';
       workbench.refreshed++;
     } catch {

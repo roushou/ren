@@ -9,6 +9,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import Glyph from '#lib/Glyph.svelte';
+  import Skeleton from '#lib/Skeleton.svelte';
   import Toolbar from '#lib/Toolbar.svelte';
   import ApprovalModal from '#lib/ApprovalModal.svelte';
   import { ApprovalAnswers } from '#lib/approvals.svelte.ts';
@@ -19,12 +20,14 @@
   import { Home } from '#lib/home.ts';
   import { Work } from '#lib/work.ts';
   import { usagePoints } from '#lib/usage.ts';
+  import { createArrival } from '#lib/snapshot.svelte.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
-  const board = $derived(
-    new ProjectBoard(data.projects, data.work, data.live, data.sessions, null, data.clients),
-  );
+  const boardRead = createArrival(() => data.board);
+  /** The board is on its way, and this browser has none yet: outlines. */
+  const pending = $derived(boardRead.current.state === 'pending');
+  const board = $derived(ProjectBoard.read(boardRead.snapshot?.value ?? null));
   const running = $derived(board.active.reduce((sum, project) => sum + project.running, 0));
   const answers = new ApprovalAnswers();
   const underWay = $derived(Home.underWay(board));
@@ -80,8 +83,18 @@
 <Toolbar {scope} />
 
 <section class="projects-view" aria-label="Projects">
-  {#if data.failed}
-    <p class="error" role="alert">{data.failed}</p>
+  {#if boardRead.snapshot?.value?.failed}
+    <p class="error" role="alert">{boardRead.snapshot.value.failed}</p>
+  {:else if pending}
+    <div class="table" aria-hidden="true">
+      {#each ['9em', '7em', '11em'] as width, index (index)}
+        <div class="row">
+          <span></span><Skeleton {width} /><Skeleton width="3em" /><Skeleton width="5em" /><Skeleton
+            width="8em"
+          /><Skeleton width="6em" /><Skeleton width="3em" /><span></span>
+        </div>
+      {/each}
+    </div>
   {:else if !board.projects.length}
     <p class="empty">
       No project is registered. <code>ren project add --dir ~/dev/acme</code> registers one;
@@ -200,7 +213,7 @@
           </span>
         </div>
       {/each}
-      {#if data.sessions.length}
+      {#if board.sessions.length}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <div class="row" role="row" tabindex="-1" onclick={(event) => open(event, '/scratch')}>
           <Glyph mark="idle" label="Sessions that work for no project" />

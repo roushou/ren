@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { GatewayData } from '#lib/loaders.ts';
+  import { Arrival } from '#lib/arrival.ts';
   import { Allowances } from './allowance.ts';
   import BodyInspector from './BodyInspector.svelte';
   import Glyph from './Glyph.svelte';
@@ -41,7 +43,9 @@
     onupdate: (record: CallView) => void;
   } = $props();
   /** The daemon's per-body capture limit, to tell a trimmed body from lost bytes. */
-  const bodyLimit = $derived(page.data.gateway?.value?.storage.capture?.body_limit_bytes ?? null);
+  const bodyLimit = $derived(
+    Arrival.value<GatewayData>(page.data.gateway)?.storage.capture?.body_limit_bytes ?? null,
+  );
   const api = new ManagementApi();
   let detail = $state<CallDetail | null>(null);
   let detailError = $state('');

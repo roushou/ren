@@ -4,9 +4,10 @@
  * On a navigation in the browser, a read that finishes within a short grace
  * period arrives ready, so the page renders once, complete, as on a first
  * load. Only a read that takes longer is handed over pending: the page then
- * renders at once with its own outline where the values will go, instead of
- * keeping the old page up until every read is done. A first load is read in
- * full on the server, so the page arrives complete.
+ * renders at once, with the newest value this browser read under the same
+ * key, or its own outline where the values will go, instead of keeping the
+ * old page up until every read is done. A first load is read in full on the
+ * server, so the page arrives complete.
  */
 import { readSnapshot, retainSnapshot, type Snapshot } from './snapshots.ts';
 
@@ -26,7 +27,13 @@ export class Arrival {
    * in ms. Below it, an outline would only flash by before the page; above
    * it, the outline shows the page is coming instead of the old one lingering.
    */
-  static readonly GRACE_MS = 500;
+  static readonly GRACE_MS = 200;
+
+  /** How many reads' newest values the browser keeps. */
+  static readonly KEPT = 32;
+
+  /** The newest value read under each key, in this browser; oldest first. */
+  static #newest = new Map<string, Snapshot<unknown>>();
 
   /** Whether reads are handed over before they finish. */
   static #streaming = false;
@@ -39,6 +46,31 @@ export class Arrival {
    */
   static stream(): void {
     Arrival.#streaming = true;
+  }
+
+  /** Keep `snapshot` as the newest read of its key, when it has a value.
+   * Only the browser keeps any: the page's effects call this. */
+  static keep<T>(snapshot: Snapshot<T>): void {
+    if (snapshot.value === null) return;
+    Arrival.#newest.delete(snapshot.key);
+    Arrival.#newest.set(snapshot.key, snapshot);
+    for (const key of Arrival.#newest.keys()) {
+      if (Arrival.#newest.size <= Arrival.KEPT) break;
+      Arrival.#newest.delete(key);
+    }
+  }
+
+  /** The newest read of `key` this browser kept; null when none. */
+  static newest<T>(key: string): Snapshot<T> | null {
+    return (Arrival.#newest.get(key) as Snapshot<T> | undefined) ?? null;
+  }
+
+  /** `arriving`'s value now: read, or the newest kept under its key. */
+  static value<T>(arriving: Arriving<T> | undefined): T | null {
+    if (!arriving) return null;
+    return arriving.state === 'ready'
+      ? arriving.snapshot.value
+      : (Arrival.newest<T>(arriving.key)?.value ?? null);
   }
 
   /** `read` under `key`, handed over pending when streaming and it is late. */
