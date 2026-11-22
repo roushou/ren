@@ -185,6 +185,7 @@ const routes: { pattern: RegExp; route: Route }[] = [
   { pattern: /^\/control\/tools\/rollback$/, route: { method: 'POST', feed: false } },
   // The Release view's Promote: a request the factory's next pass carries out.
   { pattern: /^\/control\/release\/promote$/, route: { method: 'POST', feed: false } },
+  { pattern: /^\/control\/previews\/(ask|withdraw)$/, route: { method: 'POST', feed: false } },
   // Work items: queued from a Redline pane, and moved on.
   { pattern: /^\/control\/work$/, route: { method: 'POST', feed: false } },
   {

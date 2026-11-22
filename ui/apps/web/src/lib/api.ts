@@ -25,6 +25,15 @@ import type { Build as WireBuild } from './wire/Build.ts';
 import type { CanaryView as WireCanaryView } from './wire/CanaryView.ts';
 import type { CheckView as WireCheckView } from './wire/CheckView.ts';
 import type { ReleaseBody as WireReleaseBody } from './wire/ReleaseBody.ts';
+import type { PullsBody as WirePullsBody } from './wire/PullsBody.ts';
+import type { SightingBody as WireSightingBody } from './wire/SightingBody.ts';
+import type { PullBody as WirePullBody } from './wire/PullBody.ts';
+import type { CheckBody as WirePullCheck } from './wire/CheckBody.ts';
+import type { BranchBody as WireBranchBody } from './wire/BranchBody.ts';
+import type { PreviewsBody as WirePreviewsBody } from './wire/PreviewsBody.ts';
+import type { PreviewBody as WirePreviewBody } from './wire/PreviewBody.ts';
+import type { PreviewOfBody as WirePreviewOf } from './wire/PreviewOfBody.ts';
+import type { PreviewStateBody as WirePreviewState } from './wire/PreviewStateBody.ts';
 import type { ProjectBody as WireProjectBody } from './wire/ProjectBody.ts';
 import type { ProjectsBody as WireProjectsBody } from './wire/ProjectsBody.ts';
 import type { WorkCountsBody as WireWorkCounts } from './wire/WorkCountsBody.ts';
@@ -723,6 +732,110 @@ export interface WorkCounts {
   /** In a state this UI does not know. */
   other: number;
 }
+/** GitHub's words for an open pull request, as the daemon passes them on. */
+export const readinesses = ['draft', 'ready'] as const;
+export const mergeStates = [
+  'clean',
+  'behind',
+  'blocked',
+  'conflicting',
+  'draft',
+  'unstable',
+  'has_hooks',
+  'computing',
+] as const;
+export const reviewDecisions = [
+  'approved',
+  'changes_requested',
+  'review_required',
+  'not_required',
+] as const;
+/** All of a pull request's checks, taken together. */
+export const checksStates = [
+  'passing',
+  'failing',
+  'errored',
+  'pending',
+  'expected',
+  'none',
+] as const;
+/** One check on a pull request. */
+export const pullCheckStates = [
+  'queued',
+  'running',
+  'expected',
+  'passed',
+  'failed',
+  'errored',
+  'cancelled',
+  'timed_out',
+  'skipped',
+  'neutral',
+] as const;
+export type ChecksState = (typeof checksStates)[number];
+export type PullCheckState = (typeof pullCheckStates)[number];
+export interface PullCheck {
+  name: string;
+  state: Stored<PullCheckState>;
+}
+/** One open pull request, as the daemon's poller last saw it. */
+export interface Pull {
+  number: number;
+  title: string;
+  url: string;
+  author: string | null;
+  readiness: Stored<(typeof readinesses)[number]>;
+  head_branch: string;
+  head: string;
+  base_branch: string;
+  merge: Stored<(typeof mergeStates)[number]>;
+  review: Stored<(typeof reviewDecisions)[number]>;
+  checks: Stored<ChecksState>;
+  check_list: PullCheck[];
+  /** The work items its description's `Work-Item:` trailers name. */
+  work_items: string[];
+}
+/** One answer from GitHub. */
+export interface Sighting {
+  at: number;
+  default_branch: { name: string; head: string } | null;
+  pull_requests: Pull[];
+  /** More open pull requests (or checks) exist than were listed. */
+  truncated: boolean;
+}
+/** `/api/projects/{name}/pulls`: whether its repository is watched, and what was seen. */
+export type Pulls =
+  | { watch: 'off' }
+  | { watch: 'waiting'; repository: string }
+  | { watch: 'seen'; repository: string; seen: Sighting }
+  | { watch: 'failed'; repository: string; error: string; at: number; last: Sighting | null }
+  /** A watch this UI does not know. */
+  | { watch: 'unknown'; text: string };
+export const reaches = ['loopback', 'tailnet'] as const;
+/** Where a preview stands. */
+export type PreviewState =
+  | { state: 'building' }
+  | { state: 'running'; reach: Stored<(typeof reaches)[number]> }
+  | { state: 'failed'; detail: string }
+  | { state: 'unknown'; text: string };
+/** What a preview is of: an open pull request at its head, or a commit asked for. */
+export type PreviewOf = { kind: 'pull'; number: number } | { kind: 'commit' } | { kind: 'unknown' };
+/** One preview in its slot. */
+export interface Preview {
+  slot: number;
+  of: PreviewOf;
+  commit: string;
+  state: PreviewState;
+  ui_port: number;
+  /** The tailnet port its UI is published on. */
+  published_ui_port: number;
+}
+/** `/api/projects/{name}/previews`: the factory's previews, and the commits asked for. */
+export interface Previews {
+  previews: Preview[];
+  /** Newest ask first. */
+  requested: string[];
+}
 /** One registered project: what it is, what is under way, and its release. */
 export interface Project {
   id: string;
@@ -1069,6 +1182,99 @@ const releaseBody = object<ReleaseBody, WireReleaseBody>({
   release: nullable(releaseView),
   shots: array(string),
   promotion_requested: nullable(string),
+});
+const sighting = object<Sighting, WireSightingBody>({
+  at: count,
+  default_branch: nullable(
+    object<{ name: string; head: string }, WireBranchBody>({ name: string, head: string }),
+  ),
+  pull_requests: array(
+    object<Pull, WirePullBody>({
+      number: count,
+      title: string,
+      url: string,
+      author: nullable(string),
+      readiness: label(readinesses),
+      head_branch: string,
+      head: string,
+      base_branch: string,
+      merge: label(mergeStates),
+      review: label(reviewDecisions),
+      checks: label(checksStates),
+      check_list: array(
+        object<PullCheck, WirePullCheck>({ name: string, state: label(pullCheckStates) }),
+      ),
+      work_items: array(string),
+    }),
+  ),
+  truncated: boolean,
+});
+const pulls = tagged<Pulls, WirePullsBody, 'watch'>(
+  'watch',
+  {
+    off: object<Variant<WirePullsBody, 'watch', 'off'>>({ watch: tagValue('off') }),
+    waiting: object<Variant<WirePullsBody, 'watch', 'waiting'>>({
+      watch: tagValue('waiting'),
+      repository: string,
+    }),
+    seen: object<Extract<Pulls, { watch: 'seen' }>, Variant<WirePullsBody, 'watch', 'seen'>>({
+      watch: tagValue('seen'),
+      repository: string,
+      seen: sighting,
+    }),
+    failed: object<Extract<Pulls, { watch: 'failed' }>, Variant<WirePullsBody, 'watch', 'failed'>>({
+      watch: tagValue('failed'),
+      repository: string,
+      error: string,
+      at: count,
+      last: nullable(sighting),
+    }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { watch: 'unknown', text: string(value.watch, `${path}.watch`) };
+  },
+);
+const previewState = tagged<PreviewState, WirePreviewState, 'state'>(
+  'state',
+  {
+    building: object<Variant<WirePreviewState, 'state', 'building'>>({
+      state: tagValue('building'),
+    }),
+    running: object<
+      Extract<PreviewState, { state: 'running' }>,
+      Variant<WirePreviewState, 'state', 'running'>
+    >({ state: tagValue('running'), reach: label(reaches) }),
+    failed: object<Variant<WirePreviewState, 'state', 'failed'>>({
+      state: tagValue('failed'),
+      detail: string,
+    }),
+  },
+  (value, path) => {
+    if (!isRecord(value)) throw new ShapeError(path, 'an object');
+    return { state: 'unknown', text: string(value.state, `${path}.state`) };
+  },
+);
+const previewOf = tagged<PreviewOf, WirePreviewOf, 'kind'>(
+  'kind',
+  {
+    pull: object<Variant<WirePreviewOf, 'kind', 'pull'>>({ kind: tagValue('pull'), number: count }),
+    commit: object<Variant<WirePreviewOf, 'kind', 'commit'>>({ kind: tagValue('commit') }),
+  },
+  () => ({ kind: 'unknown' }),
+);
+const previews = object<Previews, WirePreviewsBody>({
+  previews: array(
+    object<Preview, WirePreviewBody>({
+      slot: count,
+      of: previewOf,
+      commit: string,
+      state: previewState,
+      ui_port: count,
+      published_ui_port: count,
+    }),
+  ),
+  requested: array(string),
 });
 const project = object<Project, WireProjectBody>({
   id: string,
@@ -1635,6 +1841,14 @@ export class ManagementApi {
   /** A project's release, with Ren's captured pages and any promotion asked for. */
   projectRelease(name: string, signal?: AbortSignal): Promise<ReleaseBody> {
     return this.#read(`/api/projects/${encodeURIComponent(name)}/release`, releaseBody, signal);
+  }
+  /** A project's open pull requests, as the daemon's poller last saw them. */
+  projectPulls(name: string, signal?: AbortSignal): Promise<Pulls> {
+    return this.#read(`/api/projects/${encodeURIComponent(name)}/pulls`, pulls, signal);
+  }
+  /** A project's previews and the commits asked for; Ren's alone has any. */
+  projectPreviews(name: string, signal?: AbortSignal): Promise<Previews> {
+    return this.#read(`/api/projects/${encodeURIComponent(name)}/previews`, previews, signal);
   }
   /** Ren's own release; null until its canary has run, or while no project
    * is Ren. Read as the project `install-vps` registers, `ren`, with one

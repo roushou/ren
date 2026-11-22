@@ -1,7 +1,7 @@
 // Where the release stands, as one status-line entry: how far production
 // is behind main, the canary's verdict, and what promotion decided. Pure,
 // read from `/api/release` (`ReleaseView`); the factory writes it.
-import type { Revision } from './api.ts';
+import type { CheckView, Preview, Pull, Pulls, Revision } from './api.ts';
 import type { ReleaseView } from './api.ts';
 import { unrecognised } from './decode.ts';
 import type { Mark } from './marks.ts';
@@ -273,8 +273,285 @@ export class ReleasePage {
   }
 }
 
-/** The Release view's one write: asking production to take the canary's
- * build, which the factory's next pass carries out. */
+/** What a pull request's chip on the flow says: how it stands, its checks,
+ * or its preview. */
+export type PullMode = 'status' | 'checks' | 'preview';
+
+/** A pull request's chip: its glyph and what the glyph says. */
+export interface PullChip {
+  mark: Mark;
+  label: string;
+}
+
+export class PullChips {
+  static readonly modes: readonly { mode: PullMode; label: string }[] = [
+    { mode: 'status', label: 'Status' },
+    { mode: 'checks', label: 'Checks' },
+    { mode: 'preview', label: 'Preview' },
+  ];
+
+  static of(pull: Pull, mode: PullMode, previews: readonly Preview[]): PullChip {
+    switch (mode) {
+      case 'status':
+        return PullChips.status(pull);
+      case 'checks':
+        return PullChips.checks(pull);
+      case 'preview':
+        return PullChips.preview(
+          previews.find((each) => each.of.kind === 'pull' && each.of.number === pull.number) ??
+            null,
+        );
+      default: {
+        const never: never = mode;
+        return never;
+      }
+    }
+  }
+
+  /** What stands between it and merging, the most pressing first. */
+  static status(pull: Pull): PullChip {
+    if (pull.readiness === 'draft' || pull.merge === 'draft')
+      return { mark: 'draft', label: 'Draft' };
+    if (pull.checks === 'failing' || pull.checks === 'errored')
+      return { mark: 'failed', label: 'Checks failing' };
+    if (pull.merge === 'conflicting') return { mark: 'failed', label: 'Conflicts with its base' };
+    if (pull.checks === 'pending' || pull.checks === 'expected')
+      return { mark: 'running', label: 'Checks running' };
+    if (pull.review === 'changes_requested') return { mark: 'warning', label: 'Changes requested' };
+    if (pull.review === 'review_required') return { mark: 'yours', label: 'Review required' };
+    if (pull.merge === 'behind') return { mark: 'warning', label: 'Behind its base' };
+    if (pull.merge === 'blocked') return { mark: 'warning', label: 'Blocked' };
+    if (pull.merge === 'clean' || pull.merge === 'unstable' || pull.merge === 'has_hooks')
+      return { mark: 'passed', label: 'Ready to merge' };
+    return { mark: 'unknown', label: 'Not worked out yet' };
+  }
+
+  /** Its checks taken together, with how many passed. */
+  static checks(pull: Pull): PullChip {
+    const passed = pull.check_list.filter((check) => check.state === 'passed').length;
+    const of = `${passed}/${pull.check_list.length} checks passed`;
+    switch (pull.checks) {
+      case 'passing':
+        return { mark: 'passed', label: of };
+      case 'failing':
+      case 'errored':
+        return { mark: 'failed', label: of };
+      case 'pending':
+      case 'expected':
+        return { mark: 'running', label: of };
+      case 'none':
+        return { mark: 'idle', label: 'No checks' };
+      default:
+        return { mark: 'unknown', label: unrecognised(pull.checks) };
+    }
+  }
+
+  static preview(preview: Preview | null): PullChip {
+    if (!preview) return { mark: 'idle', label: 'No preview' };
+    return Previewing.chip(preview);
+  }
+}
+
+/** One of the figures under the flow. */
+export interface StripItem {
+  label: string;
+  value: string;
+  mark: Mark | null;
+}
+
+/** The figures under the flow: production against main, the canary, the
+ * policy, the open pull requests, and what comes next. */
+export class ReleaseFigures {
+  static of(view: ReleasePage, pulls: readonly Pull[]): StripItem[] {
+    const release = view.release;
+    const canary = release.canary;
+    const failing = pulls.filter((pull) => PullChips.status(pull).mark === 'failed').length;
+    const promotion = Promotion.of(release.decision);
+    return [
+      {
+        label: 'Production',
+        value:
+          release.behind === null
+            ? 'not on main'
+            : release.behind === 0
+              ? 'on main'
+              : `${release.behind} behind main`,
+        mark: release.behind ? 'warning' : null,
+      },
+      {
+        label: 'Canary',
+        value: canary
+          ? `${canary.checks.filter((check) => check.passed).length}/${canary.checks.length}`
+          : 'none checked',
+        mark: canary ? (canary.passed ? 'passed' : 'failed') : null,
+      },
+      { label: 'Policy', value: release.policy, mark: null },
+      {
+        label: 'Open pull requests',
+        value: failing ? `${pulls.length} · ${failing} failing` : String(pulls.length),
+        mark: failing ? 'failed' : null,
+      },
+      {
+        label: 'Next',
+        value:
+          view.promotable && canary && !view.asked
+            ? `Promote ${ReleasePage.short(canary.commit).slice(0, 7)}`
+            : promotion.word,
+        mark: promotion.mark,
+      },
+    ];
+  }
+
+  /** Where a canary check comes from: Ren's own, or one the project declares. */
+  static source(check: CheckView): string {
+    return check.check === 'declared' ? 'declared' : 'Ren';
+  }
+}
+
+/** The open pull requests a watch saw, and what it says about the watch. */
+export class PullWatch {
+  static pulls(watch: Pulls | null): Pull[] {
+    if (!watch) return [];
+    switch (watch.watch) {
+      case 'seen':
+        return watch.seen.pull_requests;
+      case 'failed':
+        return watch.last?.pull_requests ?? [];
+      case 'off':
+      case 'waiting':
+      case 'unknown':
+        return [];
+      default: {
+        const never: never = watch;
+        return never;
+      }
+    }
+  }
+
+  /** The repository it watches, when it watches one. */
+  static repository(watch: Pulls | null): string | null {
+    if (!watch) return null;
+    switch (watch.watch) {
+      case 'seen':
+      case 'failed':
+      case 'waiting':
+        return watch.repository;
+      case 'off':
+      case 'unknown':
+        return null;
+      default: {
+        const never: never = watch;
+        return never;
+      }
+    }
+  }
+
+  /** Why no pull requests show, when none do for a reason. */
+  static note(watch: Pulls | null): string | null {
+    if (!watch) return 'Pull requests did not read';
+    switch (watch.watch) {
+      case 'off':
+        return 'No GitHub repository watched';
+      case 'waiting':
+        return 'Waiting for GitHub';
+      case 'failed':
+        return `GitHub did not answer: ${watch.error}`;
+      case 'seen':
+        return null;
+      case 'unknown':
+        return `GitHub watch ${watch.text}`;
+      default: {
+        const never: never = watch;
+        return never;
+      }
+    }
+  }
+}
+
+/** What can be done with a preview from its row. */
+export type PreviewAction =
+  | { kind: 'open'; href: string }
+  /** Withdraw a commit asked for. */
+  | { kind: 'stop'; commit: string }
+  /** Ask a failed commit again. */
+  | { kind: 'retry'; commit: string }
+  | { kind: 'none' };
+
+export interface PreviewRow {
+  slot: number;
+  chip: PullChip;
+  /** `#418 Retry webhook deliveries`, or a commit. */
+  of: string;
+  action: PreviewAction;
+}
+
+/** The factory's previews as rows, in slot order. */
+export class Previewing {
+  static chip(preview: Preview): PullChip {
+    switch (preview.state.state) {
+      case 'building':
+        return { mark: 'running', label: 'Building' };
+      case 'running':
+        return { mark: 'passed', label: 'Up' };
+      case 'failed':
+        return { mark: 'failed', label: `Failed: ${preview.state.detail}` };
+      case 'unknown':
+        return { mark: 'unknown', label: preview.state.text };
+      default: {
+        const never: never = preview.state;
+        return never;
+      }
+    }
+  }
+
+  /** `host` is the page's own: a preview published on the tailnet answers there. */
+  static rows(previews: readonly Preview[], pulls: readonly Pull[], host: string): PreviewRow[] {
+    return previews
+      .toSorted((a, b) => a.slot - b.slot)
+      .map((preview) => {
+        const pull =
+          preview.of.kind === 'pull'
+            ? pulls.find((each) => preview.of.kind === 'pull' && each.number === preview.of.number)
+            : undefined;
+        const of =
+          preview.of.kind === 'pull'
+            ? `#${preview.of.number}${pull ? ` ${pull.title}` : ''}`
+            : ReleasePage.short(preview.commit);
+        return {
+          slot: preview.slot,
+          chip: Previewing.chip(preview),
+          of,
+          action: Previewing.action(preview, host),
+        };
+      });
+  }
+
+  static action(preview: Preview, host: string): PreviewAction {
+    const asked = preview.of.kind === 'commit';
+    switch (preview.state.state) {
+      case 'running':
+        return preview.state.reach === 'tailnet'
+          ? { kind: 'open', href: `https://${host}:${preview.published_ui_port}/` }
+          : asked
+            ? { kind: 'stop', commit: preview.commit }
+            : { kind: 'none' };
+      case 'failed':
+        return asked ? { kind: 'retry', commit: preview.commit } : { kind: 'none' };
+      case 'building':
+        return asked ? { kind: 'stop', commit: preview.commit } : { kind: 'none' };
+      case 'unknown':
+        return { kind: 'none' };
+      default: {
+        const never: never = preview.state;
+        return never;
+      }
+    }
+  }
+}
+
+/** The Release view's writes: asking production to take the canary's
+ * build, and asking for or withdrawing a commit's preview, each carried
+ * out by the factory's next pass. */
 export class ReleaseApi {
   readonly #fetch: typeof fetch;
 
@@ -282,8 +559,21 @@ export class ReleaseApi {
     this.#fetch = fetcher;
   }
 
-  async promote(commit: string): Promise<void> {
-    const response = await this.#fetch('/control/release/promote', {
+  promote(commit: string): Promise<void> {
+    return this.#post('/control/release/promote', commit);
+  }
+
+  /** Ask for a preview of `commit`, a commit or a branch. */
+  ask(commit: string): Promise<void> {
+    return this.#post('/control/previews/ask', commit);
+  }
+
+  withdraw(commit: string): Promise<void> {
+    return this.#post('/control/previews/withdraw', commit);
+  }
+
+  async #post(path: string, commit: string): Promise<void> {
+    const response = await this.#fetch(path, {
       method: 'POST',
       cache: 'no-store',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
