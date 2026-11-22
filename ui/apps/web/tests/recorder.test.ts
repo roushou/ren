@@ -48,7 +48,17 @@ test('a full queue is loss, and errors outrank it', () => {
   assert.deepEqual(RecorderReport.capture(lost), { kind: 'lost', calls: 2, bytes: 4096 });
   const report = new RecorderReport(lost, null, null, null, NOW);
   assert.equal(report.verdict.tone, 'warning');
-  assert.equal(report.verdict.facts[0], '2 calls and 4.0 KiB not captured');
+  assert.deepEqual(
+    report.indicators.map((one) => [one.key, one.value, one.tone]),
+    [
+      ['lost', '4.0 KiB', 'warning'],
+      ['unrecorded', '2', 'warning'],
+      ['errors', '0', 'success'],
+      ['queue', '0%', 'success'],
+      ['commit', `${report.recorder.last_commit_ms} ms`, 'success'],
+      ['lag', `${report.recorder.lag_ms} ms`, 'success'],
+    ],
+  );
   const failing = recorderFixture({ storage_errors: 1, omissions: lost.omissions });
   const worst = new RecorderReport(failing, null, null, null, NOW);
   assert.equal(worst.verdict.headline, 'Recording failing');
@@ -96,4 +106,18 @@ test('the limit nearest its end is the one retention prunes for first', () => {
     '3.5 days',
   ]);
   assert.deepEqual([0, 0.002, 0.07].map(RecorderReport.percent), ['0%', '<1%', '7%']);
+});
+
+test('the queue, commit time and lag are toned by their own limits', () => {
+  const busy = recorderFixture({
+    queue: { ...recorderFixture().queue, items: 95, capacity: 100 },
+    max_commit_ms: RecorderReport.COMMIT_WARN_MS,
+    lag_ms: RecorderReport.LAG_ERROR_MS,
+  });
+  const tones = Object.fromEntries(
+    new RecorderReport(busy, null, null, null, NOW).indicators.map((one) => [one.key, one.tone]),
+  );
+  assert.equal(tones.queue, 'error');
+  assert.equal(tones.commit, 'warning');
+  assert.equal(tones.lag, 'error');
 });

@@ -30,6 +30,16 @@ export interface CounterNote {
   detail: string;
 }
 
+/** One figure of how recording stands, toned by its own limits. */
+export interface Indicator {
+  key: 'lost' | 'unrecorded' | 'errors' | 'queue' | 'commit' | 'lag';
+  label: string;
+  value: string;
+  tone: VerdictTone;
+  /** How full it is, 0–1, for a figure with a capacity; else null. */
+  share: number | null;
+}
+
 /** One retention limit, and how much of it is used. */
 export interface Gauge {
   label: string;
@@ -109,44 +119,91 @@ export class RecorderReport {
     return health.calls ? `${calls} not recorded` : `${bytes(health.bytes)} not captured`;
   }
 
-  /** The verdict line: a headline, its tone, and the facts behind it. */
-  get verdict(): { tone: VerdictTone; headline: string; facts: string[] } {
+  /** Queue use past these shares needs a look, then is trouble. */
+  static readonly QUEUE_WARN = 0.7;
+  static readonly QUEUE_ERROR = 0.9;
+  /** A commit slower than these, in ms, needs a look, then is trouble. */
+  static readonly COMMIT_WARN_MS = 250;
+  static readonly COMMIT_ERROR_MS = 1000;
+  /** Recording lag past these, in ms, needs a look, then is trouble. */
+  static readonly LAG_WARN_MS = 1000;
+  static readonly LAG_ERROR_MS = 5000;
+
+  /** How recording stands: its tone and the state it names. */
+  get verdict(): { tone: VerdictTone; headline: string } {
+    const health = this.health;
+    switch (health.kind) {
+      case 'failing':
+        return { tone: 'error', headline: 'Recording failing' };
+      case 'lost':
+        return { tone: 'warning', headline: 'Capture loss since startup' };
+      case 'healthy':
+        return { tone: 'success', headline: 'Recording healthy' };
+      default:
+        return assertNever(health);
+    }
+  }
+
+  /** The figures behind the verdict, each toned by its own limits. */
+  get indicators(): Indicator[] {
     const recorder = this.recorder;
     const queue = Math.max(
       recorder.queue.capacity ? recorder.queue.items / recorder.queue.capacity : 0,
       recorder.queue.byte_capacity ? recorder.queue.bytes / recorder.queue.byte_capacity : 0,
     );
-    const timing = [
-      `queue ${RecorderReport.percent(queue)} full`,
-      `commits ${num(recorder.last_commit_ms)} ms (slowest ${num(recorder.max_commit_ms)} ms)`,
-      `lag ${num(recorder.lag_ms)} ms`,
+    const lost = RecorderReport.lostBytes(recorder);
+    const unrecorded = recorder.omissions.unrecorded_calls;
+    const errors = recorder.storage_errors + recorder.retention_errors;
+    const above = (value: number, warn: number, error: number): VerdictTone =>
+      value >= error ? 'error' : value >= warn ? 'warning' : 'success';
+    return [
+      {
+        key: 'lost',
+        label: 'Lost',
+        value: bytes(lost),
+        tone: lost ? 'warning' : 'success',
+        share: null,
+      },
+      {
+        key: 'unrecorded',
+        label: 'Unrecorded',
+        value: num(unrecorded),
+        tone: unrecorded ? 'warning' : 'success',
+        share: null,
+      },
+      {
+        key: 'errors',
+        label: 'Errors',
+        value: num(errors),
+        tone: errors ? 'error' : 'success',
+        share: null,
+      },
+      {
+        key: 'queue',
+        label: 'Queue',
+        value: RecorderReport.percent(queue),
+        tone: above(queue, RecorderReport.QUEUE_WARN, RecorderReport.QUEUE_ERROR),
+        share: Math.min(1, queue),
+      },
+      {
+        key: 'commit',
+        label: 'Commit',
+        value: `${num(recorder.last_commit_ms)} ms`,
+        tone: above(
+          recorder.max_commit_ms,
+          RecorderReport.COMMIT_WARN_MS,
+          RecorderReport.COMMIT_ERROR_MS,
+        ),
+        share: null,
+      },
+      {
+        key: 'lag',
+        label: 'Lag',
+        value: `${num(recorder.lag_ms)} ms`,
+        tone: above(recorder.lag_ms, RecorderReport.LAG_WARN_MS, RecorderReport.LAG_ERROR_MS),
+        share: null,
+      },
     ];
-    const health = this.health;
-    switch (health.kind) {
-      case 'failing':
-        return {
-          tone: 'error',
-          headline: 'Recording failing',
-          facts: [
-            `${num(health.storageErrors)} storage and ${num(health.retentionErrors)} retention errors since startup`,
-            ...timing,
-          ],
-        };
-      case 'lost':
-        return {
-          tone: 'warning',
-          headline: 'Capture loss since startup',
-          facts: [RecorderReport.lossText(health), ...timing],
-        };
-      case 'healthy':
-        return {
-          tone: 'success',
-          headline: 'Recording healthy',
-          facts: ['nothing lost since startup', ...timing],
-        };
-      default:
-        return assertNever(health);
-    }
   }
 
   /** `7%`, or `<1%` for a little that is not nothing. */

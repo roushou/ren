@@ -2,7 +2,7 @@
   import Toolbar from '#lib/Toolbar.svelte';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { num, bytes, type FileUsage } from '#lib/api.ts';
-  import { buildLabel, SEPARATOR } from '#lib/display.ts';
+  import { buildLabel } from '#lib/display.ts';
   import { RecorderReport } from '#lib/recorder.ts';
   import { Marks } from '#lib/marks.ts';
   import Glyph from '#lib/Glyph.svelte';
@@ -53,7 +53,7 @@
 {#snippet scope()}
   <div class="scope-group">
     <span class="meta"
-      >daemon build {buildLabel(gateway.snapshot?.value?.health.build ?? null)} · counters since start</span
+      >daemon build {buildLabel(gateway.snapshot?.value?.health.build ?? null)}</span
     >
   </div>
 {/snippet}
@@ -66,12 +66,33 @@
     </section>
   {:else if verdict}
     <section class="rec-verdict state-edge {verdict.tone}" aria-label="How recording stands">
-      <Glyph mark={Marks.ofTone(verdict.tone)} label={true} />
-      <strong>{verdict.headline}</strong>
-      {#each verdict.facts as fact (fact)}<span class="muted">{SEPARATOR}{fact}</span>{/each}
-      {#if usage?.open_calls}<span class="muted"
-          >{SEPARATOR}{num(usage.open_calls)} call{usage.open_calls === 1 ? '' : 's'} open</span
-        >{/if}
+      <div class="rec-state">
+        <Glyph mark={Marks.ofTone(verdict.tone)} />
+        <strong>{verdict.headline}</strong>
+      </div>
+      {#each report?.indicators ?? [] as one (one.key)}
+        <div class="rec-indicator {one.tone}">
+          <span class="cap">{one.label}</span>
+          <span class="value mono"><Glyph mark={Marks.ofTone(one.tone)} />{one.value}</span>
+          {#if one.share !== null}<svg
+              class="meter"
+              viewBox="0 0 100 4"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+              ><rect class="track" width="100" height="4" /><rect
+                class="fill"
+                width={Math.max(one.share * 100, one.share > 0 ? 2 : 0)}
+                height="4"
+              /></svg
+            >{/if}
+        </div>
+      {/each}
+      {#if usage}
+        <div class="rec-indicator neutral">
+          <span class="cap">Open</span>
+          <span class="value mono">{num(usage.open_calls)}</span>
+        </div>
+      {/if}
     </section>
   {/if}
   {#if pending}
@@ -426,10 +447,59 @@
     height: 8px;
   }
   .rec-verdict {
-    padding: 10px 16px 10px 18px;
+    display: grid;
+    grid-template-columns: minmax(220px, 1.6fr) repeat(auto-fit, minmax(92px, 1fr));
+    gap: 1px;
     border-bottom: 1px solid var(--control-border);
-    background: var(--surface);
+    background: var(--line);
     font-size: 13.5px;
+  }
+  .rec-verdict > div {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    min-width: 0;
+    padding: 10px 16px;
+    background: var(--surface);
+  }
+  .rec-verdict > .rec-state {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    padding-left: 18px;
+  }
+  .rec-indicator .value {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 15px;
+  }
+  .rec-indicator.success {
+    --tone: var(--success);
+  }
+  .rec-indicator.warning {
+    --tone: var(--warning);
+    background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+  }
+  .rec-indicator.error {
+    --tone: var(--error);
+    background: color-mix(in srgb, var(--error) 10%, var(--surface));
+  }
+  .rec-indicator.warning .value,
+  .rec-indicator.error .value {
+    color: var(--tone);
+  }
+  .rec-indicator .meter {
+    width: 100%;
+    height: 4px;
+  }
+  .rec-indicator .meter .track {
+    fill: var(--surface-inset);
+  }
+  .rec-indicator .meter .fill {
+    fill: var(--tone);
   }
   .rec-verdict.error {
     --state: var(--error);
