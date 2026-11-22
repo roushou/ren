@@ -1278,7 +1278,7 @@
     if (recording)
       items.push({
         label: 'Open its calls',
-        onselect: () => void goto(`/monitor/recordings/${recording}`),
+        onselect: () => void goto(`/monitor/sessions/${recording}`),
       });
     if (data.runsControl) {
       const archived_ = session.shelf === 'archived';
@@ -1666,7 +1666,7 @@
             >
             {#if facts.recording}<a
                 class="head-chip mono"
-                href="/monitor/recordings/{facts.recording}"
+                href="/monitor/sessions/{facts.recording}"
                 title="Its recorded calls"><Icon name="rows" size={11} />{short(facts.recording)}</a
               >{/if}
             {#if spentLine}<span class="head-chip mono spent" title={spentLine.title}

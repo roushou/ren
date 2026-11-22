@@ -149,9 +149,9 @@
   {#if current.recording}{@const recording = current.recording}<button
       class="inspector-recording text-button"
       onclick={() => onrecording(recording)}
-      >Recording <span class="mono">{short(current.attribution.hint?.session ?? recording)}</span
+      >Session <span class="mono">{short(current.attribution.hint?.session ?? recording)}</span
       ><Icon name="arrow" size={12} /></button
-    >{:else}<p class="inspector-recording muted">No recording</p>{/if}
+    >{:else}<p class="inspector-recording muted">No session</p>{/if}
   <div class="chip-row drawer-chips" aria-label="Call figures">
     {#if current.status !== null}{@const http = httpChip(current.status)}<span
         class="chip mono {http.tone}"
@@ -441,7 +441,7 @@
           <dd>{current.channel}</dd>
           <dt>Caller</dt>
           <dd>{callerShown(current.caller).title}</dd>
-          <dt>Recording</dt>
+          <dt>Session</dt>
           <dd>{current.recording ?? 'Unassigned'}</dd>
           <dt>Ren turn</dt>
           <dd>{current.turn ?? 'Unassigned'}</dd>

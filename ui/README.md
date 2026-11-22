@@ -16,14 +16,13 @@ Browser ──> optional SvelteKit server ──> Rust management API
 below from `ui`; its scripts run each member's. Paths to source files below are
 in `apps/web`.
 
-Pages: Overview (`/`: one line that says how it stands, edged by the worst thing in it;
-what needs attention in the last day, worst first, with repeats folded into a count:
-exposed secrets, recording trouble, failed and cut-off model calls, then failed
-bookkeeping such as quota probes, which is not the agents' work; the recordings active in
-the last 15 minutes in the Live page's state colours; the day's calls (against the day
-before), failed work calls, input tokens cached and fresh, and output tokens; and input
-per hour with failed and cut-off calls ticked along the same hours, filling the rest of
-the window; with nothing recorded in the last day it leads with how to connect a client), Live
+Pages: Overview (`/monitor/overview`: whether model traffic is healthy over the last day:
+each provider with its calls, failures, failure rate, failures by hour, the allowance its
+newest response's limit headers say is left (`lib/allowance.ts`), and its last failure;
+the day's failures folded by provider and how they ended, failed work first, then cut-off
+calls, then failed bookkeeping such as quota probes, which is not the agents' work; what
+is live now; secrets seen in requests; and the day against the one before; with nothing
+recorded in the last day it leads with how to connect a client), Live
 (`/monitor/live`: the recordings active in the last 15 minutes as they work (or 5 minutes, an
 hour, or four hours, chosen beside the active count; a window holding more than the page
 reads at once is marked partial), on a four-by-two board
@@ -49,10 +48,12 @@ reply so far, the tools it has begun, and whether the model is thinking (never s
 client that reports no turns shows only that. The full text appears once the call finishes
 and its activity is derived),
 Traffic (`/monitor/traffic`; wherever a recording appears, there and on a recording's page, in Search,
-and in Usage, it is named by its client, its newest prompt, and its folder), Recordings (`/monitor/recordings`: each recording's client, its newest prompt, and its folder, what it
-is doing now, and its size against the rest, grouped by day, with single-call recordings
-that have no turn folded away; `/monitor/recordings/:id`, each recording's context and
-cache report at `/monitor/recordings/:id/report` (with each turn's context drawn oldest to newest,
+and in Usage, it is named by its client, its newest prompt, and its folder), Sessions (`/monitor/sessions`: every agent session seen through the gateway, as Ren
+records it (a recording, by the session ID its client reports): its client, its newest
+prompt, and its folder, what it is doing now, and its size against the rest, grouped by
+day, with single-call recordings that have no turn folded away; a session Ren drives links
+to its desk, and its desk's inspector links back to its calls; `/monitor/sessions/:id`, each session's context and
+cache report at `/monitor/sessions/:id/report` (with each turn's context drawn oldest to newest,
 from where it started to where it ended), and what a turn did at `/monitor/turns/:id`: its prompt,
 tool calls with their effects and reported results, files, commands (one row each,
 opening to the whole command), and findings, with paths shown relative to the folder the

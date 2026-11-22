@@ -7,4 +7,5 @@
 {#key data.recordingId}<TrafficWorkbench
     snapshot={data.traffic}
     recordingId={data.recordingId}
+    desk={data.desk}
   />{/key}

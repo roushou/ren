@@ -290,3 +290,22 @@ test('a session’s age reads short: now, minutes, hours, then its day', () => {
     ['now', '18m', '3h', 'Tue'],
   );
 });
+
+test('a session Ren drives is found by the recording its calls went under', async () => {
+  const recording = '0190f3a0-0000-7000-8000-0000000000dd';
+  const bodies = (await sessions()).map((body) =>
+    body.session === sessionA && body.stored
+      ? {
+          ...body,
+          stored: {
+            ...body.stored,
+            runs: body.stored.runs.map((run) => ({ ...run, recording })),
+          },
+        }
+      : body,
+  ) as SessionBody[];
+  const found = Sessions.byRecording(bodies);
+  assert.equal(found.size, 1);
+  assert.equal(found.get(recording as never), sessionA);
+  assert.equal(Sessions.href(sessionA), `/sessions?session=${sessionA}`);
+});

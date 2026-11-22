@@ -45,7 +45,7 @@
   /** Hits grouped by recording, or one flat list. */
   let grouped = $state(true);
   const groupOptions: SegmentedOption<'recording' | 'flat'>[] = [
-    { value: 'recording', label: 'By recording' },
+    { value: 'recording', label: 'By session' },
     { value: 'flat', label: 'Flat' },
   ];
   const fieldOptions: SegmentedOption<SearchField | ''>[] = [
@@ -204,13 +204,13 @@
                       />{:else if group.recording}<span
                         class="recording-dot tone-{recordingTone(group.recording)}"
                       ></span><span class="mono">{group.recording.slice(0, 8)}</span>{:else}<span
-                        class="muted">No recording</span
+                        class="muted">No session</span
                       >{/if}
                     <svg
                       class="ticks"
                       viewBox="0 0 100 10"
                       preserveAspectRatio="none"
-                      aria-label="Where the hits fall in the recording"
+                      aria-label="Where the hits fall in the session"
                       >{#each group.ticks as tick, index (index)}<rect
                           class="tick field-{tick.field}"
                           x={tick.at * 99}
@@ -276,13 +276,13 @@
               {/each}
             </section>
             <section>
-              <h3>Recordings</h3>
+              <h3>Sessions</h3>
               {#each results.recordings as one (one.key ?? '')}
                 <div class="facet">
                   <span class="facet-name"
                     >{one.key
                       ? (details.get(one.key)?.prompt?.text.split('\n')[0] ?? one.key.slice(0, 8))
-                      : 'No recording'}</span
+                      : 'No session'}</span
                   >
                   <svg viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"
                     ><rect class="facet-bar" width={one.share * 100} height="6" /></svg

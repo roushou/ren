@@ -43,7 +43,7 @@
     try {
       await client.edit({ kind: 'recording', id: recording }, change);
       if (change === 'delete') {
-        await goto('/monitor/recordings');
+        await goto('/monitor/sessions');
         return;
       }
       archived = change === 'archive';
@@ -62,7 +62,7 @@
 <span class="recording-actions">
   {#if notice}<span class="danger-text">{notice}</span>{/if}
   {#if confirming}
-    <span class="danger-text">Delete this recording’s calls for good?</span>
+    <span class="danger-text">Delete this session’s calls for good?</span>
     <button class="button small danger confirm" disabled={busy} onclick={() => edit('delete')}
       >Delete</button
     >
@@ -73,8 +73,8 @@
       disabled={busy}
       onclick={() => edit(archived ? 'unarchive' : 'archive')}
       title={archived
-        ? 'List it with the current recordings again'
-        : 'Hide it from the recordings list until it has new traffic'}
+        ? 'List it with the current sessions again'
+        : 'Hide it from the sessions list until it has new traffic'}
       >{archived ? 'Unarchive' : 'Archive'}</button
     >
     <button class="button small danger" disabled={busy} onclick={() => (confirming = true)}

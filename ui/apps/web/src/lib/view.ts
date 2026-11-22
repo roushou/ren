@@ -33,8 +33,9 @@ export type View =
   | 'release'
   | 'recorder';
 
-/** A page of a place, or of a project: a recording's report and
- * turns sit under Recordings. */
+/** A page of a place, or of a project: a session's calls, report and
+ * turns sit under Monitor's Sessions (`recordings`: the gateway's sessions,
+ * as it records them). */
 export type Tab =
   | 'home'
   | 'projects'
@@ -92,11 +93,11 @@ export class Views {
         return 'overview';
       case '/monitor/live':
         return 'live';
-      case '/monitor/recordings':
+      case '/monitor/sessions':
         return 'recordings';
-      case '/monitor/recordings/[id]':
+      case '/monitor/sessions/[id]':
         return 'recording';
-      case '/monitor/recordings/[id]/report':
+      case '/monitor/sessions/[id]/report':
         return 'report';
       case '/monitor/turns/[id]':
         return 'turn';
@@ -144,14 +145,18 @@ export class Views {
   }
 
   /** Where an address from before the places leads now (Inspect's pages
-   * moved under `/monitor`, Host's under `/system`); null for any other. */
+   * moved under `/monitor`, Host's under `/system`, and Recordings became
+   * Monitor's Sessions); null for any other. */
   static moved(pathname: string): string | null {
-    const first = pathname.split('/')[1] ?? '';
+    const [, first = '', second = ''] = pathname.split('/');
+    if (first === 'monitor' && second === 'recordings')
+      return pathname.replace('/monitor/recordings', '/monitor/sessions');
     switch (first) {
+      case 'recordings':
+        return pathname.replace('/recordings', '/monitor/sessions');
       case 'overview':
       case 'live':
       case 'traffic':
-      case 'recordings':
       case 'turns':
       case 'search':
       case 'usage':
@@ -211,7 +216,7 @@ export class Views {
           { tab: 'overview', href: '/monitor/overview', label: 'Overview' },
           { tab: 'live', href: '/monitor/live', label: 'Live' },
           { tab: 'traffic', href: '/monitor/traffic', label: 'Traffic' },
-          { tab: 'recordings', href: '/monitor/recordings', label: 'Recordings' },
+          { tab: 'recordings', href: '/monitor/sessions', label: 'Sessions' },
           { tab: 'search', href: '/monitor/search', label: 'Search' },
           { tab: 'usage', href: '/monitor/usage', label: 'Usage' },
         ];
@@ -280,11 +285,11 @@ export class Views {
       case 'traffic':
         return 'Traffic';
       case 'recordings':
-        return 'Recordings';
+        return 'Sessions';
       case 'recording':
-        return 'Recording activity';
+        return 'Session calls';
       case 'report':
-        return 'Recording report';
+        return 'Session report';
       case 'turn':
         return 'Turn';
       case 'search':

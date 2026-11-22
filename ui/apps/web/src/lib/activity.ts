@@ -304,7 +304,7 @@ export function harnessLabel(harness: Stored<Harness>): string {
 
 /** A call, selected in its recording's traffic. */
 export function callHref(recording: RecordingId, call: CallId): string {
-  return `/monitor/recordings/${encodeURIComponent(recording)}?call=${encodeURIComponent(call)}`;
+  return `/monitor/sessions/${encodeURIComponent(recording)}?call=${encodeURIComponent(call)}`;
 }
 
 /** What one turn did. */

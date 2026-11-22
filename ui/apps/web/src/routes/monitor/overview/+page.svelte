@@ -304,7 +304,7 @@
             </div>
             <div>
               <span class="ov-figure">{board ? num(board.tiles.length + board.overflow) : '—'}</span
-              ><span class="meta">recordings active</span>
+              ><span class="meta">sessions active</span>
             </div>
             <div>
               <span class="ov-figure">{lastCall ? span(Math.max(0, now - lastCall)) : '—'}</span

@@ -692,7 +692,7 @@ export class Board {
   static alerts(tile: Tile, calls: CallView[], now: number): Alert[] {
     const recording = tile.recording.id;
     const callHref = (call: CallView) =>
-      `/monitor/recordings/${encodeURIComponent(recording)}?call=${encodeURIComponent(call.id)}`;
+      `/monitor/sessions/${encodeURIComponent(recording)}?call=${encodeURIComponent(call.id)}`;
     const alerts: Alert[] = [];
     if (tile.phase.kind === 'awaiting' && now - tile.phase.since >= Board.slowHeadMs) {
       alerts.push({
@@ -822,7 +822,7 @@ export class Feed {
     const of = (id: RecordingId | null) => (id ? (recordings.get(id) ?? null) : null);
     const callHref = (call: CallView) =>
       call.recording
-        ? `/monitor/recordings/${encodeURIComponent(call.recording)}?call=${encodeURIComponent(call.id)}`
+        ? `/monitor/sessions/${encodeURIComponent(call.recording)}?call=${encodeURIComponent(call.id)}`
         : null;
     const calm = (at: number) => at <= now && now - at <= Feed.calmMs;
     const items: FeedItem[] = [];
@@ -834,11 +834,11 @@ export class Feed {
         key: `${recording.id}:new`,
         recording,
         tone: 'neutral',
-        text: 'new recording',
+        text: 'new session',
         detail: `${Board.clientName(harness)} → ${providerName(recording.provider)}`,
         at: recording.first_seen,
         pinned: false,
-        href: `/monitor/recordings/${encodeURIComponent(recording.id)}`,
+        href: `/monitor/sessions/${encodeURIComponent(recording.id)}`,
       });
     }
 

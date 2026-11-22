@@ -1,7 +1,7 @@
 # Plan: hierarchy
 
 Ren's domain has no hierarchy, so its UI has none either. The topbar has 11
-links (Overview, Live, Sessions, Traffic, Recordings, Search, Usage, Tools,
+links (Overview, Live, Sessions, Traffic, Recordings (now Monitor's Sessions), Search, Usage, Tools,
 Work, Release, Recorder), each a flat list of one kind of record, because
 the API serves flat lists and nothing in the model says what owns what. The
 factory built in [self-build.md](self-build.md) runs a loop (a project's

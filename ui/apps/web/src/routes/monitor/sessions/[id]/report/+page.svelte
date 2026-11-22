@@ -70,10 +70,9 @@
     ><Icon name="info" size={12} /> Provider-reported tokens</span
   >
   <div class="scope-group end">
-    <a class="text-button" href={`/monitor/recordings/${encodeURIComponent(data.recordingId)}`}
-      >Recording calls <Icon name="arrow" size={12} /></a
-    ><a class="text-button" href="/monitor/recordings"
-      >All recordings <Icon name="arrow" size={12} /></a
+    <a class="text-button" href={`/monitor/sessions/${encodeURIComponent(data.recordingId)}`}
+      >Calls <Icon name="arrow" size={12} /></a
+    ><a class="text-button" href="/monitor/sessions">All sessions <Icon name="arrow" size={12} /></a
     >
   </div>
 {/snippet}
@@ -96,9 +95,9 @@
                 >{/snippet}
               <strong>The largest prompt one call sent</strong>
               <span
-                >Tokens of prompt in the recording's biggest call, as the provider reported them:
-                new input plus the cache read and written. The model's limit is not reported, so
-                none is compared.</span
+                >Tokens of prompt in the session's biggest call, as the provider reported them: new
+                input plus the cache read and written. The model's limit is not reported, so none is
+                compared.</span
               ></HoverCard
             ></span
           ><strong class="mono"
@@ -300,7 +299,7 @@
             {:else if findings.length}
               <FindingList {findings} recording={data.recordingId} page="recording" />
             {:else}
-              <p class="quiet-empty">No cache rebuilds or large context steps in this recording.</p>
+              <p class="quiet-empty">No cache rebuilds or large context steps in this session.</p>
             {/if}
           </section>
         </aside>

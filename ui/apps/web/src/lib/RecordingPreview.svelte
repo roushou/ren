@@ -14,10 +14,18 @@
   import { Board } from '#lib/board.ts';
   import { RecordingList, type RecordingRow } from '#lib/recordings.ts';
   import { snapshotError } from '#lib/snapshots.ts';
+  import { Sessions, type SessionId } from '#lib/runs.ts';
 
-  let { row }: { row: RecordingRow } = $props();
+  let {
+    row,
+    desk = null,
+  }: {
+    row: RecordingRow;
+    /** The desk session Ren drives it as; null when Ren does not drive it. */
+    desk?: SessionId | null;
+  } = $props();
   const recording = $derived(row.recording);
-  const href = $derived(`/monitor/recordings/${encodeURIComponent(recording.id)}`);
+  const href = $derived(`/monitor/sessions/${encodeURIComponent(recording.id)}`);
 
   type Read =
     | { state: 'reading' }
@@ -59,8 +67,9 @@
         .join(' · ')}
     </p>
     <div class="actions">
-      <a class="button primary small" {href}>Open calls</a>
+      <a class="button primary small" {href}>Calls</a>
       <a class="button small" href="{href}/report">Report</a>
+      {#if desk}<a class="button small" href={Sessions.href(desk)}>Open in desk</a>{/if}
     </div>
   </header>
 
@@ -78,7 +87,7 @@
               >{/snippet}
             <strong>The largest prompt one call sent</strong>
             <span
-              >Tokens of prompt in the recording's biggest call, as the provider reported them: new
+              >Tokens of prompt in the session's biggest call, as the provider reported them: new
               input plus the cache read and written. The model's limit is not reported, so none is
               compared.</span
             ></HoverCard

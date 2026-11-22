@@ -87,7 +87,14 @@
 
 <aside class="inspector" aria-label="Session inspector">
   <section class="block">
-    <div class="head"><span class="cap">Context</span><span class="meta">per turn</span></div>
+    <div class="head">
+      <span class="cap">Context</span>
+      {#if recording}<a
+          class="meta calls"
+          href="/monitor/sessions/{encodeURIComponent(recording)}"
+          title="This session's model calls, in Monitor">Calls →</a
+        >{/if}
+    </div>
     {#if context && context.last !== null}
       <div class="figure">
         <span class="big">{context.last.toLocaleString()}</span><span class="meta">last call</span>
@@ -254,6 +261,12 @@
     font-size: 24px;
     font-weight: 500;
     letter-spacing: -0.02em;
+  }
+  .calls {
+    color: var(--accent);
+  }
+  .calls:hover {
+    color: var(--accent-hover);
   }
   .hit {
     color: var(--success);

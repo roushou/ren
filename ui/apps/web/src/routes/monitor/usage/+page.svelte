@@ -38,7 +38,7 @@
     { label: 'Out', numeric: true },
   ];
   const modelColumns: Column[] = [{ label: 'Model' }, ...figures];
-  const recordingColumns: Column[] = [{ label: 'Recording', class: 'fill' }, ...figures];
+  const recordingColumns: Column[] = [{ label: 'Session', class: 'fill' }, ...figures];
   const userColumns: Column[] = [{ label: 'User' }, ...figures];
   const totals = $derived(current?.usage.totals);
   const points = $derived(current ? usagePoints(current.usage.hours, range, current.now) : []);
@@ -293,8 +293,7 @@
 
         <section class="panel usage-panel" aria-labelledby="usage-recordings-title">
           <header class="panel-heading">
-            <h2 id="usage-recordings-title">Busiest recordings</h2>
-            <span class="subtle-label">Totals over each recording's whole life</span>
+            <h2 id="usage-recordings-title">Busiest sessions</h2>
           </header>
           {#if recordings.length || pending}
             <table class="usage-list">
@@ -306,7 +305,7 @@
                     <td class="fill"
                       ><a
                         class="row-link"
-                        href={`/monitor/recordings/${encodeURIComponent(recording.id)}`}
+                        href={`/monitor/sessions/${encodeURIComponent(recording.id)}`}
                         ><RecordingName {recording} detail={details.get(recording.id)} /></a
                       ></td
                     >
@@ -322,7 +321,7 @@
                 {/each}
               </tbody>
             </table>
-          {:else}<p class="quiet-empty">No recordings were active in this range.</p>{/if}
+          {:else}<p class="quiet-empty">No sessions were active in this range.</p>{/if}
         </section>
 
         {#if named}<section class="panel usage-panel" aria-labelledby="usage-users-title">

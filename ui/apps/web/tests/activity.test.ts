@@ -271,7 +271,7 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
   const turnId = TurnId.parse(turn);
   const callId = CallId.parse(call);
   assert.ok(recordingId && turnId && callId);
-  assert.equal(callHref(recordingId, callId), `/monitor/recordings/${recording}?call=${call}`);
+  assert.equal(callHref(recordingId, callId), `/monitor/sessions/${recording}?call=${call}`);
   assert.equal(turnHref(turnId), `/monitor/turns/${turn}`);
 
   const hit = (overrides: Partial<SearchHit>): SearchHit => ({
@@ -285,7 +285,7 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
     ...overrides,
   });
   assert.equal(searchHitHref(hit({})), `/monitor/turns/${turn}`);
-  assert.equal(searchHitHref(hit({ turn: null })), `/monitor/recordings/${recording}?call=${call}`);
+  assert.equal(searchHitHref(hit({ turn: null })), `/monitor/sessions/${recording}?call=${call}`);
   assert.equal(
     searchHitHref(hit({ turn: null, recording: null })),
     `/monitor/traffic?call=${call}`,
@@ -305,11 +305,11 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
     label: 'Open turn',
   });
   assert.deepEqual(findingLink(line({ turn: null }), recordingId, 'recording'), {
-    href: `/monitor/recordings/${recording}?call=${call}`,
+    href: `/monitor/sessions/${recording}?call=${call}`,
     label: 'Open call',
   });
   assert.deepEqual(findingLink(line({}), recordingId, 'turn'), {
-    href: `/monitor/recordings/${recording}?call=${call}`,
+    href: `/monitor/sessions/${recording}?call=${call}`,
     label: 'Open call',
   });
   assert.equal(findingLink(line({ call: null, turn: null }), recordingId, 'recording'), null);

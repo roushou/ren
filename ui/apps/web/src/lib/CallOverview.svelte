@@ -46,7 +46,7 @@
 <section class="overview" aria-label="The listed calls over time">
   <div class="lanes">
     <div class="lanes-head">
-      <span class="cap">Calls by recording</span>
+      <span class="cap">Calls by session</span>
       <span class="muted">this page · a bar is one call, start to end</span>
     </div>
     {#each timeline.lanes as lane (lane.recording ?? '')}
@@ -55,9 +55,9 @@
           <Glyph mark={lane.live ? 'responding' : 'idle'} label={lane.live ? 'Live' : 'Idle'} />
           {#if lane.recording}{@const recording = lane.recording}<button
               class="lane-link mono"
-              title="Show only this recording's calls"
+              title="Show only this session's calls"
               onclick={() => onrecording(recording)}>{name(recording)}</button
-            >{:else}<span class="mono muted">No recording</span>{/if}
+            >{:else}<span class="mono muted">No session</span>{/if}
           <span class="mono muted count">{lane.bars.length}</span>
         </span>
         <svg class="lane-track" viewBox="0 0 100 10" preserveAspectRatio="none">

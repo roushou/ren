@@ -760,13 +760,13 @@ test('the feed tells what happened lately, ongoing waits first, newest next', ()
   const lines = feed.map((item) => item.text);
   assert.equal(lines[0], 'no response head after 6 s');
   assert.equal(feed[0]?.pinned, true);
-  assert.ok(lines.includes('new recording'));
+  assert.ok(lines.includes('new session'));
   assert.ok(lines.includes('you: “Fix the flaky test”'));
   assert.ok(lines.includes('asked for Edit'));
   assert.ok(lines.includes('turn finished'));
   assert.ok(lines.includes('Edit src/relay.rs failed'));
   assert.ok(lines.includes('Anthropic: 2 rate limits (429)'));
-  assert.equal(lines.filter((line) => line === 'new recording').length, 1);
+  assert.equal(lines.filter((line) => line === 'new session').length, 1);
   assert.equal(feed.filter((item) => item.text.startsWith('no response head')).length, 1);
   // After the pinned wait, newest first.
   const times = feed.slice(1).map((item) => item.at);

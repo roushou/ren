@@ -14,20 +14,20 @@ test('each route is its view, and an unknown one is Traffic', () => {
   assert.equal(Views.of('/scratch'), 'scratch');
   assert.equal(Views.of('/monitor/overview'), 'overview');
   assert.equal(Views.of('/monitor/traffic'), 'traffic');
-  assert.equal(Views.of('/monitor/recordings/[id]'), 'recording');
-  assert.equal(Views.of('/monitor/recordings/[id]/report'), 'report');
+  assert.equal(Views.of('/monitor/sessions/[id]'), 'recording');
+  assert.equal(Views.of('/monitor/sessions/[id]/report'), 'report');
   assert.equal(Views.of('/monitor/turns/[id]'), 'turn');
   assert.equal(Views.of(null), 'traffic');
 });
 
-test('a recording, its report, and its turns sit under the Recordings tab', () => {
+test("a session's calls, its report, and its turns sit under Monitor's Sessions tab", () => {
   for (const view of ['recordings', 'recording', 'report', 'turn'] as const) {
     assert.equal(Views.tab(view), 'recordings');
   }
   // A work item sits under its project's Release, where work is listed.
   assert.equal(Views.tab('work'), 'release');
   assert.equal(Views.tab('traffic'), 'traffic');
-  assert.equal(Views.title('recording'), 'Recording activity');
+  assert.equal(Views.title('recording'), 'Session calls');
   assert.equal(Views.title('recorder'), 'Recorder & storage');
 });
 
@@ -82,7 +82,9 @@ test('only the pages that read a project carry it between them', () => {
 
 test('an address from before the places leads to the same page in its place', () => {
   assert.equal(Views.moved('/traffic'), '/monitor/traffic');
-  assert.equal(Views.moved('/recordings/r1/report'), '/monitor/recordings/r1/report');
+  assert.equal(Views.moved('/recordings/r1/report'), '/monitor/sessions/r1/report');
+  assert.equal(Views.moved('/monitor/recordings'), '/monitor/sessions');
+  assert.equal(Views.moved('/monitor/recordings/r1'), '/monitor/sessions/r1');
   assert.equal(Views.moved('/turns/t1'), '/monitor/turns/t1');
   assert.equal(Views.moved('/tools'), '/system/tools');
   assert.equal(Views.moved('/recorder'), '/system/recorder');

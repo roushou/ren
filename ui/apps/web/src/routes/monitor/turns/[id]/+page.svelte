@@ -41,12 +41,10 @@
     >
   </div>
   {#if turn}<div class="scope-group end">
-      <a
-        class="text-button"
-        href={`/monitor/recordings/${encodeURIComponent(turn.recording)}/report`}
-        >Recording report <Icon name="arrow" size={12} /></a
-      ><a class="text-button" href={`/monitor/recordings/${encodeURIComponent(turn.recording)}`}
-        >Recording calls <Icon name="arrow" size={12} /></a
+      <a class="text-button" href={`/monitor/sessions/${encodeURIComponent(turn.recording)}/report`}
+        >Session report <Icon name="arrow" size={12} /></a
+      ><a class="text-button" href={`/monitor/sessions/${encodeURIComponent(turn.recording)}`}
+        >Session calls <Icon name="arrow" size={12} /></a
       >
     </div>{/if}
 {/snippet}

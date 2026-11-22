@@ -9,6 +9,7 @@
   import { ago } from '#lib/overview.ts';
   import { RecordingList, type RecordingRow } from '#lib/recordings.ts';
   import { Board } from '#lib/board.ts';
+  import { Sessions } from '#lib/runs.ts';
   import Icon from '#lib/Icon.svelte';
   import Glyph from '#lib/Glyph.svelte';
   import SlideOver from '#lib/layer/SlideOver.svelte';
@@ -26,7 +27,7 @@
   const current = $derived(arrived.state === 'ready' ? arrived.snapshot.value : null);
   /** Widths come from the column group, so the folded table lines up with this one. */
   const tableColumns: Column[] = [
-    { label: 'Recording' },
+    { label: 'Session' },
     { label: 'Now' },
     { label: 'Day' },
     { label: 'Requests', numeric: true },
@@ -54,7 +55,7 @@
     }),
   );
   const shown = $derived(list.groups.reduce((sum, group) => sum + group.rows.length, 0));
-  const recordingHref = (id: string) => `/monitor/recordings/${encodeURIComponent(id)}`;
+  const recordingHref = (id: string) => `/monitor/sessions/${encodeURIComponent(id)}`;
   /** The recording whose report shows beside the list. */
   let previewing = $state<RecordingRow | null>(null);
   /** A plain click on a row previews it; a modified click, or its link
@@ -76,24 +77,21 @@
           ? '+'
           : ''}{/if}</strong
     >
-    <span class="muted"
-      >{data.shelf === 'archived' ? 'archived recordings' : 'recordings'} · grouped by the IDs clients
-      report</span
-    >
+    <span class="muted">{data.shelf === 'archived' ? 'archived sessions' : 'sessions'}</span>
   </div>
-  <div class="scope-group segmented" role="group" aria-label="Which recordings">
-    <a class="button small" class:chosen={data.shelf === 'current'} href="/monitor/recordings"
+  <div class="scope-group segmented" role="group" aria-label="Which sessions">
+    <a class="button small" class:chosen={data.shelf === 'current'} href="/monitor/sessions"
       >Current</a
     >
     <a
       class="button small"
       class:chosen={data.shelf === 'archived'}
-      href="/monitor/recordings?shelf=archived">Archived</a
+      href="/monitor/sessions?shelf=archived">Archived</a
     >
   </div>
   <label class="scope-group end search-input scope-search"
     ><Icon name="search" /><input
-      aria-label="Filter recordings"
+      aria-label="Filter sessions"
       placeholder="Search prompt, folder, client, or ID…"
       bind:value={query}
     /></label
@@ -118,6 +116,7 @@
 
 {#snippet row(row: RecordingRow)}
   {@const recording = row.recording}
+  {@const desk = data.desks.get(recording.id) ?? null}
   <tr class="call-row recording-row" onclick={(event) => open(event, row)}>
     <!-- The edge sits on the cell: on a row, its ::before would become a cell of its own. -->
     <td class="recording-cell state-edge {row.now.kind === 'open' ? `state-${row.now.mark}` : ''}">
@@ -139,6 +138,11 @@
           >
         </span>
       </a>
+      {#if desk}<a
+          class="desk-link mono"
+          href={Sessions.href(desk)}
+          title="Ren drives this session: open it on its desk">desk ↗</a
+        >{/if}
     </td>
     <td class="recording-now mono">
       {#if row.now.kind === 'open'}<span class="now-open state-{row.now.mark}"
@@ -186,9 +190,9 @@
 <Toolbar {scope} />
 {#if !pending && list.summary.recordings}
   {@const summary = list.summary}
-  <section class="summary" aria-label="The listed recordings at a glance">
+  <section class="summary" aria-label="The listed sessions at a glance">
     <div class="tile">
-      <span class="cap">Recordings</span><span class="mono big">{num(summary.recordings)}</span>
+      <span class="cap">Sessions</span><span class="mono big">{num(summary.recordings)}</span>
     </div>
     <div class="tile">
       <span class="cap">Open now</span><span class="mono big"
@@ -255,11 +259,7 @@
       {#if list.folded.length}
         <details class="recordings-folded">
           <summary
-            >{list.folded.length} single-call recording{list.folded.length === 1 ? '' : 's'} with no turns<span
-              class="muted"
-            >
-              · a client's own checks, most often; select to list them</span
-            ></summary
+            >{list.folded.length} single-call session{list.folded.length === 1 ? '' : 's'} with no turns</summary
           >
           <table class="recordings-table">
             {@render columns()}
@@ -276,17 +276,17 @@
           Archive a recording from its page, or a run from Runs. A recording with new traffic is
           listed with the current ones again.
         </p>
-        <a class="button" href="/monitor/recordings"
-          >Current recordings <Icon name="arrow" size={14} /></a
+        <a class="button" href="/monitor/sessions"
+          >Current sessions <Icon name="arrow" size={14} /></a
         >
       </div>
     {:else}<div class="empty-state">
         <div class="empty-icon"><Icon name="sessions" size={25} /></div>
-        <h2>{query ? 'No matching recordings' : 'No recordings yet'}</h2>
+        <h2>{query ? 'No matching sessions' : 'No sessions yet'}</h2>
         <p>
           {query
             ? 'Try a different prompt, folder, client, or session ID.'
-            : 'Recordings appear when clients send session identifiers through Ren.'}
+            : 'Sessions appear when clients send session identifiers through Ren.'}
         </p>
         {#if query}<button class="button" onclick={() => (query = '')}>Clear search</button
           >{:else}<button class="button" onclick={() => goto('/monitor/traffic')}
@@ -295,8 +295,8 @@
       </div>{/if}
   </div>
   {#if previewing}
-    <SlideOver label="Recording report" pin="report" onclose={() => (previewing = null)}>
-      <RecordingPreview row={previewing} />
+    <SlideOver label="Session report" pin="report" onclose={() => (previewing = null)}>
+      <RecordingPreview row={previewing} desk={data.desks.get(previewing.recording.id) ?? null} />
     </SlideOver>
   {/if}
 </section>
@@ -333,7 +333,20 @@
   }
   /* A row: who and what, then the state now, then how big it got. */
   .recording-cell {
+    position: relative;
     overflow: hidden;
+  }
+  .desk-link {
+    position: absolute;
+    right: 8px;
+    bottom: 7px;
+    padding: 0 5px;
+    border: 1px solid var(--control-border);
+    color: var(--muted);
+    font-size: 10.5px;
+  }
+  .desk-link:hover {
+    color: var(--ink);
   }
   .recording-link {
     display: flex;

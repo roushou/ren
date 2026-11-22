@@ -55,7 +55,13 @@
   let {
     snapshot,
     recordingId,
-  }: { snapshot: Arriving<TrafficData>; recordingId: RecordingId | null } = $props();
+    desk = null,
+  }: {
+    snapshot: Arriving<TrafficData>;
+    recordingId: RecordingId | null;
+    /** Where the session opens on its desk, when Ren drives it. */
+    desk?: string | null;
+  } = $props();
   const workbench = getWorkbench();
   // The scope bar shows the narrowing controls, or the recording itself.
   const arrival = createArrival(() => snapshot);
@@ -188,7 +194,7 @@
     observed = record;
   }
   function showCallRecording(id: RecordingId) {
-    const url = new URL(`/monitor/recordings/${encodeURIComponent(id)}`, page.url.origin);
+    const url = new URL(`/monitor/sessions/${encodeURIComponent(id)}`, page.url.origin);
     if (selectedId) url.searchParams.set('call', selectedId);
     void goto(url);
   }
@@ -239,7 +245,7 @@
   }
   const recordingChoices = $derived(retained?.value?.recordings ?? []);
   const recordingOptions = $derived<SelectOption<string>[]>([
-    { value: '', label: 'All recordings' },
+    { value: '', label: 'All sessions' },
     ...recordingChoices.map((choice) => ({
       value: choice.id,
       label: short(choice.native_id),
@@ -279,7 +285,7 @@
     return found ? short(found.native_id) : short(id);
   }
   function chipLabel(key: string, value: string) {
-    if (key === 'recording') return `Recording: ${recordingName(value)}`;
+    if (key === 'recording') return `Session: ${recordingName(value)}`;
     if (key === 'user') return `User: ${value}`;
     if (key === 'client')
       return `Client: ${clientChoices.find((item) => item.client === value)?.label ?? value}`;
@@ -381,12 +387,15 @@
           recording={recordingId}
           shelf={recording ? recording.archived_at !== null : null}
         />{/if}
-      <a class="text-button" href={`/monitor/recordings/${encodeURIComponent(recordingId)}/report`}
+      {#if desk}<a class="text-button" href={desk}>Open in desk <Icon name="arrow" size={12} /></a
+        >{/if}<a
+        class="text-button"
+        href={`/monitor/sessions/${encodeURIComponent(recordingId)}/report`}
         >Turns and report <Icon name="arrow" size={12} /></a
       ><a class="text-button" href={`/monitor/traffic?recording=${encodeURIComponent(recordingId)}`}
         >Narrow in Traffic <Icon name="arrow" size={12} /></a
-      ><a class="text-button" href="/monitor/recordings"
-        >All recordings <Icon name="arrow" size={12} /></a
+      ><a class="text-button" href="/monitor/sessions"
+        >All sessions <Icon name="arrow" size={12} /></a
       >
     </div>
   {:else}
@@ -400,7 +409,7 @@
     </div>
     <div class="scope-group">
       <Select
-        label="Recording"
+        label="Session"
         size="compact"
         options={recordingOptions}
         value={applied.get('recording') ?? ''}
@@ -627,7 +636,7 @@
               : filterCount || !!after
                 ? 'Try a broader search or adjust your filters.'
                 : recordingId
-                  ? 'Refresh to check for new activity in this recording.'
+                  ? 'Refresh to check for new activity in this session.'
                   : 'Point a client at Ren or use a launch command below.'}
           </p>
           {#if !loading && (filterCount || !!after)}<button class="button" onclick={resetFilters}
@@ -702,7 +711,7 @@
                               >{#snippet trigger()}<button
                                   type="button"
                                   class="recording-filter"
-                                  title="Show only this recording's calls"
+                                  title="Show only this session's calls"
                                   aria-label={`Show only recording ${short(c.attribution.hint?.session ?? recording)}`}
                                   onclick={() => pick((f) => (f.recording = recording))}
                                   >{#if recordingsById.get(recording) && (!previous || previous.recording !== c.recording)}<RecordingName
@@ -714,7 +723,7 @@
                                     ></span>{#if !previous || previous.recording !== c.recording}{c
                                         .attribution.hint
                                         ? short(c.attribution.hint.session)
-                                        : 'Recording'}{/if}{/if}</button
+                                        : 'Session'}{/if}{/if}</button
                                 >{/snippet}
                               {#if known}
                                 <RecordingName recording={known} detail={details.get(recording)} />
@@ -733,8 +742,8 @@
                                 >
                                 <a
                                   class="text-button"
-                                  href="/monitor/recordings/{encodeURIComponent(recording)}"
-                                  >Open the recording <Icon name="arrow" size={11} /></a
+                                  href="/monitor/sessions/{encodeURIComponent(recording)}"
+                                  >Open the session <Icon name="arrow" size={11} /></a
                                 >
                               {:else}<span class="muted">Not in this page's listing.</span>{/if}
                             </HoverCard>{:else if !previous || previous.recording !== c.recording}No
