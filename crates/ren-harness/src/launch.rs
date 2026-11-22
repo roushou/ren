@@ -143,13 +143,19 @@ impl Harness {
     /// through `drive`, with its model traffic sent to `gateway`. The client
     /// keeps its own sign-in. OpenCode is driven through its ACP mode.
     pub fn drive(self, gateway: &GatewayEndpoint, opening: &Opening) -> LaunchPlan {
-        self.structured(gateway, Structured::Conversation(opening))
+        LaunchPlan {
+            keeps: self.profile().keeps,
+            ..self.structured(gateway, Structured::Conversation(opening))
+        }
     }
 
     /// How to start this harness only to list its models
     /// (`models::ModelListing`): its structured mode with no conversation.
     pub fn list_models(self, gateway: &GatewayEndpoint) -> LaunchPlan {
-        self.structured(gateway, Structured::Listing)
+        LaunchPlan {
+            keeps: self.profile().keeps,
+            ..self.structured(gateway, Structured::Listing)
+        }
     }
 
     fn structured(self, gateway: &GatewayEndpoint, mode: Structured<'_>) -> LaunchPlan {
@@ -361,6 +367,7 @@ impl LaunchPlan {
 mod tests {
     use super::{GatewayEndpoint, Harness, HostEnv, LaunchArg, OsString, Path, PiCache};
     use crate::{drive::Opening, endpoint::UserToken};
+    use ren_protocol::label::Labeled;
     use ren_protocol::native::NativeThreadId;
 
     const SESSION: &str = "0190f3a0-0000-7000-8000-00000000000a";
@@ -431,6 +438,25 @@ mod tests {
         assert_eq!(listing.get_envs().count(), 0);
         assert!(Harness::OpenCode.names_its_default());
         assert!(!Harness::Codex.names_its_default());
+    }
+
+    /// A driven run is what a container holds: it must carry what its
+    /// client keeps, or its client starts there signed out.
+    #[test]
+    fn a_driven_client_carries_what_it_keeps() {
+        let gateway = "http://127.0.0.1:8787".parse::<GatewayEndpoint>().unwrap();
+        for harness in Harness::ALL {
+            assert_eq!(
+                harness.drive(&gateway, &opening()).keeps(),
+                harness.profile().keeps,
+                "{harness}"
+            );
+            assert_eq!(
+                harness.list_models(&gateway).keeps(),
+                harness.profile().keeps,
+                "{harness}"
+            );
+        }
     }
 
     #[test]

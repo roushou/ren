@@ -92,7 +92,11 @@ pub(super) struct RunContainer {
     image: String,
     mounts: Vec<Mount>,
     env: Vec<(String, String)>,
-    command: Vec<String>,
+    /// The `ren` it runs as its entrypoint: never the image's own, which a
+    /// mount of the host's programs may hide.
+    host: PathBuf,
+    /// The run folder its host serves.
+    folder: PathBuf,
 }
 
 impl RunContainers {
@@ -141,11 +145,8 @@ impl RunContainers {
             image: self.image.clone(),
             mounts,
             env,
-            command: vec![
-                needs.host.display().to_string(),
-                "run-host".to_owned(),
-                needs.folder.display().to_string(),
-            ],
+            host: needs.host.clone(),
+            folder: needs.folder.clone(),
         }
     }
 }
@@ -157,6 +158,25 @@ impl RunContainer {
 
     pub(super) fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The `systemd-run` arguments that start it, from a transient scope
+    /// of its own named for the run (`ren-run-<run>.scope`). The
+    /// container's monitor is a child of the `podman` that starts it: in
+    /// the daemon's unit it would be stopped with the daemon, leaving the
+    /// run going with nothing to see it exit and remove its container.
+    pub(super) fn start_args(&self) -> Vec<String> {
+        let mut args = vec![
+            "--user".to_owned(),
+            "--scope".to_owned(),
+            "--quiet".to_owned(),
+            "--collect".to_owned(),
+            format!("--unit={}", self.name),
+            "--".to_owned(),
+            "podman".to_owned(),
+        ];
+        args.extend(self.run_args());
+        args
     }
 
     /// `podman` arguments that start it, detached and removed once its run
@@ -177,8 +197,10 @@ impl RunContainer {
                 .iter()
                 .map(|(key, value)| format!("--env={key}={value}")),
         );
+        args.push(format!("--entrypoint={}", self.host.display()));
         args.push(self.image.clone());
-        args.extend(self.command.iter().cloned());
+        args.push("run-host".to_owned());
+        args.push(self.folder.display().to_string());
         args
     }
 }
@@ -251,12 +273,32 @@ mod tests {
         assert_eq!(
             &args[args.len() - 4..],
             [
+                "--entrypoint=/home/op/.local/bin/ren",
                 "localhost/ren-instance:abc",
-                "/home/op/.local/bin/ren",
                 "run-host",
                 "/home/op/.local/state/ren/runs/r",
             ]
         );
+    }
+
+    #[test]
+    fn its_monitor_lives_in_a_scope_of_its_own_not_the_daemons() {
+        let run = RunId::restore(uuid::Uuid::nil());
+        let container = containers(None).container(run, &needs());
+        let args = container.start_args();
+        let split = args.iter().position(|arg| arg == "--").unwrap();
+        assert_eq!(
+            &args[..split],
+            [
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                &format!("--unit=ren-run-{run}"),
+            ]
+        );
+        assert_eq!(args[split + 1], "podman");
+        assert_eq!(&args[split + 2..], container.run_args());
     }
 
     #[test]

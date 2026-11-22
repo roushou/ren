@@ -204,7 +204,10 @@ mod tests {
             assert!(!keeps.is_empty(), "{harness}");
             for entry in keeps {
                 let path = entry.under(home);
-                assert!(path.starts_with(home) && path != home, "{harness}: {path:?}");
+                assert!(
+                    path.starts_with(home) && path != home,
+                    "{harness}: {path:?}"
+                );
             }
         }
     }

@@ -25,7 +25,7 @@ use provider::{FakeProvider, ProviderError};
 use ren_harness::host::HostEnv;
 use seed::{Scenario, SeedError, Seeder};
 use shot::{Camera, Page};
-use slot::{Preview, RunWait, Slot};
+use slot::{Preview, RunWait, Slot, SlotHold};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use traffic::{Pace, SettingsError, Traffic, TrafficError};
@@ -114,6 +114,10 @@ struct UpArgs {
     /// Keep the preview on this host's loopback; do not touch Tailscale.
     #[arg(long, requires = "ui")]
     local: bool,
+    /// Where the slot's runs' hosts run: systemd units, or containers that
+    /// see only what each run works on.
+    #[arg(long, value_enum, default_value = "unit")]
+    hold: SlotHold,
     #[command(flatten)]
     tailnet: TailnetArgs,
 }
@@ -268,7 +272,7 @@ impl Dev {
                 }
             },
             DevAction::Up(args) => {
-                let slot = Slot::new(env)?;
+                let slot = Slot::new(env)?.holding(args.hold);
                 let wait = RunWait {
                     policy: if args.drain_runs {
                         RunPolicy::Drain

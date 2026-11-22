@@ -10,12 +10,14 @@ use crate::progress::Progress;
 use crate::{
     daemon::{Busy, Ending, RunPolicy, Runs, StillBusy},
     invocation::{Echo, Invocation, InvocationError},
+    pod::Pod,
     tailscale::{TailscaleCli, TailscaleError},
     ui::UiBuild,
     unit::{KillMode, Listener, TransientUnit},
 };
 use ren_daemon::config::{
-    Config, GithubOptions, RunHold, RunsOptions, UpstreamConfig, WatchedRepository,
+    Config, GithubOptions, RunContainerOptions, RunHold, RunsOptions, UpstreamConfig,
+    WatchedRepository,
 };
 use ren_daemon::host::HeldRuns;
 use ren_gateway::{
@@ -127,6 +129,18 @@ pub struct Slot {
     places_dir: PathBuf,
     /// Where its scratch runs get their folders.
     scratch_dir: PathBuf,
+    /// Where its runs' hosts run.
+    hold: SlotHold,
+}
+
+/// Where the dev slot's runs' hosts run: in systemd units, as the installed
+/// service holds them by default, or in containers that see only what each
+/// run works on (`[runs] hold = "container"`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum SlotHold {
+    #[default]
+    Unit,
+    Container,
 }
 
 impl Slot {
@@ -174,7 +188,15 @@ impl Slot {
             work_dir: share.join("work"),
             places_dir: share.join("config"),
             scratch_dir: share.join("scratch"),
+            hold: SlotHold::Unit,
         })
+    }
+
+    /// The slot, its runs' hosts run as `hold` says.
+    #[must_use]
+    pub fn holding(mut self, hold: SlotHold) -> Self {
+        self.hold = hold;
+        self
     }
 
     /// The dev user `ci`'s token. Fixed, since the slot's data is fake and
@@ -243,11 +265,22 @@ impl Slot {
                 roots: vec![self.work_dir.clone()],
                 places: vec![self.places_dir.clone()],
                 scratch: Some(self.scratch_dir.clone()),
-                // Held as the installed service holds them, so a restart
-                // of the slot leaves its runs going.
-                hold: RunHold::Auto,
+                // Held, so a restart of the slot leaves its runs going.
+                hold: match self.hold {
+                    SlotHold::Unit => RunHold::Auto,
+                    SlotHold::Container => RunHold::Container,
+                },
                 worktree_env: Default::default(),
-                container: Default::default(),
+                container: match self.hold {
+                    SlotHold::Unit => RunContainerOptions::default(),
+                    // The host's programs; the fake agent, which is this
+                    // slot's xtask and keeps its state in the slot's data.
+                    SlotHold::Container => RunContainerOptions {
+                        image: Some(Pod::image()),
+                        read_only: vec!["/usr".into(), self.bin_dir.clone()],
+                        read_write: vec![self.data_dir.clone()],
+                    },
+                },
             },
             packages: toml::from_str::<Config>(Self::PACKAGES)
                 .map_err(|_| DevError::Config)?
@@ -522,6 +555,10 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
 
     fn start_core(&self, wait: RunWait) -> Result<(), DevError> {
         self.build()?;
+        match self.hold {
+            SlotHold::Unit => {}
+            SlotHold::Container => Pod::ensure_image(&self.repo)?,
+        }
         self.write_config()?;
         let ending = self.settle_runs(wait)?;
         ending.announce();

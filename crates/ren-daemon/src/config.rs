@@ -306,6 +306,7 @@ pub struct RunsOptions {
     #[serde(alias = "workspace_env")]
     pub worktree_env: std::collections::BTreeMap<String, String>,
     /// What a run's container is, under `hold = "container"`.
+    #[serde(skip_serializing_if = "RunContainerOptions::is_unset")]
     pub container: RunContainerOptions,
 }
 
@@ -383,6 +384,11 @@ impl RunHold {
 }
 
 impl RunContainerOptions {
+    /// Nothing set: the table is left out of a written configuration.
+    pub fn is_unset(&self) -> bool {
+        *self == Self::default()
+    }
+
     /// How run hosts start in containers on a host whose environment is
     /// `env`: its home, and its SSH agent's socket when it has one.
     fn containers(&self, env: &HostEnv) -> Result<crate::host::RunContainers, ConfigError> {

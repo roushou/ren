@@ -46,7 +46,8 @@ pub enum Launcher {
     /// without a user manager.
     Direct,
     /// In a rootless Podman container of its own, `ren-run-<run>`, that
-    /// sees only what the run works on and what its client keeps.
+    /// sees only what the run works on and what its client keeps, started
+    /// from a systemd scope of its own.
     Container(RunContainers),
 }
 
@@ -365,8 +366,8 @@ impl HeldRuns {
                     io::Error::other("a run host in a container was started without its needs")
                 })?;
                 let container = containers.container(run, needs);
-                let output = std::process::Command::new("podman")
-                    .args(container.run_args())
+                let output = std::process::Command::new("systemd-run")
+                    .args(container.start_args())
                     .stdin(std::process::Stdio::null())
                     .output()?;
                 if output.status.success() {
