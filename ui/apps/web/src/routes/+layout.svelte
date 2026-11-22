@@ -262,7 +262,7 @@
     workbench.refreshing = true;
     try {
       // Every load that read Ren reads it again; the server loads that only
-      // hold settings (and the desk's and Tools', whose pages follow their
+      // hold settings (and the desk's and Packages', whose pages follow their
       // own feeds) do not. A refresh a click interrupts then leaves only
       // those reads to redo, not a round trip to this server first.
       await invalidate(() => true, true);

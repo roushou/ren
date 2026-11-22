@@ -28,7 +28,7 @@ export type View =
   | 'report'
   | 'search'
   | 'usage'
-  | 'tools'
+  | 'packages'
   | 'integrations'
   | 'release'
   | 'recorder';
@@ -47,7 +47,7 @@ export type Tab =
   | 'traffic'
   | 'recordings'
   | 'search'
-  | 'tools'
+  | 'packages'
   | 'integrations'
   | 'usage'
   | 'recorder';
@@ -71,7 +71,7 @@ export class Views {
   }[] = [
     { place: 'projects', href: '/projects', label: 'Projects' },
     { place: 'monitor', href: '/monitor/overview', label: 'Monitor' },
-    { place: 'system', href: '/system/tools', label: 'System' },
+    { place: 'system', href: '/system/packages', label: 'System' },
   ];
 
   /** The view a SvelteKit route id is; an unknown route is Traffic, the
@@ -104,8 +104,8 @@ export class Views {
         return 'search';
       case '/monitor/usage':
         return 'usage';
-      case '/system/tools':
-        return 'tools';
+      case '/system/packages':
+        return 'packages';
       case '/system/integrations':
         return 'integrations';
       case '/system/recorder':
@@ -133,7 +133,7 @@ export class Views {
       case 'recordings':
       case 'search':
       case 'usage':
-      case 'tools':
+      case 'packages':
       case 'integrations':
       case 'release':
       case 'recorder':
@@ -147,11 +147,13 @@ export class Views {
 
   /** Where an address from before the places leads now (Inspect's pages
    * moved under `/monitor`, Host's under `/system`, and Recordings became
-   * Monitor's Sessions); null for any other. */
+   * Monitor's Sessions, and Tools System's Packages); null for any other. */
   static moved(pathname: string): string | null {
     const [, first = '', second = ''] = pathname.split('/');
     if (first === 'monitor' && second === 'recordings')
       return pathname.replace('/monitor/recordings', '/monitor/sessions');
+    if (first === 'system' && second === 'tools')
+      return pathname.replace('/system/tools', '/system/packages');
     switch (first) {
       case 'recordings':
         return pathname.replace('/recordings', '/monitor/sessions');
@@ -163,6 +165,7 @@ export class Views {
       case 'usage':
         return `/monitor${pathname}`;
       case 'tools':
+        return pathname.replace('/tools', '/system/packages');
       case 'recorder':
         return `/system${pathname}`;
       default:
@@ -187,7 +190,7 @@ export class Views {
       case 'search':
       case 'usage':
         return 'monitor';
-      case 'tools':
+      case 'packages':
       case 'integrations':
       case 'recorder':
         return 'system';
@@ -224,7 +227,7 @@ export class Views {
         ];
       case 'system':
         return [
-          { tab: 'tools', href: '/system/tools', label: 'Tools' },
+          { tab: 'packages', href: '/system/packages', label: 'Packages' },
           { tab: 'integrations', href: '/system/integrations', label: 'Integrations' },
           { tab: 'recorder', href: '/system/recorder', label: 'Recorder' },
         ];
@@ -250,7 +253,7 @@ export class Views {
       case 'scratch':
       case 'sessions':
       case 'release':
-      case 'tools':
+      case 'packages':
       case 'integrations':
       case 'usage':
       case 'recorder':
@@ -298,8 +301,8 @@ export class Views {
         return 'Search';
       case 'usage':
         return 'Usage';
-      case 'tools':
-        return 'Tools';
+      case 'packages':
+        return 'Packages';
       case 'integrations':
         return 'Integrations';
       case 'release':

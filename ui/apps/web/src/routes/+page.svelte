@@ -202,7 +202,7 @@
                 >
               </div>
               <div class="acts">
-                <a class="button small primary" href="/system/tools">Sign in</a>
+                <a class="button small primary" href="/system/packages">Sign in</a>
               </div>
             </article>
           {/each}

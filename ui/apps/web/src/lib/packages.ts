@@ -1,9 +1,9 @@
-// The tools Ren installs for its agents on the daemon's host: what the
+// The packages Ren installs for its agents on the daemon's host: what the
 // daemon's `/control/v1/tools` says (through this UI server's
-// `/control/tools` proxy), and the Tools view's pure logic: each package's
+// `/control/tools` proxy), and the Packages view's pure logic: each package's
 // standing, the change the operator stages before applying it, and how the
 // table groups packages. No browser APIs beyond the `fetch` handed in;
-// tested in tests/tools.test.ts.
+// tested in tests/packages.test.ts.
 import { API_VERSION, harnesses, versioned, type Harness } from './api.ts';
 import {
   ShapeError,
@@ -40,7 +40,7 @@ import type { RollbackRequest as WireRollbackRequest } from './wire/RollbackRequ
 export type PackageId = Brand<string, 'PackageId'>;
 /** A release's version as its publisher numbers it. */
 export type Version = Brand<string, 'Version'>;
-/** A toolset generation's number; 0 before anything is installed. */
+/** A generation's number; 0 before anything is installed. */
 export type Generation = Brand<number, 'Generation'>;
 
 export const KINDS = ['runtime', 'utility', 'client'] as const;
@@ -59,13 +59,13 @@ export type ChangeKind = (typeof changeKinds)[number];
 export const stages = ['fetch', 'verify', 'unpack', 'place'] as const;
 export type Stage = (typeof stages)[number];
 
-export interface InstalledTool {
+export interface InstalledPackage {
   version: Version;
   sha256: string;
   dir: string;
 }
 
-export interface SystemTool {
+export interface SystemProgram {
   path: string;
   /** The version it reported, when the daemon could read one. */
   version: Version | null;
@@ -73,7 +73,7 @@ export interface SystemTool {
   unread: string | null;
 }
 
-export interface ToolPackage {
+export interface Package {
   id: PackageId;
   /** Which catalog names it; `null` for an install the catalog no longer names. */
   origin: Stored<Origin> | null;
@@ -83,8 +83,8 @@ export interface ToolPackage {
   program: string;
   /** The release Ren installs; `null` for a package it only finds on PATH. */
   release: Version | null;
-  installed: InstalledTool | null;
-  system: SystemTool | null;
+  installed: InstalledPackage | null;
+  system: SystemProgram | null;
   needed_by: Stored<Harness>[];
 }
 
@@ -99,13 +99,13 @@ export interface GenerationView {
   installs: GenerationInstall[];
 }
 
-export interface ToolListing {
-  /** Where Ren installs tools; `null` on a platform it installs nothing for. */
+export interface PackageListing {
+  /** Where Ren installs packages; `null` on a platform it installs nothing for. */
   platform: Stored<Platform> | null;
   generation: Generation;
   /** The current generation's folder of programs; `null` before any. */
   bin: string | null;
-  packages: ToolPackage[];
+  packages: Package[];
   generations: GenerationView[];
 }
 
@@ -123,17 +123,17 @@ export interface InstallFailure {
   reason: string;
 }
 
-export interface ToolChange {
+export interface GenerationChange {
   outcome: Stored<ChangeOutcome>;
   generation: Generation;
   changes: PackageChange[];
   failures: InstallFailure[];
 }
 
-export class ToolChanges {
+export class GenerationChanges {
   /** What a change came to, as a toast says it: activated, nothing to do, or
    * which installs failed and at which stage. */
-  static said(change: ToolChange): { mark: Mark; text: string; detail: string | null } {
+  static said(change: GenerationChange): { mark: Mark; text: string; detail: string | null } {
     const outcome = change.outcome;
     switch (outcome) {
       case 'activated':
@@ -160,7 +160,7 @@ export class ToolChanges {
   }
 }
 
-export interface ToolCollection {
+export interface PackageCollection {
   generations: Generation[];
   installs: string[];
 }
@@ -170,22 +170,22 @@ const version = branded<'Version'>();
 const generation = brandedCount<'Generation'>();
 
 const listing = versioned(
-  object<ToolListing, WireToolListing>({
+  object<PackageListing, WireToolListing>({
     platform: nullable(label(platforms)),
     generation,
     bin: nullable(string),
     packages: array(
-      object<ToolPackage, WireToolPackage>({
+      object<Package, WireToolPackage>({
         id: packageId,
         origin: nullable(label(origins)),
         kind: nullable(label(KINDS)),
         program: string,
         release: nullable(version),
         installed: nullable(
-          object<InstalledTool, WireInstalledTool>({ version, sha256: string, dir: string }),
+          object<InstalledPackage, WireInstalledTool>({ version, sha256: string, dir: string }),
         ),
         system: nullable(
-          object<SystemTool, WireSystemTool>({
+          object<SystemProgram, WireSystemTool>({
             path: string,
             version: nullable(version),
             unread: nullable(string),
@@ -207,7 +207,7 @@ const listing = versioned(
 );
 
 const change = versioned(
-  object<ToolChange, WireToolChange>({
+  object<GenerationChange, WireToolChange>({
     outcome: label(outcomes),
     generation,
     changes: array(
@@ -230,7 +230,7 @@ const change = versioned(
 );
 
 const collection = versioned(
-  object<ToolCollection, WireToolCollection>({
+  object<PackageCollection, WireToolCollection>({
     generations: array(generation),
     installs: array(string),
   }),
@@ -252,7 +252,7 @@ export type Standing =
   | { kind: 'uncatalogued'; installed: Version };
 
 export class Standings {
-  static of(pkg: ToolPackage): Standing {
+  static of(pkg: Package): Standing {
     if (pkg.origin === null && pkg.installed !== null) {
       return { kind: 'uncatalogued', installed: pkg.installed.version };
     }
@@ -270,8 +270,8 @@ export class Standings {
  * nowhere.
  */
 export type Supply =
-  | { kind: 'managed'; version: Version; shadows: SystemTool | null }
-  | { kind: 'system'; system: SystemTool }
+  | { kind: 'managed'; version: Version; shadows: SystemProgram | null }
+  | { kind: 'system'; system: SystemProgram }
   | { kind: 'none' };
 
 /** How many packages stand each way, for the view's header. */
@@ -285,7 +285,7 @@ export interface Tally {
 }
 
 export class Supplies {
-  static of(pkg: ToolPackage): Supply {
+  static of(pkg: Package): Supply {
     if (pkg.installed !== null) {
       return { kind: 'managed', version: pkg.installed.version, shadows: pkg.system };
     }
@@ -294,7 +294,7 @@ export class Supplies {
   }
 
   /** The row's dot; `missing` is nothing where a client needs it. */
-  static tone(pkg: ToolPackage): 'managed' | 'system' | 'none' | 'missing' {
+  static tone(pkg: Package): 'managed' | 'system' | 'none' | 'missing' {
     const supply = Supplies.of(pkg);
     switch (supply.kind) {
       case 'managed':
@@ -310,7 +310,7 @@ export class Supplies {
   /** How a package stands, as a mark and its words: Ren's install of the
    * catalog's release passes, another release needs a look, a package a
    * client needs and runs would not find failed, and any other rests. */
-  static mark(pkg: ToolPackage): { mark: Mark; word: string } {
+  static mark(pkg: Package): { mark: Mark; word: string } {
     if (Standings.of(pkg).kind === 'outdated') return { mark: 'warning', word: 'Update available' };
     const tone = Supplies.tone(pkg);
     switch (tone) {
@@ -345,7 +345,7 @@ export class Supplies {
    * What runs use of `pkg` before and after `change`: an install or update
    * gives them Ren's release; a removal leaves them the PATH's copy, if any.
    */
-  static effect(pkg: ToolPackage, change: PlannedChange): Effect {
+  static effect(pkg: Package, change: PlannedChange): Effect {
     const after: Supply =
       change.change === 'remove'
         ? pkg.system === null
@@ -361,7 +361,7 @@ export class Supplies {
     };
   }
 
-  static tally(listing: ToolListing): Tally {
+  static tally(listing: PackageListing): Tally {
     const tally: Tally = { managed: 0, system: 0, missing: 0, updates: 0 };
     for (const pkg of listing.packages) {
       const tone = Supplies.tone(pkg);
@@ -394,7 +394,7 @@ export type RowAction =
 
 export class RowActions {
   /** What `pkg`'s button does; `null` for a package Ren does not install. */
-  static of(pkg: ToolPackage): RowAction | null {
+  static of(pkg: Package): RowAction | null {
     const standing = Standings.of(pkg);
     switch (standing.kind) {
       case 'available':
@@ -423,7 +423,7 @@ export interface Effect {
   toKind: Supply['kind'];
 }
 
-/** One row of a staged plan, as it will change the toolset. */
+/** One row of a staged plan, as it will change the installed packages. */
 export interface PlannedChange {
   change: ChangeKind;
   id: PackageId;
@@ -436,7 +436,7 @@ export interface PlannedChange {
  * bring to the catalog's release) and packages to remove. Immutable; each
  * toggle makes a new plan.
  */
-export class ToolPlan {
+export class PackagePlan {
   readonly add: ReadonlySet<PackageId>;
   readonly remove: ReadonlySet<PackageId>;
 
@@ -445,14 +445,14 @@ export class ToolPlan {
     this.remove = new Set(remove);
   }
 
-  static readonly EMPTY = new ToolPlan();
+  static readonly EMPTY = new PackagePlan();
 
   get empty(): boolean {
     return this.add.size === 0 && this.remove.size === 0;
   }
 
   /** Whether `pkg` is staged, either way. */
-  staged(pkg: ToolPackage): boolean {
+  staged(pkg: Package): boolean {
     return this.add.has(pkg.id) || this.remove.has(pkg.id);
   }
 
@@ -461,7 +461,7 @@ export class ToolPlan {
    * the catalog's release, or remove an installed one. A package Ren only
    * finds on PATH takes none, and the plan is returned unchanged.
    */
-  toggle(pkg: ToolPackage): ToolPlan {
+  toggle(pkg: Package): PackagePlan {
     const add = new Set(this.add);
     const remove = new Set(this.remove);
     const flip = (set: Set<PackageId>) => (set.has(pkg.id) ? set.delete(pkg.id) : set.add(pkg.id));
@@ -481,22 +481,22 @@ export class ToolPlan {
       default:
         return assertNever(standing);
     }
-    return new ToolPlan(add, remove);
+    return new PackagePlan(add, remove);
   }
 
   /** Stage removing an outdated install instead of updating it. */
-  toggleRemove(pkg: ToolPackage): ToolPlan {
+  toggleRemove(pkg: Package): PackagePlan {
     if (pkg.installed === null) return this;
     const add = new Set(this.add);
     const remove = new Set(this.remove);
     add.delete(pkg.id);
     if (remove.has(pkg.id)) remove.delete(pkg.id);
     else remove.add(pkg.id);
-    return new ToolPlan(add, remove);
+    return new PackagePlan(add, remove);
   }
 
   /** What applying this plan to `listing` changes, in listing order. */
-  changes(listing: ToolListing): PlannedChange[] {
+  changes(listing: PackageListing): PlannedChange[] {
     const planned: PlannedChange[] = [];
     for (const pkg of listing.packages) {
       if (this.remove.has(pkg.id) && pkg.installed !== null) {
@@ -518,7 +518,7 @@ export class ToolPlan {
   }
 
   /** What applying this plan changes for runs, in listing order. */
-  effects(listing: ToolListing): Effect[] {
+  effects(listing: PackageListing): Effect[] {
     const byId = new Map(listing.packages.map((p) => [p.id, p]));
     return this.changes(listing).flatMap((change) => {
       const pkg = byId.get(change.id);
@@ -527,9 +527,9 @@ export class ToolPlan {
   }
 
   /** Only what still applies to `listing`, after it changed. */
-  within(listing: ToolListing): ToolPlan {
+  within(listing: PackageListing): PackagePlan {
     const changes = this.changes(listing);
-    return new ToolPlan(
+    return new PackagePlan(
       changes.filter((c) => c.change !== 'remove').map((c) => c.id),
       changes.filter((c) => c.change === 'remove').map((c) => c.id),
     );
@@ -548,7 +548,7 @@ export class ToolPlan {
 export interface KindGroup {
   kind: Stored<Kind> | null;
   title: string;
-  packages: ToolPackage[];
+  packages: Package[];
 }
 
 /** A header chip's narrowing: one way packages stand. */
@@ -563,16 +563,16 @@ export const ONLY_MARKS: Record<Only, Mark> = {
 };
 
 /** What the view shows: packages matching `query`, narrowed to `only`. */
-export interface ToolFilter {
+export interface PackageFilter {
   query: string;
   only: Only | null;
 }
 
-export class ToolFilters {
-  static readonly ALL: ToolFilter = { query: '', only: null };
+export class PackageFilters {
+  static readonly ALL: PackageFilter = { query: '', only: null };
 
   /** Whether `pkg` matches: its name, program, or path holds the query. */
-  static keeps(pkg: ToolPackage, filter: ToolFilter): boolean {
+  static keeps(pkg: Package, filter: PackageFilter): boolean {
     const query = filter.query.trim().toLowerCase();
     if (
       query !== '' &&
@@ -597,8 +597,8 @@ export class ToolFilters {
   }
 }
 
-export class ToolGroups {
-  static of(listing: ToolListing, filter: ToolFilter = ToolFilters.ALL): KindGroup[] {
+export class PackageGroups {
+  static of(listing: PackageListing, filter: PackageFilter = PackageFilters.ALL): KindGroup[] {
     const known: Stored<Kind>[] = [...KINDS];
     const unknown = new Set<Stored<Kind>>();
     for (const p of listing.packages) {
@@ -608,8 +608,10 @@ export class ToolGroups {
     return kinds
       .map((kind) => ({
         kind,
-        title: ToolGroups.title(kind),
-        packages: listing.packages.filter((p) => p.kind === kind && ToolFilters.keeps(p, filter)),
+        title: PackageGroups.title(kind),
+        packages: listing.packages.filter(
+          (p) => p.kind === kind && PackageFilters.keeps(p, filter),
+        ),
       }))
       .filter((group) => group.packages.length > 0);
   }
@@ -629,19 +631,19 @@ export class ToolGroups {
   }
 }
 
-/** Why a tools request did not succeed, in the operator's words. */
-export class ToolsError extends Error {
+/** Why a packages request did not succeed, in the operator's words. */
+export class PackagesError extends Error {
   readonly status: number;
   readonly code: Stored<Refusal> | null;
 
   constructor(status: number, code: Stored<Refusal> | null, message: string | null) {
-    super(ToolsError.describe(status, code, message));
+    super(PackagesError.describe(status, code, message));
     this.status = status;
     this.code = code;
   }
 
   /** The daemon's message where it explains more; otherwise the code's
-   * words, said for tools where the proxy's refusals read otherwise. */
+   * words, said for packages where the proxy's refusals read otherwise. */
   static describe(status: number, code: Stored<Refusal> | null, message: string | null): string {
     if (code === null) return `The request was refused (${status}).`;
     switch (code) {
@@ -650,33 +652,34 @@ export class ToolsError extends Error {
       case 'tools_collected':
         return message === null ? Refusals.say(code) : `${message}.`;
       case 'runs_off':
-        return 'Set REN_CONTROL_TOKEN_FILE on the UI server to manage tools here.';
+        return 'Set REN_CONTROL_TOKEN_FILE on the UI server to manage packages here.';
       case 'login_not_allowed':
-        return 'Your Tailscale login may not change tools here.';
+        return 'Your Tailscale login may not change packages here.';
       default:
         return Refusals.say(code);
     }
   }
 }
 
-/** The daemon's tools, through this UI server's proxy. */
-export class ToolsApi {
+/** The daemon's packages, through this UI server's proxy (its routes are
+ * still named tools). */
+export class PackagesApi {
   readonly #fetch: typeof fetch;
 
   constructor(fetcher: typeof fetch) {
     this.#fetch = fetcher;
   }
 
-  listing(signal?: AbortSignal): Promise<ToolListing> {
+  listing(signal?: AbortSignal): Promise<PackageListing> {
     return this.#request('GET', '/control/tools', undefined, listing, signal);
   }
 
-  change(plan: ToolPlan): Promise<ToolChange> {
+  change(plan: PackagePlan): Promise<GenerationChange> {
     return this.#request('POST', '/control/tools/change', plan.body(), change);
   }
 
   /** Make the next generation hold what a kept `generation` held. */
-  rollBack(generation: Generation): Promise<ToolChange> {
+  rollBack(generation: Generation): Promise<GenerationChange> {
     return this.#request(
       'POST',
       '/control/tools/rollback',
@@ -685,7 +688,7 @@ export class ToolsApi {
     );
   }
 
-  collect(): Promise<ToolCollection> {
+  collect(): Promise<PackageCollection> {
     return this.#request('POST', '/control/tools/gc', {}, collection);
   }
 
@@ -716,7 +719,7 @@ export class ToolsApi {
       const code = Refusals.read(parsed);
       const message =
         isRecord(parsed) && typeof parsed.message === 'string' ? parsed.message : null;
-      throw new ToolsError(response.status, code, message);
+      throw new PackagesError(response.status, code, message);
     }
     if (!isRecord(parsed) || parsed.api_version !== API_VERSION) {
       throw new ShapeError('api_version', `${API_VERSION}`);
@@ -728,14 +731,14 @@ export class ToolsApi {
 /** The newest generations side by side, as columns beside the packages:
  * which release of each package each held, and where that changed from
  * the generation before it. */
-export class ToolHistory {
+export class PackageHistory {
   /** Newest first, at most `max`. */
   readonly generations: GenerationView[];
   readonly #versions: Map<Generation, Map<PackageId, Version>>;
   /** The generation just older than the oldest column, to tell a change in it. */
   readonly #before: Map<PackageId, Version> | null;
 
-  constructor(listing: ToolListing, max = 5) {
+  constructor(listing: PackageListing, max = 5) {
     const newest = listing.generations.toSorted((a, b) => b.generation - a.generation);
     this.generations = newest.slice(0, max);
     this.#versions = new Map(

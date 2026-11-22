@@ -1,19 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ToolHistory,
+  PackageHistory,
   Platforms,
   RowActions,
   Standings,
   Supplies,
-  ToolChanges,
-  ToolFilters,
-  ToolGroups,
-  ToolPlan,
-  ToolsApi,
-  ToolsError,
-  type ToolListing,
-} from '../src/lib/tools.ts';
+  GenerationChanges,
+  PackageFilters,
+  PackageGroups,
+  PackagePlan,
+  PackagesApi,
+  PackagesError,
+  type PackageListing,
+} from '../src/lib/packages.ts';
 
 /** A listing as the daemon answers it: invented paths and versions. */
 const wire = {
@@ -121,8 +121,8 @@ const respond =
     return Response.json(body, { status });
   };
 
-async function listing(): Promise<ToolListing> {
-  return new ToolsApi(respond(200, wire)).listing();
+async function listing(): Promise<PackageListing> {
+  return new PackagesApi(respond(200, wire)).listing();
 }
 
 test('a listing decodes, keeping kinds this UI does not know', async () => {
@@ -133,7 +133,7 @@ test('a listing decodes, keeping kinds this UI does not know', async () => {
   assert.equal(read.packages[5]?.origin, 'operator');
   assert.equal(read.packages[6]?.kind, null);
   assert.equal(read.generations[1]?.state, 'in_use');
-  await assert.rejects(new ToolsApi(respond(200, { ...wire, api_version: 2 })).listing());
+  await assert.rejects(new PackagesApi(respond(200, { ...wire, api_version: 2 })).listing());
 });
 
 test('each package has one standing', async () => {
@@ -153,7 +153,7 @@ test('each package has one standing', async () => {
 });
 
 test('packages group by kind, runtimes first, unknown kinds and uncatalogued installs last', async () => {
-  const groups = ToolGroups.of(await listing());
+  const groups = PackageGroups.of(await listing());
   assert.deepEqual(
     groups.map((g) => [g.title, g.packages.map((p) => p.id)]),
     [
@@ -170,7 +170,7 @@ test('a plan stages one change per package and previews it in listing order', as
   const read = await listing();
   const [claude, node, jq, fd] = read.packages;
   assert.ok(claude && node && jq && fd);
-  let plan = ToolPlan.EMPTY.toggle(fd).toggle(node).toggle(jq).toggle(claude);
+  let plan = PackagePlan.EMPTY.toggle(fd).toggle(node).toggle(jq).toggle(claude);
   assert.deepEqual(plan.changes(read), [
     { change: 'replace', id: 'node', from: '24.1.0', to: '26.13.1' },
     { change: 'remove', id: 'jq', from: '1.8.2', to: null },
@@ -183,7 +183,7 @@ test('a plan stages one change per package and previews it in listing order', as
   // An install the catalog no longer names can only be removed.
   const acme = read.packages[6];
   assert.ok(acme);
-  assert.deepEqual(ToolPlan.EMPTY.toggle(acme).changes(read), [
+  assert.deepEqual(PackagePlan.EMPTY.toggle(acme).changes(read), [
     { change: 'remove', id: 'acme-lint', from: '0.3.0', to: null },
   ]);
   // Toggling again unstages.
@@ -195,8 +195,8 @@ test('a plan keeps only what still applies after the listing changed', async () 
   const read = await listing();
   const [, node, , fd] = read.packages;
   assert.ok(node && fd);
-  const plan = ToolPlan.EMPTY.toggle(fd).toggle(node);
-  const after: ToolListing = {
+  const plan = PackagePlan.EMPTY.toggle(fd).toggle(node);
+  const after: PackageListing = {
     ...read,
     packages: read.packages.map((p) =>
       p.id === 'fd'
@@ -209,7 +209,7 @@ test('a plan keeps only what still applies after the listing changed', async () 
 
 test('changes and collections post their bodies; refusals read as sentences', async () => {
   const seen: string[] = [];
-  const api = new ToolsApi(
+  const api = new PackagesApi(
     respond(
       200,
       {
@@ -222,7 +222,7 @@ test('changes and collections post their bodies; refusals read as sentences', as
       seen,
     ),
   );
-  const changed = await api.change(new ToolPlan(['fd' as never]));
+  const changed = await api.change(new PackagePlan(['fd' as never]));
   assert.equal(changed.outcome, 'activated');
   await api.rollBack(2 as never);
   assert.deepEqual(seen, [
@@ -230,19 +230,19 @@ test('changes and collections post their bodies; refusals read as sentences', as
     'POST /control/tools/rollback {"generation":2}',
   ]);
 
-  const refused = new ToolsApi(
+  const refused = new PackagesApi(
     respond(422, { error: 'tools_refused', message: 'fd is not installed by Ren' }),
   );
-  await assert.rejects(refused.change(new ToolPlan([], ['fd' as never])), (error: unknown) => {
-    assert.ok(error instanceof ToolsError);
+  await assert.rejects(refused.change(new PackagePlan([], ['fd' as never])), (error: unknown) => {
+    assert.ok(error instanceof PackagesError);
     assert.equal(error.message, 'fd is not installed by Ren.');
     return true;
   });
   assert.equal(
-    ToolsError.describe(404, 'runs_off', null),
-    'Set REN_CONTROL_TOKEN_FILE on the UI server to manage tools here.',
+    PackagesError.describe(404, 'runs_off', null),
+    'Set REN_CONTROL_TOKEN_FILE on the UI server to manage packages here.',
   );
-  assert.equal(ToolsError.describe(418, null, null), 'The request was refused (418).');
+  assert.equal(PackagesError.describe(418, null, null), 'The request was refused (418).');
 });
 
 test('where runs get each package, and the header tally', async () => {
@@ -298,7 +298,7 @@ test('a staged change shows the version runs use before and after it', async () 
   const read = await listing();
   const [claude, node, jq, fd] = read.packages;
   assert.ok(claude && node && jq && fd);
-  const plan = ToolPlan.EMPTY.toggle(node).toggle(jq).toggle(fd);
+  const plan = PackagePlan.EMPTY.toggle(node).toggle(jq).toggle(fd);
   assert.deepEqual(plan.effects(read), [
     { change: 'replace', id: 'node', from: '24.1.0', to: '26.13.1', toKind: 'managed' },
     // Removing Ren's jq leaves runs the PATH's, whose version was not read.
@@ -324,8 +324,8 @@ test('a staged change shows the version runs use before and after it', async () 
 
 test('the view narrows by name, program, or path, and by how packages stand', async () => {
   const read = await listing();
-  const ids = (query: string, only: Parameters<typeof ToolFilters.keeps>[1]['only']) =>
-    ToolGroups.of(read, { query, only }).flatMap((g) => g.packages.map((p) => p.id));
+  const ids = (query: string, only: Parameters<typeof PackageFilters.keeps>[1]['only']) =>
+    PackageGroups.of(read, { query, only }).flatMap((g) => g.packages.map((p) => p.id));
   assert.deepEqual(ids('', 'managed'), ['node', 'jq', 'acme-lint']);
   assert.deepEqual(ids('', 'system'), ['claude']);
   assert.deepEqual(ids('', 'updates'), ['node']);
@@ -338,7 +338,7 @@ test('the view narrows by name, program, or path, and by how packages stand', as
 test('a change says what it came to in a toast', () => {
   const base = { generation: 15 as never, changes: [], failures: [] };
   assert.deepEqual(
-    ToolChanges.said({
+    GenerationChanges.said({
       ...base,
       outcome: 'activated',
       changes: [
@@ -352,9 +352,9 @@ test('a change says what it came to in a toast', () => {
     }),
     { mark: 'passed', text: 'Generation 15 is current', detail: 'node 24.1.0' },
   );
-  assert.equal(ToolChanges.said({ ...base, outcome: 'unchanged' }).mark, 'idle');
+  assert.equal(GenerationChanges.said({ ...base, outcome: 'unchanged' }).mark, 'idle');
   assert.deepEqual(
-    ToolChanges.said({
+    GenerationChanges.said({
       ...base,
       outcome: 'failed',
       failures: [
@@ -374,7 +374,7 @@ test('the history sets the newest generations side by side, marking where a pack
       version: version as never,
     })),
   });
-  const history = new ToolHistory(
+  const history = new PackageHistory(
     {
       generations: [
         generation(12, [['rg', '14.0']]),

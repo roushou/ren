@@ -8,7 +8,7 @@ test('the palette offers every page, then each project’s own', () => {
   const all = Commands.all(projects);
   const hrefs = all.map((command) => command.href);
   assert.ok(
-    hrefs.includes('/monitor/traffic') && hrefs.includes('/system/tools') && hrefs.includes('/'),
+    hrefs.includes('/monitor/traffic') && hrefs.includes('/system/packages') && hrefs.includes('/'),
   );
   assert.ok(hrefs.includes('/projects/acme-api/release'));
   assert.equal(new Set(hrefs).size, hrefs.length, 'no page is offered twice');

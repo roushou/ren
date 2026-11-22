@@ -52,7 +52,7 @@
       <li>
         <Glyph mark="warning" label="Signed out on this host" />
         <span class="name">{harnessLabel(client.harness)}</span>
-        <a class="button small" href="/system/tools">Sign in</a>
+        <a class="button small" href="/system/packages">Sign in</a>
       </li>
     {/each}
     {#each board.toPromote as project (project.id)}

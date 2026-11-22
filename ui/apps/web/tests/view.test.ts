@@ -68,12 +68,12 @@ test("the Projects list has no pages; inside a project, the row holds the projec
 test('only the pages that read a project carry it between them', () => {
   const traffic = { tab: 'traffic', href: '/monitor/traffic', label: 'Traffic' } as const;
   const live = { tab: 'live', href: '/monitor/live', label: 'Live' } as const;
-  const tools = { tab: 'tools', href: '/system/tools', label: 'Tools' } as const;
+  const packages = { tab: 'packages', href: '/system/packages', label: 'Packages' } as const;
   assert.equal(Views.scopedHref(traffic, 'acme-web'), '/monitor/traffic?project=acme-web');
   assert.equal(Views.scopedHref(traffic, null), '/monitor/traffic');
   // Monitor's pages read a project; System's do not.
   assert.equal(Views.scopedHref(live, 'acme-web'), '/monitor/live?project=acme-web');
-  assert.equal(Views.scopedHref(tools, 'acme-web'), '/system/tools');
+  assert.equal(Views.scopedHref(packages, 'acme-web'), '/system/packages');
   assert.ok(Views.scoped('recordings'));
   assert.ok(Views.scoped('search'));
   assert.equal(Views.scoped('usage'), false);
@@ -85,7 +85,8 @@ test('an address from before the places leads to the same page in its place', ()
   assert.equal(Views.moved('/monitor/recordings'), '/monitor/sessions');
   assert.equal(Views.moved('/monitor/recordings/r1'), '/monitor/sessions/r1');
   assert.equal(Views.moved('/turns/t1'), '/monitor/turns/t1');
-  assert.equal(Views.moved('/tools'), '/system/tools');
+  assert.equal(Views.moved('/tools'), '/system/packages');
+  assert.equal(Views.moved('/system/tools'), '/system/packages');
   assert.equal(Views.moved('/recorder'), '/system/recorder');
   for (const kept of [
     '/',

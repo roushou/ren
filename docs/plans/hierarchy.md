@@ -181,7 +181,7 @@ Records outside the tree stay, and each says why it is outside:
    show each other: **Projects** (the list, then a project's Sessions and
    Release, and Scratch), **Monitor** (Inspect renamed: Overview, Live,
    Traffic, Recordings, Search, and Usage, which moves from Host), and
-   **System** (Host renamed: Tools and Recorder). Inside a place the bar
+   **System** (Host renamed: Packages, once Tools, Integrations, and Recorder). Inside a place the bar
    holds only its name and its pages (`Views.place`, `Views.pages`);
    Pending sits in Projects alone, and System's warnings reach Home's list.
    Monitor's pages live under `/monitor/…` and System's under

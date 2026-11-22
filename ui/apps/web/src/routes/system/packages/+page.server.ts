@@ -1,20 +1,21 @@
-// The Tools page's first read, made on this server so the page renders with
+// The Packages page's first read, made on this server so the page renders with
 // it: through the same control proxy the browser uses, with the browser's
 // Tailscale login, and never its cookies.
 import { proxy } from '#lib/server/runsProxy.ts';
-import { ToolsApi, type ToolListing } from '#lib/tools.ts';
+import { PackagesApi, type PackageListing } from '#lib/packages.ts';
 import { Arrival } from '#lib/arrival.ts';
 import { RunsClient, type RunClient } from '#lib/runs.ts';
 import type { PageServerLoad } from './$types';
 
-export type ToolsInitial =
-  { kind: 'ready'; listing: ToolListing } | { kind: 'failed'; message: string };
+export type PackagesInitial =
+  { kind: 'ready'; listing: PackageListing } | { kind: 'failed'; message: string };
 
 /** The read as the page receives it: done, or still on its way. */
-export type ToolsArriving = ToolsInitial | { kind: 'pending'; read: Promise<ToolsInitial> };
+export type PackagesArriving =
+  PackagesInitial | { kind: 'pending'; read: Promise<PackagesInitial> };
 
 /** The listing on a navigation: whole if it is in within the grace period, else streamed. */
-class Tools {
+class PackagesRead {
   /** The clients' sign-ins, if they are in within the grace period; else the
    * page reads them itself. */
   static async inTime(read: Promise<RunClient[] | null>): Promise<RunClient[] | null> {
@@ -31,7 +32,7 @@ class Tools {
     }
   }
 
-  static async arriving(read: Promise<ToolsInitial>): Promise<ToolsArriving> {
+  static async arriving(read: Promise<PackagesInitial>): Promise<PackagesArriving> {
     const within = await Arrival.within(read, Arrival.GRACE_MS);
     switch (within.state) {
       case 'in':
@@ -59,11 +60,11 @@ export const load: PageServerLoad = async ({ request, isDataRequest }) => {
       }),
     );
   }) as typeof fetch;
-  const api = new ToolsApi(proxied);
+  const api = new PackagesApi(proxied);
   // Each client's sign-in, read with the listing so the clients' rows show
   // it from the first paint; null when runs are off or it was not in time.
   const clientsRead = new RunsClient(proxied).clients().catch(() => null);
-  const read: Promise<ToolsInitial> = api.listing().then(
+  const read: Promise<PackagesInitial> = api.listing().then(
     (listing) => ({ kind: 'ready', listing }),
     (error: unknown) => ({
       kind: 'failed',
@@ -75,8 +76,8 @@ export const load: PageServerLoad = async ({ request, isDataRequest }) => {
   // arrives whole too; a later one is streamed, and the page draws its
   // outline until it arrives.
   const [initial, clients] = await Promise.all([
-    isDataRequest ? Tools.arriving(read) : read,
-    isDataRequest ? Tools.inTime(clientsRead) : clientsRead,
+    isDataRequest ? PackagesRead.arriving(read) : read,
+    isDataRequest ? PackagesRead.inTime(clientsRead) : clientsRead,
   ]);
-  return { initial: initial satisfies ToolsArriving, clients };
+  return { initial: initial satisfies PackagesArriving, clients };
 };

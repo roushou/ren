@@ -9,7 +9,7 @@ import * as attachments from '../src/lib/attachments.ts';
 import * as exit from '../src/lib/exit.ts';
 import * as runs from '../src/lib/runs.ts';
 import * as signIn from '../src/lib/signIn.ts';
-import * as tools from '../src/lib/tools.ts';
+import * as packages from '../src/lib/packages.ts';
 
 /** `<crate> <vocabulary>` → its labels, from every crate's pinned table. */
 const rust = new Map<string, string[]>();
@@ -88,13 +88,13 @@ const ui: [string, readonly string[]][] = [
   ['ren-recorder capture::RunEnd', runs.runEnds],
   ['ren-recorder capture::ExitKind', exit.exitKinds],
   ['ren-harness sign_in::SignInMethod', signIn.SIGN_IN_METHODS],
-  ['ren-depot package::Kind', tools.KINDS],
-  ['ren-gateway tools::ChangeKind', tools.changeKinds],
-  ['ren-gateway tools::GenerationState', tools.generationStates],
-  ['ren-depot package::Origin', tools.origins],
-  ['ren-gateway tools::ChangeOutcome', tools.outcomes],
-  ['ren-depot source::Platform', tools.platforms],
-  ['ren-depot job::Stage', tools.stages],
+  ['ren-depot package::Kind', packages.KINDS],
+  ['ren-gateway tools::ChangeKind', packages.changeKinds],
+  ['ren-gateway tools::GenerationState', packages.generationStates],
+  ['ren-depot package::Origin', packages.origins],
+  ['ren-gateway tools::ChangeOutcome', packages.outcomes],
+  ['ren-depot source::Platform', packages.platforms],
+  ['ren-depot job::Stage', packages.stages],
 ];
 
 test("each vocabulary the UI decodes has exactly the daemon's labels", () => {

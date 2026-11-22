@@ -17,30 +17,30 @@
     Platforms,
     RowActions,
     Supplies,
-    ToolFilters,
-    ToolGroups,
+    PackageFilters,
+    PackageGroups,
     type Only,
     ONLY_MARKS,
-    ToolChanges,
-    ToolPlan,
-    ToolsApi,
-    ToolsError,
-    ToolHistory,
+    GenerationChanges,
+    PackagePlan,
+    PackagesApi,
+    PackagesError,
+    PackageHistory,
     type Generation,
     type GenerationView,
     type PackageId,
-    type ToolPackage,
-  } from '#lib/tools.ts';
+    type Package,
+  } from '#lib/packages.ts';
 
   import type { PageProps } from './$types';
-  import type { ToolsInitial } from './+page.server.ts';
+  import type { PackagesInitial } from './+page.server.ts';
 
   let { data }: PageProps = $props();
-  const api = new ToolsApi(fetch);
+  const api = new PackagesApi(fetch);
 
   /** What the page shows: the daemon's listing, why there is none, or its
    * outline while the first read is on its way. */
-  type Loaded = ToolsInitial | { kind: 'pending' };
+  type Loaded = PackagesInitial | { kind: 'pending' };
   /** Whether a change is on its way; how it ended is a toast. */
   type Applying = { kind: 'idle' } | { kind: 'applying' };
   /** The change the operator is asked to confirm, if any. */
@@ -50,7 +50,7 @@
   let loaded = $state<Loaded>(
     untrack(() => (data.initial.kind === 'pending' ? { kind: 'pending' } : data.initial)),
   );
-  let plan = $state(ToolPlan.EMPTY);
+  let plan = $state(PackagePlan.EMPTY);
   let applying = $state<Applying>({ kind: 'idle' });
   let confirming = $state<Confirming>(null);
   /** The package whose details are open; none until one is chosen. */
@@ -62,7 +62,7 @@
     if (initial.kind !== 'pending') return;
     let current = true;
     void initial.read
-      .catch((error: unknown): ToolsInitial => ({ kind: 'failed', message: message(error) }))
+      .catch((error: unknown): PackagesInitial => ({ kind: 'failed', message: message(error) }))
       .then((read) => {
         if (current) took(read);
       });
@@ -73,16 +73,16 @@
   let collecting = $state<string | null>(null);
 
   const listing = $derived(loaded.kind === 'ready' ? loaded.listing : null);
-  let filter = $state(ToolFilters.ALL);
-  const groups = $derived(listing ? ToolGroups.of(listing, filter) : []);
+  let filter = $state(PackageFilters.ALL);
+  const groups = $derived(listing ? PackageGroups.of(listing, filter) : []);
   const changes = $derived(listing ? plan.changes(listing) : []);
   const chosen = $derived(listing?.packages.find((p) => p.id === selected) ?? null);
 
   const message = (error: unknown) =>
-    error instanceof ToolsError || error instanceof Error ? error.message : String(error);
+    error instanceof PackagesError || error instanceof Error ? error.message : String(error);
 
   /** Show a read: its listing, keeping the plan within it, or why there is none. */
-  function took(read: ToolsInitial) {
+  function took(read: PackagesInitial) {
     loaded = read;
     if (read.kind === 'failed') return;
     plan = plan.within(read.listing);
@@ -99,7 +99,7 @@
   /** The outline's groups: the catalog's kinds, with rows varied in width. */
   const OUTLINE = KINDS.map((kind, index) => ({
     kind,
-    title: ToolGroups.title(kind),
+    title: PackageGroups.title(kind),
     rows: [3, 4, 3][index] ?? 3,
   }));
   const OUTLINE_WIDTHS = ['62%', '48%', '71%', '55%'] as const;
@@ -110,8 +110,8 @@
     applying = { kind: 'applying' };
     try {
       const change = await api.change(plan);
-      toasts.show(ToolChanges.said(change));
-      if (change.outcome !== 'failed') plan = ToolPlan.EMPTY;
+      toasts.show(GenerationChanges.said(change));
+      if (change.outcome !== 'failed') plan = PackagePlan.EMPTY;
     } catch (error) {
       toasts.show({ mark: 'failed', text: 'The change was not applied', detail: message(error) });
     }
@@ -125,8 +125,8 @@
     if (applying.kind === 'applying') return;
     applying = { kind: 'applying' };
     try {
-      toasts.show(ToolChanges.said(await api.rollBack(generation)));
-      plan = ToolPlan.EMPTY;
+      toasts.show(GenerationChanges.said(await api.rollBack(generation)));
+      plan = PackagePlan.EMPTY;
     } catch (error) {
       toasts.show({
         mark: 'failed',
@@ -149,7 +149,7 @@
   }
 
   /** A row's button label, or `null` for a package Ren does not install. */
-  function action(pkg: ToolPackage): string | null {
+  function action(pkg: Package): string | null {
     const row = RowActions.of(pkg);
     if (row === null) return null;
     if (plan.staged(pkg)) return 'Undo';
@@ -199,7 +199,7 @@
     if (untrack(() => data.clients) === null) void readClients();
   });
   /** The client a package is, with its sign-in; null for other packages. */
-  const clientOf = (pkg: ToolPackage) => SignIns.clientOf(pkg, clients);
+  const clientOf = (pkg: Package) => SignIns.clientOf(pkg, clients);
   const signedOut = $derived(
     listing?.packages.filter((pkg) => {
       const entry = clientOf(pkg);
@@ -233,8 +233,8 @@
 {#snippet outline()}
   <!-- The listing on its way: the catalog's groups with rows where packages
        go, and the details pane's labels with bars where values go. -->
-  <section class="tools-main" aria-label="Packages" aria-busy="true">
-    <table class="tools-table">
+  <section class="packages-main" aria-label="Packages" aria-busy="true">
+    <table class="packages-table">
       <colgroup>
         <col class="c-name" />
         <col class="c-version" />
@@ -243,7 +243,7 @@
       </colgroup>
       {#each OUTLINE as group (group.kind)}
         <tbody>
-          <tr class="tools-group">
+          <tr class="packages-group">
             <th colspan="4" scope="rowgroup">{group.title}</th>
           </tr>
           {#each { length: group.rows }, row (row)}
@@ -266,14 +266,14 @@
   </section>
 {/snippet}
 
-{#snippet dot(pkg: ToolPackage)}
+{#snippet dot(pkg: Package)}
   {@const standing = Supplies.mark(pkg)}<Glyph mark={standing.mark} label={standing.word} />
 {/snippet}
 
 <Toolbar {scope} />
-<div class="tools-view">
+<div class="packages-view">
   {#if loaded.kind === 'failed'}
-    <div class="tools-empty">
+    <div class="packages-empty">
       <Icon name="alert" size={18} />
       <p>{loaded.message}</p>
       <button class="button" onclick={load}><Icon name="refresh" size={12} />Try again</button>
@@ -282,11 +282,11 @@
     {@render outline()}
   {:else if listing}
     <!-- The newest generations, as columns beside the packages. -->
-    {@const history = new ToolHistory(listing)}
-    <div class="tools-body">
-      <div class="tools-left">
+    {@const history = new PackageHistory(listing)}
+    <div class="packages-body">
+      <div class="packages-left">
         {#if tally}
-          <section class="figures" aria-label="Tools at a glance">
+          <section class="figures" aria-label="Packages at a glance">
             <div>
               <span class="cap">Managed</span>
               <span class="figure"><Glyph mark="passed" />{tally.managed}</span>
@@ -329,7 +329,7 @@
               <input
                 type="search"
                 placeholder="Filter"
-                aria-label="Filter tools"
+                aria-label="Filter packages"
                 value={filter.query}
                 oninput={(event) => (filter = { ...filter, query: event.currentTarget.value })}
               />
@@ -368,8 +368,8 @@
             {/if}
           </div>
         {/if}
-        <section class="tools-main" aria-label="Packages">
-          <table class="tools-table">
+        <section class="packages-main" aria-label="Packages">
+          <table class="packages-table">
             <colgroup>
               <col class="c-name" />
               <col class="c-origin" />
@@ -413,7 +413,7 @@
             </thead>
             {#each groups as group (group.kind)}
               <tbody>
-                <tr class="tools-group">
+                <tr class="packages-group">
                   <th colspan={6 + history.generations.length} scope="rowgroup"
                     >{group.title} <span class="count">{group.packages.length}</span></th
                   >
@@ -423,7 +423,7 @@
                   {@const supply = Supplies.of(pkg)}
                   {@const change = staged.get(pkg.id)}
                   <tr
-                    class="tools-row"
+                    class="packages-row"
                     class:selected={selected === pkg.id}
                     class:staged={change !== undefined}
                     onclick={() => (selected = pkg.id)}
@@ -490,7 +490,8 @@
             {:else}
               <tbody>
                 <tr
-                  ><td colspan={6 + history.generations.length} class="muted">No tool matches.</td
+                  ><td colspan={6 + history.generations.length} class="muted"
+                    >No package matches.</td
                   ></tr
                 >
               </tbody>
@@ -537,7 +538,7 @@
       {@const entry = clientOf(chosen)}
       {@const harness = entry ? Runs.drivable(entry.harness) : null}
       <SlideOver label="{chosen.id} details" pin="package" onclose={() => (selected = null)}
-        ><div class="tools-inspector">
+        ><div class="packages-inspector">
           <section class="head">
             <h2 class="mono">{@render dot(chosen)}{chosen.id}</h2>
             <span class="chip-row">
@@ -614,9 +615,8 @@
       >{:else if !plan.empty}<FloatingBar label="Staged changes"
         ><Glyph mark="yours" /><b>{changes.length} staged</b><span class="mono muted staged"
           >{effects.map((e) => `${e.id} ${e.to ?? 'removed'}`).join(' · ')}</span
-        ><button class="button small" onclick={() => (plan = ToolPlan.EMPTY)}>Clear</button><button
-          class="button primary small"
-          onclick={() => (confirming = { kind: 'apply' })}
+        ><button class="button small" onclick={() => (plan = PackagePlan.EMPTY)}>Clear</button
+        ><button class="button primary small" onclick={() => (confirming = { kind: 'apply' })}
           >Apply {changes.length} change{changes.length === 1 ? '' : 's'}…</button
         ></FloatingBar
       >{/if}
@@ -627,7 +627,7 @@
   {@const asked = confirming}
   {#if asked.kind === 'apply'}
     <Modal
-      eyebrow="Tools · {listing.platform ? Platforms.label(listing.platform) : 'this host'}"
+      eyebrow="Packages · {listing.platform ? Platforms.label(listing.platform) : 'this host'}"
       title="Apply {changes.length} change{changes.length === 1 ? '' : 's'}?"
       onclose={() => (confirming = null)}
     >
@@ -656,7 +656,7 @@
   {:else}
     {@const restored = listing.generations.find((g) => g.generation === asked.generation)}
     <Modal
-      eyebrow="Tools · history"
+      eyebrow="Packages · history"
       title="Restore generation {asked.generation}?"
       onclose={() => (confirming = null)}
     >
@@ -695,7 +695,7 @@
 {/if}
 
 <style>
-  .tools-view {
+  .packages-view {
     position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -703,7 +703,7 @@
     min-height: 0;
     background: var(--surface);
   }
-  .tools-empty {
+  .packages-empty {
     grid-column: 1 / -1;
     display: flex;
     flex-direction: column;
@@ -712,7 +712,7 @@
     gap: 10px;
     padding: 48px 16px;
   }
-  .tools-main {
+  .packages-main {
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -726,10 +726,10 @@
   .tally .chip :global(.glyph) {
     margin-right: 2px;
   }
-  .tools-main {
+  .packages-main {
     overflow: auto;
   }
-  .tools-table {
+  .packages-table {
     width: 100%;
     border-collapse: collapse;
     table-layout: fixed;
@@ -779,13 +779,13 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
-  .tools-body {
+  .packages-body {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 320px;
     min-height: 0;
     height: 100%;
   }
-  .tools-left {
+  .packages-left {
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -851,7 +851,7 @@
     min-height: 32px;
   }
   @media (max-width: 1100px) {
-    .tools-body {
+    .packages-body {
       grid-template-columns: minmax(0, 1fr);
     }
     .clients {
@@ -873,27 +873,27 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .tools-group th {
+  .packages-group th {
     height: 24px;
     font-size: 11px;
     font-weight: 600;
     color: var(--muted);
     background: var(--surface-subtle);
   }
-  .tools-group .count {
+  .packages-group .count {
     font-weight: 400;
     margin-left: 4px;
   }
-  .tools-row {
+  .packages-row {
     cursor: pointer;
   }
-  .tools-row:hover {
+  .packages-row:hover {
     background: var(--row-hover);
   }
-  .tools-row.selected {
+  .packages-row.selected {
     background: var(--row-selected);
   }
-  .tools-row.staged td:first-child {
+  .packages-row.staged td:first-child {
     box-shadow: inset 2px 0 0 var(--accent);
   }
   td.end {
@@ -997,7 +997,7 @@
   .failed {
     color: var(--error);
   }
-  .tools-inspector {
+  .packages-inspector {
     min-height: 0;
     overflow: auto;
     font-size: 12px;
@@ -1015,11 +1015,11 @@
     gap: 4px;
     margin-left: 6px;
   }
-  .tools-inspector section {
+  .packages-inspector section {
     padding: 10px 12px;
     border-bottom: 1px solid var(--line);
   }
-  .tools-inspector h2 {
+  .packages-inspector h2 {
     margin: 0;
     font-size: 14px;
   }
@@ -1046,7 +1046,7 @@
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     color: var(--ink);
   }
-  .tools-inspector h3,
+  .packages-inspector h3,
   dl {
     display: grid;
     grid-template-columns: 72px minmax(0, 1fr);
