@@ -85,6 +85,10 @@
   --success-soft: #e9f4ee;
   --live: #3f6ea8;
   --live-soft: #e9f0f8;
+  /* A session's time, by what spent it (the desk's inspector). */
+  --ink-soft: #3d404b;
+  --time-model: #9ca0aa;
+  --time-edit: #8fa8c6;
   /* A call's context, by where it came from. */
   --cache-read: #a9c7b8;
   --cache-written: #8fa8c6;
@@ -164,6 +168,9 @@
   --success-soft: #14231d;
   --live: #6f9fd8;
   --live-soft: #151c26;
+  --ink-soft: #c4c7ce;
+  --time-model: #7f838d;
+  --time-edit: #3a5068;
   --cache-read: #4b5f57;
   --cache-written: #3a5068;
   --input-fresh: #8b8f99;

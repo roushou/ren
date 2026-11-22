@@ -68,6 +68,7 @@
   import QuestionCard from './QuestionCard.svelte';
   import StepGroup from './StepGroup.svelte';
   import StepDetail from './StepDetail.svelte';
+  import SessionInspector from './SessionInspector.svelte';
   import SlideOver from '#lib/layer/SlideOver.svelte';
   import FloatingBar from '#lib/layer/FloatingBar.svelte';
   import { toasts } from '#lib/layer/toasts.svelte.ts';
@@ -1137,8 +1138,14 @@
     // not while one runs, when they are still coming in.
     const target = chosen;
     const settled = runState?.phase !== 'starting' && runState?.phase !== 'working';
-    if (target && settled) untrack(() => void readSpent(target));
+    if (target && settled)
+      untrack(() => {
+        void readSpent(target);
+        settledAt += 1;
+      });
   });
+  /** Turns ended while the desk is open, so the inspector reads again. */
+  let settledAt = $state(0);
 
   $effect(() => {
     // The composer is where the keyboard goes once a run takes prompts.
@@ -2100,6 +2107,15 @@
       {/if}
     {/if}
   </section>
+  {#if chosen && session}
+    <SessionInspector
+      session={chosen}
+      recording={current?.recorded?.recording ?? null}
+      steps={allSteps}
+      project={scope.kind === 'project' ? scope.project.name : null}
+      version={settledAt}
+    />
+  {/if}
 </div>
 {#if viewing}
   <ImageViewer images={viewing.images} start={viewing.start} onclose={() => (viewing = null)} />
@@ -2128,6 +2144,18 @@
     display: grid;
     grid-template-columns: minmax(220px, 280px) 1fr;
     background: var(--canvas);
+  }
+  /* An open session has its inspector beside it, where there is room. */
+  .runs-page[data-pane='session'] {
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(280px, 320px);
+  }
+  @media (max-width: 1180px) {
+    .runs-page[data-pane='session'] {
+      grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+    }
+    .runs-page > :global(.inspector) {
+      display: none;
+    }
   }
   .runs-sidebar {
     display: flex;
