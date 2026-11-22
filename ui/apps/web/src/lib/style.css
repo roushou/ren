@@ -1951,11 +1951,10 @@ td.zero {
 :root[data-theme='dark'] {
   --chart: #6f9fd8;
 }
-/* Overview and Usage fill the workspace edge to edge, like Traffic: their
-   sections touch, separated by 1px rules drawn as grid gaps over the border
-   color. No outer margin, square corners throughout. */
-.usage-page,
-.overview {
+/* Usage fills the workspace edge to edge, like Traffic: its sections
+   touch, separated by 1px rules drawn as grid gaps over the border color.
+   No outer margin, square corners throughout. */
+.usage-page {
   flex: 1;
   min-height: 0;
   overflow: auto;

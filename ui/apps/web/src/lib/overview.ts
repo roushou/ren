@@ -1,120 +1,13 @@
-// The overview page's pure logic: the health line, what needs attention,
-// and which recordings are active. No browser needed.
-import type { CallView, ExposureView, Health, Storage, UsageView } from './api.ts';
-import { bytes, num, providerName } from './api.ts';
-import { searchFieldLabel, secretKindLabel } from './activity.ts';
-import { buildLabel, callStatus, compactOrDash, statusBadge, type Chip } from './display.ts';
-import { usagePoints, type UsagePoint } from './usage.ts';
-import { RecorderReport, type Severity, type VerdictTone } from './recorder.ts';
-import { assertNever } from './decode.ts';
+// The Overview page's pure logic: each provider's health over the last day,
+// the day's failures folded by kind, and the day against the one before.
+// No browser needed; tested in tests/overview.test.ts.
+import type { CallId, CallView, ModelUsage, UsageView } from './api.ts';
+import { num, providerName } from './api.ts';
+import { callStatus, statusBadge } from './display.ts';
+import type { Stored } from './decode.ts';
+import type { Mark } from './marks.ts';
+import type { Severity } from './recorder.ts';
 
-/** A health chip and where to look when it is not fine. */
-export interface HealthItem extends Chip {
-  href?: string;
-}
-
-/**
- * One line that says whether everything is fine: the daemon is reachable,
- * recording works, calls are admitted, and storage has room. Each item is
- * green when fine and says what is wrong when not.
- */
-export function healthLine(
-  health: Health | null,
-  storage: Storage | null,
-  error: string | null,
-): HealthItem[] {
-  if (!health)
-    return [
-      {
-        label: "Can't reach Ren",
-        tone: 'error',
-        title: error ?? 'The daemon did not answer.',
-      },
-    ];
-  const items: HealthItem[] = [
-    { label: 'Daemon reachable', tone: 'success', title: buildLabel(health.build) },
-  ];
-  const recorder = health.recorder;
-  const lost =
-    recorder.omissions.unrecorded_calls +
-    recorder.omissions.queue_bytes_bytes +
-    recorder.omissions.queue_slots_bytes +
-    recorder.omissions.storage_failure_bytes;
-  items.push(
-    health.status !== 'ok' || recorder.storage_errors || recorder.retention_errors
-      ? {
-          label: 'Recording failing',
-          tone: 'error',
-          title: 'Storage or retention errors since the daemon started',
-          href: '/system/recorder',
-        }
-      : lost
-        ? {
-            label: 'Capture loss',
-            tone: 'warning',
-            title: 'Some calls or body bytes were not recorded since the daemon started',
-            href: '/system/recorder',
-          }
-        : {
-            label: 'Recording',
-            tone: 'success',
-            title: 'No capture loss since the daemon started',
-          },
-  );
-  const operator = health.operator;
-  const pause = operator.pause;
-  switch (pause.state) {
-    case 'running':
-      items.push({ label: 'Admitting calls', tone: 'success', title: 'Not paused' });
-      break;
-    case 'paused':
-      items.push({
-        label: `Paused · retry in ${pause.retry_after} s`,
-        tone: 'warning',
-        title: 'Every new call gets 503; `ren control resume` admits them again',
-      });
-      break;
-    case 'unknown':
-      items.push({
-        label: pause.text,
-        tone: 'neutral',
-        title: 'An admission state this UI does not know',
-      });
-      break;
-  }
-  if (operator.blocked_sessions)
-    items.push({
-      label: `${operator.blocked_sessions} recording${operator.blocked_sessions === 1 ? '' : 's'} blocked`,
-      tone: 'warning',
-      title: 'Calls from blocked recordings get 403; `ren control unblock` lifts a block',
-    });
-  if (storage) {
-    const used =
-      RecorderReport.live(storage.usage.disk.metadata) +
-      RecorderReport.live(storage.usage.disk.blobs);
-    const budget = storage.policy.max_storage_bytes;
-    const share = storage.policy.enabled && budget ? used / budget : null;
-    items.push(
-      share === null
-        ? {
-            label: `${bytes(used)} stored`,
-            tone: 'neutral',
-            title: 'Retention is off: no storage limit',
-            href: '/system/recorder',
-          }
-        : {
-            label: `${bytes(used)} of ${bytes(budget)}`,
-            tone: share >= 0.9 ? 'error' : share >= 0.7 ? 'warning' : 'success',
-            title:
-              'Live storage against the retention budget; the oldest calls are removed past it',
-            href: '/system/recorder',
-          },
-    );
-  }
-  return items;
-}
-
-/** `just now`, `45 s ago`, `12 min ago`, `3 h ago`, `4 days ago`. */
 export function ago(ms: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - ms) / 1000));
   if (seconds < 5) return 'just now';
@@ -126,426 +19,278 @@ export function ago(ms: number, now: number): string {
   return `${Math.round(hours / 24)} days ago`;
 }
 
-/**
- * One kind of trouble in the last day, with its repeats folded into a count
- * and their times kept as marks along the day.
- */
-export interface AttentionGroup {
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+
+/** One kind of failure in the last day, its repeats folded into a count. */
+export interface FailureGroup {
   key: string;
   severity: Severity;
-  title: string;
-  detail: string;
-  /** When the newest one happened; null for counts since the daemon started. */
-  at: number | null;
+  /** The provider and how the calls ended: `Anthropic 500`, `Codex interrupted`. */
+  name: string;
+  /** How many, `100+` when the listing was full. */
+  count: string;
+  /** The models they were for, and `bookkeeping` for calls that are not agents' work. */
+  models: string;
+  /** When the newest one happened. */
+  at: number;
   /** Where each one happened along the day, 0 (a day ago) to 1 (now). */
   marks: number[];
   href: string;
 }
 
-/** What the overview reads, as the loader returns it. */
-export interface OverviewInput {
+/** What the failures are folded from, as the loader read them. */
+export interface FailureInput {
   now: number;
-  health: Health | null;
   /** Model calls that failed in the last day: an error status, transport, or outcome. */
   failed: CallView[];
   /** Model calls cut off in the last day: cancelled, interrupted, recovered. */
   stopped: CallView[];
   /** Bookkeeping calls that failed: quota probes, token counts, listings. */
   bookkeeping: CallView[];
-  /** Credentials found in the last day; null from a daemon without them. */
-  exposures: ExposureView[] | null;
 }
 
 /**
- * What needs attention, worst first: exposed secrets, recording trouble,
- * failed and cut-off work, then bookkeeping that failed, which is not the
- * agents' work and never outranks it. Repeats fold into one line each.
+ * The day's failures, worst first: failed work, then cut-off work, then
+ * failed bookkeeping, which is not the agents' work and never outranks it;
+ * newest first within each.
  */
-export class Attention {
-  static readonly dayMs = 24 * 3_600_000;
+export class Failures {
   /** Listings are read one page deep; a full page means there may be more. */
   static readonly page = 100;
 
-  readonly groups: AttentionGroup[];
-
-  constructor(input: OverviewInput) {
-    const groups = [
-      ...Attention.secrets(input),
-      ...Attention.recording(input.health),
-      ...Attention.calls(input, input.failed, 'error', 'failed'),
-      ...Attention.calls(input, input.stopped, 'warning', 'stopped'),
-      ...Attention.calls(input, input.bookkeeping, 'neutral', 'bookkeeping'),
-    ];
+  static of(input: FailureInput): FailureGroup[] {
     const rank: Record<Severity, number> = { error: 0, warning: 1, neutral: 2 };
-    this.groups = groups.sort(
-      (a, b) => rank[a.severity] - rank[b.severity] || (b.at ?? Infinity) - (a.at ?? Infinity),
-    );
-  }
-
-  /** The worst severity present, or null when nothing needs a look. */
-  get worst(): Severity | null {
-    return this.groups[0]?.severity ?? null;
-  }
-
-  static count(items: unknown[]): string {
-    return `${items.length}${items.length >= Attention.page ? '+' : ''}`;
-  }
-
-  static secrets(input: OverviewInput): AttentionGroup[] {
-    const found = input.exposures ?? [];
-    const newest = found[0];
-    if (!newest) return [];
-    const recordings = new Set(found.map((exposure) => exposure.recording ?? exposure.call));
-    const kinds = [...new Set(found.map((exposure) => secretKindLabel(exposure.kind)))];
-    const fields = [...new Set(found.map((exposure) => searchFieldLabel(exposure.field)))];
-    const only = recordings.size === 1 && newest.recording;
     return [
-      {
-        key: 'secrets',
-        severity: 'error',
-        title: `${Attention.count(found)} secret${found.length === 1 ? '' : 's'} exposed`,
-        detail: `${kinds.join(', ')} in ${fields.join(', ').toLowerCase()} · ${recordings.size} recording${recordings.size === 1 ? '' : 's'} · rotate ${found.length === 1 ? 'it' : 'them'}`,
-        at: newest.started_at,
-        marks: found.map((exposure) => Attention.along(exposure.started_at, input.now)),
-        href: only
-          ? `/monitor/recordings/${encodeURIComponent(only)}/report`
-          : `/monitor/traffic?call=${encodeURIComponent(newest.call)}`,
-      },
-    ];
+      ...Failures.#fold(input, input.failed, 'error', 'failed'),
+      ...Failures.#fold(input, input.stopped, 'warning', 'stopped'),
+      ...Failures.#fold(input, input.bookkeeping, 'neutral', 'bookkeeping'),
+    ].sort((a, b) => rank[a.severity] - rank[b.severity] || b.at - a.at);
   }
 
-  /**
-   * Recording trouble since the daemon started. Bytes left out because a
-   * body passed the capture policy's limit are left out by design, so they
-   * are noted, never raised.
-   */
-  static recording(health: Health | null): AttentionGroup[] {
-    if (!health) return [];
-    const recorder = health.recorder;
-    const groups: AttentionGroup[] = [];
-    const base = { at: null, marks: [], href: '/system/recorder' };
-    const capture = RecorderReport.capture(recorder);
-    switch (capture.kind) {
-      case 'failing':
-        groups.push({
-          ...base,
-          key: 'recording',
-          severity: 'error',
-          title: 'Recording failing',
-          detail: `${num(capture.storageErrors)} storage and ${num(capture.retentionErrors)} retention errors since the daemon started`,
-        });
-        break;
-      case 'lost':
-        groups.push({
-          ...base,
-          key: 'capture-loss',
-          severity: 'warning',
-          title: RecorderReport.lossText(capture),
-          detail:
-            'The capture queue was full or storage failed, since the daemon started; forwarding was unaffected',
-        });
-        break;
-      case 'healthy':
-        break;
-      default:
-        assertNever(capture);
-    }
-    if (recorder.omissions.policy_limit_bytes)
-      groups.push({
-        ...base,
-        key: 'capture-policy',
-        severity: 'neutral',
-        title: `${bytes(recorder.omissions.policy_limit_bytes)} over the capture limit`,
-        detail: 'Body bytes past the capture policy, left out by design, since the daemon started',
-      });
-    return groups;
+  static count(items: readonly unknown[]): string {
+    return `${items.length}${items.length >= Failures.page ? '+' : ''}`;
   }
 
-  /** Calls folded by provider and how they ended, newest group first. */
-  static calls(
-    input: OverviewInput,
-    calls: CallView[],
+  static #fold(
+    input: FailureInput,
+    calls: readonly CallView[],
     severity: Severity,
     kind: 'failed' | 'stopped' | 'bookkeeping',
-  ): AttentionGroup[] {
+  ): FailureGroup[] {
     const groups = new Map<string, CallView[]>();
     for (const call of calls) {
-      const label = Attention.ending(call);
-      const key = `${kind}:${call.provider}:${label}`;
+      const key = `${kind}:${call.provider}:${Failures.ending(call)}`;
       groups.set(key, [...(groups.get(key) ?? []), call]);
     }
     const status = kind === 'stopped' ? 'interrupted' : 'errors';
     const filter = kind === 'bookkeeping' ? '&kind=other' : '';
-    return [...groups].map(([key, group]): AttentionGroup => {
+    return [...groups].map(([key, group]): FailureGroup => {
       const first = group[0];
       const models = [...new Set(group.flatMap((call) => (call.model ? [call.model] : [])))];
-      const what =
-        kind === 'bookkeeping'
-          ? "bookkeeping (quota probes, token counts), not your agents' work"
-          : kind === 'stopped'
-            ? 'model calls cut off before they finished'
-            : 'model calls that failed';
       return {
         key,
         severity,
-        title: `${first ? providerName(first.provider) : ''} ${first ? Attention.ending(first) : ''} ×${Attention.count(group)}`,
-        detail: models.length ? `${what} · ${models.join(', ')}` : what,
+        name: `${providerName(first.provider)} ${Failures.ending(first)}`,
+        count: Failures.count(group),
+        models: [...(kind === 'bookkeeping' ? ['bookkeeping'] : []), ...models].join(' · '),
         at: Math.max(...group.map((call) => call.started_at)),
-        marks: group.map((call) => Attention.along(call.started_at, input.now)),
-        href: `/monitor/traffic?status=${status}${filter}&since=24h`,
+        marks: group.map((call) => Failures.along(call.started_at, input.now)),
+        href: `/monitor/traffic?status=${status}${filter}&provider=${encodeURIComponent(first.provider)}&since=24h`,
       };
     });
   }
 
-  /** How a call ended, as its row badge says it: `Error 429`, `Interrupted`. */
+  /** How a call ended, short: its HTTP status when it has one, else `interrupted`. */
   static ending(call: CallView): string {
-    const badge = statusBadge(callStatus(call));
     return call.status !== null && call.status >= 400
-      ? `${badge.label} ${call.status}`
-      : badge.label;
+      ? String(call.status)
+      : statusBadge(callStatus(call)).label.toLowerCase();
   }
 
   /** A time as a fraction of the last day, clamped to it. */
   static along(at: number, now: number): number {
-    return Math.min(1, Math.max(0, 1 - (now - at) / Attention.dayMs));
+    return Math.min(1, Math.max(0, 1 - (now - at) / DAY));
   }
 }
 
-/** Which of the day's numbers a tile shows: input gets a cached and fresh bar. */
-export type DayTileKind = 'calls' | 'failed' | 'input' | 'output';
+/** How a provider stands: failing now, failing at times, or fine. */
+export type ProviderState = 'failing' | 'failures' | 'healthy';
 
-/** A number tile: its value, a line under it, and the hours behind it. */
-export interface DayTile {
-  kind: DayTileKind;
-  label: string;
-  value: string;
-  detail: string;
-  /** The hourly series for its sparkline, oldest first; empty for none. */
-  spark: number[];
-  tone: 'error' | null;
+export interface ProviderRow {
+  provider: Stored<string>;
+  name: string;
+  /** Its models, the busiest first. */
+  models: string[];
+  calls: number;
+  failed: number;
+  /** Failed against calls, 0–1; null without calls. */
+  rate: number | null;
+  /** Failed model calls per hour, oldest first, the last ending now. */
+  hours: number[];
+  /** The newest failure: how it ended and when. */
+  last: { ending: string; at: number } | null;
+  state: ProviderState;
+  /** Its newest finished call, whose response says how much allowance is left. */
+  newest: CallId | null;
+  href: string;
 }
 
-/**
- * The last day in numbers and hours: calls, failed work, tokens in with
- * their cached share, tokens out. A day before it, when read, gives the
- * change in calls.
- */
-export class Day {
-  /** The tiles in order: the same before the day is read, for its outline. */
-  static readonly kinds: readonly DayTileKind[] = ['calls', 'failed', 'input', 'output'];
+export interface ProviderInput {
+  now: number;
+  models: readonly ModelUsage[];
+  failed: readonly CallView[];
+  /** Recent calls of any outcome, for each provider's newest. */
+  recent: readonly CallView[];
+}
 
-  /** What a tile is called. */
-  static label(kind: DayTileKind): string {
-    switch (kind) {
-      case 'calls':
-        return 'Calls';
-      case 'failed':
-        return 'Failed work calls';
-      case 'input':
-        return 'Tokens in';
-      case 'output':
-        return 'Tokens out';
+/** Each provider's last day: its calls and failures, and how it stands now. */
+export class Providers {
+  /** Failures in the last hour that make a provider failing, not just failing at times. */
+  static readonly FAILING = 10;
+
+  static rows(input: ProviderInput): ProviderRow[] {
+    const byProvider = new Map<string, ModelUsage[]>();
+    for (const model of input.models)
+      byProvider.set(model.provider, [...(byProvider.get(model.provider) ?? []), model]);
+    for (const call of input.failed)
+      if (!byProvider.has(call.provider)) byProvider.set(call.provider, []);
+    const rows = [...byProvider].map(([provider, models]): ProviderRow => {
+      const failures = input.failed.filter((call) => call.provider === provider);
+      const calls = models.reduce((sum, model) => sum + model.calls, 0);
+      const failed = models.reduce((sum, model) => sum + model.errors, 0);
+      const hours = Array.from({ length: 24 }, () => 0);
+      for (const call of failures) {
+        const back = Math.floor((input.now - call.started_at) / HOUR);
+        if (back >= 0 && back < 24) hours[23 - back] += 1;
+      }
+      const newestFailure = failures.reduce<CallView | null>(
+        (best, call) => (!best || call.started_at > best.started_at ? call : best),
+        null,
+      );
+      const newest = input.recent
+        .filter((call) => call.provider === provider && call.state !== 'open')
+        .reduce<CallView | null>(
+          (best, call) => (!best || call.started_at > best.started_at ? call : best),
+          newestFailure,
+        );
+      return {
+        provider,
+        name: providerName(provider),
+        models: models
+          .toSorted((a, b) => b.calls - a.calls)
+          .flatMap((model) => (model.model ? [model.model] : [])),
+        calls,
+        failed,
+        rate: calls ? failed / calls : null,
+        hours,
+        last: newestFailure
+          ? { ending: Failures.ending(newestFailure), at: newestFailure.started_at }
+          : null,
+        state: Providers.state(hours),
+        newest: newest?.id ?? null,
+        href: `/monitor/traffic?provider=${encodeURIComponent(provider)}&since=24h`,
+      };
+    });
+    const rank: Record<ProviderState, number> = { failing: 0, failures: 1, healthy: 2 };
+    return rows.sort((a, b) => rank[a.state] - rank[b.state] || b.calls - a.calls);
+  }
+
+  /** Failing with many failures in the last hour; failing at times with any. */
+  static state(hours: readonly number[]): ProviderState {
+    const lastHour = hours.at(-1) ?? 0;
+    return lastHour >= Providers.FAILING ? 'failing' : lastHour > 0 ? 'failures' : 'healthy';
+  }
+
+  static mark(state: ProviderState): Mark {
+    switch (state) {
+      case 'failing':
+        return 'failed';
+      case 'failures':
+        return 'warning';
+      case 'healthy':
+        return 'passed';
       default: {
-        const never: never = kind;
+        const never: never = state;
         return never;
       }
     }
   }
+}
 
-  readonly points: UsagePoint[];
-  readonly tiles: DayTile[];
-  /** Input tokens read from cache and sent fresh; null when not reported. */
-  readonly input: { cached: number; fresh: number } | null;
+/** One of the day's figures against the day before. */
+export interface Change {
+  label: string;
+  value: string;
+  /** `+18%`, `+2.4 pt`; null when the day before was not read or had nothing. */
+  delta: string | null;
+  /** The change is for the worse. */
+  worse: boolean;
+}
 
-  constructor(
-    usage: UsageView,
-    previous: UsageView | null,
-    now: number,
-    counts: { bookkeeping: number; stopped: number },
-  ) {
-    this.points = usagePoints(usage.hours, '24h', now);
-    const totals = usage.totals;
-    const input = totals.tokens.input;
-    this.input =
-      input === null
-        ? null
-        : {
-            cached: Math.min(input, totals.tokens.cache_read ?? 0),
-            fresh: Math.max(0, input - (totals.tokens.cache_read ?? 0)),
-          };
-    const before = previous?.totals.calls ?? null;
-    const peak = this.points.reduce<UsagePoint | null>(
-      (best, point) => ((point.tokens.output ?? 0) > (best?.tokens.output ?? 0) ? point : best),
-      null,
-    );
-    this.tiles = [
+/** The last day against the day before: calls, failure rate, input, cache. */
+export class DayChange {
+  static rows(day: UsageView, before: UsageView | null): Change[] {
+    const share = (part: number | null, whole: number | null) =>
+      whole ? (part ?? 0) / whole : null;
+    const was = before?.totals ?? null;
+    const now = day.totals;
+    const rateNow = share(now.errors, now.calls);
+    const rateWas = was ? share(was.errors, was.calls) : null;
+    const cacheNow = share(now.tokens.cache_read, now.tokens.input);
+    const cacheWas = was ? share(was.tokens.cache_read, was.tokens.input) : null;
+    return [
       {
-        kind: 'calls',
-        label: Day.label('calls'),
-        value: num(totals.calls),
-        detail: Day.change(totals.calls, before),
-        spark: this.points.map((point) => point.calls),
-        tone: null,
+        label: 'Calls',
+        value: num(now.calls),
+        delta: DayChange.percent(now.calls, was?.calls ?? null),
+        worse: false,
       },
       {
-        kind: 'failed',
-        label: Day.label('failed'),
-        value: num(totals.errors),
-        detail: [
-          `${num(counts.bookkeeping)} failed bookkeeping`,
-          `${num(counts.stopped)} cut off`,
-        ].join(' · '),
-        spark: this.points.map((point) => point.errors),
-        tone: totals.errors ? 'error' : null,
+        label: 'Failure rate',
+        value: DayChange.share(rateNow),
+        delta: DayChange.points(rateNow, rateWas),
+        worse: rateNow !== null && rateWas !== null && rateNow > rateWas,
       },
       {
-        kind: 'input',
-        label: Day.label('input'),
-        value: compactOrDash(input),
-        detail: this.input
-          ? `${compactOrDash(this.input.cached)} cached · ${compactOrDash(this.input.fresh)} fresh`
-          : 'not reported',
-        spark: [],
-        tone: null,
+        label: 'Tokens in',
+        value: DayChange.compact(now.tokens.input),
+        delta: DayChange.percent(now.tokens.input, was?.tokens.input ?? null),
+        worse: false,
       },
       {
-        kind: 'output',
-        label: Day.label('output'),
-        value: compactOrDash(totals.tokens.output),
-        detail: peak?.tokens.output
-          ? `peak ${compactOrDash(peak.tokens.output)} at ${Day.clock(peak.start)}`
-          : 'none reported',
-        spark: this.points.map((point) => point.tokens.output ?? 0),
-        tone: null,
+        label: 'Read from cache',
+        value: DayChange.share(cacheNow),
+        delta: DayChange.points(cacheNow, cacheWas),
+        worse: cacheNow !== null && cacheWas !== null && cacheNow < cacheWas,
       },
     ];
   }
 
-  /** Below this many calls, the day before is shown as its count, not a percentage. */
-  static readonly smallDay = 50;
+  static share(value: number | null): string {
+    if (value === null) return '—';
+    const percent = value * 100;
+    return `${percent < 10 && percent > 0 ? percent.toFixed(1) : Math.round(percent)}%`;
+  }
 
-  /** `+38% vs the day before`, or why there is no comparison. */
-  static change(value: number, before: number | null): string {
-    if (before === null) return 'no earlier day read';
-    if (before === 0) return value ? 'none the day before' : 'none the day before either';
-    // A percentage over a handful of calls says more about the handful than the change.
-    if (before < Day.smallDay) return `${num(before)} the day before`;
+  static compact(value: number | null): string {
+    if (value === null) return '—';
+    if (value < 1000) return String(value);
+    if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}k`;
+    return `${(value / 1_000_000).toFixed(1)}M`;
+  }
+
+  /** The change as a percentage of the day before; null without one to compare. */
+  static percent(value: number | null, before: number | null): string | null {
+    if (value === null || !before) return null;
     const change = Math.round(((value - before) / before) * 100);
-    return `${change > 0 ? '+' : ''}${change}% vs the day before`;
+    return `${change > 0 ? '+' : change < 0 ? '−' : '±'}${Math.abs(change)}%`;
   }
 
-  static clock(ms: number): string {
-    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-
-  /** A sparkline's points in a 100 × `height` box, flat when nothing happened. */
-  static spark(values: number[], height: number): string {
-    const max = Math.max(0, ...values);
-    const step = 100 / Math.max(1, values.length - 1);
-    return values
-      .map((value, index) => {
-        const y = max ? height - 1 - (value / max) * (height - 2) : height - 1;
-        return `${(index * step).toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(' ');
-  }
-
-  /** The chart's time span: the first hour's start to the end of the current one. */
-  get span(): { from: number; until: number } {
-    const from = this.points[0]?.start ?? 0;
-    return { from, until: (this.points.at(-1)?.start ?? from) + 3_600_000 };
-  }
-
-  /** A time as x in a 1000-wide box over the chart's span, clamped to it. */
-  x(at: number): number {
-    const { from, until } = this.span;
-    return Math.min(1000, Math.max(0, ((at - from) / Math.max(1, until - from)) * 1000));
-  }
-
-  /** Labels along the axis: every sixth hour's clock time, oldest first. */
-  axis(): { at: number; label: string }[] {
-    return this.points
-      .filter((_, index) => index % 6 === 0)
-      .map((point) => ({ at: point.start, label: Day.clock(point.start) }));
-  }
-
-  /**
-   * The day's hours as stacked bars in a 1000 × `height` box: input read
-   * from cache at the bottom, fresh input above it.
-   */
-  bars(
-    height: number,
-  ): { start: number; x: number; width: number; cached: number; fresh: number }[] {
-    const max = Math.max(1, ...this.points.map((point) => point.tokens.input ?? 0));
-    return this.points.map((point) => {
-      const input = point.tokens.input ?? 0;
-      const cached = Math.min(input, point.tokens.cache_read ?? 0);
-      const x = this.x(point.start);
-      return {
-        start: point.start,
-        x: x + 1,
-        width: Math.max(1, this.x(point.start + 3_600_000) - x - 2),
-        cached: (cached / max) * height,
-        fresh: ((input - cached) / max) * height,
-      };
-    });
-  }
-}
-
-/** What the verdict line reads: health, what needs attention, and the recordings at work. */
-export interface VerdictInput {
-  health: Health | null;
-  items: HealthItem[];
-  attention: Attention | null;
-  /** Recordings active in the last 15 minutes. */
-  active: number;
-  /** Model calls in flight. */
-  inFlight: number;
-  /** When the newest recording was last seen; 0 for never. */
-  lastCall: number;
-  now: number;
-}
-
-/**
- * How it stands, in one line: a headline, the facts behind it, the problems
- * worth naming, and a tone from the worst thing among them. Bookkeeping and
- * by-design notes never colour it.
- */
-export class Verdict {
-  readonly tone: VerdictTone;
-  readonly headline: string;
-  readonly facts: string[];
-  readonly problems: AttentionGroup[];
-
-  constructor(input: VerdictInput) {
-    const groups = input.attention?.groups ?? [];
-    const tones = [
-      ...input.items.map((item) => item.tone),
-      ...groups.map((group) => group.severity),
-    ];
-    this.tone = tones.includes('error')
-      ? 'error'
-      : tones.includes('warning')
-        ? 'warning'
-        : 'success';
-    this.headline = Verdict.headline(input.health);
-    this.facts = [
-      input.active
-        ? `${input.active} recording${input.active === 1 ? '' : 's'} active`
-        : 'no recording active',
-      input.inFlight
-        ? `${input.inFlight} in flight`
-        : `nothing in flight${input.lastCall ? `, last call ${ago(input.lastCall, input.now)}` : ''}`,
-    ];
-    this.problems = groups.filter((group) => group.severity !== 'neutral');
-  }
-
-  static headline(health: Health | null): string {
-    if (!health) return "Can't reach Ren";
-    if (health.status !== 'ok' || RecorderReport.capture(health.recorder).kind === 'failing')
-      return 'Recording failing';
-    return health.operator.pause.state === 'paused'
-      ? 'Paused: new calls get 503'
-      : 'Recording normally';
+  /** The change between two shares in percentage points. */
+  static points(value: number | null, before: number | null): string | null {
+    if (value === null || before === null) return null;
+    const change = Math.round((value - before) * 1000) / 10;
+    return `${change > 0 ? '+' : change < 0 ? '−' : '±'}${Math.abs(change)} pt`;
   }
 }
