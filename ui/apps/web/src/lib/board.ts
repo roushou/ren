@@ -18,9 +18,10 @@ import type {
   TurnId,
 } from './api.ts';
 import { harnesses, providerName, RecordingId } from './api.ts';
-import { findingLine, harnessLabel, resultBadge, turnHref } from './activity.ts';
+import { callHref, findingLine, harnessLabel, resultBadge, turnHref } from './activity.ts';
 import { assertNever, unrecognised, type Stored } from './decode.ts';
-import { callStatus, recordingTone, statusBadge, type Tone } from './display.ts';
+import { callStatus, compactOrDash, recordingTone, statusBadge, type Tone } from './display.ts';
+import type { CallProgress } from './streaming.ts';
 
 /**
  * What a recording is doing, as far as its recorded calls show. Only the
@@ -114,46 +115,6 @@ export interface LaneMark {
   tone: Tone;
 }
 
-export interface Tile {
-  recording: RecordingView;
-  harness: Stored<Harness> | null;
-  tone: number;
-  phase: RecordingPhase;
-  /** Model calls open at once in this recording (subagents run in parallel). */
-  open: number;
-  /** The newest model call, for its model and usage. */
-  latest: CallView | null;
-  /** The newest turn's ID, from the newest call that carried one. */
-  turnId: TurnId | null;
-  /** That turn's activity, when it was read. */
-  turn: TurnActivity | null;
-  prompt: Excerpt | null;
-  /** The turn's read calls, oldest first, for the expanded card. */
-  calls: TurnCall[];
-  /** The card's lines: the newest `maxLines`, like tool calls merged. */
-  lines: CardLine[];
-  /** Calls in the turn whose text is not derived yet (still open, or just finished). */
-  unread: UnreadCall[];
-  /** The directory the turn's commands change into, when they agree on one. */
-  workdir: string | null;
-  tally: TurnTally | null;
-  /** Context the newest call carried, in tokens: provider-reported. */
-  context: number | null;
-  /** The share of that context read from cache, 0–1. */
-  cached: number | null;
-  lane: LaneMark[];
-  /** The newest model name a call reported. */
-  model: string | null;
-  /** Output tokens of the call that reported `context`. */
-  output: number | null;
-  /** Calls in the newest turn so far. */
-  turnCalls: number;
-  /** Nothing open and nothing on the lane: drawn dimmed until it leaves the board. */
-  quiet: boolean;
-  /** Kept on the wall by the viewer. */
-  pinned: boolean;
-}
-
 export interface Alert {
   key: string;
   recording: RecordingId;
@@ -233,10 +194,10 @@ export class Board {
     const pins = new Set(input.pins);
     const shown = Board.shown(active, byRecording, this.focus, pins);
     this.overflow = active.length - shown.length;
-    this.tiles = shown.map((recording) => ({
-      ...Board.tile(recording, byRecording.get(recording.id) ?? [], input.turns, input.now),
-      pinned: pins.has(recording.id),
-    }));
+    this.tiles = shown.map(
+      (recording) =>
+        new Tile(recording, byRecording.get(recording.id) ?? [], input.turns, input.now, pins),
+    );
     this.alerts = this.tiles
       .flatMap((tile) => Board.alerts(tile, byRecording.get(tile.recording.id) ?? [], input.now))
       .sort((a, b) => b.at - a.at);
@@ -246,6 +207,11 @@ export class Board {
   /** Tiles the wall has room for: eight, or the expanded one and four beside it. */
   get capacity(): number {
     return this.focus ? 1 + Board.besideFocus : Board.maxTiles;
+  }
+
+  /** Slots of the wall left empty: its capacity less its tiles. */
+  get emptySlots(): number {
+    return Math.max(0, this.capacity - this.tiles.length);
   }
 
   /** The worst thing to look at in a recording, for its tile's top rule. */
@@ -629,70 +595,6 @@ export class Board {
       });
   }
 
-  static tile(
-    recording: RecordingView,
-    calls: CallView[],
-    turns: Map<TurnId, TurnActivity>,
-    now: number,
-  ): Tile {
-    const latest = calls.at(-1) ?? null;
-    const lane = Board.lane(calls, now);
-    const turnId = calls.findLast((call) => call.turn !== null)?.turn ?? null;
-    const turn = turnId ? (turns.get(turnId) ?? null) : null;
-    // Context and cache come from the newest call that reported usage.
-    const usage = calls.findLast((call) => call.usage !== null)?.usage ?? null;
-    const read = usage?.cache_read_tokens ?? 0;
-    const written = usage?.cache_creation_tokens ?? 0;
-    const context =
-      usage && usage.input_tokens !== null
-        ? usage.accounting === 'excludes_cache'
-          ? usage.input_tokens + read + written
-          : usage.input_tokens
-        : null;
-    const turnCalls = turnId ? calls.filter((call) => call.turn === turnId) : [];
-    const order = new Map(turnCalls.map((call, index) => [call.id as string, index + 1]));
-    const workdir = turn ? Board.workdir(turn) : null;
-    const readCalls = turn ? Board.turnCalls(turn, order, workdir) : [];
-    const derived = new Set(readCalls.map((call) => call.key));
-    return {
-      recording,
-      harness: Board.harness(recording.source),
-      tone: recordingTone(recording.id),
-      phase: Board.phase(calls, now),
-      open: calls.filter((call) => call.state === 'open').length,
-      latest,
-      turnId,
-      turn,
-      prompt: turn?.prompt ?? null,
-      calls: readCalls,
-      lines: Board.lines(readCalls),
-      unread: turnId
-        ? turnCalls.flatMap((call, index) =>
-            derived.has(call.id) ? [] : [{ call, index: index + 1 }],
-          )
-        : latest
-          ? [{ call: latest, index: calls.length }]
-          : [],
-      workdir,
-      tally: turn
-        ? {
-            read: turn.files_read.length,
-            wrote: turn.files_written.length,
-            ran: turn.commands.length,
-            failed: turn.failed_tool_calls,
-          }
-        : null,
-      context,
-      cached: context ? Math.min(1, read / context) : null,
-      lane,
-      model: calls.findLast((call) => call.model !== null)?.model ?? null,
-      output: usage?.output_tokens ?? null,
-      turnCalls: turnCalls.length,
-      quiet: !lane.length,
-      pinned: false,
-    };
-  }
-
   /** What in this recording needs a look: slow heads, bad endings, findings. */
   static alerts(tile: Tile, calls: CallView[], now: number): Alert[] {
     const recording = tile.recording.id;
@@ -789,6 +691,212 @@ export class Board {
   }
 }
 
+/**
+ * Where a call not read yet stands, for its status line in a card: waiting
+ * for its response head, thinking, responding, or finished and being read.
+ */
+export type UnreadPhase = 'waiting' | 'thinking' | 'responding' | 'finished';
+
+/** A card's status line for a call not read yet. */
+export interface UnreadLine {
+  phase: UnreadPhase;
+  text: string;
+}
+
+/** One card on the wall: a recording, what it is doing, and its newest turn. */
+export class Tile {
+  readonly recording: RecordingView;
+  readonly harness: Stored<Harness> | null;
+  readonly tone: number;
+  readonly phase: RecordingPhase;
+  /** Model calls open at once in this recording (subagents run in parallel). */
+  readonly open: number;
+  /** The newest model call, for its model and usage. */
+  readonly latest: CallView | null;
+  /** The newest turn's ID, from the newest call that carried one. */
+  readonly turnId: TurnId | null;
+  /** That turn's activity, when it was read. */
+  readonly turn: TurnActivity | null;
+  readonly prompt: Excerpt | null;
+  /** The turn's read calls, oldest first, for the expanded card. */
+  readonly calls: TurnCall[];
+  /** The card's lines: the newest `Board.maxLines`, like tool calls merged. */
+  readonly lines: CardLine[];
+  /** Calls in the turn whose text is not derived yet (still open, or just finished). */
+  readonly unread: UnreadCall[];
+  /** The directory the turn's commands change into, when they agree on one. */
+  readonly workdir: string | null;
+  readonly tally: TurnTally | null;
+  /** Context the newest call carried, in tokens: provider-reported. */
+  readonly context: number | null;
+  /** The share of that context read from cache, 0–1. */
+  readonly cached: number | null;
+  readonly lane: LaneMark[];
+  /** The newest model name a call reported. */
+  readonly model: string | null;
+  /** Output tokens of the call that reported `context`. */
+  readonly output: number | null;
+  /** Calls in the newest turn so far. */
+  readonly turnCalls: number;
+  /** Nothing open and nothing on the lane: drawn dimmed until it leaves the board. */
+  readonly quiet: boolean;
+  /** Kept on the wall by the viewer. */
+  readonly pinned: boolean;
+
+  /** A recording's tile from its calls, oldest first, and the turns read. */
+  constructor(
+    recording: RecordingView,
+    calls: CallView[],
+    turns: Map<TurnId, TurnActivity>,
+    now: number,
+    pins: ReadonlySet<RecordingId> = new Set(),
+  ) {
+    const latest = calls.at(-1) ?? null;
+    const lane = Board.lane(calls, now);
+    const turnId = calls.findLast((call) => call.turn !== null)?.turn ?? null;
+    const turn = turnId ? (turns.get(turnId) ?? null) : null;
+    // Context and cache come from the newest call that reported usage.
+    const usage = calls.findLast((call) => call.usage !== null)?.usage ?? null;
+    const read = usage?.cache_read_tokens ?? 0;
+    const written = usage?.cache_creation_tokens ?? 0;
+    const context =
+      usage && usage.input_tokens !== null
+        ? usage.accounting === 'excludes_cache'
+          ? usage.input_tokens + read + written
+          : usage.input_tokens
+        : null;
+    const turnCalls = turnId ? calls.filter((call) => call.turn === turnId) : [];
+    const order = new Map(turnCalls.map((call, index) => [call.id as string, index + 1]));
+    const workdir = turn ? Board.workdir(turn) : null;
+    const readCalls = turn ? Board.turnCalls(turn, order, workdir) : [];
+    const derived = new Set(readCalls.map((call) => call.key));
+    this.recording = recording;
+    this.harness = Board.harness(recording.source);
+    this.tone = recordingTone(recording.id);
+    this.phase = Board.phase(calls, now);
+    this.open = calls.filter((call) => call.state === 'open').length;
+    this.latest = latest;
+    this.turnId = turnId;
+    this.turn = turn;
+    this.prompt = turn?.prompt ?? null;
+    this.calls = readCalls;
+    this.lines = Board.lines(readCalls);
+    this.unread = turnId
+      ? turnCalls.flatMap((call, index) =>
+          derived.has(call.id) ? [] : [{ call, index: index + 1 }],
+        )
+      : latest
+        ? [{ call: latest, index: calls.length }]
+        : [];
+    this.workdir = workdir;
+    this.tally = turn
+      ? {
+          read: turn.files_read.length,
+          wrote: turn.files_written.length,
+          ran: turn.commands.length,
+          failed: turn.failed_tool_calls,
+        }
+      : null;
+    this.context = context;
+    this.cached = context ? Math.min(1, read / context) : null;
+    this.lane = lane;
+    this.model = calls.findLast((call) => call.model !== null)?.model ?? null;
+    this.output = usage?.output_tokens ?? null;
+    this.turnCalls = turnCalls.length;
+    this.quiet = !lane.length;
+    this.pinned = pins.has(recording.id);
+  }
+
+  /** The recording's own page. */
+  get href(): string {
+    return `/monitor/sessions/${encodeURIComponent(this.recording.id)}`;
+  }
+
+  /** The call the card is about, in its recording: the open or last one its state names, else the newest. */
+  get callHref(): string | null {
+    const call = this.phase.kind === 'idle' ? this.latest : this.phase.call;
+    return call ? callHref(this.recording.id, call.id) : null;
+  }
+
+  /** The class that gives the card its client's colour. */
+  get harnessClass(): string {
+    return `harness-${this.harness ?? 'unknown'}`;
+  }
+
+  /** What the card is called: its client, and the folder it works in when known. */
+  get title(): string {
+    const client = Board.clientName(this.harness);
+    return this.workdir ? `${client} · ${Board.folder(this.workdir)}` : client;
+  }
+
+  /** The newest thing the recording did, for a row. */
+  get lastLine(): string {
+    const line = this.lines.at(-1);
+    if (line?.kind === 'tools')
+      return `${line.tool.name}${line.tool.target ? ` ${line.tool.target}` : ''}`;
+    if (line?.kind === 'reply') return line.text;
+    return this.prompt?.text ?? '';
+  }
+
+  /**
+   * The status line of a call not read yet, given what streamed of it so
+   * far; none once its reply streams, since that text then holds the call's
+   * place and the read reply replaces it there. Without a turn, a finished
+   * call has no line.
+   */
+  unreadLine(
+    unread: UnreadCall,
+    streamed: CallProgress | undefined,
+    now: number,
+  ): UnreadLine | null {
+    const { call } = unread;
+    if (streamed?.reply || (!this.turnId && call.state !== 'open')) return null;
+    const phase: UnreadPhase =
+      call.state !== 'open'
+        ? 'finished'
+        : call.status === null
+          ? 'waiting'
+          : streamed?.thinking
+            ? 'thinking'
+            : 'responding';
+    return {
+      phase,
+      text: `call ${unread.index} · ${Tile.unreadState(phase, now - call.started_at)}`,
+    };
+  }
+
+  /** An unread call's phase in words, with how long it has been open. */
+  static unreadState(phase: UnreadPhase, openMs: number): string {
+    switch (phase) {
+      case 'finished':
+        return 'finished · reading';
+      case 'waiting':
+        return `waiting for response · ${Elapsed.span(openMs)}`;
+      case 'thinking':
+        return `thinking · ${Elapsed.span(openMs)}`;
+      case 'responding':
+        return `responding · ${Elapsed.span(openMs)}`;
+      default:
+        return assertNever(phase);
+    }
+  }
+
+  /** A call's boundary in the expanded card: its number, how long it took, its output. */
+  static callLabel(call: TurnCall): string {
+    const parts = [`call ${call.index ?? '—'}`];
+    if (call.durationMs !== null) parts.push(Elapsed.span(call.durationMs));
+    if (call.output !== null) parts.push(`out ${compactOrDash(call.output)}`);
+    return parts.join(' · ');
+  }
+
+  /** What an excerpt left out, as a closing line; nothing when it is whole. */
+  static omitted(excerpt: Excerpt): string {
+    return excerpt.omitted_chars
+      ? `\n… ${excerpt.omitted_chars.toLocaleString('en')} more characters`
+      : '';
+  }
+}
+
 /** One line in the Now strip. */
 export interface FeedItem {
   /** Stable while the item lasts, so an update never animates it in again. */
@@ -818,6 +926,8 @@ export class Feed {
   /** Rate limits are counted per provider over this long. */
   static readonly limitMs = 60_000;
   static readonly maxItems = 24;
+  /** An item this new stands out as it slides in. */
+  static readonly freshMs = 3_000;
 
   readonly items: FeedItem[];
 
@@ -958,6 +1068,11 @@ export class Feed {
       .slice(0, Feed.maxItems);
   }
 
+  /** Whether an item just happened: an ongoing one never is. */
+  static fresh(item: FeedItem, now: number): boolean {
+    return !item.pinned && now - item.at < Feed.freshMs;
+  }
+
   /** Text cut to `length` characters on one line. */
   static clip(text: string, length: number): string {
     const line = text.replace(/\s+/g, ' ').trim();
@@ -1065,6 +1180,16 @@ export class LivePlace {
     };
   }
 
+  /** The view narrowed to this band series, or to every one if it was. */
+  static toggleSeries(view: LiveView, key: string): LiveView {
+    return { ...view, series: view.series === key ? null : key };
+  }
+
+  /** A window's span without its `last`: `15 min`. */
+  static shortLabel(window: LiveWindow): string {
+    return LivePlace.windows[window].label.replace('last ', '');
+  }
+
   /** The next longer window, to offer when the board is empty. */
   static longer(window: LiveWindow): LiveWindow | null {
     const order = Object.keys(LivePlace.windows) as LiveWindow[];
@@ -1108,9 +1233,13 @@ export class Band {
   static readonly binMs = 15_000;
   static readonly rateMs = 60_000;
   static readonly maxSeries = 4;
+  /** The axis splits the span into this many equal parts. */
+  static readonly divisions = 5;
   /** The merged series' key; no client, provider, or model is named this. */
   static readonly other = '__other';
 
+  /** What the series group output by. */
+  readonly by: BandBy;
   /** Biggest first: the ribbon stacks them from the bottom. */
   readonly series: BandSeries[];
   /** The scale shared by every series drawn alone, in tokens per second. */
@@ -1137,6 +1266,7 @@ export class Band {
     by: BandBy = 'client',
     complete = -Infinity,
   ) {
+    this.by = by;
     const byRecording = new Map(recordings.map((recording) => [recording.id, recording]));
     const from = now - Band.spanMs;
     this.unread = Math.min(1, Math.max(0, (complete - from) / Band.spanMs));
@@ -1260,6 +1390,60 @@ export class Band {
   /** The series a key is drawn in: its own, `other`, or none when it had no output. */
   seriesOf(key: string): BandSeries | null {
     return this.series.find((series) => series.members.includes(key)) ?? null;
+  }
+
+  /** The series a tile's recording is drawn in. */
+  seriesOfTile(tile: Tile): BandSeries | null {
+    return this.seriesOf(Band.recordingKey(this.by, tile.recording, tile.model));
+  }
+
+  /**
+   * What the wall is narrowed to when the viewer picks the series `key`: its
+   * label and members, or the bare key while the band draws no such series.
+   */
+  only(key: string): { by: BandBy; label: string; keys: string[] } {
+    const series = this.series.find((candidate) => candidate.key === key);
+    return { by: this.by, label: series?.label ?? key, keys: series?.members ?? [key] };
+  }
+
+  /** Output tokens a series made over the span. */
+  static seriesTokens(series: BandSeries): number {
+    return Math.round(series.bins.reduce((sum, value) => sum + value, 0) * (Band.binMs / 1000));
+  }
+
+  /** Output tokens every series made over the span. */
+  get tokens(): number {
+    return this.series.reduce((sum, series) => sum + Band.seriesTokens(series), 0);
+  }
+
+  /** A series' share of the span's output, as a percentage; a dash when there was none. */
+  share(series: BandSeries): string {
+    const tokens = this.tokens;
+    return tokens ? `${Math.round((Band.seriesTokens(series) / tokens) * 100)}%` : '—';
+  }
+
+  /** Output tokens per second now, across every series. */
+  get rate(): number {
+    return this.series.reduce((sum, series) => sum + series.rate, 0);
+  }
+
+  /** A rate as the band's head writes it: one decimal below 10, whole above. */
+  static rateText(value: number): string {
+    return value < 10 ? value.toFixed(1) : String(Math.round(value));
+  }
+
+  /**
+   * The axis under the band, oldest first: each division's place across the
+   * span (0–1) and its label, `−10m` … `now`, derived from `spanMs`.
+   */
+  static axis(): { at: number; label: string }[] {
+    return Array.from({ length: Band.divisions + 1 }, (_, index) => {
+      const before = (Band.spanMs * (Band.divisions - index)) / Band.divisions;
+      return {
+        at: index / Band.divisions,
+        label: before > 0 ? `−${Elapsed.ago(0, before)}` : 'now',
+      };
+    });
   }
 
   /** A round scale above a peak, never below 50 tok/s, so a trickle does not look like a flood. */

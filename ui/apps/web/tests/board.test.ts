@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Band, Board, Feed, LivePlace, type BoardInput, type LiveView } from '../src/lib/board.ts';
+import {
+  Band,
+  Board,
+  Feed,
+  LivePlace,
+  Tile,
+  type BandSeries,
+  type BoardInput,
+  type FeedItem,
+  type LiveView,
+} from '../src/lib/board.ts';
 import { LiveReader, RecentCalls } from '../src/lib/loaders.ts';
 import {
   ManagementApi,
@@ -980,4 +990,222 @@ test("a tool's result is unknown, not missing, when the request carrying it was 
   assert.deepEqual(labels([activity(1, { tool_calls: [tool] }), activity(2)]), [
     ['No result', 'warning'],
   ]);
+});
+
+test('a card names its client and folder, links its session and call, and sums up its newest line', () => {
+  const plain = board({ recordings: [recording(1)], calls: [done(1, 1)] }).tiles[0];
+  assert.ok(plain);
+  assert.equal(plain.title, 'Claude Code');
+  assert.equal(plain.harnessClass, 'harness-claude_code');
+  assert.equal(plain.href, `/monitor/sessions/${sid(1)}`);
+  // Its state names the last call, so the card opens that one.
+  assert.equal(plain.callHref, `/monitor/sessions/${sid(1)}?call=${callId(1)}`);
+  // Nothing read yet: the row has nothing to say.
+  assert.equal(plain.lastLine, '');
+
+  const activityTurn = turn(1, 1, [
+    activity(1, {
+      tool_calls: [
+        {
+          id: 'tool-1',
+          name: 'Read',
+          effects: [{ kind: 'read_file', target: '/work/acme/src/main.ts' }],
+          input: { text: '{}', omitted_chars: 0 },
+          result: { status: 'succeeded', output: { text: 'ok', omitted_chars: 0 } },
+        },
+      ],
+    }),
+  ]);
+  const [tile] = board({
+    recordings: [recording(1)],
+    calls: [done(1, 1, { turn: tid(1) })],
+    turns: new Map([[tid(1), { ...activityTurn, commands: ['cd /work/acme && ls'] }]]),
+  }).tiles;
+  assert.ok(tile);
+  assert.equal(tile.title, 'Claude Code · acme');
+  assert.equal(tile.lastLine, 'Read src/main.ts');
+
+  const asked = board({
+    recordings: [recording(1)],
+    calls: [done(1, 1, { turn: tid(1) })],
+    turns: new Map([[tid(1), turn(1, 1, [activity(1)])]]),
+  }).tiles[0];
+  assert.equal(asked?.lastLine, 'Fix the flaky test');
+
+  const unknown = board({
+    recordings: [recording(1, { source: 'mystery' as RecordingView['source'] })],
+    calls: [],
+  });
+  assert.equal(unknown.tiles[0]?.harnessClass, 'harness-unknown');
+  assert.equal(unknown.tiles[0]?.title, 'Unknown client');
+  assert.equal(unknown.tiles[0]?.callHref, null);
+});
+
+test("an unread call's line says where it stands, and gives way once its reply streams", () => {
+  const streamed = (overrides: { reply?: string; thinking?: boolean } = {}) => ({
+    call: callId(2),
+    reply: '',
+    cut: false,
+    tools: [],
+    thinking: false,
+    ...overrides,
+  });
+  const inTurn = new Tile(
+    recording(1),
+    [done(1, 1, { turn: tid(1) }), open(2, 1, { turn: tid(1) })],
+    new Map(),
+    NOW,
+  );
+  // The turn is not read yet, so both its calls are unread; the open one is the second.
+  const waiting = inTurn.unread.find((unread) => unread.call.id === callId(2));
+  assert.ok(waiting);
+  assert.deepEqual(inTurn.unreadLine(waiting, undefined, NOW), {
+    phase: 'waiting',
+    text: 'call 2 · waiting for response · 5 s',
+  });
+
+  const responding = { ...waiting, call: { ...waiting.call, status: 200 } };
+  assert.deepEqual(inTurn.unreadLine(responding, streamed(), NOW), {
+    phase: 'responding',
+    text: 'call 2 · responding · 5 s',
+  });
+  assert.deepEqual(inTurn.unreadLine(responding, streamed({ thinking: true }), NOW), {
+    phase: 'thinking',
+    text: 'call 2 · thinking · 5 s',
+  });
+  // Streamed text holds the call's place.
+  assert.equal(inTurn.unreadLine(responding, streamed({ reply: 'Looking' }), NOW), null);
+
+  const finished = { ...waiting, call: done(2, 1, { turn: tid(1) }) };
+  assert.deepEqual(inTurn.unreadLine(finished, undefined, NOW), {
+    phase: 'finished',
+    text: 'call 2 · finished · reading',
+  });
+  // Without a turn, a finished call has no line; an open one does.
+  const noTurn = new Tile(recording(1), [done(1, 1)], new Map(), NOW);
+  const [latest] = noTurn.unread;
+  assert.ok(latest);
+  assert.equal(noTurn.unreadLine(latest, undefined, NOW), null);
+});
+
+test('a call boundary counts the call, its time, and its output; an excerpt says what it left out', () => {
+  assert.equal(
+    Tile.callLabel({
+      key: 'a',
+      index: 3,
+      durationMs: 12_000,
+      output: 1500,
+      reply: null,
+      tools: [],
+    }),
+    'call 3 · 12 s · out 1.5k',
+  );
+  assert.equal(
+    Tile.callLabel({
+      key: 'a',
+      index: null,
+      durationMs: null,
+      output: null,
+      reply: null,
+      tools: [],
+    }),
+    'call —',
+  );
+  assert.equal(Tile.omitted({ text: 'x', omitted_chars: 0 }), '');
+  assert.equal(Tile.omitted({ text: 'x', omitted_chars: 12_345 }), '\n… 12,345 more characters');
+});
+
+test('the band axis is derived from its span, oldest first', () => {
+  const axis = Band.axis();
+  assert.deepEqual(
+    axis.map((division) => division.label),
+    ['−10m', '−8m', '−6m', '−4m', '−2m', 'now'],
+  );
+  assert.deepEqual(
+    axis.map((division) => division.at),
+    [0, 0.2, 0.4, 0.6, 0.8, 1],
+  );
+});
+
+test("the band totals each series' output, its share, and the rate now", () => {
+  const calls = [
+    finishedFixture(callId(1), {
+      recording: sid(1),
+      started_at: ms(NOW - 40_000),
+      ended_at: ms(NOW - 30_000),
+      usage: {
+        accounting: 'excludes_cache',
+        input_tokens: 10,
+        output_tokens: 300,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        reasoning_tokens: null,
+      },
+    }),
+    finishedFixture(callId(2), {
+      recording: sid(2),
+      provider: 'openai',
+      started_at: ms(NOW - 40_000),
+      ended_at: ms(NOW - 30_000),
+      usage: {
+        accounting: 'excludes_cache',
+        input_tokens: 10,
+        output_tokens: 100,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        reasoning_tokens: null,
+      },
+    }),
+  ];
+  const recordings = [recording(1), recording(2, { provider: 'openai' })];
+  const band = new Band(recordings, calls, NOW, 'provider');
+  const [first, second] = band.series as [BandSeries, BandSeries];
+  assert.equal(Band.seriesTokens(first), 300);
+  assert.equal(band.tokens, 400);
+  assert.equal(band.share(first), '75%');
+  assert.equal(band.share(second), '25%');
+  assert.equal(band.rate, 400 / 60);
+  assert.equal(Band.rateText(band.rate), '6.7');
+  assert.equal(Band.rateText(12.4), '12');
+
+  const quiet = new Band([], [], NOW);
+  assert.equal(quiet.tokens, 0);
+  assert.equal(quiet.rate, 0);
+
+  // A tile is drawn in its recording's series; picking one narrows to its members.
+  const tile = new Tile(recordings[1]!, [calls[1]!], new Map(), NOW);
+  assert.equal(band.seriesOfTile(tile)?.key, 'openai');
+  assert.deepEqual(band.only('openai'), { by: 'provider', label: 'OpenAI', keys: ['openai'] });
+  assert.deepEqual(band.only('gone'), { by: 'provider', label: 'gone', keys: ['gone'] });
+});
+
+test('a feed item is fresh for a moment after it happens, an ongoing one never', () => {
+  const item: FeedItem = {
+    key: 'a',
+    recording: null,
+    tone: 'neutral',
+    text: 'turn finished',
+    detail: null,
+    at: NOW - 1000,
+    pinned: false,
+    href: null,
+  };
+  assert.equal(Feed.fresh(item, NOW), true);
+  assert.equal(Feed.fresh({ ...item, at: NOW - Feed.freshMs }, NOW), false);
+  assert.equal(Feed.fresh({ ...item, pinned: true }, NOW), false);
+});
+
+test('the wall counts its empty slots, and the place toggles a series and names a window', () => {
+  assert.equal(board({}).emptySlots, Board.maxTiles);
+  assert.equal(
+    board({ recordings: [recording(1)], calls: [open(1, 1)] }).emptySlots,
+    Board.maxTiles - 1,
+  );
+  const view = LivePlace.parse(new URLSearchParams());
+  const narrowed = LivePlace.toggleSeries(view, 'anthropic');
+  assert.equal(narrowed.series, 'anthropic');
+  assert.equal(LivePlace.toggleSeries(narrowed, 'anthropic').series, null);
+  assert.equal(LivePlace.toggleSeries(narrowed, 'openai').series, 'openai');
+  assert.equal(LivePlace.shortLabel('15m'), '15 min');
+  assert.equal(LivePlace.shortLabel('1h'), '1 h');
 });
