@@ -629,12 +629,6 @@ pre {
   gap: 9px;
   min-width: 0;
 }
-.page-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-}
 .workspace {
   flex: 1;
   min-height: 0;
@@ -2286,9 +2280,6 @@ td.zero {
 .workbench-toolbar.folded .scope {
   display: none;
 }
-.workbench-toolbar.folded .page-actions {
-  margin-left: auto;
-}
 .workbench-toolbar.folded.scope-open .scope {
   display: flex;
   flex-basis: 100%;
@@ -2318,9 +2309,6 @@ td.zero {
   }
   .workbench-toolbar .scope {
     display: none;
-  }
-  .workbench-toolbar .page-actions {
-    margin-left: auto;
   }
   .workbench-toolbar.scope-open .scope {
     display: flex;
@@ -2882,10 +2870,39 @@ td.zero {
 .strip-more:hover {
   color: var(--ink);
 }
+.bar-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.bar-tool:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+.live-switch {
+  margin-left: 8px;
+}
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.live-switch.on {
+  color: var(--ink);
+}
+.live-switch.on .live-dot {
+  background: var(--success);
+}
 .redline-toggle {
   display: flex;
-  /* The same room before its divider as between the bar's other controls. */
-  margin-left: 8px;
   align-items: center;
   gap: 5px;
   padding: 0 10px;

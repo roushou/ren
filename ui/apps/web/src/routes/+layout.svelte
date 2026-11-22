@@ -285,11 +285,6 @@
       workbench.manual = false;
     }
   }
-  // Set before any page renders its toolbar, on the server too.
-  workbench.controls = {
-    refresh: () => void refresh(),
-    loading: () => loading,
-  };
   // The views' code is small and static: fetch it once up front, so switching
   // views waits only for data (which hovering a tab also starts).
   onMount(() => {
@@ -459,6 +454,25 @@
         <p><Icon name="shield" size={12} /> Each client keeps its own sign-in; Ren forwards it.</p>
       </div>
     {/if}
+    <!-- Live updates and refresh: the whole workbench's, so they sit in its bar. -->
+    <button
+      class="bar-tool live-switch"
+      class:on={workbench.automatic}
+      aria-pressed={workbench.automatic}
+      title={workbench.automatic
+        ? 'Live updates on: pages follow new calls. Select to pause.'
+        : 'Live updates paused. Select to follow new calls.'}
+      onclick={() => (workbench.automatic = !workbench.automatic)}
+      ><span class="live-dot" aria-hidden="true"></span>Live</button
+    >
+    <button
+      class="bar-tool"
+      onclick={() => void refresh()}
+      disabled={loading}
+      aria-label="Refresh"
+      title="Refresh"
+      ><span class:spinning={loading}><Icon name="refresh" size={13} /></span></button
+    >
     <!-- Redline: mark what's wrong on this page for an agent to fix. A
          tool, so it sits with the bar's tools, not over the page. -->
     {#if page.data.runsControl}<button

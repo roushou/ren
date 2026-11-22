@@ -118,11 +118,7 @@
   const age = (at: number | null) => (at === null ? '' : Sessions.age(at, now));
 </script>
 
-{#snippet scope()}
-  <div class="scope-group"><span class="scope-title">Home</span></div>
-{/snippet}
-
-<Toolbar {scope} />
+<Toolbar />
 <div class="home">
   {#if data.runsControl}
     <form class="start" onsubmit={start} aria-label="Start a session">

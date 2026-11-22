@@ -1346,10 +1346,7 @@
   <!-- The list beside says how many and what they are doing; the bar keeps
        only what concerns the feed. -->
   <div class="scope-group scope-identity">
-    {#if scope.kind === 'scratch'}<span class="scope-title">Scratch</span>{/if}
-    {#if data.runsControl && feedNote(feed)}<span class="muted"
-        >{feedNote(feed).replace(/^ · /, '')}</span
-      >{/if}
+    <span class="muted">{feedNote(feed).replace(/^ · /, '')}</span>
   </div>
 {/snippet}
 
@@ -1588,7 +1585,7 @@
 
 <svelte:window onkeydown={shortcut} />
 
-<Toolbar scope={toolbarScope} />
+<Toolbar scope={data.runsControl && feedNote(feed) ? toolbarScope : undefined} />
 <div class="runs-page" data-pane={pane}>
   <aside class="runs-sidebar" aria-label="Runs">
     {#if unavailable}<p class="sidebar-note danger">{unavailable}</p>{/if}

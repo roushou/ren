@@ -103,13 +103,6 @@
   </li>
 {/snippet}
 
-{#snippet scope()}
-  <div class="scope-group">
-    <span class="scope-title">Search</span>
-    <span class="muted">Prompts, replies, and tool input and output · press / to search</span>
-  </div>
-{/snippet}
-
 {#snippet searchForm(hero: boolean)}
   <form class="search-form" class:hero method="GET" action="/monitor/search" role="search">
     {#if project}<input type="hidden" name="project" value={project} />{/if}
@@ -138,7 +131,7 @@
   </form>
 {/snippet}
 
-<Toolbar {scope} />
+<Toolbar />
 <section class="panel list-panel search-panel">
   {#if !current && !pending}
     <div class="list-content">

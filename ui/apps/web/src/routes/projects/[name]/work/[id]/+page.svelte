@@ -25,11 +25,7 @@
   }
 </script>
 
-{#snippet scope()}
-  <span class="muted">{data.item.title}</span>
-{/snippet}
-
-<Toolbar {scope} />
+<Toolbar />
 
 <section class="item" aria-label={data.item.title}>
   {#if failed}<p class="error" role="alert">{failed}</p>{/if}
@@ -54,8 +50,5 @@
     margin: 0;
     padding: 8px 16px;
     color: var(--error);
-  }
-  .muted {
-    color: var(--muted);
   }
 </style>
