@@ -27,7 +27,6 @@ import {
   type RunClient,
   type RunSnapshot,
   type SessionBody,
-  type SessionId,
 } from './runs.ts';
 import { WorkApi, type WorkItem } from './work.ts';
 import { localDayStart, parseRange, rangeStart, type UsageRange } from './usage.ts';
@@ -737,8 +736,12 @@ export async function projectsData(
 /** Which recordings are sessions Ren drives, for the links between Monitor
  * and their desks: none when it drives none here, or they did not read. It
  * arrives like any page's read, so the page never waits on the links. */
-export function deskLinks(fetcher: typeof fetch): Promise<Arriving<Map<RecordingId, SessionId>>> {
-  return Arrival.read('desks', () =>
-    new RunsClient(fetcher).sessions().then(Sessions.byRecording, () => new Map()),
-  );
+export function deskLinks(fetcher: typeof fetch): Promise<Arriving<Map<RecordingId, string>>> {
+  return Arrival.read('desks', async () => {
+    const [bodies, projects] = await Promise.all([
+      new RunsClient(fetcher).sessions().catch(() => []),
+      new ManagementApi(fetcher).projects().catch(() => []),
+    ]);
+    return Sessions.desks(bodies, projects);
+  });
 }

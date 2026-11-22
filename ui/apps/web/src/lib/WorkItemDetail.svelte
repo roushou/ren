@@ -20,8 +20,11 @@
     ondismiss,
     pulls = [],
     repository = null,
+    desk,
   }: {
     item: WorkItem;
+    /** Where its session opens on its desk; null before it is sent. */
+    desk: string | null;
     /** The open pull requests that name it. */
     pulls?: readonly Pull[];
     /** The repository they are on. */
@@ -141,7 +144,7 @@
   <aside class="detail-aside">
     <section>
       <h3>Its session</h3>
-      {#if item.session}<a class="session-link" href={`/sessions?session=${item.session}`}
+      {#if desk}<a class="session-link" href={desk}
           ><Icon name="sessions" size={12} />Open its session <Icon name="arrow" size={11} /></a
         >{:else}<p class="meta">Not sent to a session yet.</p>{/if}
     </section>

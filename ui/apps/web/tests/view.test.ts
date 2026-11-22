@@ -78,25 +78,3 @@ test('only the pages that read a project carry it between them', () => {
   assert.ok(Views.scoped('search'));
   assert.equal(Views.scoped('usage'), false);
 });
-
-test('an address from before the places leads to the same page in its place', () => {
-  assert.equal(Views.moved('/traffic'), '/monitor/traffic');
-  assert.equal(Views.moved('/recordings/r1/report'), '/monitor/sessions/r1/report');
-  assert.equal(Views.moved('/monitor/recordings'), '/monitor/sessions');
-  assert.equal(Views.moved('/monitor/recordings/r1'), '/monitor/sessions/r1');
-  assert.equal(Views.moved('/turns/t1'), '/monitor/turns/t1');
-  assert.equal(Views.moved('/tools'), '/system/packages');
-  assert.equal(Views.moved('/system/tools'), '/system/packages');
-  assert.equal(Views.moved('/recorder'), '/system/recorder');
-  for (const kept of [
-    '/',
-    '/projects',
-    '/projects/acme-web/sessions',
-    '/scratch',
-    '/monitor/traffic',
-    '/api/calls',
-    '/trafficking',
-  ]) {
-    assert.equal(Views.moved(kept), null, kept);
-  }
-});

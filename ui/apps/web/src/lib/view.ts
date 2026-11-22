@@ -29,7 +29,7 @@ export type View =
   | 'search'
   | 'usage'
   | 'packages'
-  | 'integrations'
+  | 'github'
   | 'release'
   | 'recorder';
 
@@ -48,7 +48,7 @@ export type Tab =
   | 'recordings'
   | 'search'
   | 'packages'
-  | 'integrations'
+  | 'github'
   | 'usage'
   | 'recorder';
 
@@ -106,8 +106,8 @@ export class Views {
         return 'usage';
       case '/system/packages':
         return 'packages';
-      case '/system/integrations':
-        return 'integrations';
+      case '/system/github':
+        return 'github';
       case '/system/recorder':
         return 'recorder';
       default:
@@ -134,7 +134,7 @@ export class Views {
       case 'search':
       case 'usage':
       case 'packages':
-      case 'integrations':
+      case 'github':
       case 'release':
       case 'recorder':
         return view;
@@ -142,34 +142,6 @@ export class Views {
         const never: never = view;
         return never;
       }
-    }
-  }
-
-  /** Where an address from before the places leads now (Inspect's pages
-   * moved under `/monitor`, Host's under `/system`, and Recordings became
-   * Monitor's Sessions, and Tools System's Packages); null for any other. */
-  static moved(pathname: string): string | null {
-    const [, first = '', second = ''] = pathname.split('/');
-    if (first === 'monitor' && second === 'recordings')
-      return pathname.replace('/monitor/recordings', '/monitor/sessions');
-    if (first === 'system' && second === 'tools')
-      return pathname.replace('/system/tools', '/system/packages');
-    switch (first) {
-      case 'recordings':
-        return pathname.replace('/recordings', '/monitor/sessions');
-      case 'overview':
-      case 'live':
-      case 'traffic':
-      case 'turns':
-      case 'search':
-      case 'usage':
-        return `/monitor${pathname}`;
-      case 'tools':
-        return pathname.replace('/tools', '/system/packages');
-      case 'recorder':
-        return `/system${pathname}`;
-      default:
-        return null;
     }
   }
 
@@ -191,7 +163,7 @@ export class Views {
       case 'usage':
         return 'monitor';
       case 'packages':
-      case 'integrations':
+      case 'github':
       case 'recorder':
         return 'system';
       default: {
@@ -228,7 +200,7 @@ export class Views {
       case 'system':
         return [
           { tab: 'packages', href: '/system/packages', label: 'Packages' },
-          { tab: 'integrations', href: '/system/integrations', label: 'Integrations' },
+          { tab: 'github', href: '/system/github', label: 'GitHub' },
           { tab: 'recorder', href: '/system/recorder', label: 'Recorder' },
         ];
       default: {
@@ -254,7 +226,7 @@ export class Views {
       case 'sessions':
       case 'release':
       case 'packages':
-      case 'integrations':
+      case 'github':
       case 'usage':
       case 'recorder':
         return false;
@@ -303,8 +275,8 @@ export class Views {
         return 'Usage';
       case 'packages':
         return 'Packages';
-      case 'integrations':
-        return 'Integrations';
+      case 'github':
+        return 'GitHub';
       case 'release':
         return 'Release';
       case 'recorder':

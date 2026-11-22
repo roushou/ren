@@ -1,19 +1,17 @@
 <!--
-  System · Integrations: what Ren reaches outside itself. Today GitHub:
-  each project's watched repository with its open pull requests by where
+  System · GitHub: each project's watched repository with its open pull requests by where
   they stand and GitHub's newest answer, then the pull requests themselves.
 -->
 <script lang="ts">
   import Toolbar from '#lib/Toolbar.svelte';
   import Glyph from '#lib/Glyph.svelte';
-  import Icon from '#lib/Icon.svelte';
   import { ago } from '#lib/overview.ts';
   import { PullChips } from '#lib/release.ts';
-  import { GitHubWatches, type PullStanding } from '#lib/integrations.ts';
+  import { GitHubWatches, type PullStanding } from '#lib/github.ts';
   import type { Mark } from '#lib/marks.ts';
-  import type { IntegrationsData } from './+page.ts';
+  import type { GitHubData } from './+page.ts';
 
-  let { data }: { data: IntegrationsData } = $props();
+  let { data }: { data: GitHubData } = $props();
   const rows = $derived(GitHubWatches.rows(data.watches));
   const summary = $derived(GitHubWatches.summary(rows));
   const pulls = $derived(GitHubWatches.pulls(rows));
@@ -47,15 +45,7 @@
 </script>
 
 <Toolbar />
-<div class="integrations">
-  <aside class="services" aria-label="Integrations">
-    <div class="service">
-      <span class="service-icon" aria-hidden="true"><Icon name="branch" size={16} /></span>
-      <strong>GitHub</strong>
-      {#if summary.failing}<Glyph mark="warning" label="{summary.failing} watches failing" />{/if}
-    </div>
-  </aside>
-
+<div class="github">
   <section class="main">
     {#if data.failed}
       <p class="error" role="alert">{data.failed}</p>
@@ -180,31 +170,14 @@
 </div>
 
 <style>
-  .integrations {
+  .github {
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: 320px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     overflow: auto;
     background: var(--line);
     gap: 1px;
-  }
-  .services {
-    padding: 14px 16px;
-    background: var(--surface);
-  }
-  .service {
-    display: grid;
-    grid-template-columns: 32px minmax(0, 1fr) auto;
-    gap: 10px;
-    align-items: center;
-  }
-  .service-icon {
-    display: grid;
-    width: 32px;
-    height: 32px;
-    place-items: center;
-    border: 1px solid var(--line);
   }
   .main {
     display: flex;
@@ -357,9 +330,6 @@
     padding: 8px 16px 14px;
   }
   @media (max-width: 1000px) {
-    .integrations {
-      grid-template-columns: minmax(0, 1fr);
-    }
     .figures {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }

@@ -272,7 +272,7 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
   const callId = CallId.parse(call);
   assert.ok(recordingId && turnId && callId);
   assert.equal(callHref(recordingId, callId), `/monitor/sessions/${recording}?call=${call}`);
-  assert.equal(turnHref(turnId), `/monitor/turns/${turn}`);
+  assert.equal(turnHref(recordingId, turnId), `/monitor/sessions/${recording}?turn=${turn}`);
 
   const hit = (overrides: Partial<SearchHit>): SearchHit => ({
     call: callId,
@@ -284,7 +284,7 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
     snippet: '',
     ...overrides,
   });
-  assert.equal(searchHitHref(hit({})), `/monitor/turns/${turn}`);
+  assert.equal(searchHitHref(hit({})), `/monitor/sessions/${recording}?turn=${turn}`);
   assert.equal(searchHitHref(hit({ turn: null })), `/monitor/sessions/${recording}?call=${call}`);
   assert.equal(
     searchHitHref(hit({ turn: null, recording: null })),
@@ -301,7 +301,7 @@ test('links to calls, turns, hits, and findings encode their IDs', () => {
   });
   // A recording's report opens the turn first; a turn's page opens only the call.
   assert.deepEqual(findingLink(line({}), recordingId, 'recording'), {
-    href: `/monitor/turns/${turn}`,
+    href: `/monitor/sessions/${recording}?turn=${turn}`,
     label: 'Open turn',
   });
   assert.deepEqual(findingLink(line({ turn: null }), recordingId, 'recording'), {

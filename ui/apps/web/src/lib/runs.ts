@@ -2263,19 +2263,22 @@ export class Sessions {
     }
   }
 
-  /** The sessions among `bodies` by the recordings their runs' calls were
-   * recorded under: a session Ren drives, as the gateway saw it. */
-  static byRecording(bodies: readonly SessionBody[]): Map<RecordingId, SessionId> {
-    const found = new Map<RecordingId, SessionId>();
-    for (const body of bodies)
+  /** Where each session among `bodies` opens on its desk (its project's,
+   * or Scratch), by the recordings its runs' calls were recorded under: a
+   * session Ren drives, as the gateway saw it. */
+  static desks(
+    bodies: readonly SessionBody[],
+    projects: readonly DeskProject[],
+  ): Map<RecordingId, string> {
+    const found = new Map<RecordingId, string>();
+    for (const body of bodies) {
+      const href = Sessions.deskHref(Sessions.projectOf(body, projects)?.name ?? null, {
+        session: body.session,
+      });
       for (const run of body.stored?.runs ?? [])
-        if (run.recording && !found.has(run.recording)) found.set(run.recording, body.session);
+        if (run.recording && !found.has(run.recording)) found.set(run.recording, href);
+    }
     return found;
-  }
-
-  /** Where a session Ren drives opens: its desk, found from its id. */
-  static href(session: SessionId): string {
-    return `/sessions?${new URLSearchParams({ session })}`;
   }
 
   /** The desk a session is on: its project's, by name, or Scratch (null). */

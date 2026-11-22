@@ -1,7 +1,6 @@
-// System · Integrations: what Ren reaches outside itself. Today that is
-// GitHub: each project's watched repository, its open pull requests by
+// System · GitHub: each project's watched repository, its open pull requests by
 // where they stand, and the newest answer. Pure, read from each project's
-// `/api/projects/{name}/pulls`; tested in tests/integrations.test.ts.
+// `/api/projects/{name}/pulls`; tested in tests/github.test.ts.
 import type { Pull, Pulls } from './api.ts';
 import type { Mark } from './marks.ts';
 import { PullChips, PullWatch } from './release.ts';

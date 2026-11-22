@@ -12,15 +12,13 @@
   import Skeleton from '#lib/Skeleton.svelte';
   import SkeletonRows from '#lib/SkeletonRows.svelte';
   import type { Column } from '#lib/columns.ts';
-  import { Sessions } from '#lib/runs.ts';
   import type { PageProps } from './$types';
   let { data }: PageProps = $props();
   const arrival = createArrival(() => data.report);
   const desks = createArrival(() => data.desks);
   /** Where the session opens on its desk, when Ren drives it. */
   const desk = $derived.by(() => {
-    const session = desks.snapshot?.value?.get(data.recordingId);
-    return session ? Sessions.href(session) : null;
+    return desks.snapshot?.value?.get(data.recordingId) ?? null;
   });
   const arrived = $derived(arrival.current);
   /** The report is on its way: the page draws its outline. */
@@ -145,7 +143,7 @@
                       y2={CHART * at}
                     />{/each}
                   {#each chart.bars as bar (bar.turn)}
-                    <a href={turnHref(bar.turn)} class:flagged={bar.flagged}
+                    <a href={turnHref(data.recordingId, bar.turn)} class:flagged={bar.flagged}
                       ><title>{bar.title}</title><rect
                         class="bar"
                         x={bar.x}
@@ -193,7 +191,9 @@
                           ></td
                         >
                         <td class="turn-prompt">
-                          <a class="row-link" href={turnHref(metrics.turn)}>{rowPrompt(row)}</a>
+                          <a class="row-link" href={turnHref(data.recordingId, metrics.turn)}
+                            >{rowPrompt(row)}</a
+                          >
                           {#each row.findings as line, at (at)}<Glyph
                               mark={Marks.ofTone(line.tone)}
                               label={`${line.title}: ${line.detail}`}

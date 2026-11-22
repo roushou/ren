@@ -17,7 +17,7 @@ import type {
   TurnId,
 } from './api.ts';
 import { clock, harnesses, providerName, RecordingId } from './api.ts';
-import { findingLine, harnessLabel, resultBadge } from './activity.ts';
+import { findingLine, harnessLabel, resultBadge, turnHref } from './activity.ts';
 import { assertNever, unrecognised, type Stored } from './decode.ts';
 import { callStatus, recordingTone, span, statusBadge, type Tone } from './display.ts';
 
@@ -770,7 +770,7 @@ export class Board {
           label: line.title,
           detail: line.detail,
           at: tile.turn.ended_at ?? tile.turn.started_at ?? tile.recording.last_seen,
-          href: `/monitor/turns/${encodeURIComponent(tile.turn.turn)}`,
+          href: turnHref(tile.recording.id, tile.turn.turn),
         };
       }
       case 'cache_rebuild':
@@ -843,7 +843,7 @@ export class Feed {
     }
 
     for (const turn of input.turns.values()) {
-      const href = `/monitor/turns/${encodeURIComponent(turn.turn)}`;
+      const href = turnHref(turn.recording, turn.turn);
       if (turn.prompt && turn.started_at !== null && calm(turn.started_at)) {
         items.push({
           key: `${turn.turn}:prompt`,

@@ -10,6 +10,7 @@
   import PageOutline from '#lib/PageOutline.svelte';
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { WorkApi, WorkError, type WorkItem } from '#lib/work.ts';
+  import { Sessions } from '#lib/runs.ts';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -36,6 +37,9 @@
     {#if failed}<p class="error" role="alert">{failed}</p>{/if}
     <WorkItemDetail
       item={read.item}
+      desk={read.item.session
+        ? Sessions.deskHref(read.project.name, { session: read.item.session })
+        : null}
       project={read.project.factory === 'ren'
         ? { kind: 'ren' }
         : { kind: 'other', name: read.project.name }}

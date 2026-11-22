@@ -9,6 +9,7 @@
   import { createArrival } from '#lib/snapshot.svelte.ts';
   import { getWorkbench } from '#lib/workbench.svelte.ts';
   import { clock, num, providerName, short } from '#lib/api.ts';
+  import { turnHref } from '#lib/activity.ts';
   import { compactOrDash, span } from '#lib/display.ts';
   import { unrecognised, type Stored } from '#lib/decode.ts';
   import type { EffectKind, Excerpt } from '#lib/api.ts';
@@ -138,7 +139,6 @@
   const outlineLines = ['82%', '64%', '91%', '57%', '76%', '69%', '88%', '61%'];
   const emptySlots = $derived(board ? Math.max(0, board.capacity - board.tiles.length) : 0);
   const pinHref = (tile: Tile) => LivePlace.href(LivePlace.togglePin(view, tile.recording.id));
-  const turnHref = (turn: string) => `/monitor/turns/${encodeURIComponent(turn)}`;
   /** The call a card is about: the open or last one its state names, else the newest. */
   function callHref(tile: Tile): string | null {
     const call = tile.phase.kind === 'idle' ? tile.latest : tile.phase.call;
@@ -670,7 +670,7 @@
               <div class="live-actions">
                 {#if tile.turnId}<a
                     class="icon-button"
-                    href={turnHref(tile.turnId)}
+                    href={turnHref(tile.recording.id, tile.turnId)}
                     aria-label="Open the turn"
                     title="Open the turn: its prompt, tools, files, and findings"
                     ><Icon name="logs" size={13} /></a

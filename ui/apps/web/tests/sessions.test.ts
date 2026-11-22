@@ -299,13 +299,16 @@ test('a session Ren drives is found by the recording its calls went under', asyn
           ...body,
           stored: {
             ...body.stored,
+            project: 'p-acme' as never,
             runs: body.stored.runs.map((run) => ({ ...run, recording })),
           },
         }
       : body,
   ) as SessionBody[];
-  const found = Sessions.byRecording(bodies);
+  const projects = [{ id: 'p-acme' as never, name: 'acme-web', repository: '/srv/acme-web' }];
+  const found = Sessions.desks(bodies, projects);
   assert.equal(found.size, 1);
-  assert.equal(found.get(recording as never), sessionA);
-  assert.equal(Sessions.href(sessionA), `/sessions?session=${sessionA}`);
+  assert.equal(found.get(recording as never), `/projects/acme-web/sessions?session=${sessionA}`);
+  // A session of no project known opens in Scratch.
+  assert.equal(Sessions.desks(bodies, []).get(recording as never), `/scratch?session=${sessionA}`);
 });

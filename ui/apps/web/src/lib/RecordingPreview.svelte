@@ -13,15 +13,15 @@
   import { Board } from '#lib/board.ts';
   import { RecordingList, type RecordingRow } from '#lib/recordings.ts';
   import { snapshotError } from '#lib/snapshots.ts';
-  import { Sessions, type SessionId } from '#lib/runs.ts';
 
   let {
     row,
     desk = null,
   }: {
     row: RecordingRow;
-    /** The desk session Ren drives it as; null when Ren does not drive it. */
-    desk?: SessionId | null;
+    /** Where the session Ren drives it as opens on its desk; null when Ren
+     * does not drive it. */
+    desk?: string | null;
   } = $props();
   const recording = $derived(row.recording);
   const href = $derived(`/monitor/sessions/${encodeURIComponent(recording.id)}`);
@@ -68,7 +68,7 @@
     <div class="actions">
       <a class="button primary small" {href}>Calls</a>
       <a class="button small" href="{href}/report">Report</a>
-      {#if desk}<a class="button small" href={Sessions.href(desk)}>Open in desk</a>{/if}
+      {#if desk}<a class="button small" href={desk}>Open in desk</a>{/if}
     </div>
   </header>
 

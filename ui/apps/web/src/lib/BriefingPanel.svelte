@@ -47,6 +47,7 @@
     source,
     revision,
     evidence,
+    renProject,
   }: {
     desk: RedlineDesk;
     /** Where a brief can go, read from the daemon. */
@@ -57,6 +58,9 @@
     revision: Revision | null;
     /** What this page logged and read, carried by the work item. */
     evidence: PageEvidence;
+    /** The project Ren itself is registered as, whose desk holds the sessions
+     * briefs go to; null when none is, and they sit in Scratch. */
+    renProject: string | null;
   } = $props();
 
   const client = new RunsClient();
@@ -359,7 +363,7 @@
       if (destination.kind === 'new') keep();
       desk.clear();
       desk.toggle();
-      await goto(`/sessions?session=${target}`);
+      await goto(Sessions.deskHref(renProject, { session: target }));
     } catch (failure) {
       error =
         failure instanceof RunCommandError || failure instanceof WorkError

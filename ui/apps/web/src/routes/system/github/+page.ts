@@ -3,7 +3,7 @@ import { ManagementApi, type Pulls } from '#lib/api.ts';
 import type { PageLoad } from './$types';
 
 /** Each current project's GitHub watch; null where its pulls did not read. */
-export interface IntegrationsData {
+export interface GitHubData {
   watches: { project: string; watch: Pulls | null }[];
   failed: string | null;
 }
@@ -13,7 +13,7 @@ export interface IntegrationsData {
 export const load: PageLoad = async ({ fetch, parent }) => {
   await parent();
   const api = new ManagementApi(fetch);
-  const integrations = await Arrival.read('integrations', async (): Promise<IntegrationsData> => {
+  const github = await Arrival.read('github', async (): Promise<GitHubData> => {
     try {
       const projects = (await api.projects()).filter((project) => project.archived_at === null);
       const watches = await Promise.all(
@@ -30,5 +30,5 @@ export const load: PageLoad = async ({ fetch, parent }) => {
       };
     }
   });
-  return { integrations };
+  return { github };
 };

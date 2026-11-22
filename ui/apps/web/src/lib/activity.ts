@@ -307,14 +307,14 @@ export function callHref(recording: RecordingId, call: CallId): string {
   return `/monitor/sessions/${encodeURIComponent(recording)}?call=${encodeURIComponent(call)}`;
 }
 
-/** What one turn did. */
-export function turnHref(turn: TurnId): string {
-  return `/monitor/turns/${encodeURIComponent(turn)}`;
+/** What one turn did: its panel, beside its recording's calls. */
+export function turnHref(recording: RecordingId, turn: TurnId): string {
+  return `/monitor/sessions/${encodeURIComponent(recording)}?${new URLSearchParams({ turn })}`;
 }
 
 /** A search hit: its turn, else its call in its recording, else the call in Traffic. */
 export function searchHitHref(hit: SearchHit): string {
-  if (hit.turn) return turnHref(hit.turn);
+  if (hit.recording && hit.turn) return turnHref(hit.recording, hit.turn);
   if (hit.recording) return callHref(hit.recording, hit.call);
   return `/monitor/traffic?call=${encodeURIComponent(hit.call)}`;
 }
@@ -335,7 +335,8 @@ export function findingLink(
   recording: RecordingId,
   page: 'recording' | 'turn',
 ): FindingLink | null {
-  if (page === 'recording' && line.turn) return { href: turnHref(line.turn), label: 'Open turn' };
+  if (page === 'recording' && line.turn)
+    return { href: turnHref(recording, line.turn), label: 'Open turn' };
   if (line.call) return { href: callHref(recording, line.call), label: 'Open call' };
   return null;
 }

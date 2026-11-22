@@ -14,7 +14,7 @@
   import { createArrival, createSettled } from '#lib/snapshot.svelte.ts';
   import { Workbench, setWorkbench } from '#lib/workbench.svelte.ts';
   import { LiveConnection } from '#lib/live.svelte.ts';
-  import { clock } from '#lib/api.ts';
+  import { ManagementApi, clock } from '#lib/api.ts';
   import type { SnapshotError } from '#lib/snapshots.ts';
   import Icon, { type IconName } from '#lib/Icon.svelte';
   import ThemeControl from '#lib/ThemeControl.svelte';
@@ -297,7 +297,6 @@
       '/system/recorder',
       '/monitor/sessions/[id]',
       '/monitor/sessions/[id]/report',
-      '/monitor/turns/[id]',
       '/monitor/search',
       '/scratch',
     ] as const)
@@ -563,5 +562,6 @@
         source={page.data.redlineSource}
         revision={health?.build.revision ?? null}
         {evidence}
+        renProject={ManagementApi.ren(board.projects)?.name ?? null}
       />{/if}{/if}
 </div>

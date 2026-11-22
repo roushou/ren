@@ -9,7 +9,6 @@
   import { ago } from '#lib/overview.ts';
   import { RecordingList, type RecordingRow } from '#lib/recordings.ts';
   import { Board } from '#lib/board.ts';
-  import { Sessions } from '#lib/runs.ts';
   import Icon from '#lib/Icon.svelte';
   import Glyph from '#lib/Glyph.svelte';
   import SlideOver from '#lib/layer/SlideOver.svelte';
@@ -143,7 +142,7 @@
       </a>
       {#if desk}<a
           class="desk-link mono"
-          href={Sessions.href(desk)}
+          href={desk}
           title="Ren drives this session: open it on its desk">desk ↗</a
         >{/if}
     </td>

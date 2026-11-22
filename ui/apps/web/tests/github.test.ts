@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GitHubWatches } from '../src/lib/integrations.ts';
+import { GitHubWatches } from '../src/lib/github.ts';
 import type { Pull, Pulls } from '../src/lib/api.ts';
 
 const pull = (number: number, overrides: Partial<Pull> = {}): Pull => ({
