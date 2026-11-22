@@ -188,19 +188,25 @@ export class ProjectBoard {
     const passed = new Set(before.toPromote.map(ProjectBoard.#canaryKey));
     const canaries = after.toPromote
       .filter((project) => !passed.has(ProjectBoard.#canaryKey(project)))
-      .map((project): Said => ({
-        mark: 'passed',
-        text: `${project.name}: canary passed`,
-        detail: project.release?.canary?.commit.slice(0, 12) ?? null,
-        // Where Ren promotes, the toast asks it of Release's modal.
-        link:
-          project.factory === 'ren' && project.release?.canary
-            ? {
-                label: 'Promote…',
-                href: `${ProjectBoard.releaseHref(project)}?promote=${encodeURIComponent(project.release.canary.commit)}`,
-              }
-            : { label: 'Release', href: ProjectBoard.releaseHref(project) },
-      }));
+      .map((project): Said => {
+        const release = project.release;
+        const canary = release?.canary ?? null;
+        const checks = canary?.checks ?? [];
+        return {
+          mark: 'passed',
+          text: `Canary ${canary?.commit.slice(0, 12) ?? ''} ${checks.filter((check) => check.passed).length}/${checks.length}`,
+          detail: `${project.name} · production ${release?.behind ? `↓${release.behind}` : 'up to date'}`,
+          // Where Ren promotes, the toast asks it of Release's modal.
+          link:
+            project.factory === 'ren' && canary
+              ? {
+                  label: 'Promote…',
+                  href: `${ProjectBoard.releaseHref(project)}?promote=${encodeURIComponent(canary.commit)}`,
+                  emphasis: 'primary',
+                }
+              : { label: 'Release', href: ProjectBoard.releaseHref(project) },
+        };
+      });
     return [...approvals, ...canaries];
   }
 

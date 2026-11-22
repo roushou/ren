@@ -238,7 +238,16 @@ test('news is what newly waits: a new approval, a newly passed canary; nothing a
     ({
       decision: commit ? 'awaiting_operator' : 'current',
       policy: 'manual',
-      canary: commit ? { commit } : null,
+      canary: commit
+        ? {
+            commit,
+            checks: [
+              { check: 'build', passed: true },
+              { check: 'pages', passed: true },
+            ],
+          }
+        : null,
+      behind: commit ? 6 : 0,
     }) as unknown as Project['release'];
   const board = (approval: string | null, commit: string | null) =>
     new ProjectBoard(
@@ -259,8 +268,8 @@ test('news is what newly waits: a new approval, a newly passed canary; nothing a
     },
     {
       mark: 'passed',
-      text: 'acme-web: canary passed',
-      detail: 'a3f9c21deadb',
+      text: 'Canary a3f9c21deadb 2/2',
+      detail: 'acme-web · production ↓6',
       link: { label: 'Release', href: '/projects/acme-web/release' },
     },
   ]);
@@ -271,7 +280,7 @@ test('news is what newly waits: a new approval, a newly passed canary; nothing a
   // A new ask from the same run, or a newer canary, is news.
   assert.deepEqual(
     ProjectBoard.news(waiting, board('approval-2', 'b0b0b0b0b0b0b0b0')).map((said) => said.text),
-    ['Run a command', 'acme-web: canary passed'],
+    ['Run a command', 'Canary b0b0b0b0b0b0 2/2'],
   );
 });
 
@@ -307,5 +316,9 @@ test('a canary that passed where Ren promotes offers Promote… from its toast',
     } as never,
   });
   const [said] = ProjectBoard.news(new ProjectBoard([], []), new ProjectBoard([project_], []));
-  assert.deepEqual(said?.link, { label: 'Promote…', href: '/projects/ren/release?promote=abc123' });
+  assert.deepEqual(said?.link, {
+    label: 'Promote…',
+    href: '/projects/ren/release?promote=abc123',
+    emphasis: 'primary',
+  });
 });

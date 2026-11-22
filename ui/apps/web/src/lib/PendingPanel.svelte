@@ -48,10 +48,12 @@
         decision,
       });
       const said = Runs.decision(decision);
+      const asked = Runs.ask(waiting.ask);
       toasts.show({
         mark: said.mark,
-        text: said.done,
-        detail: Runs.ask(waiting.ask).action,
+        text: asked.detail ?? asked.action,
+        form: asked.detail ? 'code' : 'words',
+        detail: [said.done, waiting.project].filter((part) => part !== null).join(' · '),
         link: {
           label: 'Open session',
           href: Sessions.deskHref(waiting.project, { session: waiting.session }),

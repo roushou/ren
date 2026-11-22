@@ -8,6 +8,8 @@ import type { Mark } from '#lib/marks.ts';
 export interface ToastLink {
   label: string;
   href: string;
+  /** The next step it asks for (Promote…), or one more place to look. */
+  emphasis?: 'primary' | 'plain';
 }
 
 /** One thing that happened: its mark, what happened, its detail, and where
@@ -18,10 +20,15 @@ export interface Toast {
   text: string;
   detail: string | null;
   link: ToastLink | null;
+  /** Whether its text is words, or code to show as written (a command). */
+  form: 'words' | 'code';
 }
 
 /** What a caller says: a toast before the stack numbers it. */
-export type Said = Omit<Toast, 'id' | 'link'> & { link?: ToastLink | null };
+export type Said = Omit<Toast, 'id' | 'link' | 'form'> & {
+  link?: ToastLink | null;
+  form?: Toast['form'];
+};
 
 /** How long a toast stays, unless dismissed first. */
 const STAY_MS = 6_000;
@@ -32,7 +39,10 @@ class ToastStack {
 
   show(toast: Said): void {
     const id = ++this.#next;
-    this.items = [...this.items, { ...toast, link: toast.link ?? null, id }];
+    this.items = [
+      ...this.items,
+      { ...toast, link: toast.link ?? null, form: toast.form ?? 'words', id },
+    ];
     setTimeout(() => this.dismiss(id), STAY_MS);
   }
 

@@ -13,11 +13,12 @@
     <div class="toast">
       <Glyph mark={toast.mark} />
       <span class="text">
-        <span>{toast.text}</span>
+        <span class:mono={toast.form === 'code'}>{toast.text}</span>
         {#if toast.detail}<span class="detail">{toast.detail}</span>{/if}
       </span>
       {#if toast.link}<a
           class="button small"
+          class:primary={toast.link.emphasis === 'primary'}
           href={toast.link.href}
           onclick={() => toasts.dismiss(toast.id)}>{toast.link.label}</a
         >{/if}
