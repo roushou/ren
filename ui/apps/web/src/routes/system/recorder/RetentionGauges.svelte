@@ -48,7 +48,7 @@
         <Meter
           share={gauge.share ?? 0}
           size="bar"
-          tone={RecorderReport.meterTone(gauge.share ?? 0)}
+          tone={RecorderReport.toneOf(RecorderReport.limitFullness(gauge))}
         />
       </div>
     {/each}

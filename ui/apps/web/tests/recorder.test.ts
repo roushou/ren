@@ -174,3 +174,12 @@ test('the queue meters read records and bytes against their capacity', () => {
   );
   assert.equal(meters[0]?.text, '256 / 1,024');
 });
+
+test('only storage filling up needs a look: a full call limit is retention working', () => {
+  const gauge = (key: 'storage' | 'calls' | 'history', share: number) =>
+    ({ key, label: key, used: '', limit: '', share, binding: false }) as const;
+  assert.equal(RecorderReport.limitFullness(gauge('storage', 0.95)), 'error');
+  assert.equal(RecorderReport.limitFullness(gauge('storage', 0.75)), 'warning');
+  assert.equal(RecorderReport.limitFullness(gauge('calls', 1)), 'fine');
+  assert.equal(RecorderReport.limitFullness(gauge('history', 1)), 'fine');
+});

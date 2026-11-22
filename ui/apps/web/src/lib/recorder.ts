@@ -373,9 +373,28 @@ export class RecorderReport {
     return gauges.map((gauge) => ({ ...gauge, binding: gauge === nearest }));
   }
 
+  /** How a retention limit stands. Retention keeps calls and history at
+   * their limits by pruning the oldest, so a full one is the limit working:
+   * only storage filling up needs a look. */
+  static limitFullness(gauge: Gauge): 'fine' | 'warning' | 'error' {
+    switch (gauge.key) {
+      case 'storage':
+        return gauge.share === null ? 'fine' : RecorderReport.fullness(gauge.share);
+      case 'calls':
+      case 'history':
+        return 'fine';
+      default:
+        return assertNever(gauge.key);
+    }
+  }
+
   /** A capacity's meter: its own colour while fine, else how it stands. */
   static meterTone(share: number): 'chart' | 'warning' | 'error' {
-    const fullness = RecorderReport.fullness(share);
+    return RecorderReport.toneOf(RecorderReport.fullness(share));
+  }
+
+  /** A fullness as a meter's colour. */
+  static toneOf(fullness: 'fine' | 'warning' | 'error'): 'chart' | 'warning' | 'error' {
     switch (fullness) {
       case 'fine':
         return 'chart';

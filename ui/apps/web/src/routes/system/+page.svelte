@@ -66,12 +66,7 @@
         <Figure label="Recording" href="/system/recorder">—</Figure>
       {/each}
       {#each limits as gauge (gauge.key)}
-        <!-- Retention keeps calls at their limit by pruning: a full call
-             limit is the limit working. Only storage filling needs a look. -->
-        {@const fullness =
-          gauge.key !== 'storage' || gauge.share === null
-            ? 'fine'
-            : RecorderReport.fullness(gauge.share)}
+        {@const fullness = RecorderReport.limitFullness(gauge)}
         <Figure
           label={gauge.label}
           tone={fullness === 'fine' ? null : fullness}
