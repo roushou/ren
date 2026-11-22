@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Desk } from '../src/lib/desk.ts';
+import { Home } from '../src/lib/home.ts';
 import { ProjectBoard } from '../src/lib/projects.ts';
 
 const project = {
@@ -57,7 +57,7 @@ test('what is under way puts the sessions waiting on the operator first, then th
       stored('s3', 'Old', 10, 20),
     ],
   );
-  const rows = Desk.underWay(board);
+  const rows = Home.underWay(board);
   assert.deepEqual(
     rows.map((row) => [row.title, row.mark, row.project]),
     [
@@ -83,7 +83,7 @@ test('outcomes since a time: sessions that ended and work that landed or shipped
       stored('s3', 'Ended before', 10, 90, 'idled'),
     ],
   );
-  const outcomes = Desk.outcomes(board, 100);
+  const outcomes = Home.outcomes(board, 100);
   assert.deepEqual(
     outcomes.map((one) => [one.title, one.mark, one.happened]),
     [
@@ -92,13 +92,13 @@ test('outcomes since a time: sessions that ended and work that landed or shipped
       ['Explain the queue', 'passed', 'Ended'],
     ],
   );
-  assert.deepEqual(Desk.counts(outcomes), { ended: 2, landed: 1, shipped: 0, failed: 1 });
+  assert.deepEqual(Home.counts(outcomes), { ended: 2, landed: 1, shipped: 0, failed: 1 });
 });
 
 test('when the operator looked reads as a phrase', () => {
   const now = 10 * 86_400_000;
   const day = () => 'Sat';
-  assert.equal(Desk.looked(now - 10_000, now, day), 'just now');
-  assert.equal(Desk.looked(now - 3 * 3_600_000, now, day), '3h ago');
-  assert.equal(Desk.looked(now - 2 * 86_400_000, now, day), 'since Sat');
+  assert.equal(Home.looked(now - 10_000, now, day), 'just now');
+  assert.equal(Home.looked(now - 3 * 3_600_000, now, day), '3h ago');
+  assert.equal(Home.looked(now - 2 * 86_400_000, now, day), 'since Sat');
 });

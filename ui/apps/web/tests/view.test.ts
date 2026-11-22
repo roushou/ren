@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { Views } from '../src/lib/view.ts';
 
 test('each route is its view, and an unknown one is Traffic', () => {
-  assert.equal(Views.of('/'), 'desk');
+  assert.equal(Views.of('/'), 'home');
   assert.equal(Views.of('/projects'), 'projects');
-  // The desk sits under the wordmark, within Projects, on no row of pages.
-  assert.equal(Views.destination(Views.tab('desk')), 'projects');
-  assert.ok(!Views.pages('projects').some((page) => page.tab === 'desk'));
+  // Home sits under the wordmark, in no place and on no row of pages.
+  assert.equal(Views.place(Views.tab('home')), 'home');
+  assert.deepEqual(Views.pages('home'), []);
   assert.equal(Views.of('/projects/[name]/work/[id]'), 'work');
   assert.equal(Views.of('/projects/[name]/sessions'), 'sessions');
   assert.equal(Views.of('/projects/[name]/release'), 'release');
@@ -31,39 +31,39 @@ test('a recording, its report, and its turns sit under the Recordings tab', () =
   assert.equal(Views.title('recorder'), 'Recorder & storage');
 });
 
-test('three destinations hold every page, each page in exactly one', () => {
+test('three places hold every page, each page in exactly one', () => {
   assert.deepEqual(
-    Views.destinations.map((place) => place.label),
-    ['Projects', 'Inspect', 'Host'],
+    Views.places.map((place) => place.label),
+    ['Work', 'Monitor', 'System'],
   );
-  const pages = Views.destinations.flatMap((place) => Views.pages(place.destination));
+  const pages = Views.places.flatMap((place) => Views.pages(place.place, 'acme-web'));
   assert.equal(new Set(pages.map((page) => page.tab)).size, pages.length);
-  for (const place of Views.destinations) {
-    for (const page of Views.pages(place.destination)) {
-      assert.equal(Views.destination(page.tab), place.destination, page.tab);
+  for (const place of Views.places) {
+    for (const page of Views.pages(place.place, 'acme-web')) {
+      assert.equal(Views.place(page.tab), place.place, page.tab);
     }
-    // Each destination opens on its first page.
-    assert.equal(Views.pages(place.destination)[0]?.href, place.href);
+    // Each place opens where its name leads: Work on Projects, the others
+    // on their first page.
+    assert.equal(
+      Views.of(place.href),
+      place.place === 'work' ? 'projects' : Views.pages(place.place)[0]?.tab,
+    );
   }
-  assert.equal(Views.destination(Views.tab('turn')), 'inspect');
-  assert.equal(Views.destination(Views.tab('work')), 'projects');
+  assert.equal(Views.place(Views.tab('turn')), 'monitor');
+  assert.equal(Views.place(Views.tab('usage')), 'monitor');
+  assert.equal(Views.place(Views.tab('work')), 'work');
+  assert.equal(Views.place('recorder'), 'system');
 });
 
-test("inside a project, the row holds the project's own pages", () => {
+test("Work's own home has no pages; inside a project, the row holds the project's", () => {
+  assert.deepEqual(Views.pages('work'), []);
   assert.deepEqual(
-    Views.pages('projects').map((page) => page.label),
-    ['Projects'],
-  );
-  assert.deepEqual(
-    Views.pages('projects', 'acme web').map((page) => [page.tab, page.href]),
+    Views.pages('work', 'acme web').map((page) => [page.tab, page.href]),
     [
       ['sessions', '/projects/acme%20web/sessions'],
       ['release', '/projects/acme%20web/release'],
     ],
   );
-  for (const page of Views.pages('projects', 'acme-web')) {
-    assert.equal(Views.destination(page.tab), 'projects');
-  }
 });
 
 test('only the pages that read a project carry it between them', () => {
@@ -72,7 +72,7 @@ test('only the pages that read a project carry it between them', () => {
   const tools = { tab: 'tools', href: '/tools', label: 'Tools' } as const;
   assert.equal(Views.scopedHref(traffic, 'acme-web'), '/traffic?project=acme-web');
   assert.equal(Views.scopedHref(traffic, null), '/traffic');
-  // Every Inspect page reads a project; Host's do not.
+  // Monitor's pages read a project; System's do not.
   assert.equal(Views.scopedHref(live, 'acme-web'), '/live?project=acme-web');
   assert.equal(Views.scopedHref(tools, 'acme-web'), '/tools');
   assert.ok(Views.scoped('recordings'));

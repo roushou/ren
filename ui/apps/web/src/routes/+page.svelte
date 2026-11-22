@@ -1,7 +1,8 @@
 <!--
-  The desk (`/`): where the operator lands. A prompt to start something;
-  what needs them, one card each with what they need to decide; what each
-  agent is doing now; and what ended or moved on since they last looked.
+  Home (`/`): where the operator lands. A prompt to start something; what
+  needs them anywhere (Work's decisions and System's warnings), one card
+  each with what they need to decide; what each agent is doing now; and
+  what ended or moved on since they last looked.
   Each part scrolls within its own height, so a long list never pushes
   the others away.
 -->
@@ -16,8 +17,10 @@
   import { ManagementApi, clock, type UsageCounts } from '#lib/api.ts';
   import { harnessLabel } from '#lib/activity.ts';
   import { compactOrDash } from '#lib/display.ts';
-  import { Desk } from '#lib/desk.ts';
+  import { Home } from '#lib/home.ts';
   import { ProjectBoard } from '#lib/projects.ts';
+  import { RecorderReport } from '#lib/recorder.ts';
+  import { createSnapshot } from '#lib/snapshot.svelte.ts';
   import { Runs, Sessions } from '#lib/runs.ts';
   import { Work } from '#lib/work.ts';
   import type { PageProps } from './$types';
@@ -27,10 +30,24 @@
     new ProjectBoard(data.projects, data.work, data.live, data.sessions, null, data.clients),
   );
   const answers = new ApprovalAnswers();
+  /** The machine's recording, for System's card when storage is near its limit. */
+  const gateway = createSnapshot(() => data.gateway);
+  const crowded = $derived.by(() => {
+    const read = gateway.current.value;
+    return read
+      ? new RecorderReport(
+          read.health.recorder,
+          read.storage?.usage ?? null,
+          read.storage?.policy ?? null,
+          null,
+          Date.now(),
+        ).crowded
+      : null;
+  });
 
   /** When the operator last marked what happened as seen: kept in this
    * browser, a day ago at first. It moves only when they say so. */
-  const SEEN = 'ren.desk.seen';
+  const SEEN = 'ren.home.seen';
   let now = $state(Date.now());
   let seen = $state(Date.now() - 86_400_000);
   let spent = $state<UsageCounts | null>(null);
@@ -62,12 +79,13 @@
     readSpent(seen);
   }
 
-  const underWay = $derived(Desk.underWay(board));
-  const outcomes = $derived(Desk.outcomes(board, seen));
-  const counts = $derived(Desk.counts(outcomes));
+  const underWay = $derived(Home.underWay(board));
+  const outcomes = $derived(Home.outcomes(board, seen));
+  const counts = $derived(Home.counts(outcomes));
   const needs = $derived(
     board.approvals.length +
       board.signedOut.length +
+      (crowded ? 1 : 0) +
       board.toPromote.length +
       board.previews.length +
       board.queued.length,
@@ -101,11 +119,11 @@
 </script>
 
 {#snippet scope()}
-  <div class="scope-group"><span class="scope-title">Desk</span></div>
+  <div class="scope-group"><span class="scope-title">Home</span></div>
 {/snippet}
 
 <Toolbar {scope} />
-<div class="desk">
+<div class="home">
   {#if data.runsControl}
     <form class="start" onsubmit={start} aria-label="Start a session">
       <label class="prompt">
@@ -145,7 +163,7 @@
       <section class="part" aria-labelledby="needs-title">
         <header>
           <h2 id="needs-title" class="cap">Needs you · {needs}</h2>
-          <span class="muted mono">across projects · worst first</span>
+          <span class="muted mono">everywhere · worst first</span>
         </header>
         <div class="scroll cards">
           {#each board.approvals as waiting (`${waiting.session}:${waiting.approval}`)}
@@ -183,12 +201,24 @@
               <div class="body">
                 <strong>{harnessLabel(client.harness)} is signed out on this host</strong>
                 <span class="from muted"
-                  >new {harnessLabel(client.harness)} sessions cannot start until it signs in</span
+                  >System · new {harnessLabel(client.harness)} sessions cannot start until it signs in</span
                 >
               </div>
               <div class="acts"><a class="button small primary" href="/tools">Sign in</a></div>
             </article>
           {/each}
+          {#if crowded}
+            <article class="card">
+              <Glyph mark="warning" label="Needs a look" />
+              <div class="body">
+                <strong>Recorder storage is at {RecorderReport.percent(crowded.share ?? 0)}</strong>
+                <span class="from muted"
+                  >System · {crowded.used} of {crowded.limit} · the oldest calls go first at the limit</span
+                >
+              </div>
+              <div class="acts"><a class="button small" href="/recorder">Recorder</a></div>
+            </article>
+          {/if}
           {#each board.toPromote as project (project.id)}
             {@const canary = project.release?.canary ?? null}
             {@const checks = canary?.checks ?? []}
@@ -281,7 +311,7 @@
         <h2 id="since-title" class="cap">Since you looked</h2>
         <span class="seen"
           ><span class="muted mono" title={new Date(seen).toLocaleString()}
-            >{Desk.looked(seen, now)}</span
+            >{Home.looked(seen, now)}</span
           ><button
             class="button small"
             disabled={!outcomes.length}
@@ -341,7 +371,7 @@
 <ApprovalModal {answers} />
 
 <style>
-  .desk {
+  .home {
     display: flex;
     flex: 1;
     flex-direction: column;
@@ -605,7 +635,7 @@
     .parts > aside {
       border-top: 1px solid var(--line);
     }
-    .desk {
+    .home {
       overflow: auto;
     }
   }

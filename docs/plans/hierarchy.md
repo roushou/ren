@@ -175,6 +175,16 @@ Records outside the tree stay, and each says why it is outside:
    Release. Overview, the gateway's traffic, moves to `/overview` under
    Inspect.
 
+   Since the redesign, Home (`/`, the wordmark) is where the operator
+   lands: what needs them anywhere, what each agent is doing, and what
+   happened since they looked. Its bar leads to three places that never
+   show each other: **Work** (Projects, then a project's Sessions and
+   Release, and Scratch), **Monitor** (Inspect renamed: Overview, Live,
+   Traffic, Recordings, Search, and Usage, which moves from Host), and
+   **System** (Host renamed: Tools and Recorder). Inside a place the bar
+   holds only its name and its pages (`Views.place`, `Views.pages`);
+   Pending sits in Work alone, and System's warnings reach Home's list.
+
    Approvals are among what is pending: when this UI drives sessions, the
    Projects view reads the daemon's live runs (`/control/v1/runs`) and the
    current sessions, and lists each approval a working run waits on with

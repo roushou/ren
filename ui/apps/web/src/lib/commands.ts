@@ -5,7 +5,7 @@
 // no DOM.
 
 import { assertNever } from './decode.ts';
-import { Views, type Destination } from './view.ts';
+import { Views } from './view.ts';
 
 /** One thing the palette offers: where it goes, and how it is said. */
 export interface Command {
@@ -13,7 +13,7 @@ export interface Command {
    * search recorded history: the palette's groups, in that order. */
   kind: CommandKind;
   label: string;
-  /** Where it sits: its destination, or its project. */
+  /** Where it sits: its place, or its project. */
   detail: string;
   href: string;
   /** The project it belongs to; null for one that belongs to none. */
@@ -30,8 +30,6 @@ export interface CommandGroup {
   commands: Command[];
 }
 
-const DESTINATIONS: readonly Destination[] = ['projects', 'inspect', 'host'];
-
 /** What the palette can offer besides places: canaries waiting to be
  * promoted from here, and work items under way. */
 export interface CommandSources {
@@ -42,22 +40,32 @@ export interface CommandSources {
 const NONE: CommandSources = { promotable: [], work: [] };
 
 export class Commands {
-  /** Every command: the actions first, then each destination's pages, each
-   * project's own, and its work items. */
+  /** Every command: the actions first, then Home, each place and its
+   * pages, each project's own, and its work items. */
   static all(projects: readonly { name: string }[], sources: CommandSources = NONE): Command[] {
-    const label = (destination: Destination) =>
-      Views.destinations.find((place) => place.destination === destination)?.label ?? destination;
-    const places = DESTINATIONS.flatMap((destination) =>
-      Views.pages(destination).map((link): Command => ({
+    const places = Views.places.flatMap((place): Command[] => [
+      // A place that opens on one of its pages is offered as that page.
+      ...(Views.pages(place.place).some((link) => link.href === place.href)
+        ? []
+        : [
+            {
+              kind: 'go',
+              label: place.label,
+              detail: 'Ren',
+              href: place.href,
+              project: null,
+            } as const,
+          ]),
+      ...Views.pages(place.place).map((link): Command => ({
         kind: 'go',
         label: link.label,
-        detail: label(destination),
+        detail: place.label,
         href: link.href,
         project: null,
       })),
-    );
+    ]);
     const own = projects.flatMap((project) =>
-      Views.pages('projects', project.name).map((link): Command => ({
+      Views.pages('work', project.name).map((link): Command => ({
         kind: 'go',
         label: link.label,
         detail: project.name,
@@ -94,7 +102,7 @@ export class Commands {
           ]
         : [],
     );
-    const desk: Command = { kind: 'go', label: 'Desk', detail: 'Ren', href: '/', project: null };
+    const home: Command = { kind: 'go', label: 'Home', detail: 'Ren', href: '/', project: null };
     // Scratch is picked like a project, so it is no page of a row.
     const scratch: Command = {
       kind: 'go',
@@ -103,7 +111,7 @@ export class Commands {
       href: '/scratch',
       project: null,
     };
-    return [...actions, desk, ...places, scratch, ...own, ...work];
+    return [...actions, home, ...places, scratch, ...own, ...work];
   }
 
   /**

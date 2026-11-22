@@ -1,5 +1,5 @@
-// The desk (`/`): what is under way across projects, and what happened
-// since the operator last looked, read from the board the layout loads.
+// Home (`/`): what is under way across projects, and what happened since
+// the operator last looked, read from the board the layout loads.
 // What needs them is the board's own (approvals, signed-out clients,
 // canaries, previews). Pure: no DOM, no clock, no storage.
 
@@ -41,7 +41,7 @@ export interface OutcomeCounts {
   failed: number;
 }
 
-export class Desk {
+export class Home {
   /** Running sessions across projects: the ones waiting on the operator
    * first, then the newest. */
   static underWay(board: ProjectBoard): UnderWay[] {

@@ -3,18 +3,19 @@
  * (docs/plans/hierarchy.md), and its title. Pure, so the layout's choices
  * are tested without a browser.
  *
- * The desk (`/`, under the wordmark) is where the operator lands: what
- * needs them, what is moving, what happened since they looked. Three
- * destinations hold every other view: Projects (the factory: each
+ * Home (`/`, under the wordmark) is where the operator lands: what needs
+ * them, what is moving, what happened since they looked, everywhere. Three
+ * places hold every other view, and never show each other: Work (each
  * project, with its work, sessions, and release under it, and Scratch for
- * sessions that work for none), Inspect (everything recorded), and
- * Host (this machine). The header names the three; under it, the current
- * destination's own pages, or inside a project, the project's.
+ * sessions that work for none), Monitor (what agents and models did), and
+ * System (the machine Ren runs on). Home's bar names the three; inside one,
+ * the bar holds only that place's pages, or inside a project, the
+ * project's.
  */
 
 /** A view of the workbench, one per page. */
 export type View =
-  | 'desk'
+  | 'home'
   | 'projects'
   | 'work'
   | 'scratch'
@@ -32,10 +33,10 @@ export type View =
   | 'release'
   | 'recorder';
 
-/** A page of a destination, or of a project: a recording's report and
+/** A page of a place, or of a project: a recording's report and
  * turns sit under Recordings. */
 export type Tab =
-  | 'desk'
+  | 'home'
   | 'projects'
   | 'scratch'
   | 'sessions'
@@ -49,10 +50,10 @@ export type Tab =
   | 'usage'
   | 'recorder';
 
-/** The header's three places. */
-export type Destination = 'projects' | 'inspect' | 'host';
+/** Where a view sits: Home, or one of the three places. */
+export type Place = 'home' | 'work' | 'monitor' | 'system';
 
-/** A destination's page, as its row of links shows it. */
+/** A place's page, as its row of links shows it. */
 export interface PageLink {
   tab: Tab;
   href: string;
@@ -60,15 +61,15 @@ export interface PageLink {
 }
 
 export class Views {
-  /** The destinations, in the header's order, each with where it opens. */
-  static readonly destinations: readonly {
-    destination: Destination;
+  /** The three places, in Home's order, each with where it opens. */
+  static readonly places: readonly {
+    place: Exclude<Place, 'home'>;
     href: string;
     label: string;
   }[] = [
-    { destination: 'projects', href: '/projects', label: 'Projects' },
-    { destination: 'inspect', href: '/overview', label: 'Inspect' },
-    { destination: 'host', href: '/tools', label: 'Host' },
+    { place: 'work', href: '/projects', label: 'Work' },
+    { place: 'monitor', href: '/overview', label: 'Monitor' },
+    { place: 'system', href: '/tools', label: 'System' },
   ];
 
   /** The view a SvelteKit route id is; an unknown route is Traffic, the
@@ -76,7 +77,7 @@ export class Views {
   static of(route: string | null): View {
     switch (route) {
       case '/':
-        return 'desk';
+        return 'home';
       case '/projects':
         return 'projects';
       case '/projects/[name]/work/[id]':
@@ -121,7 +122,7 @@ export class Views {
         return 'recordings';
       case 'work':
         return 'release';
-      case 'desk':
+      case 'home':
       case 'projects':
       case 'scratch':
       case 'overview':
@@ -142,25 +143,26 @@ export class Views {
     }
   }
 
-  /** The destination `tab` belongs to. */
-  static destination(tab: Tab): Destination {
+  /** The place `tab` belongs to. */
+  static place(tab: Tab): Place {
     switch (tab) {
-      case 'desk':
+      case 'home':
+        return 'home';
       case 'projects':
       case 'scratch':
       case 'sessions':
       case 'release':
-        return 'projects';
+        return 'work';
       case 'overview':
       case 'live':
       case 'traffic':
       case 'recordings':
       case 'search':
-        return 'inspect';
-      case 'tools':
       case 'usage':
+        return 'monitor';
+      case 'tools':
       case 'recorder':
-        return 'host';
+        return 'system';
       default: {
         const never: never = tab;
         return never;
@@ -168,44 +170,44 @@ export class Views {
     }
   }
 
-  /** A destination's pages, in the order its row shows them; inside the
-   * project named `project`, the project's own. */
-  static pages(destination: Destination, project: string | null = null): readonly PageLink[] {
-    switch (destination) {
-      case 'projects': {
-        if (project !== null) {
-          const base = `/projects/${encodeURIComponent(project)}`;
-          return [
-            { tab: 'sessions', href: `${base}/sessions`, label: 'Sessions' },
-            { tab: 'release', href: `${base}/release`, label: 'Release' },
-          ];
-        }
-        // Scratch is not a page of the row: it is picked like a project.
-        return [{ tab: 'projects', href: '/projects', label: 'Projects' }];
+  /** A place's pages, in the order its bar shows them; inside the project
+   * named `project`, the project's own. Home and Work's own home
+   * (Projects) have none: the place's name leads there. */
+  static pages(place: Place, project: string | null = null): readonly PageLink[] {
+    switch (place) {
+      case 'home':
+        return [];
+      case 'work': {
+        if (project === null) return [];
+        const base = `/projects/${encodeURIComponent(project)}`;
+        return [
+          { tab: 'sessions', href: `${base}/sessions`, label: 'Sessions' },
+          { tab: 'release', href: `${base}/release`, label: 'Release' },
+        ];
       }
-      case 'inspect':
+      case 'monitor':
         return [
           { tab: 'overview', href: '/overview', label: 'Overview' },
           { tab: 'live', href: '/live', label: 'Live' },
           { tab: 'traffic', href: '/traffic', label: 'Traffic' },
           { tab: 'recordings', href: '/recordings', label: 'Recordings' },
           { tab: 'search', href: '/search', label: 'Search' },
+          { tab: 'usage', href: '/usage', label: 'Usage' },
         ];
-      case 'host':
+      case 'system':
         return [
           { tab: 'tools', href: '/tools', label: 'Tools' },
-          { tab: 'usage', href: '/usage', label: 'Usage' },
           { tab: 'recorder', href: '/recorder', label: 'Recorder' },
         ];
       default: {
-        const never: never = destination;
+        const never: never = place;
         return never;
       }
     }
   }
 
   /** Whether `tab` can be scoped to one project with `?project=`: every
-   * Inspect page. */
+   * Monitor page that reads one. */
   static scoped(tab: Tab): boolean {
     switch (tab) {
       case 'traffic':
@@ -214,7 +216,7 @@ export class Views {
       case 'live':
       case 'search':
         return true;
-      case 'desk':
+      case 'home':
       case 'projects':
       case 'scratch':
       case 'sessions':
@@ -240,8 +242,8 @@ export class Views {
   /** What the toolbar and the document title call `view`. */
   static title(view: View): string {
     switch (view) {
-      case 'desk':
-        return 'Desk';
+      case 'home':
+        return 'Home';
       case 'projects':
         return 'Projects';
       case 'work':

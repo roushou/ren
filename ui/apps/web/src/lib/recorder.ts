@@ -73,6 +73,15 @@ export class RecorderReport {
     this.gauges = RecorderReport.gauges(storage, policy, oldest, now);
   }
 
+  /** Storage used past this share of its limit needs a look. */
+  static readonly CROWDED = 0.8;
+
+  /** Storage, when it is close enough to its limit to need a look. */
+  get crowded(): Gauge | null {
+    const storage = this.gauges.find((gauge) => gauge.label === 'Storage');
+    return storage?.share != null && storage.share > RecorderReport.CROWDED ? storage : null;
+  }
+
   /** Bytes the recorder could not keep: the queue was full or storage failed. */
   static lostBytes(recorder: RecorderMetrics): number {
     const omissions = recorder.omissions;

@@ -31,7 +31,7 @@
   import BriefingPanel from '#lib/BriefingPanel.svelte';
   import { RedlineDesk } from 'redline/desk';
   import { Recipients } from '#lib/briefing.svelte.ts';
-  import { Views, type Destination } from '#lib/view.ts';
+  import { Views } from '#lib/view.ts';
   import { Arrival } from '#lib/arrival.ts';
   import type { RecordingsData } from '#lib/loaders.ts';
   import '#lib/style.css';
@@ -122,8 +122,10 @@
       : null,
   );
   const tab = $derived(Views.tab(target ?? view));
-  /** The header's place the page is in, and so the row of pages under it. */
-  const destination = $derived(Views.destination(tab));
+  /** Home, or the place the page is in: the bar shows only it. */
+  const where = $derived(Views.place(tab));
+  /** The place's own entry: its name, and where that leads. */
+  const here = $derived(Views.places.find((each) => each.place === where) ?? null);
   /** What waits on the operator, across every project: the top bar's Pending. */
   const board = $derived(
     new ProjectBoard(
@@ -161,12 +163,7 @@
     const to = navigating.to ?? page;
     return to.route.id?.startsWith('/projects/[name]') ? (to.params?.name ?? null) : null;
   });
-  /** The last project visited, for the way back from Inspect and Host. */
-  let lastProject = $state<string | null>(null);
-  $effect(() => {
-    if (inProject) lastProject = inProject;
-  });
-  /** How recording stands on this host, for the top bar's health mark. */
+  /** How recording stands on this host, for System's mark on Home. */
   const hostReport = $derived(
     health
       ? new RecorderReport(
@@ -179,10 +176,6 @@
       : null,
   );
   const hostVerdict = $derived(hostReport?.verdict ?? null);
-  const storageGauge = $derived(
-    hostReport?.gauges.find((gauge) => gauge.label === 'Storage') ?? null,
-  );
-  const callsGauge = $derived(hostReport?.gauges.find((gauge) => gauge.label === 'Calls') ?? null);
   /** What on the host needs a look, worst first; null when nothing does. */
   const hostAttention = $derived.by((): { mark: 'failed' | 'warning'; label: string } | null => {
     if (error) return { mark: 'failed', label: 'the gateway is not answering' };
@@ -191,8 +184,7 @@
         mark: Marks.ofTone(hostVerdict.tone) === 'failed' ? 'failed' : 'warning',
         label: hostVerdict.headline,
       };
-    if ((storageGauge?.share ?? 0) > 0.8)
-      return { mark: 'warning', label: 'storage is near its limit' };
+    if (hostReport?.crowded) return { mark: 'warning', label: 'storage is near its limit' };
     if (board.signedOut.length)
       return {
         mark: 'warning',
@@ -210,11 +202,6 @@
     const search = params.toString();
     return search ? `${page.url.pathname}?${search}` : page.url.pathname;
   });
-  const destinationIcons = {
-    projects: 'branch',
-    inspect: 'logs',
-    host: 'storage',
-  } as const satisfies Record<Destination, IconName>;
   /** The page's reads, as each comes in, for the status line and the error banner. */
   const reads = createSettled(() => [
     page.data.overview,
@@ -336,18 +323,39 @@
     <a
       class="brand"
       class:marked
-      class:active={view === 'desk'}
+      class:active={view === 'home'}
       href="/"
-      aria-current={view === 'desk' ? 'page' : undefined}
-      aria-label={marked ? `Your desk, ${marked.tag} gateway` : 'Your desk'}
-      title={marked?.what ?? 'Your desk: what needs you, what is moving'}
+      aria-current={view === 'home' ? 'page' : undefined}
+      aria-label={marked ? `Home, ${marked.tag} gateway` : 'Home'}
+      title={marked?.what ?? 'Home: what needs you, what is moving, what happened'}
       ><span class="flaps" aria-hidden="true"
         ><span class="flap">R</span><span class="flap">E</span><span class="flap">N</span
         >{#if marked}<span class="instance-badge">{marked.tag}</span>{/if}</span
       ></a
     >
     <nav class="workbench-context" aria-label="Where you are" bind:this={tabs}>
-      {#if destination === 'projects' && (inProject || view === 'scratch')}
+      {#if here === null}
+        <!-- Home leads to the three places; inside one, only it shows. -->
+        {#each Views.places as each (each.place)}
+          <a class="place-link" href={each.href} data-sveltekit-preload-data="hover"
+            >{each.label}{#if each.place === 'system' && hostAttention}<Glyph
+                mark={hostAttention.mark}
+                label={hostAttention.label}
+              />{/if}</a
+          >
+        {/each}
+      {:else}
+        <a
+          class="place-name"
+          class:active={view === 'projects'}
+          href={here.href}
+          aria-current={view === 'projects' ? 'page' : undefined}
+          >{here.label}{#if where === 'system' && place.node}<span class="mono muted"
+              >{place.node}</span
+            >{/if}</a
+        >
+      {/if}
+      {#if where === 'work' && (inProject || view === 'scratch')}
         <button class="project-pick" popovertarget="project-picker" title="Switch project"
           ><Icon name="branch" size={13} /><strong>{inProject ?? 'Scratch'}</strong><Icon
             name="chevron"
@@ -381,14 +389,8 @@
             <li class="all"><a href="/projects">All projects</a></li>
           </ul>
         </Popover>
-      {:else if destination !== 'projects'}
-        <span class="mode-name"
-          ><Icon name={destinationIcons[destination]} size={13} />{Views.destinations.find(
-            (place) => place.destination === destination,
-          )?.label}</span
-        >
       {/if}
-      {#each view === 'scratch' ? [] : Views.pages(destination, inProject) as link (link.tab)}
+      {#each view === 'scratch' ? [] : Views.pages(where, inProject) as link (link.tab)}
         <a
           href={Views.scopedHref(link, scope)}
           data-sveltekit-preload-data="hover"
@@ -400,161 +402,51 @@
             />{/if}</a
         >
       {/each}
-      {#if destination !== 'projects'}
-        <a class="back" href={lastProject ? ProjectBoard.href(lastProject) : '/projects'}
-          ><span aria-hidden="true">←</span>{lastProject ?? 'Projects'}</a
-        >
-      {/if}
     </nav>
     <button class="command-open" onclick={() => (commanding = true)}
       ><Icon name="search" size={13} /><span>Go to anything</span><kbd>⌘K</kbd></button
     >
-    <button
-      class="pending-open"
-      class:waiting={board.waiting > 0}
-      popovertarget="pending-popover"
-      aria-label={board.waiting ? `Pending: ${board.waiting}` : 'Pending: nothing waits on you'}
-      ><Glyph mark={board.waiting ? 'yours' : 'idle'} />Pending{#if board.waiting}<span
-          class="pending-count mono">{board.waiting}</span
-        >{/if}</button
-    >
-    <Popover id="pending-popover" label="Pending" width="wide"><PendingPanel {board} /></Popover>
-    <nav class="mode-links" aria-label="Inspect and host">
-      <a
-        href="/overview"
-        data-sveltekit-preload-data="hover"
-        class:active={destination === 'inspect'}
-        aria-current={destination === 'inspect' ? 'page' : undefined}
-        ><Icon name={destinationIcons.inspect} size={13} />Inspect</a
-      >
-      <!-- Host opens its health; its pages are a click further. It carries a
-           glyph only when something on the host needs a look. -->
+    {#if where === 'work'}
       <button
-        class="host-open"
-        class:active={destination === 'host'}
-        popovertarget="host-popover"
-        aria-label={hostAttention ? `Host: ${hostAttention.label}` : 'Host: everything is fine'}
-        title={hostAttention?.label ?? 'Host: everything is fine'}
-        ><Icon name={destinationIcons.host} size={13} />Host{#if hostAttention}<Glyph
-            mark={hostAttention.mark}
-          />{/if}</button
+        class="pending-open"
+        class:waiting={board.waiting > 0}
+        popovertarget="pending-popover"
+        aria-label={board.waiting ? `Pending: ${board.waiting}` : 'Pending: nothing waits on you'}
+        ><Glyph mark={board.waiting ? 'yours' : 'idle'} />Pending{#if board.waiting}<span
+            class="pending-count mono">{board.waiting}</span
+          >{/if}</button
       >
-    </nav>
-    <Popover id="host-popover" label="Host health">
-      <div class="host-card">
-        <p class="host-head">
-          <span class="cap"
-            >Host · {place.node ??
-              (place.network === 'loopback'
-                ? 'this machine'
-                : GatewayPlace.networkLabel(place.network))}</span
-          >
-        </p>
-        <ul class="host-rows">
-          <li>
-            <Glyph
-              mark={hostVerdict ? Marks.ofTone(hostVerdict.tone) : 'waiting'}
-              label={hostVerdict?.headline ?? 'Not read yet'}
-            />
-            <span title={hostVerdict?.facts.join(' · ')}>Recording</span>
-            <a class="muted" href="/recorder">{hostVerdict?.headline ?? 'not read yet'} →</a>
-          </li>
-          {#each [storageGauge, callsGauge] as gauge (gauge?.label)}
-            {#if gauge && gauge.share !== null}
-              <li>
-                <!-- Calls kept sit at their cap by design (the oldest go first);
-                     storage near its limit is what needs a look. -->
-                <Glyph
-                  mark={gauge.label === 'Storage' && gauge.share > 0.8 ? 'warning' : 'passed'}
-                  label={gauge.label === 'Storage' && gauge.share > 0.8
-                    ? 'Near its limit'
-                    : 'Within its limit'}
-                />
-                <span
-                  >{gauge.label === 'Storage'
-                    ? 'Recorder storage'
-                    : 'Calls kept'}{#if gauge.binding}<span class="muted sep">· prunes first</span
-                    >{/if}</span
-                >
-                <a class="muted mono" href="/recorder">{Math.round(gauge.share * 100)}% →</a>
-              </li>
-            {/if}
-          {/each}
-          <li>
-            <Glyph
-              mark={board.signedOut.length ? 'warning' : 'passed'}
-              label={board.signedOut.length ? 'Signed out' : 'Signed in'}
-            />
-            <span
-              >Clients{#if board.signedOut.length}<span class="muted mono sep"
-                  >· {board.signedOut
-                    .map((client) => harnessLabel(client.harness))
-                    .join(', ')}</span
-                >{/if}</span
-            >
-            <a class="muted" href="/tools">Tools →</a>
-          </li>
-          <li>
-            <Glyph
-              mark={error ? 'failed' : 'passed'}
-              label={error ? 'Not answering' : 'Answering'}
-            />
-            <span>Gateway</span>
-            <span class="muted">{error ? 'not answering' : 'reachable'}</span>
-          </li>
-        </ul>
-        {#if storageGauge && storageGauge.share !== null}
-          <div class="host-storage">
-            <svg viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true"
-              ><rect class="gauge-whole" width="100" height="4" /><rect
-                class="gauge-used"
-                class:high={storageGauge.share > 0.8}
-                width={Math.min(100, storageGauge.share * 100)}
-                height="4"
-              /></svg
-            >
-            <span class="muted mono"
-              >{storageGauge.used} of {storageGauge.limit} · oldest calls go first</span
-            >
-          </div>
-        {/if}
-        <nav class="host-pages" aria-label="Host pages">
-          {#each Views.pages('host') as link (link.tab)}<a
-              href={link.href}
-              aria-current={tab === link.tab ? 'page' : undefined}>{link.label}</a
-            >{/each}
-        </nav>
+      <Popover id="pending-popover" label="Pending" width="wide"><PendingPanel {board} /></Popover>
+    {/if}
+    {#if where === 'home' || where === 'system'}
+      <button
+        class="gateway-place mono"
+        class:public={place.network === 'public'}
+        popovertarget="connect-panel"
+        title="Gateway on {place.node ??
+          GatewayPlace.networkLabel(place.network)}, reached over {GatewayPlace.networkLabel(
+          place.network,
+        )}. {error ? 'The management API is not answering. ' : ''}Connect a client"
+        ><Glyph
+          mark={error ? 'failed' : updated ? 'passed' : 'waiting'}
+        />{#if place.node && place.network !== 'loopback'}<b>{place.node}</b><span
+            class="gateway-sep">·</span
+          >{/if}<Icon name={networkIcons[place.network]} size={12} /><span
+          >{place.network === 'loopback'
+            ? 'this machine'
+            : GatewayPlace.networkLabel(place.network)}</span
+        ><Icon name="chevron" size={11} /></button
+      >
+      <div id="connect-panel" class="connect-panel" popover="auto" aria-label="Connect a client">
+        <header>
+          <strong>Connect a client</strong>
+          <span class="mono">{shownOrigin}</span>{#if place.maskable}<AddressToggle
+            />{/if}<CopyButton text={gatewayOrigin} label="Copy the gateway address" />
+        </header>
+        <ConnectClient layout="list" {gatewayOrigin} />
+        <p><Icon name="shield" size={12} /> Each client keeps its own sign-in; Ren forwards it.</p>
       </div>
-    </Popover>
-    <button
-      class="gateway-place mono"
-      class:public={place.network === 'public'}
-      popovertarget="connect-panel"
-      title="Gateway on {place.node ??
-        GatewayPlace.networkLabel(place.network)}, reached over {GatewayPlace.networkLabel(
-        place.network,
-      )}. {error ? 'The management API is not answering. ' : ''}Connect a client"
-      ><Glyph
-        mark={error ? 'failed' : updated ? 'passed' : 'waiting'}
-      />{#if place.node && place.network !== 'loopback'}<b>{place.node}</b><span class="gateway-sep"
-          >·</span
-        >{/if}<Icon name={networkIcons[place.network]} size={12} /><span
-        >{place.network === 'loopback'
-          ? 'this machine'
-          : GatewayPlace.networkLabel(place.network)}</span
-      ><Icon name="chevron" size={11} /></button
-    >
-    <div id="connect-panel" class="connect-panel" popover="auto" aria-label="Connect a client">
-      <header>
-        <strong>Connect a client</strong>
-        <span class="mono">{shownOrigin}</span>{#if place.maskable}<AddressToggle />{/if}<CopyButton
-          text={gatewayOrigin}
-          label="Copy the gateway address"
-        />
-      </header>
-      <ConnectClient layout="list" {gatewayOrigin} />
-      <p><Icon name="shield" size={12} /> Each client keeps its own sign-in; Ren forwards it.</p>
-    </div>
+    {/if}
     <ThemeControl />
   </header>
   {#if commanding}<CommandPalette
