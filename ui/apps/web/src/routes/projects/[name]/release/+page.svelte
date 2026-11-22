@@ -721,9 +721,12 @@
   .check.failed .check-name > .mono {
     color: var(--error);
   }
+  /* One row of pages that scrolls sideways, however many the canary captured. */
   .shots {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-auto-flow: column;
+    grid-auto-columns: 170px;
+    overflow-x: auto;
     gap: 1px;
     border-top: 1px solid var(--line);
     background: var(--line);
