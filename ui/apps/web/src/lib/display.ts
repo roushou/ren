@@ -460,7 +460,7 @@ export function tokenSummary(
   return {
     input: compact(input),
     output: usage.output_tokens === null ? '—' : compact(usage.output_tokens),
-    title: `${parts.join(' · ')} (provider reported; not subscription allowance or charges)`,
+    title: `${parts.join(' · ')}`,
   };
 }
 
@@ -477,7 +477,7 @@ export function spentSummary(tokens: TokenTotals): { text: string; title: string
   ].filter(Boolean);
   return {
     text: `${compactOrDash(tokens.input)} in · ${compactOrDash(tokens.output)} out`,
-    title: `${parts.join(' · ')} (provider reported; not subscription allowance or charges)`,
+    title: `${parts.join(' · ')}`,
   };
 }
 

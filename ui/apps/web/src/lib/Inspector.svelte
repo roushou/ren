@@ -410,8 +410,7 @@
               : usage.accounting === 'excludes_cache'
                 ? 'Input excludes cached tokens.'
                 : `Cached-token accounting: ${usage.accounting}.`
-            : 'No usage reported or captured.'} Token counts do not represent subscription allowance or
-          charges.
+            : 'No usage reported or captured.'}
         </p>
       </section>
       <section class="detail-section">

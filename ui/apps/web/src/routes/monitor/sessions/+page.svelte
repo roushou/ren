@@ -177,9 +177,7 @@
           )}</span
         >{:else}<span class="muted">—</span>{/if}</td
     >
-    <td
-      class="numeric mono sized"
-      title="Provider reported; input includes cached context. Not subscription allowance or charges."
+    <td class="numeric mono sized" title="Input includes cached context"
       >{compactOrDash(recording.tokens.input)}
       <span class="muted">· {compactOrDash(recording.tokens.output)}</span>{@render bar(
         row.tokens,
