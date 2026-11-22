@@ -183,6 +183,23 @@
     hostReport?.gauges.find((gauge) => gauge.label === 'Storage') ?? null,
   );
   const callsGauge = $derived(hostReport?.gauges.find((gauge) => gauge.label === 'Calls') ?? null);
+  /** What on the host needs a look, worst first; null when nothing does. */
+  const hostAttention = $derived.by((): { mark: 'failed' | 'warning'; label: string } | null => {
+    if (error) return { mark: 'failed', label: 'the gateway is not answering' };
+    if (hostVerdict && hostVerdict.tone !== 'success')
+      return {
+        mark: Marks.ofTone(hostVerdict.tone) === 'failed' ? 'failed' : 'warning',
+        label: hostVerdict.headline,
+      };
+    if ((storageGauge?.share ?? 0) > 0.8)
+      return { mark: 'warning', label: 'storage is near its limit' };
+    if (board.signedOut.length)
+      return {
+        mark: 'warning',
+        label: `${board.signedOut.map((client) => harnessLabel(client.harness)).join(', ')} signed out`,
+      };
+    return null;
+  });
   /** The project an Inspect page is narrowed to, when it can be. */
   const scope = $derived(Views.scoped(tab) ? page.url.searchParams.get('project') : null);
   /** The same page, for every project. */
@@ -394,28 +411,24 @@
     >
     <Popover id="pending-popover" label="Pending" width="wide"><PendingPanel {board} /></Popover>
     <nav class="mode-links" aria-label="Inspect and host">
-      {#each Views.destinations.filter((place) => place.destination !== 'projects') as place (place.destination)}
-        <a
-          href={place.href}
-          data-sveltekit-preload-data="hover"
-          class:active={destination === place.destination}
-          aria-current={destination === place.destination ? 'page' : undefined}
-          ><Icon name={destinationIcons[place.destination]} size={13} />{place.label}</a
-        >
-      {/each}
+      <a
+        href="/overview"
+        data-sveltekit-preload-data="hover"
+        class:active={destination === 'inspect'}
+        aria-current={destination === 'inspect' ? 'page' : undefined}
+        ><Icon name={destinationIcons.inspect} size={13} />Inspect</a
+      >
+      <!-- Host opens its health; its pages are a click further. It carries a
+           glyph only when something on the host needs a look. -->
       <button
-        class="host-health"
+        class="host-open"
+        class:active={destination === 'host'}
         popovertarget="host-popover"
-        aria-label="Host health: {hostVerdict?.headline ?? 'not read yet'}"
-        title={hostVerdict?.headline ?? 'Host health'}
-        ><Glyph
-          mark={(board.signedOut.length || (storageGauge?.share ?? 0) > 0.8) &&
-          hostVerdict?.tone === 'success'
-            ? 'warning'
-            : hostVerdict
-              ? Marks.ofTone(hostVerdict.tone)
-              : 'waiting'}
-        /></button
+        aria-label={hostAttention ? `Host: ${hostAttention.label}` : 'Host: everything is fine'}
+        title={hostAttention?.label ?? 'Host: everything is fine'}
+        ><Icon name={destinationIcons.host} size={13} />Host{#if hostAttention}<Glyph
+            mark={hostAttention.mark}
+          />{/if}</button
       >
     </nav>
     <Popover id="host-popover" label="Host health">
@@ -496,6 +509,12 @@
             >
           </div>
         {/if}
+        <nav class="host-pages" aria-label="Host pages">
+          {#each Views.pages('host') as link (link.tab)}<a
+              href={link.href}
+              aria-current={tab === link.tab ? 'page' : undefined}>{link.label}</a
+            >{/each}
+        </nav>
       </div>
     </Popover>
     <button

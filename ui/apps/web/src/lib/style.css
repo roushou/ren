@@ -399,16 +399,42 @@ pre {
 .project-list .all a {
   color: var(--muted);
 }
-.host-health {
+.host-open {
   display: flex;
   align-items: center;
+  gap: 6px;
   padding: 0 10px;
   border: 0;
+  border-top: 2px solid transparent;
   background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
   cursor: pointer;
 }
-.host-health:hover {
+.host-open:hover {
+  color: var(--ink);
+}
+.host-open.active {
+  border-top-color: var(--accent);
+  background: var(--canvas);
+  color: var(--ink);
+}
+.host-pages {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--line);
+}
+.host-pages a {
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.host-pages a:hover,
+.host-pages a[aria-current='page'] {
   background: var(--surface-hover);
+  color: var(--ink);
 }
 .host-card {
   display: flex;
@@ -568,7 +594,8 @@ pre {
     width: auto;
   }
   .command-open span,
-  .mode-links a {
+  .mode-links a,
+  .host-open {
     font-size: 0;
   }
   .command-open span {
