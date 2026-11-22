@@ -12,7 +12,7 @@ import type {
 } from '../src/lib/runs.ts';
 
 const page: PageContext = {
-  path: '/sessions?session=s1',
+  path: '/projects/acme-web/sessions/s1',
   title: 'Ren - Sessions',
   width: 1400,
   height: 820,
@@ -50,7 +50,7 @@ test('the brief lists each noted mark with what it points at', () => {
     [
       'Redline: Move it to the end.',
       '',
-      'Marked on `/sessions?session=s1` (Ren - Sessions), 1400×820, dark theme.',
+      'Marked on `/projects/acme-web/sessions/s1` (Ren - Sessions), 1400×820, dark theme.',
       "In Ren's UI this page is `ui/apps/web/src/routes/sessions/+page.svelte`.",
       'This page was served by a build of commit `97aa93b00000`; the checkout may have moved on since.',
       '',

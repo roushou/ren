@@ -2272,21 +2272,29 @@ export class Sessions {
   ): Map<RecordingId, string> {
     const found = new Map<RecordingId, string>();
     for (const body of bodies) {
-      const href = Sessions.deskHref(Sessions.projectOf(body, projects)?.name ?? null, {
-        session: body.session,
-      });
+      const href = Sessions.deskHref(
+        Sessions.projectOf(body, projects)?.name ?? null,
+        body.session,
+      );
       for (const run of body.stored?.runs ?? [])
         if (run.recording && !found.has(run.recording)) found.set(run.recording, href);
     }
     return found;
   }
 
-  /** The desk a session is on: its project's, by name, or Scratch (null). */
-  static deskHref(project: string | null, query: Record<string, string> = {}): string {
-    const search = new URLSearchParams(query).toString();
-    const path =
+  /** The desk a session is on: its project's, by name, or Scratch (null);
+   * with `session`, that session open on it. */
+  static deskHref(project: string | null, session: SessionId | null = null): string {
+    const desk =
       project === null ? '/scratch' : `/projects/${encodeURIComponent(project)}/sessions`;
-    return search ? `${path}?${search}` : path;
+    return session ? `${desk}/${encodeURIComponent(session)}` : desk;
+  }
+
+  /** The session `pathname` opens on the desk at `desk`; null for the desk
+   * alone, or an address that is not a session's. */
+  static openOn(pathname: string, desk: string): SessionId | null {
+    if (!pathname.startsWith(`${desk}/`)) return null;
+    return SessionId.parse(decodeURIComponent(pathname.slice(desk.length + 1)));
   }
 
   static #base(path: string): string {
@@ -2460,16 +2468,6 @@ export class Sessions {
   /** Whether `workdir` is a scratch folder of its own, under `scratch`. */
   static inScratch(workdir: string, scratch: string | null): boolean {
     return scratch !== null && workdir.startsWith(`${scratch}/`);
-  }
-
-  /** The session one of whose runs is `run`, for links to a run. */
-  static of(bodies: readonly SessionBody[], run: RunId): SessionId | null {
-    return (
-      bodies.find(
-        (body) =>
-          body.served?.process === run || body.stored?.runs.some((entry) => entry.id === run),
-      )?.session ?? null
-    );
   }
 }
 

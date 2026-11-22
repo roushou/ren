@@ -84,11 +84,11 @@ export class Views {
         return 'projects';
       case '/projects/[name]/work/[id]':
         return 'work';
-      case '/projects/[name]/sessions':
+      case '/projects/[name]/sessions/[[session]]':
         return 'sessions';
       case '/projects/[name]/release':
         return 'release';
-      case '/scratch':
+      case '/scratch/[[session]]':
         return 'scratch';
       case '/monitor/overview':
         return 'overview';

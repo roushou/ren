@@ -32,7 +32,7 @@
   <ul>
     {#each board.approvals as waiting (`${waiting.session}:${waiting.approval}`)}
       {@const said = Runs.ask(waiting.ask)}
-      {@const desk = Sessions.deskHref(waiting.project, { session: waiting.session })}
+      {@const desk = Sessions.deskHref(waiting.project, waiting.session)}
       <li>
         <Glyph mark="yours" label="Waits for you: {said.action}" />
         <a class="name" href={desk} title="{origin(waiting)} · {said.action}"

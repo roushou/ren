@@ -224,7 +224,7 @@ export class ProjectBoard {
             .join(' · '),
           link: {
             label: 'Open session',
-            href: Sessions.deskHref(waiting.project, { session: waiting.session }),
+            href: Sessions.deskHref(waiting.project, waiting.session),
           },
         };
       });

@@ -43,7 +43,7 @@ export class ApprovalAnswers {
         detail: [said.done, waiting.project].filter((part) => part !== null).join(' · '),
         link: {
           label: 'Open session',
-          href: Sessions.deskHref(waiting.project, { session: waiting.session }),
+          href: Sessions.deskHref(waiting.project, waiting.session),
         },
       });
       this.reviewing = null;

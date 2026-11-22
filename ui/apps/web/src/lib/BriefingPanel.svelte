@@ -363,7 +363,7 @@
       if (destination.kind === 'new') keep();
       desk.clear();
       desk.toggle();
-      await goto(Sessions.deskHref(renProject, { session: target }));
+      await goto(Sessions.deskHref(renProject, target));
     } catch (failure) {
       error =
         failure instanceof RunCommandError || failure instanceof WorkError

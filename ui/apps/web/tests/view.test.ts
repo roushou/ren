@@ -9,9 +9,9 @@ test('each route is its view, and an unknown one is Traffic', () => {
   assert.equal(Views.place(Views.tab('home')), 'home');
   assert.deepEqual(Views.pages('home'), []);
   assert.equal(Views.of('/projects/[name]/work/[id]'), 'work');
-  assert.equal(Views.of('/projects/[name]/sessions'), 'sessions');
+  assert.equal(Views.of('/projects/[name]/sessions/[[session]]'), 'sessions');
   assert.equal(Views.of('/projects/[name]/release'), 'release');
-  assert.equal(Views.of('/scratch'), 'scratch');
+  assert.equal(Views.of('/scratch/[[session]]'), 'scratch');
   assert.equal(Views.of('/monitor/overview'), 'overview');
   assert.equal(Views.of('/monitor/traffic'), 'traffic');
   assert.equal(Views.of('/monitor/sessions/[id]'), 'recording');

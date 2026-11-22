@@ -37,9 +37,7 @@
     {#if failed}<p class="error" role="alert">{failed}</p>{/if}
     <WorkItemDetail
       item={read.item}
-      desk={read.item.session
-        ? Sessions.deskHref(read.project.name, { session: read.item.session })
-        : null}
+      desk={read.item.session ? Sessions.deskHref(read.project.name, read.item.session) : null}
       project={read.project.factory === 'ren'
         ? { kind: 'ren' }
         : { kind: 'other', name: read.project.name }}

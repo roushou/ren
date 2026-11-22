@@ -264,7 +264,7 @@ test('news is what newly waits: a new approval, a newly passed canary; nothing a
       mark: 'yours',
       text: 'Run a command',
       detail: 'acme-web · Ship the fix',
-      link: { label: 'Open session', href: '/projects/acme-web/sessions?session=session-1' },
+      link: { label: 'Open session', href: '/projects/acme-web/sessions/session-1' },
     },
     {
       mark: 'passed',

@@ -142,8 +142,12 @@
   });
   /** The session the page shows, from the URL: the one it was loaded
    * with, or the one chosen since without loading it again (`select`). */
+  /** The project whose desk this is; null for Scratch. */
+  const deskProject = $derived(scope.kind === 'project' ? scope.project.name : null);
   const chosen = $derived(
-    page.shallow ? SessionId.parse(page.shallow.url.searchParams.get('session')) : data.session,
+    page.shallow
+      ? Sessions.openOn(page.shallow.url.pathname, Sessions.deskHref(deskProject))
+      : data.session,
   );
   /** On a phone the page shows one pane at a time: the list, a session, or
    * the new-session form that New session opened. */
@@ -445,7 +449,7 @@
    * itself (`readConversation`).
    */
   function select(next: SessionId | null, how: 'push' | 'replace' = 'push') {
-    void goto(next ? `?session=${next}` : page.url.pathname, {
+    void goto(Sessions.deskHref(deskProject, next), {
       shallow: true,
       replaceState: how === 'replace',
     });

@@ -165,7 +165,7 @@
         <div class="scroll cards">
           {#each board.approvals as waiting (`${waiting.session}:${waiting.approval}`)}
             {@const said = Runs.ask(waiting.ask)}
-            {@const desk = Sessions.deskHref(waiting.project, { session: waiting.session })}
+            {@const desk = Sessions.deskHref(waiting.project, waiting.session)}
             <article class="card urgent">
               <Glyph mark="yours" label="Waits for you" />
               <div class="body">

@@ -229,9 +229,8 @@ Records outside the tree stay, and each says why it is outside:
    Scratch (`/scratch`), beside Projects and Release, holds those that work
    for no project (scratch folders, and folders no project is registered
    for). Ren's Work holds the items from before projects, as their briefs
-   name Ren. `/work?item=` and `/sessions?session=` (or `?run=`) lead to
-   where the item or session now is; `/work` and `/sessions` alone lead to
-   Projects.
+   name Ren. A session open on a desk is the address's last part
+   (`/projects/{name}/sessions/{session}`, `/scratch/{session}`).
 
    Release is a project's fourth page (`/projects/{name}/release`): its
    builds, the canary's checks, and the work its production build shipped

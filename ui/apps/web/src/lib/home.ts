@@ -58,7 +58,7 @@ export class Home {
           mark: said.mark,
           doing: said.label,
           since: stored?.runs.at(-1)?.started_at ?? null,
-          href: Sessions.deskHref(project, { session: run.session }),
+          href: Sessions.deskHref(project, run.session),
         },
       ];
     });
@@ -85,7 +85,7 @@ export class Home {
           title: stored.first_prompt ?? 'A session',
           project,
           at: run.ended_at,
-          href: Sessions.deskHref(project, { session: body.session }),
+          href: Sessions.deskHref(project, body.session),
         },
       ];
     });

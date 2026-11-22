@@ -298,7 +298,7 @@
       '/monitor/sessions/[id]',
       '/monitor/sessions/[id]/report',
       '/monitor/search',
-      '/scratch',
+      '/scratch/[[session]]',
     ] as const)
       void preloadCode(route);
   });

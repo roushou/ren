@@ -65,7 +65,7 @@ test('what is under way puts the sessions waiting on the operator first, then th
       ['Paginate', 'responding', 'acme-web'],
     ],
   );
-  assert.equal(rows[0]?.href, '/projects/acme-web/sessions?session=s2');
+  assert.equal(rows[0]?.href, '/projects/acme-web/sessions/s2');
 });
 
 test('outcomes since a time: sessions that ended and work that landed or shipped, newest first', () => {
