@@ -735,10 +735,10 @@ impl SessionsApi {
     /// Delete a session for good: its runs, what they recorded, and the
     /// session, even one with no run. A client still running is stopped
     /// first, and the delete waits until its run's end and its calls are
-    /// recorded, so nothing it was doing lands after the session is gone;
-    /// refused only when they are not within the wait. The supervisor stops
-    /// serving it at once; the store deletes it when the recorder reaches
-    /// the edit.
+    /// recorded and the supervisor has let its process go, so nothing it
+    /// was doing lands after the session is gone; refused only when they
+    /// are not within the wait. The supervisor stops serving it at once;
+    /// the store deletes it when the recorder reaches the edit.
     async fn delete(
         State(api): Api,
         headers: HeaderMap,
@@ -754,18 +754,12 @@ impl SessionsApi {
             .history_target(subject)
             .await
             .map_err(|_| ControlRefusal::Unavailable)?;
-        if let Some(target) = target
-            && (target.running_runs > 0 || target.open_calls > 0)
-        {
-            api.stop_to_delete(supervisor, session, subject, target.running_runs > 0)
-                .await?;
-        }
         let slot = api
             .control
             .recorder
             .history_slot()
             .ok_or(ControlRefusal::Unrecorded)?;
-        let served = supervisor.forget(session).await.map_err(Self::refused)?;
+        let served = api.stop_to_delete(supervisor, session, subject).await?;
         if target.is_none() && !served {
             return Err(ControlRefusal::NotFound);
         }
@@ -775,52 +769,54 @@ impl SessionsApi {
     }
 
     /// How long a delete waits for a stopped client's run to end and its
-    /// calls to close: this many reads of the store, this far apart.
+    /// calls to close: this many reads, this far apart.
     const STOP_READS: u32 = 100;
     const STOP_READ_EVERY: Duration = Duration::from_millis(100);
 
-    /// Stop the client serving `session`, when `running`, and wait until the
-    /// store holds no run of it running and none of its calls open; else why
-    /// it cannot be deleted yet.
+    /// Stop the client serving `session`, if any, wait until the store
+    /// holds no run of it running and none of its calls open, and have the
+    /// supervisor stop serving it: whether it served it, else why it cannot
+    /// be deleted yet. The supervisor, not the store, says whether a client
+    /// runs: the store records a run's start and end after the supervisor
+    /// sees them, so it can show none running while the process is served.
     async fn stop_to_delete(
         &self,
         supervisor: &Supervisor,
         session: SessionId,
         subject: HistorySubject,
-        running: bool,
-    ) -> Result<(), ControlRefusal> {
-        if running {
-            match supervisor.send(session, RunCommand::Stop).await {
-                // Already on its way out, or gone: there is only the wait.
-                Ok(())
-                | Err(
-                    SessionError::NoProcess
-                    | SessionError::NoSuchSession(_)
-                    | SessionError::Command(CommandError::Refused(
-                        RunRefused::Stopping | RunRefused::Ended,
-                    )),
-                ) => {}
-                Err(error) => return Err(Self::refused(error)),
-            }
+    ) -> Result<bool, ControlRefusal> {
+        match supervisor.send(session, RunCommand::Stop).await {
+            // Already on its way out, gone, or never started: there is only
+            // the wait.
+            Ok(())
+            | Err(
+                SessionError::NoProcess
+                | SessionError::NoSuchSession(_)
+                | SessionError::Command(CommandError::Refused(
+                    RunRefused::Stopping | RunRefused::Ended,
+                )),
+            ) => {}
+            Err(error) => return Err(Self::refused(error)),
         }
-        let mut left = None;
+        let mut left = ControlRefusal::RunRunning;
         for _ in 0..Self::STOP_READS {
-            left = self
+            let target = self
                 .reader
                 .history_target(subject)
                 .await
                 .map_err(|_| ControlRefusal::Unavailable)?;
-            match left {
-                Some(target) if target.running_runs > 0 || target.open_calls > 0 => {
-                    tokio::time::sleep(Self::STOP_READ_EVERY).await;
-                }
-                Some(_) | None => return Ok(()),
-            }
+            left = match target {
+                Some(target) if target.running_runs > 0 => ControlRefusal::RunRunning,
+                Some(target) if target.open_calls > 0 => ControlRefusal::CallOpen,
+                Some(_) | None => match supervisor.forget(session).await {
+                    Ok(served) => return Ok(served),
+                    Err(SessionError::Running) => ControlRefusal::RunRunning,
+                    Err(error) => return Err(Self::refused(error)),
+                },
+            };
+            tokio::time::sleep(Self::STOP_READ_EVERY).await;
         }
-        Err(match left {
-            Some(target) if target.running_runs > 0 => ControlRefusal::RunRunning,
-            Some(_) | None => ControlRefusal::CallOpen,
-        })
+        Err(left)
     }
 
     /// Takes the preview off each work item `session` took up: deleting the
