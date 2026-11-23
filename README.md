@@ -2,10 +2,11 @@
 
 <img src="docs/wordmark.svg" alt="Ren" height="60">
 
-<h3>Self-hosted gateway and flight recorder for coding agents</h3>
+<h3>A self-hosted software factory</h3>
 
-See every request, response, tool call, and token from Claude Code, Codex, Pi, and OpenCode
-as it happens, without changing a byte of the traffic.
+Agents write the changes on your repositories, every branch gets a live
+preview, and main reaches production through a canary. Every model call is
+recorded.
 
 [![CI](https://github.com/roushou/ren/actions/workflows/ci.yml/badge.svg)](https://github.com/roushou/ren/actions/workflows/ci.yml)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue)](#license)
@@ -19,14 +20,34 @@ as it happens, without changing a byte of the traffic.
 
 ## Overview
 
-Ren sits between your coding agents and their providers. `ren run claude` (or
-`codex`, `pi`, or `opencode`) points a client at Ren for one session without editing its
-configuration. Ren forwards each request unchanged with the client's own
-sign-in, records the request and response on the side, and serves that history
-to the CLI, a read-only API, and the optional web UI, on the same machine or
-from another one on your tailnet.
+Ren runs coding agents (Claude Code, Codex, Pi, and OpenCode) on the
+repositories you register as projects. A project's work items go to agent
+sessions; each branch gets a preview beside production; a canary builds,
+serves, and checks main before a release is promoted. Every call the agents
+make passes through Ren's gateway unchanged, with the client's own sign-in,
+and is recorded, so you can see what each session did and what it cost.
+
+Ren's daemon, UI, and agents run on your host, or on a VPS on your tailnet that
+you reach from the machines you code on.
 
 ## What you get
+
+**Build**
+
+- **Projects:** a repository declares how it is built, served, checked, and
+  deployed in `.ren/project.toml`.
+- **Work items and sessions:** each work item is taken up by an agent session,
+  in the project's folder or a worktree of its own.
+- **Previews:** every pull request and every worktree's branch, served beside
+  production.
+- **Releases:** a canary builds and checks main; your policy or `promote`
+  deploys it. Runs outlive the daemon, so an upgrade doesn't stop an agent.
+- **Contained runs:** optionally, each agent run in a rootless Podman container
+  of its own.
+- **Packages:** runtimes and tools for the agents, verified and installed in
+  generations you can roll back.
+
+**Inspect**
 
 - **Live traffic:** every call as it streams, grouped by recording and turn.
 - **Full inspection:** readable or raw requests and responses, complete bodies to
@@ -35,6 +56,9 @@ from another one on your tailnet.
 - **Truthful outcomes:** interrupted and unknown endings never count as success.
 - **Faithful forwarding:** payloads pass through unchanged unless you configure a
   transform, which is recorded; capture loss is counted.
+
+**Operate**
+
 - **Named users:** who made each call, by Tailscale login or user token, with
   per-user limits and blocks.
 - **Operator controls:** pause, block, or cancel from the CLI or another machine.
@@ -63,7 +87,15 @@ Ren listens on `127.0.0.1:8787` and stores data in `$XDG_STATE_HOME/ren` (or
 `~/.local/state/ren`). [`ren.example.toml`](ren.example.toml) documents the
 configuration (`ren --config <file> serve`).
 
-Launch a client through it, keeping the client's own sign-in:
+Register a project and give an agent work in it:
+
+```sh
+ren project add --dir ~/dev/acme
+ren runs start claude ~/dev/acme --checkout worktree --prompt "fix the failing test"
+ren project release --project acme
+```
+
+Or launch a client through the gateway yourself, keeping its own sign-in:
 
 ```sh
 ren doctor
@@ -138,6 +170,8 @@ listener.
 
 ## Documentation
 
+- [Projects](docs/deployment.md#projects): `.ren/project.toml`, previews, canary,
+  and promotion
 - [Clients](docs/clients.md): launching and configuring Claude Code, Codex, Pi, and OpenCode
 - [Recording](docs/recording.md): capture, inspection, backup, and retention
 - [History and API](docs/api.md): CLI history commands, the MCP server for

@@ -25,7 +25,7 @@ use std::{path::PathBuf, process::ExitCode};
 #[command(
     name = "ren",
     version = Cli::VERSION,
-    about = "Self-hosted gateway and flight recorder for coding agents"
+    about = "A self-hosted software factory"
 )]
 pub struct Cli {
     #[arg(long, global = true)]

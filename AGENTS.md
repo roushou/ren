@@ -1,9 +1,12 @@
 # Ren contributor guidance
 
-Ren is a self-hosted gateway and flight recorder for coding agents (Claude Code,
-Codex, Pi, and OpenCode). It forwards native provider traffic while recording, inspecting,
-and exposing it, using the operator's own Anthropic and OpenAI subscriptions. One executable and one storage format serve both
-a laptop and a VPS reached through Tailscale.
+Ren is a self-hosted software factory. Agents write the changes on registered
+projects, every branch gets a live preview, and main reaches production through
+a canary. The agents are the official clients (Claude Code, Codex, Pi, and
+OpenCode) on the operator's own Anthropic and OpenAI subscriptions; Ren's
+gateway forwards their native provider traffic unchanged and records every
+call. One executable and one storage format serve both a laptop and a VPS
+reached through Tailscale.
 
 [`docs/architecture.md`](docs/architecture.md) describes how Ren is built and
 lists its known limitations. Section 4 below maps the ten crates and the `xtask` package.
