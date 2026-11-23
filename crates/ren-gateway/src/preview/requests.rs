@@ -1,6 +1,6 @@
 //! The commits the operator asked to preview.
 
-use ren_release::Commit;
+use ren_git::Commit;
 use serde::{Deserialize, Serialize};
 
 /// The commits the operator asked to preview, the newest ask first. The
@@ -39,7 +39,7 @@ impl PreviewRequests {
 #[cfg(test)]
 mod tests {
     use super::PreviewRequests;
-    use ren_release::Commit;
+    use ren_git::Commit;
 
     fn commit(digit: char) -> Commit {
         digit.to_string().repeat(40).parse().unwrap()

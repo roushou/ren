@@ -11,6 +11,7 @@ description = "Git as the Ren LLM gateway reads and runs it: a folder's reposito
 # The one place Ren reads or runs git. It performs filesystem and process
 # I/O, but has no async runtime, HTTP, database, or CLI dependency.
 [dependencies]
+serde_with.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

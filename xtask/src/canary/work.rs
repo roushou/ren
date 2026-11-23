@@ -11,13 +11,14 @@ use crate::{
     replica::{ProductionPlace, ReplicaError},
 };
 use ren_gateway::api::control::request::{LandWorkRequest, ShipWorkRequest, WorkChange};
-use ren_git::CommitId;
+use ren_git::Commit;
+use ren_git::Tree;
 use ren_protocol::label::Stored;
 use ren_recorder::{
     id::WorkItemId,
     work::{Landing, WorkStateKind},
 };
-use ren_release::{Revision, Tree};
+use ren_release::Revision;
 use std::{thread, time::Duration};
 
 /// Production's work items, as far as closing them needs.
@@ -46,7 +47,7 @@ impl<'a> WorkLedger<'a> {
     /// Lands the sent items `main`'s recent commits name, then ships the
     /// landed items production's build holds. A production whose daemon
     /// keeps no work items yet is left alone.
-    pub fn close(&self, factory: &Factory, main: &CommitId) -> Result<Closed, CanaryError> {
+    pub fn close(&self, factory: &Factory, main: &Commit) -> Result<Closed, CanaryError> {
         let Some(items) = self.production.work_items()? else {
             Progress("Production keeps no work items yet; none to close").show();
             return Ok(Closed::default());
@@ -58,24 +59,21 @@ impl<'a> WorkLedger<'a> {
             .map(|item| item.id)
             .collect();
         // Oldest first: an item named twice lands as the first commit.
-        let mut landed: Vec<(WorkItemId, CommitId)> = items
+        let mut landed: Vec<(WorkItemId, Commit)> = items
             .iter()
             .filter(|item| item.state == Stored::Known(WorkStateKind::Landed))
-            .filter_map(|item| Some((item.id, Factory::id(item.landed.as_ref()?).ok()?)))
+            .filter_map(|item| Some((item.id, item.landed.clone()?)))
             .collect();
         if !sent.is_empty() {
             let mut log = factory.git.log(&factory.repo, main, Self::HISTORY)?;
             log.reverse();
             for (commit, message) in log {
-                let Ok(release_commit) = Factory::commit(&commit) else {
-                    continue;
-                };
-                for item in Landing::read(release_commit.clone(), &message).items {
+                for item in Landing::read(commit.clone(), &message).items {
                     if sent.contains(&item) && !landed.iter().any(|(id, _)| *id == item) {
                         self.production.move_work(
                             item,
                             WorkChange::Land(LandWorkRequest {
-                                commit: release_commit.clone(),
+                                commit: commit.clone(),
                             }),
                         )?;
                         Progress(&format!(
@@ -98,30 +96,26 @@ impl<'a> WorkLedger<'a> {
             Revision::Commit {
                 commit,
                 tree: Tree::Clean,
-            } => Factory::id(&commit).ok().map(|id| (id, commit)),
+            } => Some(commit),
             Revision::Commit {
                 tree: Tree::Modified,
                 ..
             }
             | Revision::Unknown => None,
         };
-        if let Some((running, built)) = running {
+        if let Some(running) = running {
             for (item, commit) in &landed {
                 if factory.git.contains(&factory.repo, &running, commit)? {
                     self.production.move_work(
                         *item,
                         WorkChange::Ship(ShipWorkRequest {
                             revision: Revision::Commit {
-                                commit: built.clone(),
+                                commit: running.clone(),
                                 tree: Tree::Clean,
                             },
                         }),
                     )?;
-                    Progress(&format!(
-                        "Work item {item} shipped in {}",
-                        running.abbreviated(12)
-                    ))
-                    .show();
+                    Progress(&format!("Work item {item} shipped in {}", running.short())).show();
                     closed.shipped += 1;
                 }
             }
@@ -132,7 +126,7 @@ impl<'a> WorkLedger<'a> {
     /// Waits until production lists every item in `landed` as landed, so
     /// a ship is checked against the state it moves from. Polls are
     /// counted, not timed, so this reads no clock.
-    fn settle(&self, landed: &[(WorkItemId, CommitId)]) -> Result<(), CanaryError> {
+    fn settle(&self, landed: &[(WorkItemId, Commit)]) -> Result<(), CanaryError> {
         for _ in 0..Self::POLLS {
             let items = self.production.work_items()?.unwrap_or_default();
             let stored = landed.iter().all(|(id, _)| {

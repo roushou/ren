@@ -8,7 +8,8 @@
 use ren_gateway::preview::{
     Action, PreviewKey, PreviewState, Previews, Reach, Slot, StaleReport, Wanted,
 };
-use ren_release::{Commit, PreviewCapacity};
+use ren_git::Commit;
+use ren_release::PreviewCapacity;
 
 fn commit(digit: char) -> Commit {
     digit.to_string().repeat(40).parse().unwrap()

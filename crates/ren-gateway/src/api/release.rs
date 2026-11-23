@@ -7,10 +7,11 @@
 //! views back.
 
 use crate::preview::{PreviewRequests, Previews};
+use ren_git::Commit;
 use ren_protocol::label::Stored;
 use ren_recorder::project::Factory;
 use ren_release::{
-    CheckKind, Commit, Decision, Outcome, Policy, PromotionRequest, Release, Revision, ShotName,
+    CheckKind, Decision, Outcome, Policy, PromotionRequest, Release, Revision, ShotName,
 };
 use ren_store::view::ProjectView;
 use serde::{Deserialize, Serialize};

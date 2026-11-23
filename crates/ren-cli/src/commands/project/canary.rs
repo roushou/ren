@@ -25,7 +25,7 @@ use ren_gateway::api::{
     control::request::{ControlRequest, LandWorkRequest, ShipWorkRequest, WorkChange},
     read::ReadBody,
 };
-use ren_git::{Branch, CommitId, Git};
+use ren_git::{Branch, Commit, Git, Tree};
 use ren_project::{Place, ProjectContract};
 use ren_protocol::label::Stored;
 use ren_recorder::{
@@ -34,8 +34,8 @@ use ren_recorder::{
 };
 use ren_recorder::{project::Factory, time::Clock as _};
 use ren_release::{
-    Assessment, Attempt, Canary, Check, CheckKind, Commit, Decision, Lineage, MinuteOfDay, Outcome,
-    Release, ReleaseOptions, Revision, Tree, Verdict,
+    Assessment, Attempt, Canary, Check, CheckKind, Decision, Lineage, MinuteOfDay, Outcome,
+    Release, ReleaseOptions, Revision, Verdict,
 };
 use ren_store::view::ProjectView;
 use ren_store::{
@@ -145,7 +145,7 @@ impl ProjectFactory {
         let contract = ProjectCmd::contract(&place.worktree)?;
         let steps = Steps::of(ctx, &contract);
         let verdict = self.check(&steps, &contract, &place, &worktree).await?;
-        let commit = Self::release_commit(&tip)?;
+        let commit = tip.clone();
         let canary = Canary::new(commit.clone(), verdict);
         let deployed = self.read()?.map(|release| release.production().clone());
         let release = self.assess(&tip, Some(canary), deployed)?;
@@ -179,7 +179,7 @@ impl ProjectFactory {
         let steps = Steps::of(ctx, &contract)?;
         let _ = fs::remove_file(self.failed(&commit));
         self.deploy(&steps, &contract, &place, &commit)?;
-        let tip: CommitId = release.main().to_string().parse()?;
+        let tip = release.main().clone();
         self.close_work(ctx, &tip).await?;
         Ok(ExitCode::SUCCESS)
     }
@@ -325,7 +325,7 @@ impl ProjectFactory {
     /// decides now.
     fn assess(
         &self,
-        tip: &CommitId,
+        tip: &Commit,
         canary: Option<Canary>,
         deployed: Option<Revision>,
     ) -> Result<Release> {
@@ -341,20 +341,12 @@ impl ProjectFactory {
             | Some(Revision::Unknown)
             | None => None,
         };
-        let running_id: Option<CommitId> = running
-            .as_ref()
-            .and_then(|commit| commit.to_string().parse().ok());
+        let running_id: Option<&Commit> = running.as_ref();
         let between =
-            |from: &CommitId, to: &CommitId| self.git.commits_between(&self.repo, from, to).ok();
-        let behind = running_id
-            .as_ref()
-            .and_then(|running| between(running, tip));
+            |from: &Commit, to: &Commit| self.git.commits_between(&self.repo, from, to).ok();
+        let behind = running_id.and_then(|running| between(running, tip));
         let canary = canary.map(|canary| {
-            let candidate: Option<CommitId> = canary.commit().to_string().parse().ok();
-            let lacks = match (&candidate, &running_id) {
-                (Some(candidate), Some(running)) => between(candidate, running),
-                (None, _) | (_, None) => None,
-            };
+            let lacks = running_id.and_then(|running| between(canary.commit(), running));
             let lineage = Lineage::read(running.as_ref(), canary.commit(), lacks);
             let attempt = if self.failed(canary.commit()).exists() {
                 Attempt::Failed
@@ -367,7 +359,7 @@ impl ProjectFactory {
         let now = SystemClock::start().now().wall.as_millis();
         Ok(Release::assess(
             Assessment {
-                main: Self::release_commit(tip)?,
+                main: tip.clone(),
                 production: deployed.unwrap_or(Revision::Unknown),
                 behind,
                 canary,
@@ -397,7 +389,7 @@ impl ProjectFactory {
         println!("==> Deploying {}: {}", commit.short(), step.argv.join(" "));
         let deployed = steps.run(&step, &place.worktree)?;
         let release = self.read()?.context("no release to promote")?;
-        let tip: CommitId = release.main().to_string().parse()?;
+        let tip = release.main().clone();
         let canary = release.canary().cloned();
         let production = if deployed {
             Revision::Commit {
@@ -425,7 +417,7 @@ impl ProjectFactory {
     /// commit. An item landed in this pass ships in the next, once the daemon
     /// has stored it. Each change goes through this host's daemon, which
     /// checks it against the item's state.
-    async fn close_work(&self, ctx: &Context, tip: &CommitId) -> Result<()> {
+    async fn close_work(&self, ctx: &Context, tip: &Commit) -> Result<()> {
         const HISTORY: u32 = 500;
         let host = TargetArgs::this_host();
         let ReadBody::WorkItems(listed) = host
@@ -445,11 +437,11 @@ impl ProjectFactory {
             .filter(|item| item.state == Stored::Known(WorkStateKind::Sent))
             .map(|item| item.id)
             .collect();
-        let landed: Vec<(WorkItemId, CommitId)> = listed
+        let landed: Vec<(WorkItemId, Commit)> = listed
             .work
             .iter()
             .filter(|item| item.state == Stored::Known(WorkStateKind::Landed))
-            .filter_map(|item| Some((item.id, item.landed.as_ref()?.to_string().parse().ok()?)))
+            .filter_map(|item| Some((item.id, item.landed.clone()?)))
             .collect();
         let control = ControlTarget::select(&host, ctx)?;
         let send = async |item: WorkItemId, change: WorkChange| -> Result<()> {
@@ -465,7 +457,7 @@ impl ProjectFactory {
             log.reverse();
             let mut done = Vec::new();
             for (commit, message) in log {
-                let release_commit = Self::release_commit(&commit)?;
+                let release_commit = commit.clone();
                 for item in Landing::read(release_commit.clone(), &message).items {
                     if sent.contains(&item) && !done.contains(&item) {
                         send(
@@ -493,9 +485,8 @@ impl ProjectFactory {
             | Some(Revision::Unknown)
             | None => return Ok(()),
         };
-        let running: CommitId = production.to_string().parse()?;
         for (item, commit) in &landed {
-            if self.git.contains(&self.repo, &running, commit)? {
+            if self.git.contains(&self.repo, &production, commit)? {
                 send(
                     *item,
                     WorkChange::Ship(ShipWorkRequest {
@@ -541,12 +532,6 @@ impl ProjectFactory {
         fs::write(&path, serde_json::to_vec_pretty(release)?)?;
         println!("Release: {}", release.decision());
         Ok(())
-    }
-
-    fn release_commit(id: &CommitId) -> Result<Commit> {
-        id.as_str()
-            .parse()
-            .with_context(|| format!("{id} is not a commit"))
     }
 }
 

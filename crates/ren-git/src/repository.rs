@@ -1,3 +1,4 @@
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::io;
 use std::path::Path;
 
@@ -17,18 +18,19 @@ pub enum Head {
     /// `ref: refs/heads/<name>`: the branch's name. Another reference is
     /// kept whole.
     Branch(String),
-    Detached(CommitId),
+    Detached(Commit),
 }
 
 /// A full commit id: 40 (SHA-1) or 64 (SHA-256) hex digits, lowercase.
-/// Parsed from text with [`str::parse`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommitId(String);
+/// Parsed from text with [`str::parse`], which lowercases it; written and
+/// read as that text.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub struct Commit(String);
 
 /// Text that is not a full commit id, kept as it was.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("not a full commit id: {0:?}")]
-pub struct NotACommitId(pub String);
+pub struct NotACommit(pub String);
 
 /// A branch's name, as `git check-ref-format --branch` takes one: no
 /// space, control character, `~^:?*[\\`, `..`, `@{`, or `//`; not starting
@@ -148,22 +150,29 @@ impl Head {
     }
 }
 
-impl std::str::FromStr for CommitId {
-    type Err = NotACommitId;
+impl std::str::FromStr for Commit {
+    type Err = NotACommit;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         if matches!(text.len(), 40 | 64) && text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             Ok(Self(text.to_ascii_lowercase()))
         } else {
-            Err(NotACommitId(text.to_owned()))
+            Err(NotACommit(text.to_owned()))
         }
     }
 }
 
-impl CommitId {
+impl Commit {
+    const SHORT: usize = 12;
+
     /// Its first `digits` hex digits, as people read it.
     pub fn abbreviated(&self, digits: usize) -> &str {
         self.0.get(..digits).unwrap_or(&self.0)
+    }
+
+    /// The first 12 digits, as git abbreviates in a large repository.
+    pub fn short(&self) -> &str {
+        self.abbreviated(Self::SHORT)
     }
 
     pub fn as_str(&self) -> &str {
@@ -205,7 +214,7 @@ impl std::fmt::Display for Revision {
     }
 }
 
-impl std::fmt::Display for CommitId {
+impl std::fmt::Display for Commit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }

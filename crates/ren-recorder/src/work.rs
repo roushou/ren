@@ -7,7 +7,8 @@
 //! state does not take is a typed error, never a silent no-op.
 
 use crate::id::{SessionId, WorkItemId};
-use ren_release::{Commit, Revision};
+use ren_git::Commit;
+use ren_release::Revision;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -451,7 +452,7 @@ mod tests {
     #[test]
     fn a_fact_moves_from_exactly_the_states_its_event_does() {
         use crate::batch::WorkFact;
-        let commit: ren_release::Commit = COMMIT.parse().unwrap();
+        let commit: ren_git::Commit = COMMIT.parse().unwrap();
         let landed = WorkState::Landed {
             session: session(1),
             commit: commit.clone(),

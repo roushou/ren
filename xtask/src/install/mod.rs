@@ -32,10 +32,10 @@ use crate::{
 };
 use clap::Args;
 use ren_daemon::config::{Config, ConfigError};
+use ren_git::Commit;
 use ren_git::{Git, GitError, Published, Tree};
 use ren_harness::host::HostEnv;
 use ren_recorder::project::{Factory, ProjectName, RepositoryPath};
-use ren_release::Commit;
 use serde::Deserialize;
 use std::{
     fs,

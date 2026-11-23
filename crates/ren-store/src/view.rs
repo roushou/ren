@@ -5,6 +5,7 @@
 
 use crate::{StoreError, query::Cursor};
 use ren_depot::package_set::Generation;
+use ren_git::Commit;
 use ren_harness::attribution::{HintIssue, HintSource};
 use ren_harness::drive::DriveEventKind;
 use ren_harness::tools::CallPurpose;
@@ -40,7 +41,7 @@ use ren_recorder::{
     time::UnixMillis,
     work::{WorkOrder, WorkPreview, WorkState, WorkStateKind},
 };
-use ren_release::{Commit, Revision};
+use ren_release::Revision;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, sqlite::SqliteRow};
 use std::str::FromStr;

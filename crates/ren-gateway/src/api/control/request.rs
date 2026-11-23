@@ -6,6 +6,7 @@
 
 use crate::api::control::projects::RegisterProjectRequest;
 use crate::api::read::work::{WorkOrderBody, WorkPreviewBody};
+use ren_git::Commit;
 use ren_harness::{
     Harness,
     drive::Decision,
@@ -19,7 +20,7 @@ use ren_recorder::{
     id::{AttachmentId, CallId, SessionId, WorkItemId},
     project::ProjectName,
 };
-use ren_release::{Commit, Revision};
+use ren_release::Revision;
 use ren_supervisor::Delivery;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

@@ -14,10 +14,10 @@ use crate::{
     replica::{ListedPull, ProductionPlace, Replica},
 };
 use ren_gateway::preview::{Action, PreviewKey, Previews, Reach, Slot, Wanted};
+use ren_git::Commit;
 use ren_github::Readiness;
 use ren_harness::host::HostEnv;
 use ren_protocol::label::Stored;
-use ren_release::Commit;
 use std::path::PathBuf;
 
 /// One previews pass, against `production`.
@@ -163,14 +163,13 @@ impl PreviewPass<'_> {
         tailscale: Option<crate::tailscale::TailscaleCli>,
     ) -> Result<(), CanaryError> {
         let factory = self.factory;
-        let id = Factory::id(commit)?;
         factory
             .git
-            .fetch_commit(&factory.repo, Factory::REMOTE, &id)?;
+            .fetch_commit(&factory.repo, Factory::REMOTE, commit)?;
         let worktree = factory.home.join(".local/share/ren/preview-factory");
         factory
             .git
-            .check_out_detached(&factory.repo, &worktree, &id)?;
+            .check_out_detached(&factory.repo, &worktree, commit)?;
         let build = factory
             .builds
             .make(env, &factory.cargo, &worktree, commit)?;

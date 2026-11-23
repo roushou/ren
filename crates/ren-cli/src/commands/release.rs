@@ -8,9 +8,10 @@ use crate::context::Context;
 use anyhow::{Result, bail};
 use clap::Args;
 use ren_gateway::api::release::{ReleaseBody, ReleaseView};
+use ren_git::Tree;
 use ren_protocol::label::Stored;
 use ren_recorder::project::{Factory, ProjectName};
-use ren_release::{Decision, Policy, Revision, Tree};
+use ren_release::{Decision, Policy, Revision};
 use std::{fmt::Write as _, process::ExitCode};
 
 /// Show where a release stands: main, production, and the canary.

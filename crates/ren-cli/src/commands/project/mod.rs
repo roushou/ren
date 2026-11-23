@@ -46,7 +46,7 @@ use ren_recorder::{
     id::WorkItemId,
     work::{Landing, PreviewUrl, WorkStateKind},
 };
-use ren_release::{Revision, Tree};
+use ren_release::Revision;
 use ren_store::{
     query::{PageLimit, Shelf},
     read::ReadRequest,
@@ -347,17 +347,9 @@ impl ProjectCmd {
     /// The build the worktree's checkout is: its commit, modified or not.
     fn revision(dir: &Path) -> Result<Revision> {
         let git = Git::inherited();
-        let commit = git.head_commit(dir)?;
-        let tree = match git.tree(dir)? {
-            ren_git::Tree::Clean => Tree::Clean,
-            ren_git::Tree::Modified => Tree::Modified,
-        };
         Ok(Revision::Commit {
-            commit: commit
-                .as_str()
-                .parse()
-                .with_context(|| format!("{commit} is not a commit"))?,
-            tree,
+            commit: git.head_commit(dir)?,
+            tree: git.tree(dir)?,
         })
     }
 

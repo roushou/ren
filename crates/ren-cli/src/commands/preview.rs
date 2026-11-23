@@ -13,8 +13,8 @@ use ren_gateway::api::{
     previews::{PreviewOfBody, PreviewStateBody, PreviewsBody},
 };
 use ren_gateway::preview::Reach;
+use ren_git::Commit;
 use ren_recorder::project::ProjectName;
-use ren_release::Commit;
 use std::{fmt::Write as _, process::ExitCode};
 
 /// Ren's previews: of each open pull request, and of each commit asked for.

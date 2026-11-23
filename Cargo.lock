@@ -1841,6 +1841,7 @@ dependencies = [
  "http-body-util",
  "proptest",
  "ren-depot",
+ "ren-git",
  "ren-github",
  "ren-harness",
  "ren-protocol",
@@ -1872,6 +1873,7 @@ dependencies = [
 name = "ren-git"
 version = "0.1.0"
 dependencies = [
+ "serde_with",
  "tempfile",
  "thiserror",
 ]
@@ -1950,6 +1952,7 @@ dependencies = [
  "proptest",
  "regex",
  "ren-depot",
+ "ren-git",
  "ren-harness",
  "ren-protocol",
  "ren-release",
@@ -1967,6 +1970,7 @@ dependencies = [
 name = "ren-release"
 version = "0.1.0"
 dependencies = [
+ "ren-git",
  "ren-protocol",
  "serde",
  "serde_json",
@@ -2018,6 +2022,7 @@ dependencies = [
  "blake3",
  "bytes",
  "ren-depot",
+ "ren-git",
  "ren-harness",
  "ren-protocol",
  "ren-recorder",

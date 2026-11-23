@@ -21,6 +21,7 @@ h2 = "0.4.20"
 http.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
+ren-git.workspace = true
 ren-depot.workspace = true
 ren-github.workspace = true
 ren-harness.workspace = true

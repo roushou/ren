@@ -24,7 +24,8 @@ use axum::{
     routing::post,
 };
 use http::{HeaderMap, StatusCode};
-use ren_release::{Commit, PromotionRequest};
+use ren_git::Commit;
+use ren_release::PromotionRequest;
 use std::sync::Arc;
 
 pub(super) struct ReleaseApi {

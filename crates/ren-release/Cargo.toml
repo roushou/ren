@@ -10,7 +10,9 @@ description = "How a build of the Ren LLM gateway moves from main to production:
 
 # Sans-IO: build identity and the release's pure decisions. Only pure
 # dependencies; no async runtime, HTTP, database, process, or CLI parser.
+# ren-git is here only for its Commit and Tree types; nothing runs git.
 [dependencies]
+ren-git.workspace = true
 ren-protocol.workspace = true
 serde.workspace = true
 serde_with.workspace = true

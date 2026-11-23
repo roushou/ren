@@ -23,6 +23,7 @@ use ren_gateway::{
     ControlToken, Environment, InstanceOptions,
     api::control::request::{ControlRequest, WorkChange},
 };
+use ren_git::Commit;
 use ren_github::Readiness;
 use ren_harness::host::HostEnv;
 use ren_protocol::label::Stored;
@@ -30,7 +31,7 @@ use ren_recorder::{
     id::WorkItemId,
     work::{PreviewUrl, WorkStateKind},
 };
-use ren_release::{Commit, PromotionRequest, Release, Revision, ShotName};
+use ren_release::{PromotionRequest, Release, Revision, ShotName};
 use serde::Deserialize;
 use std::{
     fs,

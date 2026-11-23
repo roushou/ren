@@ -1,8 +1,9 @@
 //! The previews in their slots, and the pure steps that move them on.
 
 use super::slot::Slot;
+use ren_git::Commit;
 use ren_github::PullNumber;
-use ren_release::{Commit, PreviewCapacity};
+use ren_release::PreviewCapacity;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};

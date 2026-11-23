@@ -1,6 +1,6 @@
 use crate::{
-    Branch, BranchRemoval, CommitId, Exit, Git, GitError, Head, NotACommitId, NotARevision,
-    Published, Repository, Revision, Tree,
+    Branch, BranchRemoval, Commit, Exit, Git, GitError, Head, NotACommit, NotARevision, Published,
+    Repository, Revision, Tree,
 };
 use std::path::Path;
 
@@ -45,16 +45,16 @@ fn a_repository_reads_as_its_head_says() {
 
 #[test]
 fn a_commit_id_parses_only_whole() {
-    let id: CommitId = "0123456789ABCDEF0123456789abcdef01234567".parse().unwrap();
+    let id: Commit = "0123456789ABCDEF0123456789abcdef01234567".parse().unwrap();
     assert_eq!(id.to_string(), "0123456789abcdef0123456789abcdef01234567");
-    assert!("f".repeat(64).parse::<CommitId>().is_ok());
+    assert!("f".repeat(64).parse::<Commit>().is_ok());
     for text in [
         "",
         "0123456",
         " 0123456789abcdef0123456789abcdef01234567",
         &"g".repeat(40),
     ] {
-        assert_eq!(text.parse::<CommitId>(), Err(NotACommitId(text.to_owned())));
+        assert_eq!(text.parse::<Commit>(), Err(NotACommit(text.to_owned())));
     }
 }
 
@@ -207,7 +207,7 @@ esac"
     .unwrap();
     assert_eq!(
         git.head_commit(dir.path()).unwrap(),
-        full.parse::<CommitId>().unwrap()
+        full.parse::<Commit>().unwrap()
     );
     assert_eq!(git.tree(dir.path()).unwrap(), Tree::Modified);
     assert_eq!(git.published(dir.path()).unwrap(), Published::LocalOnly);
@@ -238,7 +238,7 @@ esac"
     let commit = at
         .commit_of(dir.path(), &"origin/main".parse().unwrap())
         .unwrap();
-    assert_eq!(commit, full.parse::<CommitId>().unwrap());
+    assert_eq!(commit, full.parse::<Commit>().unwrap());
     assert_eq!(
         at.files_at(dir.path(), &commit).unwrap(),
         ["docs/a b.md", "Cargo.toml"]
@@ -404,7 +404,7 @@ fn a_fetched_branch_is_checked_out_detached_and_counted() {
     assert!(git.contains(&local, &tip, &main).unwrap());
     assert!(git.contains(&local, &tip, &tip).unwrap());
     assert!(!git.contains(&local, &main, &tip).unwrap());
-    let absent: crate::CommitId = "0123456789012345678901234567890123456789".parse().unwrap();
+    let absent: crate::Commit = "0123456789012345678901234567890123456789".parse().unwrap();
     assert!(!git.contains(&local, &tip, &absent).unwrap());
     // A commit fetched by its id alone, as a pull request's head is.
     let other = dir.path().join("other");

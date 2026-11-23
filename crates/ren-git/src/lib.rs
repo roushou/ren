@@ -10,7 +10,7 @@ mod repository;
 pub use error::{Exit, GitError};
 pub use git::{Author, BranchRemoval, Git, Published, Tree};
 pub use repository::{
-    Branch, CommitId, Head, NotABranch, NotACommitId, NotARevision, Repository, Revision,
+    Branch, Commit, Head, NotABranch, NotACommit, NotARevision, Repository, Revision,
 };
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ mod policy;
 mod release;
 mod verdict;
 
-pub use build::{Build, Commit, Comparison, Revision, RevisionError, Tree};
+pub use build::{Build, Comparison, Revision, RevisionError};
 pub use folder::{NotAShotName, PromotionRequest, ShotName};
 pub use policy::{
     MinuteOfDay, Policy, PolicyError, PreviewCapacity, PreviewCapacityOutOfRange, ProjectRelease,

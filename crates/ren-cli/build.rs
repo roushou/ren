@@ -6,7 +6,7 @@
 //! including `cargo install --git`, has git. Untracked files don't count as
 //! modifications: cargo writes one into its own git checkouts.
 
-use ren_git::{CommitId, Git, Tree};
+use ren_git::{Commit, Git, Tree};
 use std::path::{Path, PathBuf};
 
 /// Where the revision comes from.
@@ -19,7 +19,7 @@ enum Source {
 
 /// What the build script found.
 struct Revision {
-    commit: CommitId,
+    commit: Commit,
     tree: Tree,
 }
 

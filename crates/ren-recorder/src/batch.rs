@@ -23,6 +23,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ren_depot::package_set::Generation;
+use ren_git::Commit;
 use ren_harness::{
     Harness, attachment::Attachment, attribution::Attribution, drive::DriveEvent,
     settings::RunSettings,
@@ -35,7 +36,7 @@ use ren_protocol::{
     route::{Endpoint, Method, Provider, Transport, Wire},
     websocket::Payload,
 };
-use ren_release::{Commit, Revision};
+use ren_release::Revision;
 use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};

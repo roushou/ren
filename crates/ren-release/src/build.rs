@@ -4,6 +4,7 @@
 //! instance runs. The binary's package works out the revision when it is
 //! compiled; everything else only reports or compares it.
 
+use ren_git::{Commit, Tree};
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{fmt, str::FromStr};
@@ -23,17 +24,6 @@ pub enum Revision {
     Commit { commit: Commit, tree: Tree },
     /// The build had neither git metadata nor packaging metadata.
     Unknown,
-}
-
-/// A git object name: 40 (SHA-1) or 64 (SHA-256) lowercase hex digits.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
-pub struct Commit(String);
-
-/// Whether tracked files matched the commit when the binary was compiled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tree {
-    Clean,
-    Modified,
 }
 
 /// How two builds relate.
@@ -116,36 +106,6 @@ impl fmt::Display for Build {
     }
 }
 
-impl Commit {
-    const SHORT: usize = 12;
-
-    /// The first 12 digits, as git abbreviates in a large repository.
-    pub fn short(&self) -> &str {
-        self.0.get(..Self::SHORT).unwrap_or(&self.0)
-    }
-}
-
-impl fmt::Display for Commit {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl FromStr for Commit {
-    type Err = RevisionError;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let hex = text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-        if hex && matches!(text.len(), 40 | 64) {
-            Ok(Self(text.to_owned()))
-        } else {
-            Err(RevisionError(text.to_owned()))
-        }
-    }
-}
-
 impl Revision {
     const DIRTY: &str = "-dirty";
     const UNKNOWN: &str = "unknown";
@@ -200,11 +160,11 @@ mod tests {
         }
         let sha256 = "a".repeat(64);
         assert_eq!(sha256.parse::<Revision>().unwrap().to_string(), sha256);
+        assert_eq!(A.to_uppercase().parse::<Revision>().unwrap().to_string(), A);
         for text in [
             "",
             "-dirty",
             "07f4bb7",
-            &A.to_uppercase(),
             &format!("{A}-modified"),
             "unknown-dirty",
             &format!("{}g", &A[..39]),

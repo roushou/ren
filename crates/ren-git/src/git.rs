@@ -1,4 +1,4 @@
-use crate::{Branch, CommitId, Exit, GitError, NotACommitId, Repository, Revision};
+use crate::{Branch, Commit, Exit, GitError, NotACommit, Repository, Revision};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -87,25 +87,25 @@ impl Git {
     }
 
     /// The commit `dir`'s `HEAD` is at.
-    pub fn head_commit(&self, dir: &Path) -> Result<CommitId, GitError> {
+    pub fn head_commit(&self, dir: &Path) -> Result<Commit, GitError> {
         let args = ["rev-parse", "--verify", "HEAD"];
         let output = self.answer(dir, &args)?;
         output
             .parse()
-            .map_err(|_: NotACommitId| GitError::Unexpected {
+            .map_err(|_: NotACommit| GitError::Unexpected {
                 args: args.join(" "),
                 output,
             })
     }
 
     /// The commit `revision` names in `dir`'s repository.
-    pub fn commit_of(&self, dir: &Path, revision: &Revision) -> Result<CommitId, GitError> {
+    pub fn commit_of(&self, dir: &Path, revision: &Revision) -> Result<Commit, GitError> {
         let named = format!("{revision}^{{commit}}");
         let args = ["rev-parse", "--verify", "--quiet", named.as_str()];
         let output = self.answer(dir, &args)?;
         output
             .parse()
-            .map_err(|_: NotACommitId| GitError::Unexpected {
+            .map_err(|_: NotACommit| GitError::Unexpected {
                 args: args.join(" "),
                 output,
             })
@@ -113,7 +113,7 @@ impl Git {
 
     /// The files `commit` holds, by their paths from the repository's root,
     /// `/`-separated as git writes them.
-    pub fn files_at(&self, dir: &Path, commit: &CommitId) -> Result<Vec<String>, GitError> {
+    pub fn files_at(&self, dir: &Path, commit: &Commit) -> Result<Vec<String>, GitError> {
         let args = [
             "ls-tree",
             "-r",
@@ -137,7 +137,7 @@ impl Git {
 
     /// The bytes of the file at `path` (from the repository's root,
     /// `/`-separated) as `commit` holds it.
-    pub fn file_at(&self, dir: &Path, commit: &CommitId, path: &str) -> Result<Vec<u8>, GitError> {
+    pub fn file_at(&self, dir: &Path, commit: &Commit, path: &str) -> Result<Vec<u8>, GitError> {
         let object = format!("{commit}:{path}");
         self.output(dir, &["cat-file", "blob", object.as_str()])
     }
@@ -177,7 +177,7 @@ impl Git {
 
     /// Fetch `branch` from `remote` into `repo`, and return the commit it
     /// names there now.
-    pub fn fetch(&self, repo: &Path, remote: &str, branch: &Branch) -> Result<CommitId, GitError> {
+    pub fn fetch(&self, repo: &Path, remote: &str, branch: &Branch) -> Result<Commit, GitError> {
         self.answer(repo, &["fetch", "--quiet", remote, branch.as_str()])?;
         self.commit_of(repo, &Revision::fetched())
     }
@@ -186,12 +186,7 @@ impl Git {
     /// request's head, or a commit no branch names any more. The remote must
     /// serve it (GitHub serves any commit a ref of the repository reaches,
     /// pull requests' included).
-    pub fn fetch_commit(
-        &self,
-        repo: &Path,
-        remote: &str,
-        commit: &CommitId,
-    ) -> Result<(), GitError> {
+    pub fn fetch_commit(&self, repo: &Path, remote: &str, commit: &Commit) -> Result<(), GitError> {
         self.answer(repo, &["fetch", "--quiet", remote, commit.as_str()])
             .map(drop)
     }
@@ -203,7 +198,7 @@ impl Git {
         &self,
         repo: &Path,
         path: &Path,
-        commit: &CommitId,
+        commit: &Commit,
     ) -> Result<(), GitError> {
         if path.exists() {
             self.answer(
@@ -239,9 +234,9 @@ impl Git {
     pub fn log(
         &self,
         dir: &Path,
-        tip: &CommitId,
+        tip: &Commit,
         limit: u32,
-    ) -> Result<Vec<(CommitId, String)>, GitError> {
+    ) -> Result<Vec<(Commit, String)>, GitError> {
         let count = format!("--max-count={limit}");
         let args = ["log", count.as_str(), "--format=%H%x00%B%x01", tip.as_str()];
         let output = String::from_utf8_lossy(&self.output(dir, &args)?).into_owned();
@@ -266,8 +261,8 @@ impl Git {
     pub fn contains(
         &self,
         dir: &Path,
-        descendant: &CommitId,
-        ancestor: &CommitId,
+        descendant: &Commit,
+        ancestor: &Commit,
     ) -> Result<bool, GitError> {
         let args = [
             "merge-base",
@@ -287,12 +282,7 @@ impl Git {
     }
 
     /// How many commits `to` has that `from` does not.
-    pub fn commits_between(
-        &self,
-        dir: &Path,
-        from: &CommitId,
-        to: &CommitId,
-    ) -> Result<u64, GitError> {
+    pub fn commits_between(&self, dir: &Path, from: &Commit, to: &Commit) -> Result<u64, GitError> {
         let range = format!("{from}..{to}");
         let args = ["rev-list", "--count", range.as_str()];
         let output = self.answer(dir, &args)?;

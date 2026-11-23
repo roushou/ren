@@ -5,9 +5,10 @@
 //! the gateway reads it back and serves it, so `ren` and the UI show it.
 
 use crate::{
-    Commit, Revision, Verdict,
+    Revision, Verdict,
     policy::{MinuteOfDay, Policy},
 };
+use ren_git::Commit;
 use ren_protocol::label::Stored;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -297,7 +298,7 @@ mod tests {
 
     #[test]
     fn a_candidate_follows_production_only_when_it_lacks_none_of_its_commits() {
-        let (production, candidate): (crate::Commit, crate::Commit) =
+        let (production, candidate): (ren_git::Commit, ren_git::Commit) =
             (PRODUCTION.parse().unwrap(), MAIN.parse().unwrap());
         assert_eq!(Lineage::read(None, &candidate, Some(0)), Lineage::Unknown);
         assert_eq!(

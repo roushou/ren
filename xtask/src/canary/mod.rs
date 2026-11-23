@@ -32,13 +32,13 @@ use crate::{
 };
 use clap::{Args, Subcommand, ValueEnum};
 use ren_daemon::host::SystemClock;
-use ren_git::{Branch, CommitId, Git, GitError, Tree};
+use ren_git::{Branch, Commit, Git, GitError, Tree};
 use ren_harness::host::HostEnv;
 use ren_protocol::label::Stored;
 use ren_recorder::time::Clock as _;
 use ren_release::{
-    Assessment, Canary as CanaryBuild, Commit, Decision, Lineage, MinuteOfDay, Policy, Release,
-    ReleaseOptions, Revision, Tree as BuildTree,
+    Assessment, Canary as CanaryBuild, Decision, Lineage, MinuteOfDay, Policy, Release,
+    ReleaseOptions, Revision,
 };
 use std::{
     fs,
@@ -113,7 +113,7 @@ struct WorkArgs {
     target: TargetArgs,
     /// The commit main is at; by default, this checkout's.
     #[arg(long, value_name = "COMMIT")]
-    main: Option<CommitId>,
+    main: Option<Commit>,
 }
 
 #[derive(Args, Clone, Copy)]
@@ -231,21 +231,6 @@ impl Factory {
         })
     }
 
-    /// A commit as the release names it.
-    fn commit(id: &CommitId) -> Result<Commit, CanaryError> {
-        id.as_str()
-            .parse()
-            .map_err(|_| CanaryError::Commit(id.to_string()))
-    }
-
-    /// A commit as git names it.
-    fn id(commit: &Commit) -> Result<CommitId, CanaryError> {
-        commit
-            .to_string()
-            .parse()
-            .map_err(|_| CanaryError::Commit(commit.to_string()))
-    }
-
     /// The operator's release settings; the defaults when there are none.
     fn options(&self) -> Result<ReleaseOptions, CanaryError> {
         let path = self.home.join(".config/ren/release.toml");
@@ -311,7 +296,7 @@ impl Factory {
             Tree::Modified => return Err(CanaryError::Dirty),
         }
         let id = self.git.head_commit(&self.repo)?;
-        let commit = Self::commit(&id)?;
+        let commit = id.clone();
         let production = ProductionPlace::new(env, args.target.of)?;
         let canary = Replica::canary(env)?;
         let build = self.builds.make(env, &self.cargo, &self.repo, &commit)?;
@@ -371,10 +356,10 @@ impl Factory {
         match production.revision().ok()? {
             Revision::Commit {
                 commit,
-                tree: BuildTree::Clean,
+                tree: Tree::Clean,
             } => Some(commit),
             Revision::Commit {
-                tree: BuildTree::Modified,
+                tree: Tree::Modified,
                 ..
             }
             | Revision::Unknown => None,
@@ -393,25 +378,25 @@ impl Factory {
         let running = match &revision {
             Revision::Commit {
                 commit,
-                tree: BuildTree::Clean,
-            } => Self::id(commit).ok(),
+                tree: Tree::Clean,
+            } => Some(commit.clone()),
             Revision::Commit {
-                tree: BuildTree::Modified,
+                tree: Tree::Modified,
                 ..
             }
             | Revision::Unknown => None,
         };
-        let main_id = Self::id(main)?;
+        let main_id = main.clone();
         // A commit the factory's repository does not have counts as none.
         let between =
-            |from: &CommitId, to: &CommitId| self.git.commits_between(&self.repo, from, to).ok();
+            |from: &Commit, to: &Commit| self.git.commits_between(&self.repo, from, to).ok();
         let behind = running
             .as_ref()
             .and_then(|running| between(running, &main_id));
         let canary = match canary {
             Some((checked, build)) => {
-                let candidate = Self::id(checked.commit())?;
-                let running_commit = running.as_ref().and_then(|id| Self::commit(id).ok());
+                let candidate = checked.commit().clone();
+                let running_commit = running.clone();
                 let lacks = running
                     .as_ref()
                     .and_then(|running| between(&candidate, running));
@@ -651,18 +636,5 @@ impl Canary {
             CanaryAction::Enable(args) => factory.enable(env, &args),
             CanaryAction::Disable => factory.disable(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Factory;
-    use ren_git::CommitId;
-
-    #[test]
-    fn a_commit_reads_the_same_to_git_and_to_the_release() {
-        let id: CommitId = "62e9e9e0000000000000000000000000000000ff".parse().unwrap();
-        let commit = Factory::commit(&id).unwrap();
-        assert_eq!(Factory::id(&commit).unwrap(), id);
     }
 }

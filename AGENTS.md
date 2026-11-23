@@ -229,9 +229,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`commands/project/canary.rs`: `ProjectFactory`, with its release in
   `<data>/projects/<name>`).
 - `crates/ren-release`: how a build of Ren moves from `main` to production,
-  sans-IO: which build an instance runs (`Build`, its `Revision`, `Commit`,
-  and `Tree`, and how two compare, `Comparison`). Its manifest allows only
-  pure dependencies.
+  sans-IO: which build an instance runs (`Build`, its `Revision` of a
+  `ren_git::Commit` and `Tree`, and how two compare, `Comparison`). Its
+  manifest allows only pure dependencies and `ren-git`, for those two types.
 - `crates/ren-github`: a self-contained GitHub client for a repository's
   pull requests, with `Client` as its primary type
   (docs/plans/self-build.md, phase 8). It depends on none of Ren's crates
@@ -807,7 +807,7 @@ directly.
 | `ren-protocol`                             | `CallInspector`                                     | none of ours      |
 | `ren-depot`                                | `Depot`, with its `ProgramHost` port                | none of ours      |
 | `ren-git`                                  | `Git`                                               | none of ours      |
-| `ren-release`                              | `Release`                                           | protocol          |
+| `ren-release`                              | `Release`                                           | protocol, git     |
 | `ren-github`                               | `Client`                                            | none of ours      |
 | `ren-project`                              | `ProjectContract`                                   | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |

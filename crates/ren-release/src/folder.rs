@@ -4,7 +4,7 @@
 //! ([`PromotionRequest`]), and each project's release
 //! ([`crate::Release::PROJECTS`]).
 
-use crate::Commit;
+use ren_git::Commit;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{fmt, str::FromStr};

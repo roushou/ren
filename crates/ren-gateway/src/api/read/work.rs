@@ -2,6 +2,7 @@
 //! client sends to queue one (`POST /control/v1/work`), which is read back
 //! as it was sent.
 
+use ren_git::Commit;
 use ren_protocol::label::Stored;
 use ren_recorder::{
     id::{ProjectId, SessionId, WorkItemId},
@@ -11,7 +12,7 @@ use ren_recorder::{
         WorkStateKind,
     },
 };
-use ren_release::{Commit, Revision};
+use ren_release::Revision;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 

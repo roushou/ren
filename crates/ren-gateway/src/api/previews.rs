@@ -11,9 +11,9 @@ use axum::{
     extract::{Path, State},
     response::{IntoResponse, Response},
 };
+use ren_git::Commit;
 use ren_protocol::label::Stored;
 use ren_recorder::project::Factory;
-use ren_release::Commit;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ts_rs::TS;
