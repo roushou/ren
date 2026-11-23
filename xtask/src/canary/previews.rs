@@ -143,7 +143,7 @@ impl PreviewPass<'_> {
         &self,
         env: &HostEnv,
         slot: Slot,
-        tailscale: Option<crate::tailscale::TailscaleCli>,
+        tailscale: Option<crate::tailscale::Tailnet>,
     ) -> Result<(), CanaryError> {
         let replica = Replica::preview_slot(env, slot)?;
         replica.stop()?;
@@ -160,7 +160,7 @@ impl PreviewPass<'_> {
         slot: Slot,
         commit: &Commit,
         backup: &std::path::Path,
-        tailscale: Option<crate::tailscale::TailscaleCli>,
+        tailscale: Option<crate::tailscale::Tailnet>,
     ) -> Result<(), CanaryError> {
         let factory = self.factory;
         factory

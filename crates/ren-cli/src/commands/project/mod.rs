@@ -37,7 +37,7 @@ use ren_gateway::api::{
 };
 use ren_git::Git;
 use ren_harness::host::HostEnv;
-use ren_network::tailscale::{NodeStatus, Route, ServeStatus};
+use ren_network::tailscale::{Cli, PublishError, Route};
 use ren_project::{Expanded, Place, ProjectContract};
 use ren_protocol::label::Stored;
 use ren_recorder::{
@@ -601,35 +601,20 @@ impl Steps {
     /// else, or exposes through Funnel, is refused, never replaced.
     fn publish(port: u16) -> Result<PreviewUrl> {
         let target = format!("http://127.0.0.1:{port}");
-        let node = NodeStatus::parse(&Self::output(&["tailscale", "status", "--json"])?)?;
-        if let Some(state) = node.not_running() {
-            bail!("Tailscale is {state}, not running: run `tailscale up` first");
-        }
-        match Self::route(port, &target)? {
-            Route::Free => {
-                let argv = [
-                    "tailscale",
-                    "serve",
-                    "--bg",
-                    &format!("--https={port}"),
-                    &target,
-                ]
-                .map(str::to_owned)
-                .to_vec();
-                let serve = Expanded {
-                    argv,
-                    env: Vec::new(),
-                };
-                if !Self::status(&serve, Path::new("/"), None)? {
-                    bail!("tailscale serve did not publish port {port}");
-                }
+        let publication = match Cli::plan(port, &target) {
+            Ok(publication) => publication,
+            Err(PublishError::Down(state)) => {
+                bail!("Tailscale is {state}, not running: run `tailscale up` first")
             }
-            Route::Target => {}
-            route @ (Route::Funnel { .. } | Route::Other { .. } | Route::TcpForward) => {
+            Err(PublishError::PortTaken { port, route }) => {
                 bail!("Tailscale Serve port {port} is in use ({route}); it is not replaced")
             }
-        }
-        let dns = node
+            Err(PublishError::Cli(error)) => return Err(error.into()),
+        };
+        Cli::Direct
+            .apply(&publication)
+            .with_context(|| format!("tailscale serve did not publish port {port}"))?;
+        let dns = publication
             .dns_name()
             .context("Tailscale reports no MagicDNS name for this node")?;
         let origin = format!("https://{dns}:{port}");
@@ -642,22 +627,10 @@ impl Steps {
     /// the preview's loopback port; any other route is left.
     fn unpublish(port: u16) -> Result<()> {
         let target = format!("http://127.0.0.1:{port}");
-        match Self::route(port, &target)? {
-            Route::Target => {
-                let argv = ["tailscale", "serve", &format!("--https={port}"), "off"]
-                    .map(str::to_owned)
-                    .to_vec();
-                Self::quiet(&argv).map(drop)
-            }
+        match Cli::serve_status()?.route(port, &target) {
+            Route::Target => Ok(Cli::Direct.serve_off(port)?),
             Route::Free | Route::Funnel { .. } | Route::Other { .. } | Route::TcpForward => Ok(()),
         }
-    }
-
-    /// How Serve routes `port` now.
-    fn route(port: u16, target: &str) -> Result<Route> {
-        let status =
-            ServeStatus::parse(&Self::output(&["tailscale", "serve", "status", "--json"])?)?;
-        Ok(status.route(port, target))
     }
 
     #[expect(
@@ -676,22 +649,6 @@ impl Steps {
             .status()
             .map(|status| status.success())
             .unwrap_or(false))
-    }
-
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the one place the CLI runs a project's declared steps"
-    )]
-    fn output(argv: &[&str]) -> Result<String> {
-        let [program, args @ ..] = argv else {
-            bail!("an empty command");
-        };
-        let output = std::process::Command::new(program)
-            .args(args)
-            .stdin(Stdio::null())
-            .output()
-            .with_context(|| format!("cannot run {program}"))?;
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
 

@@ -12,7 +12,7 @@ use crate::{
     daemon_container::{Contain, DaemonContainer},
     invocation::{Echo, Invocation, InvocationError},
     pod::Pod,
-    tailscale::{TailscaleCli, TailscaleError},
+    tailscale::{Tailnet, TailscaleError},
     ui::UiBuild,
     unit::{KillMode, Listener, TransientUnit},
 };
@@ -108,7 +108,7 @@ pub struct RunWait {
 #[derive(Debug, Clone, Copy)]
 pub enum Preview {
     /// Published on the tailnet with Tailscale Serve.
-    Tailnet(TailscaleCli),
+    Tailnet(Tailnet),
     /// Only on this host's loopback.
     Local,
 }
@@ -773,7 +773,7 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
 
     /// Remove the dev preview's Serve routes, each only if it still proxies
     /// to the slot; the installed service's routes are never touched.
-    pub fn unpublish(tailscale: TailscaleCli) -> Result<(), DevError> {
+    pub fn unpublish(tailscale: Tailnet) -> Result<(), DevError> {
         Ok(tailscale.unpublish(&[
             (Self::GATEWAY_PORT, format!("http://{}", Self::DAEMON)),
             (Self::UI_PORT, format!("http://{}", Self::UI)),

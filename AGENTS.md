@@ -232,13 +232,16 @@ dependencies under "Crates" below. Read the code for current module ownership.
   sans-IO: which build an instance runs (`Build`, its `Revision` of a
   `ren_git::Commit` and `Tree`, and how two compare, `Comparison`). Its
   manifest allows only pure dependencies and `ren-git`, for those two types.
-- `crates/ren-network`: the network Ren is reached through, sans-IO, with
+- `crates/ren-network`: the network Ren is reached through, with
   `Network` as its primary type (one variant, `Tailscale`, and the header
   it names a caller's login in). It depends on none of Ren's crates.
   `tailscale` holds what is Tailscale's: the `Login` Serve vouches for, and
   what `tailscale status --json` and `tailscale serve status --json`
-  report (`NodeStatus`, `ServeStatus`, and a port's `Route`). Running
-  `tailscale` stays with xtask and `ren project preview`.
+  report (`NodeStatus`, `ServeStatus`, and a port's `Route`), and `Cli`,
+  the one place Ren runs `tailscale` (as the user, or through `sudo -n`):
+  a `Publication` planned from those reports, then applied with Serve, and
+  a Serve port turned off. xtask and `ren project preview` publish through
+  it.
 - `crates/ren-github`: a self-contained GitHub client for a repository's
   pull requests, with `Client` as its primary type
   (docs/plans/self-build.md, phase 8). It depends on none of Ren's crates
@@ -755,8 +758,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   replaced, `install::rollback`; deploying the UI, `install::ui`). What it
   shares with the dev slot sits beside it, each with its own error:
   running commands (`invocation`), writing files (`file`), progress lines
-  (`progress`), Tailscale (`tailscale`: publishing a port
-  with Serve or removing one that still points where it did), the daemon a
+  (`progress`), Tailscale (`tailscale`: `Tailnet`, publishing a port
+  through `ren-network` with Serve or removing one that still points where it did), the daemon a
   restart waits on (`daemon`: the installed `ren`'s output, the wait, and
   the runs that end), building the UI (`ui`), transient user units and the
   listeners they answer on (`unit`: `TransientUnit`, `Listener`), and builds

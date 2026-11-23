@@ -6,10 +6,11 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "The network the Ren LLM gateway is reached through: Tailscale's reports, Serve routes, and the logins it vouches for."
+description = "The network the Ren LLM gateway is reached through: the logins Tailscale vouches for, its reports, and publishing a listener with Serve."
 
-# Sans-IO: what the network reports and vouches for, parsed. Running the
-# network's own programs stays with the caller.
+# What the network reports and vouches for, parsed purely, and the one place
+# Ren runs `tailscale`. It performs process I/O, but has no async runtime,
+# HTTP, database, or CLI dependency.
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true

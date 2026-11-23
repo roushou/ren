@@ -27,13 +27,14 @@ use crate::{
     invocation::{Invocation, InvocationError},
     progress::Progress,
     replica::{Production, ProductionPlace, Replica, ReplicaError},
-    tailscale::{TailscaleCli, TailscaleError},
+    tailscale::{Tailnet, TailscaleError},
     ui::UiBuildError,
 };
 use clap::{Args, Subcommand, ValueEnum};
 use ren_daemon::host::SystemClock;
 use ren_git::{Branch, Commit, Git, GitError, Tree};
 use ren_harness::host::HostEnv;
+use ren_network::tailscale::Cli;
 use ren_protocol::label::Stored;
 use ren_recorder::time::Clock as _;
 use ren_release::{
@@ -246,15 +247,15 @@ impl Factory {
     }
 
     /// The saved Tailscale choice, for publishing the canary.
-    fn tailscale(&self, publish: PublishArgs) -> Result<Option<TailscaleCli>, CanaryError> {
+    fn tailscale(&self, publish: PublishArgs) -> Result<Option<Tailnet>, CanaryError> {
         if !publish.publish {
             return Ok(None);
         }
         let saved = Publish::default().resolve(&Publish::path(&self.home))?;
         Ok(Some(if saved.sudo_tailscale {
-            TailscaleCli::Sudo
+            Tailnet::new(Cli::Sudo)
         } else {
-            TailscaleCli::Direct
+            Tailnet::new(Cli::Direct)
         }))
     }
 

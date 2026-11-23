@@ -13,7 +13,7 @@ use crate::{
     invocation::{Echo, Invocation, InvocationError},
     pod::{Access, Container, Mount, Pod},
     progress::Progress,
-    tailscale::{TailscaleCli, TailscaleError},
+    tailscale::{Tailnet, TailscaleError},
     ui::{UiBuild, UiBuildError},
     unit::{KillMode, Listener, TransientUnit},
 };
@@ -589,7 +589,7 @@ impl Replica {
         ren: &Path,
         ui_dir: &Path,
         keys: &[String],
-        publish: Option<(TailscaleCli, u16, u16)>,
+        publish: Option<(Tailnet, u16, u16)>,
     ) -> Result<Reached, ReplicaError> {
         Pod::ensure_image(repo)?;
         self.stop_units()?;
@@ -719,11 +719,7 @@ impl Replica {
 
     /// Removes its Serve routes on `ports` (the gateway's, then the UI's),
     /// each only while it still points at this replica.
-    pub fn unpublish(
-        &self,
-        tailscale: TailscaleCli,
-        ports: (u16, u16),
-    ) -> Result<(), ReplicaError> {
+    pub fn unpublish(&self, tailscale: Tailnet, ports: (u16, u16)) -> Result<(), ReplicaError> {
         Ok(tailscale.unpublish(&[
             (ports.0, format!("http://{}", self.daemon)),
             (ports.1, format!("http://{}", self.ui)),

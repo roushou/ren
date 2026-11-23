@@ -17,7 +17,7 @@ use crate::{
     invocation::{Invocation, InvocationError},
     progress::Progress,
     replica::{Production, ProductionPlace, Replica, ReplicaError},
-    tailscale::TailscaleCli,
+    tailscale::Tailnet,
     ui::{UiBuild, UiBuildError},
 };
 use clap::{Args, Subcommand};
@@ -27,6 +27,7 @@ use ren_gateway::api::{
 };
 use ren_git::{Git, GitError};
 use ren_harness::host::HostEnv;
+use ren_network::tailscale::Cli;
 use ren_protocol::label::Stored;
 use ren_recorder::{
     id::WorkItemId,
@@ -315,7 +316,7 @@ impl Preview {
     }
 
     /// The install's saved Tailscale choice, when publishing.
-    fn tailscale(env: &HostEnv, publish: bool) -> Result<Option<TailscaleCli>, PreviewError> {
+    fn tailscale(env: &HostEnv, publish: bool) -> Result<Option<Tailnet>, PreviewError> {
         if !publish {
             return Ok(None);
         }
@@ -324,9 +325,9 @@ impl Preview {
             .ok_or(PreviewError::NotAWorktree("HOME"))?;
         let saved = Publish::default().resolve(&Publish::path(&home))?;
         Ok(Some(if saved.sudo_tailscale {
-            TailscaleCli::Sudo
+            Tailnet::new(Cli::Sudo)
         } else {
-            TailscaleCli::Direct
+            Tailnet::new(Cli::Direct)
         }))
     }
 }

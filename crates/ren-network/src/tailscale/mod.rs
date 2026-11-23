@@ -1,9 +1,13 @@
-//! Tailscale, pure: the login Serve names a request's caller by
+//! Tailscale: the login Serve names a request's caller by
 //! (`Tailscale-User-Login`), the node's state and name (`tailscale status
 //! --json`), and how a Serve port is routed (`tailscale serve status
 //! --json`), read only as far as publishing a local listener on the tailnet
-//! needs. Running `tailscale` is the caller's: xtask publishes the gateway,
-//! the UI, the canary, and previews; `ren project preview` a project's.
+//! needs; and running `tailscale` for them ([`Cli`]): xtask publishes the
+//! gateway, the UI, the canary, and previews; `ren project preview` a
+//! project's.
+
+mod cli;
+pub use cli::{Change, Cli, CliError, Publication, PublishError};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
