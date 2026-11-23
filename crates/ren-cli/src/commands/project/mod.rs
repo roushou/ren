@@ -29,10 +29,7 @@ use super::history::TargetArgs;
 use crate::{context::Context, management::Management};
 use anyhow::{Context as _, Result, anyhow, bail};
 use clap::{Args, Subcommand};
-use ren_daemon::{
-    packages::{HostPrograms, PackageStore},
-    tailscale::{NodeStatus, Route, ServeStatus},
-};
+use ren_daemon::packages::{HostPrograms, PackageStore};
 use ren_depot::package_set::{Generation, Lack};
 use ren_gateway::api::{
     control::request::{ControlRequest, PreviewWorkRequest, WorkChange},
@@ -40,6 +37,7 @@ use ren_gateway::api::{
 };
 use ren_git::Git;
 use ren_harness::host::HostEnv;
+use ren_network::tailscale::{NodeStatus, Route, ServeStatus};
 use ren_project::{Expanded, Place, ProjectContract};
 use ren_protocol::label::Stored;
 use ren_recorder::{

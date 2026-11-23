@@ -36,11 +36,12 @@ use axum::{
 use history::HistoryApi;
 use http::{HeaderMap, HeaderValue, StatusCode, header};
 pub use refusal::ControlRefusal;
+use ren_network::tailscale::Login;
 use ren_protocol::native::NativeSessionId;
 use ren_recorder::{
     Recorder,
     batch::Actor,
-    caller::{TailscaleLogin, UserId},
+    caller::UserId,
     id::{CallId, IdSource},
     time::Clock,
 };
@@ -59,7 +60,7 @@ pub struct ControlOptions {
     /// Tailscale logins (as Tailscale Serve reports them in
     /// `Tailscale-User-Login`) allowed to use the control API. Empty means
     /// the control API answers loopback requests only.
-    pub tailscale_logins: Vec<TailscaleLogin>,
+    pub tailscale_logins: Vec<Login>,
 }
 
 /// A per-run secret that authorizes control requests without a Tailscale
@@ -109,7 +110,7 @@ pub(crate) struct ControlApi {
     recorder: Recorder,
     clock: Arc<dyn Clock>,
     token: ControlToken,
-    logins: Vec<TailscaleLogin>,
+    logins: Vec<Login>,
     /// The named users an operator can block.
     users: Users,
     backup: Backup,
@@ -125,7 +126,7 @@ impl ControlApi {
         recorder: Recorder,
         clock: Arc<dyn Clock>,
         token: ControlToken,
-        logins: Vec<TailscaleLogin>,
+        logins: Vec<Login>,
         users: Users,
         backup: Backup,
     ) -> Self {
@@ -236,7 +237,7 @@ impl ControlApi {
             let login = login
                 .to_str()
                 .ok()
-                .and_then(|login| login.parse::<TailscaleLogin>().ok())
+                .and_then(|login| login.parse::<Login>().ok())
                 .ok_or(ControlRefusal::Forbidden)?;
             return if self.logins.contains(&login) {
                 Ok(Actor::Tailscale(login))

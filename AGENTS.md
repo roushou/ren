@@ -232,6 +232,13 @@ dependencies under "Crates" below. Read the code for current module ownership.
   sans-IO: which build an instance runs (`Build`, its `Revision` of a
   `ren_git::Commit` and `Tree`, and how two compare, `Comparison`). Its
   manifest allows only pure dependencies and `ren-git`, for those two types.
+- `crates/ren-network`: the network Ren is reached through, sans-IO, with
+  `Network` as its primary type (one variant, `Tailscale`, and the header
+  it names a caller's login in). It depends on none of Ren's crates.
+  `tailscale` holds what is Tailscale's: the `Login` Serve vouches for, and
+  what `tailscale status --json` and `tailscale serve status --json`
+  report (`NodeStatus`, `ServeStatus`, and a port's `Route`). Running
+  `tailscale` stays with xtask and `ren project preview`.
 - `crates/ren-github`: a self-contained GitHub client for a repository's
   pull requests, with `Client` as its primary type
   (docs/plans/self-build.md, phase 8). It depends on none of Ren's crates
@@ -369,8 +376,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `RecorderMetrics`, readable after shutdown through `RecorderMeter`. It also
   owns what is recorded: Ren's identities and `IdSource` (`id`), `Clock`
   (`time`), terminals and other recorded facts (`capture`), routing facts and
-  `OperatorRevision` (`routing`), who called (`caller`: `UserId`,
-  `TailscaleLogin`, and `Caller`), work items (`work`, pure: `WorkOrder`, what
+  `OperatorRevision` (`routing`), who called (`caller`: `UserId` and
+  `Caller`, with `ren-network`'s `Login`), work items (`work`, pure: `WorkOrder`, what
   was marked, checked by `WorkOrder::checked`, and the `WorkState` machine,
   queued to shipped, whose `apply` refuses an event a state does not take;
   `WorkSlot` records each `WorkFact`), batches (`batch`), the content-defined
@@ -748,7 +755,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   replaced, `install::rollback`; deploying the UI, `install::ui`). What it
   shares with the dev slot sits beside it, each with its own error:
   running commands (`invocation`), writing files (`file`), progress lines
-  (`progress`), Tailscale (`tailscale`: its status, and publishing a port
+  (`progress`), Tailscale (`tailscale`: publishing a port
   with Serve or removing one that still points where it did), the daemon a
   restart waits on (`daemon`: the installed `ren`'s output, the wait, and
   the runs that end), building the UI (`ui`), transient user units and the
@@ -808,6 +815,7 @@ directly.
 | `ren-depot`                                | `Depot`, with its `ProgramHost` port                | none of ours      |
 | `ren-git`                                  | `Git`                                               | none of ours      |
 | `ren-release`                              | `Release`                                           | protocol, git     |
+| `ren-network`                              | `Network`                                           | none of ours      |
 | `ren-github`                               | `Client`                                            | none of ours      |
 | `ren-project`                              | `ProjectContract`                                   | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |

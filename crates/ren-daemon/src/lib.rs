@@ -8,7 +8,6 @@
 pub mod config;
 pub mod host;
 pub mod packages;
-pub mod tailscale;
 
 use crate::config::RuntimeConfig;
 use crate::host::{HeldRuns, ObservationThread, ProcessHost, RandomIds, SystemClock};

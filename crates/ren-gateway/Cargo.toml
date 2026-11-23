@@ -25,6 +25,7 @@ ren-git.workspace = true
 ren-depot.workspace = true
 ren-github.workspace = true
 ren-harness.workspace = true
+ren-network.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
 ren-release.workspace = true

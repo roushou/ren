@@ -6,6 +6,7 @@
 //! this host: Tailscale Serve forwards tagged devices and Funnel traffic to
 //! loopback without identity headers.
 
+use ren_network::tailscale::Login;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
@@ -50,50 +51,14 @@ impl std::fmt::Display for UserId {
     }
 }
 
-/// A tailnet login name, as Tailscale Serve reports it in
-/// `Tailscale-User-Login`: 1 to 256 visible ASCII characters.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, DeserializeFromStr,
-)]
-#[serde(transparent)]
-pub struct TailscaleLogin(Box<str>);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("Tailscale logins are 1 to 256 visible ASCII characters")]
-pub struct InvalidTailscaleLogin;
-
-impl TailscaleLogin {
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::str::FromStr for TailscaleLogin {
-    type Err = InvalidTailscaleLogin;
-
-    fn from_str(login: &str) -> Result<Self, Self::Err> {
-        if (1..=256).contains(&login.len()) && login.bytes().all(|byte| byte.is_ascii_graphic()) {
-            Ok(Self(login.into()))
-        } else {
-            Err(InvalidTailscaleLogin)
-        }
-    }
-}
-
-impl std::fmt::Display for TailscaleLogin {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
 /// How a user proved who it is.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Proof {
     /// A Tailscale login the user lists.
-    Tailscale(TailscaleLogin),
+    Tailscale(Login),
     /// The user's token. A Tailscale login the request also carried, which
     /// no user lists, is kept.
-    Token { login: Option<TailscaleLogin> },
+    Token { login: Option<Login> },
 }
 
 /// Who made a call.
@@ -102,7 +67,7 @@ pub enum Caller {
     /// A configured user.
     User { user: UserId, proof: Proof },
     /// A tailnet user no user lists.
-    Unlisted(TailscaleLogin),
+    Unlisted(Login),
     /// No identity: a local process, a tagged tailnet device, or Funnel
     /// traffic, which Ren cannot tell apart.
     Unidentified,
@@ -132,7 +97,7 @@ impl Caller {
     }
 
     /// The Tailscale login the request carried, if any.
-    pub fn login(&self) -> Option<&TailscaleLogin> {
+    pub fn login(&self) -> Option<&Login> {
         match self {
             Self::User {
                 proof: Proof::Tailscale(login),
@@ -155,7 +120,7 @@ impl serde::Serialize for Caller {
         struct Fields<'a> {
             kind: CallerKind,
             user: Option<&'a UserId>,
-            login: Option<&'a TailscaleLogin>,
+            login: Option<&'a Login>,
         }
         Fields {
             kind: self.kind(),
@@ -182,24 +147,20 @@ pub enum CallerKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{Caller, CallerKind, Proof, TailscaleLogin, UserId};
+    use super::{Caller, CallerKind, Login, Proof, UserId};
 
     #[test]
-    fn ids_and_logins_parse_only_their_grammar() {
+    fn ids_parse_only_their_grammar() {
         assert!("alice-2_ci".parse::<UserId>().is_ok());
         for bad in ["", "Alice", "a b", "a/b", &"a".repeat(65)] {
             assert!(bad.parse::<UserId>().is_err(), "{bad:?}");
-        }
-        assert!("alice@example.com".parse::<TailscaleLogin>().is_ok());
-        for bad in ["", "a b", "é", &"a".repeat(257)] {
-            assert!(bad.parse::<TailscaleLogin>().is_err(), "{bad:?}");
         }
     }
 
     #[test]
     fn a_caller_names_its_kind_client_and_login() {
         let alice = "alice".parse::<UserId>().unwrap();
-        let login = "alice@example.com".parse::<TailscaleLogin>().unwrap();
+        let login = "alice@example.com".parse::<Login>().unwrap();
         let cases = [
             (
                 Caller::User {

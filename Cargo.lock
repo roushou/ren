@@ -1786,6 +1786,7 @@ dependencies = [
  "ren-git",
  "ren-github",
  "ren-harness",
+ "ren-network",
  "ren-protocol",
  "ren-recorder",
  "ren-release",
@@ -1844,6 +1845,7 @@ dependencies = [
  "ren-git",
  "ren-github",
  "ren-harness",
+ "ren-network",
  "ren-protocol",
  "ren-recorder",
  "ren-release",
@@ -1915,6 +1917,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-network"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror",
+]
+
+[[package]]
 name = "ren-project"
 version = "0.1.0"
 dependencies = [
@@ -1954,6 +1966,7 @@ dependencies = [
  "ren-depot",
  "ren-git",
  "ren-harness",
+ "ren-network",
  "ren-protocol",
  "ren-release",
  "serde",
@@ -1994,6 +2007,7 @@ dependencies = [
  "ren-gateway",
  "ren-git",
  "ren-harness",
+ "ren-network",
  "ren-project",
  "ren-protocol",
  "ren-recorder",
@@ -2024,6 +2038,7 @@ dependencies = [
  "ren-depot",
  "ren-git",
  "ren-harness",
+ "ren-network",
  "ren-protocol",
  "ren-recorder",
  "ren-release",
@@ -3506,6 +3521,7 @@ dependencies = [
  "ren-git",
  "ren-github",
  "ren-harness",
+ "ren-network",
  "ren-project",
  "ren-protocol",
  "ren-recorder",

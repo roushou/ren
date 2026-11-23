@@ -40,6 +40,7 @@ uuid = { workspace = true, features = ["v4"] }
 zip = { version = "9.5.0", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
+ren-network.workspace = true
 axum.workspace = true
 brotli.workspace = true
 bytes.workspace = true

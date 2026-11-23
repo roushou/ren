@@ -108,17 +108,14 @@ impl UserLimits {
 mod tests {
     use super::{AtLimit, ConcurrencyLimit, UserLimits};
     use crate::user::{UserConfig, Users};
-    use ren_recorder::caller::{Caller, Proof, TailscaleLogin, UserId};
+    use ren_network::tailscale::Login;
+    use ren_recorder::caller::{Caller, Proof, UserId};
 
     #[test]
     fn each_user_and_the_unnamed_callers_have_their_own_limit() {
         let user = |name: &str, limit: Option<u16>| UserConfig {
             id: name.parse::<UserId>().unwrap(),
-            tailscale_logins: vec![
-                format!("{name}@example.com")
-                    .parse::<TailscaleLogin>()
-                    .unwrap(),
-            ],
+            tailscale_logins: vec![format!("{name}@example.com").parse::<Login>().unwrap()],
             token_blake3: None,
             max_concurrent: limit.map(ConcurrencyLimit::saturating),
         };

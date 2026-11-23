@@ -6,7 +6,7 @@ use crate::{
     invocation::{Invocation, InvocationError},
     progress::Progress,
 };
-pub use ren_daemon::tailscale::{NodeStatus, Route, ServeStatus};
+pub use ren_network::tailscale::{NodeStatus, Route, ServeStatus};
 
 /// Why a port could not be published on the tailnet.
 #[derive(Debug, thiserror::Error)]

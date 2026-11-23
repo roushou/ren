@@ -27,11 +27,9 @@ use ren_gateway::{
 };
 use ren_git::{Author, Git, Repository};
 use ren_harness::{endpoint::UserToken, host::HostEnv};
+use ren_network::tailscale::Login;
 use ren_protocol::route::{Provider, Wire};
-use ren_recorder::{
-    caller::{TailscaleLogin, UserId},
-    routing::UpstreamId,
-};
+use ren_recorder::{caller::UserId, routing::UpstreamId};
 use std::{
     fs,
     net::SocketAddr,
@@ -216,7 +214,7 @@ impl Slot {
         let id = |text: &str| text.parse::<UpstreamId>().map_err(|_| DevError::Config);
         let user = |text: &str| text.parse::<UserId>().map_err(|_| DevError::Config);
         let login = "alice@example.com"
-            .parse::<TailscaleLogin>()
+            .parse::<Login>()
             .map_err(|_| DevError::Config)?;
         Ok(Config {
             listen: Self::DAEMON,

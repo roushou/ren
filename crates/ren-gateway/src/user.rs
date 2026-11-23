@@ -14,8 +14,9 @@
 use crate::limits::ConcurrencyLimit;
 use http::HeaderMap;
 use ren_harness::endpoint::UserToken;
+use ren_network::{Network, tailscale::Login};
 use ren_recorder::{
-    caller::{Caller, Proof, TailscaleLogin, UserId},
+    caller::{Caller, Proof, UserId},
     id::IdSource,
 };
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -81,7 +82,7 @@ pub struct UserConfig {
     pub id: UserId,
     /// Tailscale logins that are this user.
     #[serde(default)]
-    pub tailscale_logins: Vec<TailscaleLogin>,
+    pub tailscale_logins: Vec<Login>,
     /// The BLAKE3 digest of the user's token (`ren users token`).
     #[serde(default)]
     pub token_blake3: Option<TokenDigest>,
@@ -97,7 +98,7 @@ pub enum UsersError {
     #[error("user {0} is configured twice")]
     DuplicateId(UserId),
     #[error("Tailscale login {0} belongs to two users")]
-    DuplicateLogin(TailscaleLogin),
+    DuplicateLogin(Login),
     #[error("users {0} and {1} have the same token")]
     DuplicateToken(UserId, UserId),
     #[error("user {0} has neither a Tailscale login nor a token, so no request can be it")]
@@ -124,12 +125,12 @@ pub enum IdentifyError {
 #[derive(Debug, Clone, Default)]
 pub struct Users {
     configs: Vec<UserConfig>,
-    by_login: HashMap<TailscaleLogin, UserId>,
+    by_login: HashMap<Login, UserId>,
     by_token: HashMap<TokenDigest, UserId>,
 }
 
 impl Users {
-    pub(crate) const LOGIN_HEADER: &'static str = "tailscale-user-login";
+    pub(crate) const LOGIN_HEADER: &'static str = Network::Tailscale.login_header();
 
     pub fn new(configs: Vec<UserConfig>) -> Result<Self, UsersError> {
         let mut by_login = HashMap::new();
@@ -187,7 +188,7 @@ impl Users {
                 value
                     .to_str()
                     .ok()
-                    .and_then(|text| text.parse::<TailscaleLogin>().ok())
+                    .and_then(|text| text.parse::<Login>().ok())
                     .ok_or(IdentifyError::MalformedLogin)
             })
             .transpose()?;
@@ -237,8 +238,9 @@ mod tests {
     use super::{IdentifyError, TokenDigest, UserConfig, Users, UsersError};
     use http::HeaderMap;
     use ren_harness::endpoint::UserToken;
+    use ren_network::tailscale::Login;
     use ren_recorder::{
-        caller::{Caller, Proof, TailscaleLogin, UserId},
+        caller::{Caller, Proof, UserId},
         id::SequentialIds,
     };
 
@@ -246,8 +248,8 @@ mod tests {
         text.parse::<UserId>().unwrap()
     }
 
-    fn login(text: &str) -> TailscaleLogin {
-        text.parse::<TailscaleLogin>().unwrap()
+    fn login(text: &str) -> Login {
+        text.parse::<Login>().unwrap()
     }
 
     fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
