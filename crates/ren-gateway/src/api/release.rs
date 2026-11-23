@@ -6,7 +6,7 @@
 //! operator's promotion request for the factory; the CLI reads these same
 //! views back.
 
-use ren_preview::{PreviewRequests, Previews};
+use crate::preview::{PreviewRequests, Previews};
 use ren_protocol::label::Stored;
 use ren_recorder::project::Factory;
 use ren_release::{

@@ -1,5 +1,5 @@
 //! The factory's previews (docs/plans/self-build.md, phase 9): one pass
-//! asks `ren_preview::Previews` which previews should run, from the
+//! asks `ren_gateway::preview::Previews` which previews should run, from the
 //! commits the operator asked for and Ren's open pull requests as
 //! production last saw them on GitHub, and carries out what it says: each
 //! start fetches the commit, builds it once (`crate::builds`) in the
@@ -13,9 +13,9 @@ use crate::{
     progress::Progress,
     replica::{ListedPull, ProductionPlace, Replica},
 };
+use ren_gateway::preview::{Action, PreviewKey, Previews, Reach, Slot, Wanted};
 use ren_github::Readiness;
 use ren_harness::host::HostEnv;
-use ren_preview::{Action, PreviewKey, Previews, Reach, Slot, Wanted};
 use ren_protocol::label::Stored;
 use ren_release::Commit;
 use std::path::PathBuf;

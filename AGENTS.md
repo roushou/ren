@@ -250,8 +250,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   on its side: the daemon's `[github]` section maps projects to
   repositories and runs the poller; the gateway's `PullBoard` keeps its
   observations by project and serves them.
-- `crates/ren-preview`: which previews of Ren run, sans-IO, with
-  `Previews` as its primary type (docs/plans/self-build.md, phase 9): each
+- `ren-gateway`'s `preview` module: which previews of Ren run, sans-IO, in
+  `Previews` (docs/plans/self-build.md, phase 9): each
   `Preview` in its `Slot` (its loopback and tailnet ports), of a
   `PreviewKey` (an open pull request, or a commit the operator asked for),
   at a commit, `Building`, `Running`, or `Failed` (`PreviewState`).
@@ -260,9 +260,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   and the `Action`s to get there (stop a slot, start a commit in one);
   `started` and `failed` take the factory's reports, refusing a
   `StaleReport`. A failed build is not tried again for its commit. The
-  factory keeps it in production's data folder (`Previews::FILE`). Its
-  manifest allows only pure dependencies, and `src/purity.rs` keeps its
-  sources free of I/O.
+  factory keeps it in production's data folder (`Previews::FILE`). The
+  gateway's `src/purity.rs` keeps the module free of I/O.
 - `crates/ren-depot`: the packages Ren's agents run with, with `Depot` as its
   primary type: the package catalog (`package`: `Package`, `PackageId`,
   `ProgramName`, `Kind`, client, runtime, or utility, and `Origin`; the
@@ -545,7 +544,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`reply`: `RenCode`, `ren_`-prefixed on the wire and pinned in
   `tests/fixtures/labels.txt`).
   `src/purity.rs` keeps `lifecycle` (`attempt`, `call`, `channel`,
-  `retry`), `operator`, and `user` free of runtime, I/O, storage, and shell-module
+  `retry`), `operator`, `user`, and `preview` free of runtime, I/O, storage, and shell-module
   dependencies. Management receives `Reader`, `Backup`, retention settings, and
   control credentials through `ManagementSetup`; SQL stays in `ren-store`, and
   forwarding records only through the recorder.
@@ -810,7 +809,6 @@ directly.
 | `ren-git`                                  | `Git`                                               | none of ours      |
 | `ren-release`                              | `Release`                                           | protocol          |
 | `ren-github`                               | `Client`                                            | none of ours      |
-| `ren-preview`                              | `Previews`                                          | github, release   |
 | `ren-project`                              | `ProjectContract`                                   | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |
 | `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |

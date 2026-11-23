@@ -7,7 +7,7 @@
 //!
 //! `POST /control/v1/previews/ask` and `/previews/withdraw`: the operator
 //! asks for a preview of a commit, or withdraws the ask
-//! (`ren_preview::PreviewRequests`); the factory's next pass starts or
+//! (`crate::preview::PreviewRequests`); the factory's next pass starts or
 //! stops it. Both answer the commits asked for, the newest first; a
 //! withdrawal of a commit not asked for is `404` `not_found`.
 
@@ -16,6 +16,7 @@ use super::{
     request::{PreviewAskRequest, PromoteRequest},
 };
 use crate::api::release::ReleaseFolder;
+use crate::preview::PreviewRequests;
 use axum::{
     Json, Router,
     extract::{State, rejection::JsonRejection},
@@ -23,7 +24,6 @@ use axum::{
     routing::post,
 };
 use http::{HeaderMap, StatusCode};
-use ren_preview::PreviewRequests;
 use ren_release::{Commit, PromotionRequest};
 use std::sync::Arc;
 

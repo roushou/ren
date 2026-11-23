@@ -18,13 +18,13 @@ use crate::{
     unit::{KillMode, Listener, TransientUnit},
 };
 use ren_daemon::config::{Config, ConfigError, GithubOptions, RunsOptions};
+use ren_gateway::preview::{PreviewRequests, Previews, Slot as PreviewSlot};
 use ren_gateway::{
     ControlToken, Environment, InstanceOptions,
     api::control::request::{ControlRequest, WorkChange},
 };
 use ren_github::Readiness;
 use ren_harness::host::HostEnv;
-use ren_preview::{PreviewRequests, Previews, Slot as PreviewSlot};
 use ren_protocol::label::Stored;
 use ren_recorder::{
     id::WorkItemId,

@@ -20,7 +20,6 @@ ren-gateway.workspace = true
 ren-git.workspace = true
 ren-github.workspace = true
 ren-harness.workspace = true
-ren-preview.workspace = true
 ren-project.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true

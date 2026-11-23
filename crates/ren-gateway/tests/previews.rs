@@ -5,7 +5,9 @@
     reason = "integration tests are a shell: helpers outside #[test] fail loudly"
 )]
 
-use ren_preview::{Action, PreviewKey, PreviewState, Previews, Reach, Slot, StaleReport, Wanted};
+use ren_gateway::preview::{
+    Action, PreviewKey, PreviewState, Previews, Reach, Slot, StaleReport, Wanted,
+};
 use ren_release::{Commit, PreviewCapacity};
 
 fn commit(digit: char) -> Commit {

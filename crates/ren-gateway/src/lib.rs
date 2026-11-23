@@ -18,7 +18,8 @@
 //! decides with: the pure lifecycles in [`lifecycle`] (an HTTP attempt, a
 //! call's candidates, a WebSocket channel, and retry eligibility), operator
 //! state (`operator`) and the [`Controls`] that hold it (`control`),
-//! who is calling (`user`), and call planning (`policy`).
+//! who is calling (`user`), call planning (`policy`), and which previews of
+//! Ren run (`preview`).
 //!
 //! Management handlers read history through the store's `Reader`, stream live
 //! observations from the recorder, and run authenticated controls and backups.
@@ -52,6 +53,7 @@ mod limits;
 pub mod operator;
 pub mod packages;
 pub mod policy;
+pub mod preview;
 #[cfg(test)]
 mod purity;
 pub mod reply;

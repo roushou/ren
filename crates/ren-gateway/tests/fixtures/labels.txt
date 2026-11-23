@@ -19,3 +19,4 @@ instance::Environment: production development canary preview
 packages::GenerationState: current in_use idle
 packages::ChangeOutcome: unchanged activated failed
 packages::ChangeKind: add replace remove
+preview::Reach: loopback tailnet

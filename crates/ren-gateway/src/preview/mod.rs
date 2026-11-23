@@ -14,9 +14,6 @@ mod previews;
 mod requests;
 mod slot;
 
-#[cfg(test)]
-mod purity;
-
 pub use previews::{
     Action, Preview, PreviewKey, PreviewState, Previews, Reach, StaleReport, Wanted,
 };

@@ -223,8 +223,8 @@ async fn previews_are_asked_for_withdrawn_and_listed() {
     let (status, body) = ask("withdraw", PRODUCTION).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["error"], "not_found");
-    let read: ren_preview::PreviewRequests = serde_json::from_slice(
-        &std::fs::read(dir.path().join(ren_preview::PreviewRequests::FILE)).unwrap(),
+    let read: ren_gateway::preview::PreviewRequests = serde_json::from_slice(
+        &std::fs::read(dir.path().join(ren_gateway::preview::PreviewRequests::FILE)).unwrap(),
     )
     .unwrap();
     assert_eq!(read.commits(), [CANARY.parse().unwrap()]);

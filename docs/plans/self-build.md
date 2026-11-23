@@ -397,7 +397,8 @@ spec (phase 7):
    - The factory builds previews; the agent no longer runs `cargo xtask
      preview up`. This replaces the deviation "A preview is a replica, run
      by the agent".
-   - Built: `ren-preview` (`Previews`, the slots and `want`, and
+   - Built: `ren-preview`, since folded into `ren-gateway`'s `preview`
+     module (`Previews`, the slots and `want`, and
      `PreviewRequests`), `Git::fetch_commit`, and the factory's pass
      (`xtask/src/canary/previews.rs`), run by every canary pass and by
      `cargo xtask canary previews`; a pass keeps its previews' builds.

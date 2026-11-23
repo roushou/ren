@@ -339,39 +339,39 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
             // Ren's previews, as the factory wrote them: a pull request's
             // running, and a commit asked for whose build failed.
             let wanted = [
-                ren_preview::Wanted {
-                    key: ren_preview::PreviewKey::Pull("12".parse().unwrap()),
+                ren_gateway::preview::Wanted {
+                    key: ren_gateway::preview::PreviewKey::Pull("12".parse().unwrap()),
                     commit: "2222222222222222222222222222222222222222".parse().unwrap(),
                 },
-                ren_preview::Wanted {
-                    key: ren_preview::PreviewKey::Commit(
+                ren_gateway::preview::Wanted {
+                    key: ren_gateway::preview::PreviewKey::Commit(
                         "3333333333333333333333333333333333333333".parse().unwrap(),
                     ),
                     commit: "3333333333333333333333333333333333333333".parse().unwrap(),
                 },
             ];
-            let (mut previews, actions) = ren_preview::Previews::default()
+            let (mut previews, actions) = ren_gateway::preview::Previews::default()
                 .want(&wanted, ren_release::PreviewCapacity::DEFAULT);
             for (action, outcome) in actions.iter().zip([None, Some("the build failed")]) {
-                let ren_preview::Action::Start { slot, commit, .. } = action else {
+                let ren_gateway::preview::Action::Start { slot, commit, .. } = action else {
                     unreachable!("only starts from nothing")
                 };
                 match outcome {
                     None => previews
-                        .started(*slot, commit, ren_preview::Reach::Tailnet)
+                        .started(*slot, commit, ren_gateway::preview::Reach::Tailnet)
                         .unwrap(),
                     Some(detail) => previews.failed(*slot, commit, detail.into()).unwrap(),
                 }
             }
             std::fs::write(
-                dir.path().join(ren_preview::Previews::FILE),
+                dir.path().join(ren_gateway::preview::Previews::FILE),
                 serde_json::to_vec(&previews).unwrap(),
             )
             .unwrap();
-            let mut requests = ren_preview::PreviewRequests::default();
+            let mut requests = ren_gateway::preview::PreviewRequests::default();
             requests.ask("3333333333333333333333333333333333333333".parse().unwrap());
             std::fs::write(
-                dir.path().join(ren_preview::PreviewRequests::FILE),
+                dir.path().join(ren_gateway::preview::PreviewRequests::FILE),
                 serde_json::to_vec(&requests).unwrap(),
             )
             .unwrap();

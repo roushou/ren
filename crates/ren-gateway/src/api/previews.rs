@@ -6,11 +6,11 @@
 //! itself is previewed so; any other project has none.
 
 use super::{ApiError, ApiState};
+use crate::preview::{Preview, PreviewKey, PreviewState, Reach};
 use axum::{
     extract::{Path, State},
     response::{IntoResponse, Response},
 };
-use ren_preview::{Preview, PreviewKey, PreviewState, Reach};
 use ren_protocol::label::Stored;
 use ren_recorder::project::Factory;
 use ren_release::Commit;

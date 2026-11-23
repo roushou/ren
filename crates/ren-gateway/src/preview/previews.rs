@@ -1,6 +1,6 @@
 //! The previews in their slots, and the pure steps that move them on.
 
-use crate::slot::Slot;
+use super::slot::Slot;
 use ren_github::PullNumber;
 use ren_release::{Commit, PreviewCapacity};
 use serde::{Deserialize, Serialize};
