@@ -9,10 +9,13 @@ use super::{
     rollback::{Held, Part, Upgrade},
 };
 use crate::{
+    daemon_container::Contain,
     file::{FileError, FileMode},
     invocation::{Echo, Invocation},
+    pod::Pod,
     progress::Progress,
-    ui::UiBuild,
+    ui::{UiBuild, UiContainer},
+    unit::ContainerUnit,
 };
 use ren_harness::host::HostEnv;
 use std::{
@@ -98,11 +101,20 @@ impl UiDeploy {
     }
 
     /// Swaps in the staged copy, writes `ui.env` if missing, starts the
-    /// service, and checks that the UI answers through to the daemon. If it
-    /// does not, the copy it replaced is put back with its unit.
-    pub fn install(&self, urls: &UiUrls) -> Result<(), InstallError> {
+    /// service (in a container of its own when `contain` says the instance
+    /// runs all in containers), and checks that the UI answers through to
+    /// the daemon. If it does not, the copy it replaced is put back with
+    /// its unit.
+    pub fn install(&self, urls: &UiUrls, contain: Contain) -> Result<(), InstallError> {
         self.write_env(urls)?;
-        let rendered = self.render()?;
+        let rendered = match contain {
+            Contain::None | Contain::Runs => self.render()?,
+            Contain::All => {
+                let container = self.container()?;
+                Progress(&format!("In container {}", container.name())).show();
+                ContainerUnit::new(container.run_args()).render(&self.render()?)?
+            }
+        };
         if InstallVps::active(Self::SERVICE)? {
             Progress("Stopping the UI").show();
             Invocation::new("systemctl")
@@ -157,6 +169,36 @@ impl UiDeploy {
             self.checkout.display()
         );
         Ok(FileMode::Private.write(&self.env_file, contents.as_bytes())?)
+    }
+
+    /// The deployed copy's container, reading the control token file
+    /// `ui.env` names. The instance image is built by the daemon's part.
+    fn container(&self) -> Result<UiContainer, InstallError> {
+        let env = fs::read_to_string(&self.env_file).map_err(FileError::at(&self.env_file))?;
+        let token = Self::token_file(&env);
+        Ok(UiContainer::new(
+            "production",
+            Pod::image(),
+            &self.dir,
+            token.as_deref(),
+        ))
+    }
+
+    /// The UI's setting for the daemon's control token file
+    /// (`ui/apps/web/src/env.ts`).
+    const TOKEN_KEY: &str = "REN_CONTROL_TOKEN_FILE";
+
+    /// The control token file `env`, a `ui.env`, names, if any: its last
+    /// setting that is not commented out, as systemd reads it (set empty,
+    /// it names none).
+    fn token_file(env: &str) -> Option<PathBuf> {
+        env.lines()
+            .filter_map(|line| line.trim_start().strip_prefix(Self::TOKEN_KEY))
+            .filter_map(|rest| rest.trim_start().strip_prefix('='))
+            .map(|value| value.trim().trim_matches('"'))
+            .next_back()
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
     }
 
     /// The UI's setting for Ren's source checkout (`ui/apps/web/src/env.ts`).
@@ -261,6 +303,45 @@ mod tests {
             assert_eq!(UiDeploy::with_source(kept, checkout), None);
         }
         assert!(UiDeploy::with_source("REN_SOURCE_DIRS=/x\n", checkout).is_some());
+    }
+
+    #[test]
+    fn reads_the_token_file_its_env_names() {
+        let named = "ORIGIN=x\n# REN_CONTROL_TOKEN_FILE=/old\nREN_CONTROL_TOKEN_FILE = \"/s/control.token\"\n";
+        assert_eq!(
+            UiDeploy::token_file(named).as_deref(),
+            Some(Path::new("/s/control.token"))
+        );
+        for none in [
+            "",
+            "ORIGIN=x\n",
+            "REN_CONTROL_TOKEN_FILE=\n",
+            "REN_CONTROL_TOKEN_FILES=/x\n",
+        ] {
+            assert_eq!(UiDeploy::token_file(none), None, "{none:?}");
+        }
+    }
+
+    #[test]
+    fn its_contained_unit_runs_the_ui_in_a_container() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let rendered =
+            UiDeploy::render_template(&repo.join("deploy/ren-ui.service"), Path::new(NODE))
+                .unwrap();
+        let container = UiContainer::new(
+            "production",
+            "localhost/ren-instance:abc".to_owned(),
+            Path::new("/home/op/.local/share/ren-ui"),
+            None,
+        );
+        let unit = ContainerUnit::new(container.run_args())
+            .render(&rendered)
+            .unwrap();
+        assert!(unit.contains("\nExecStart=:\"/usr/bin/podman\" \"run\""));
+        assert!(unit.contains("\"node\" \"apps/web/build\"\n"));
+        assert!(unit.contains("EnvironmentFile=%h/.config/ren/ui.env"));
+        assert!(!unit.contains(NODE));
+        assert!(!unit.contains("NoNewPrivileges"));
     }
 
     #[test]

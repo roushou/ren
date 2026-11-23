@@ -14,6 +14,8 @@ use ren_harness::{Harness, host::HostEnv};
 use ren_protocol::label::Labeled as _;
 use std::path::{Path, PathBuf};
 
+use crate::unit::{ContainerUnit, NoExecStart};
+
 /// What of an instance runs in containers (docs/plans/self-build.md,
 /// phase 11).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
@@ -25,8 +27,8 @@ pub enum Contain {
     /// Its runs: each in a container that sees only what it works on
     /// (`[runs] hold = "container"`); its daemon on the host.
     Runs,
-    /// Its daemon too, in a container of its own, starting its runs'
-    /// containers through the Podman API socket.
+    /// Its daemon and its UI too, each in a container of its own, the
+    /// daemon starting its runs' containers through the Podman API socket.
     All,
 }
 
@@ -52,8 +54,6 @@ pub enum DaemonContainerError {
     RunsNotContained,
     #[error("HOME is not set")]
     NoHome,
-    #[error("the rendered unit has no ExecStart line to run the container")]
-    NoExecStart,
 }
 
 impl DaemonContainer {
@@ -147,41 +147,9 @@ impl DaemonContainer {
     }
 
     /// `rendered`, the unit `ren service render` writes for a daemon on
-    /// the host, made to run this container in the foreground instead:
-    /// its `ExecStart` is `podman run`. `NoNewPrivileges` goes, since
-    /// rootless Podman maps the operator's user through a setuid helper;
-    /// the container itself runs with no new privileges.
-    pub fn unit(&self, rendered: &str) -> Result<String, DaemonContainerError> {
-        let quoted = |arg: &str| {
-            format!(
-                "\"{}\"",
-                arg.replace('\\', "\\\\")
-                    .replace('"', "\\\"")
-                    .replace('%', "%%")
-            )
-        };
-        let exec = std::iter::once(quoted("/usr/bin/podman"))
-            .chain(self.run_args().iter().map(|arg| quoted(arg)))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let mut replaced = false;
-        let lines: Vec<String> = rendered
-            .lines()
-            .filter(|line| !line.starts_with("NoNewPrivileges="))
-            .map(|line| {
-                if line.starts_with("ExecStart=") {
-                    replaced = true;
-                    format!("ExecStart=:{exec}")
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect();
-        if replaced {
-            Ok(lines.join("\n") + "\n")
-        } else {
-            Err(DaemonContainerError::NoExecStart)
-        }
+    /// the host, made to run this container in the foreground instead.
+    pub fn unit(&self, rendered: &str) -> Result<String, NoExecStart> {
+        ContainerUnit::new(self.run_args()).render(rendered)
     }
 
     /// `podman run` arguments that run it in the foreground, as a unit's
@@ -217,6 +185,7 @@ impl DaemonContainer {
 #[cfg(test)]
 mod tests {
     use super::{DaemonContainer, DaemonContainerError};
+    use crate::unit::NoExecStart;
     use ren_daemon::config::Config;
     use ren_harness::host::HostEnv;
     use std::path::Path;
@@ -321,7 +290,7 @@ podman_socket = "/run/user/1000/podman/podman.sock"
         assert!(unit.contains("\"--security-opt=no-new-privileges\""));
         assert!(matches!(
             container(CONTAINED).unwrap().unit("[Service]\n"),
-            Err(DaemonContainerError::NoExecStart)
+            Err(NoExecStart)
         ));
     }
 

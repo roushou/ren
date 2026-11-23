@@ -446,9 +446,9 @@ spec (phase 7):
       every check does now.
 
 11. **Production in a pod, each run in a container.** In progress: runs in
-    containers are built (`[runs] hold = "container"`), and so is the daemon
-    in a container (`install-vps --contain all`, `cargo xtask dev up --contain
-    all`); production has not been switched. Every instance runs the same
+    containers are built (`[runs] hold = "container"`), and so are the
+    daemon and the UI in containers (`install-vps --contain all`, `cargo
+    xtask dev up --contain all`); production runs that way. Every instance runs the same
     way, so the canary checks what production runs, and a run sees only
     what it works on.
     - Runs first, while production is still a host install. A run host
@@ -502,16 +502,22 @@ spec (phase 7):
     - Deviation: no pod. The daemon and the UI are each one container that
       a systemd unit runs in the foreground, on the host's network: the unit
       keeps the instance across boots, restarts, logs, and rollback as it
-      did, and a pod would add nothing on the host's network. The UI is not
-      yet in a container.
+      did, and a pod would add nothing on the host's network.
     - Verified in the dev slot with `--contain all`: the daemon in its
       container started a run's container through the socket; the run
       outlived a restart of the daemon's container and took a second turn;
       stopping it removed its container. The daemon's container did not see
       production's configuration or data, the main checkout, or `~/.ssh`.
-    - Not yet: production switched; the UI in a container; inside a
-      container the operator's uid is named for the image's user (`node`);
-      a real client's run in a container has not been driven.
+    - Production switched: its daemon runs as `ren-production-daemon`, and
+      a real Codex run in a container saw only its folder and `.codex`.
+    - Built: the UI in a container (`UiContainer`, xtask), as
+      `ren-ui.service`'s foreground `podman run` under `--contain all`, or
+      the dev slot's UI unit. It runs its deployed copy on the instance
+      image's Node and sees only that copy and the control token file, both
+      read-only.
+    - Not yet: inside a container the operator's uid is named for the
+      image's user (`node`); Claude Code, Pi, and opencode runs in
+      containers have not been driven.
 
 Phases 1 and 2 come first: without them, upgrading automatically only breaks
 things faster. Each phase is useful on its own. Phases 7 and 8 do not depend

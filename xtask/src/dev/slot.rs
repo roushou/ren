@@ -13,7 +13,7 @@ use crate::{
     invocation::{Echo, Invocation, InvocationError},
     pod::Pod,
     tailscale::{Tailnet, TailscaleError},
-    ui::UiBuild,
+    ui::{UiBuild, UiContainer},
     unit::{KillMode, Listener, TransientUnit},
 };
 use ren_container::Engine;
@@ -526,28 +526,39 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
             }
         };
         Progress(&format!("Starting the dev UI on {}", Self::UI)).show();
-        Unit::Ui.start(
-            Some(&self.ui_dir),
-            &[ui.node()],
-            &[UiBuild::entry().display().to_string()],
-            &[
-                ("HOST", Self::UI.ip().to_string()),
-                ("PORT", Self::UI.port().to_string()),
-                ("REN_GATEWAY_URL", format!("http://{}", Self::DAEMON)),
-                ("REN_PUBLIC_GATEWAY_URL", public_gateway),
-                ("ORIGIN", origin.clone()),
-                (
-                    "REN_CONTROL_TOKEN_FILE",
-                    self.data_dir.join(ControlToken::FILE).display().to_string(),
-                ),
-                // A fake project stands in for Ren's checkout: the slot's
-                // fake agents never work in the real one.
-                (
-                    "REN_SOURCE_DIR",
-                    self.work_dir.join(Self::PROJECTS[1]).display().to_string(),
-                ),
-            ],
-        )?;
+        let token = self.data_dir.join(ControlToken::FILE);
+        let vars = [
+            ("HOST", Self::UI.ip().to_string()),
+            ("PORT", Self::UI.port().to_string()),
+            ("REN_GATEWAY_URL", format!("http://{}", Self::DAEMON)),
+            ("REN_PUBLIC_GATEWAY_URL", public_gateway),
+            ("ORIGIN", origin.clone()),
+            ("REN_CONTROL_TOKEN_FILE", token.display().to_string()),
+            // A fake project stands in for Ren's checkout: the slot's
+            // fake agents never work in the real one.
+            (
+                "REN_SOURCE_DIR",
+                self.work_dir.join(Self::PROJECTS[1]).display().to_string(),
+            ),
+        ];
+        match self.contain {
+            Contain::None | Contain::Runs => Unit::Ui.start(
+                Some(&self.ui_dir),
+                &[ui.node()],
+                &[UiBuild::entry().display().to_string()],
+                &vars,
+            )?,
+            Contain::All => {
+                let container = UiContainer::new("dev", Pod::image(), &self.ui_dir, Some(&token));
+                Progress(&format!("In container {}", container.name())).show();
+                Unit::Ui.start(
+                    None,
+                    &[Path::new(Engine::Podman.program())],
+                    &container.run_args(),
+                    &vars,
+                )?;
+            }
+        }
         // The UI's /health relays the dev daemon's.
         Self::wait_for(Self::UI, "/health")?;
         if let Preview::Tailnet(tailscale) = preview {
