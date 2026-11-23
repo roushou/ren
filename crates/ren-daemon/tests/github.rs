@@ -75,3 +75,44 @@ fn the_github_section_reads_from_toml() {
     assert!(!format!("{setup:?}").contains(TOKEN));
     assert!(toml::from_str::<Config>("[github]\npoll_seconds = 5\n").is_err());
 }
+
+#[test]
+fn an_app_grants_with_the_key_in_its_file() {
+    use aws_lc_rs::{encoding::AsDer as _, rsa::KeySize, signature};
+    use base64::Engine as _;
+    let dir = tempfile::tempdir().unwrap();
+    let key = dir.path().join("app.pem");
+    let pair = signature::RsaKeyPair::generate(KeySize::Rsa2048).unwrap();
+    std::fs::write(
+        &key,
+        format!(
+            "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\n",
+            base64::engine::general_purpose::STANDARD.encode(pair.as_der().unwrap().as_ref())
+        ),
+    )
+    .unwrap();
+    let text = |key: &std::path::Path| {
+        format!(
+            "[github]\ntoken_env = \"ACME_TOKEN\"\n\n[github.app]\nid = 4242\nkey_file = {:?}\n\n[[github.repository]]\nproject = \"acme-web\"\ngithub = \"acme/web\"\n",
+            key.display().to_string()
+        )
+    };
+    let env = HostEnv::from_pairs([("ACME_TOKEN", TOKEN)]);
+    let config: Config = toml::from_str(&text(&key)).unwrap();
+    config.validate().unwrap();
+    let runtime = config.resolve_with(&env).unwrap();
+    let installations = runtime.github().unwrap().installations.clone().unwrap();
+    assert_eq!(installations.app().id().get(), 4242);
+    assert!(!format!("{installations:?}").contains("PRIVATE"));
+
+    let missing: Config = toml::from_str(&text(&dir.path().join("none.pem"))).unwrap();
+    assert!(matches!(
+        missing.resolve_with(&env),
+        Err(ConfigError::GithubAppKeyFile(..))
+    ));
+    std::fs::write(&key, "not a key").unwrap();
+    assert!(matches!(
+        config.resolve_with(&env),
+        Err(ConfigError::GithubAppKey(..))
+    ));
+}

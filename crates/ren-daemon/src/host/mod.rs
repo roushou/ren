@@ -22,7 +22,9 @@ use uuid::Uuid;
 pub mod held;
 mod process;
 
-pub use held::{Doors, HeldRuns, Launcher, Relaying, RunContainers, RunHost, RunReach};
+pub use held::{
+    CredentialAsk, Doors, Grants, HeldRuns, Launcher, Relaying, RunContainers, RunHost, RunReach,
+};
 pub use process::ProcessHost;
 
 /// The host's clocks. Monotonic time counts from [`SystemClock::start`].

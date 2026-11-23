@@ -52,6 +52,7 @@ rust-version = "1.99"
 # crates carry a version so they can be published; keep it equal to
 # `workspace.package.version`.
 [workspace.dependencies]
+aws-lc-rs = "1.19"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 blake3 = "1.8.7"

@@ -285,9 +285,14 @@ dependencies under "Crates" below. Read the code for current module ownership.
   one's `Observation` (waiting, `Seen`, or `Failed` with the last
   `Sighting` kept apart), with the time its caller gives it. A value
   GitHub sends that it does not know is `Reported::Unknown`, never rounded
-  to a known one. Ren adapts
+  to a known one. For a GitHub `App` (its `AppId` and `AppKey`, never
+  shown), `Installations` mints a `RepositoryToken` scoped to one
+  repository, to push and open pull requests (phase 12's grants);
+  `RepositorySlug::of_remote` reads a git remote URL. Ren adapts
   on its side: the daemon's `[github]` section maps projects to
-  repositories and runs the poller; the gateway's `PullBoard` keeps its
+  repositories and runs the poller, and `[github.app]` sets up
+  `ren_daemon::host::Grants`, which a relayed run's git asks through
+  `ren credential`; the gateway's `PullBoard` keeps its
   observations by project and serves them.
 - `ren-gateway`'s `preview` module: which previews of Ren run, sans-IO, in
   `Previews` (docs/plans/self-build.md, phase 9): each

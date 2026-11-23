@@ -134,11 +134,16 @@ impl RunContainers {
         .mounts(needs.git.iter().map(Mount::read_write))
         .mount(Mount::read_write(&needs.folder))
         .mounts(needs.doors.iter().map(Mount::read_only));
-        if let Some(agent) = &self.ssh_agent {
+        // A relayed run pushes with a grant, never the operator's agent.
+        let agent = match self.network {
+            RunReach::Host => self.ssh_agent.as_ref(),
+            RunReach::Relayed(_) => None,
+        };
+        if let Some(agent) = agent {
             container = container.mount(Mount::read_write(agent));
         }
         container = container.env("HOME", self.home.display().to_string());
-        if let Some(agent) = &self.ssh_agent {
+        if let Some(agent) = agent {
             container = container.env("SSH_AUTH_SOCK", agent.display().to_string());
         }
         RunContainer {
@@ -265,6 +270,24 @@ mod tests {
         assert!(
             with.iter()
                 .any(|arg| arg == "--env=SSH_AUTH_SOCK=/run/user/1000/agent")
+        );
+    }
+
+    #[test]
+    fn a_relayed_run_never_holds_the_ssh_agent() {
+        let run = RunId::restore(uuid::Uuid::nil());
+        let relayed = RunContainers::new(
+            "localhost/ren-instance:abc".into(),
+            Reach::Scope,
+            "/home/op".into(),
+            Vec::new(),
+            Some("/run/user/1000/agent".into()),
+            RunReach::Relayed(ren_relay::RelayPolicy::default()),
+        );
+        let args = Engine::Podman.run_args(relayed.container(run, &needs()).spec());
+        assert!(
+            !args.iter().any(|arg| arg.contains("/run/user/1000/agent")),
+            "{args:?}"
         );
     }
 

@@ -10,6 +10,8 @@ description = "A GitHub client for a repository's pull requests: their heads, me
 
 # Self-contained: it depends on none of Ren's crates.
 [dependencies]
+aws-lc-rs.workspace = true
+base64.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

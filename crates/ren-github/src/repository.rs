@@ -28,6 +28,18 @@ impl RepositorySlug {
         &self.name
     }
 
+    /// The repository a git remote URL names on github.com: `https://`,
+    /// `ssh://git@`, or `git@github.com:`, with or without `.git`. None for
+    /// another host or a URL that names no repository.
+    pub fn of_remote(url: &str) -> Option<Self> {
+        let path = url
+            .strip_prefix("https://github.com/")
+            .or_else(|| url.strip_prefix("ssh://git@github.com/"))
+            .or_else(|| url.strip_prefix("git@github.com:"))?;
+        let path = path.trim_end_matches('/');
+        path.strip_suffix(".git").unwrap_or(path).parse().ok()
+    }
+
     fn part(text: &str) -> bool {
         (1..=100).contains(&text.len())
             && text != "."
@@ -60,6 +72,31 @@ impl fmt::Display for RepositorySlug {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_github_remote_names_its_repository() {
+        use super::RepositorySlug;
+        for url in [
+            "https://github.com/acme/web.git",
+            "https://github.com/acme/web",
+            "git@github.com:acme/web.git",
+            "ssh://git@github.com/acme/web.git",
+        ] {
+            assert_eq!(
+                RepositorySlug::of_remote(url),
+                Some("acme/web".parse().unwrap()),
+                "{url}"
+            );
+        }
+        for url in [
+            "https://gitlab.com/acme/web.git",
+            "https://github.com/acme",
+            "https://github.com/acme/web/tree/main",
+            "/srv/git/web.git",
+        ] {
+            assert_eq!(RepositorySlug::of_remote(url), None, "{url}");
+        }
+    }
+
     use super::RepositorySlug;
 
     #[test]

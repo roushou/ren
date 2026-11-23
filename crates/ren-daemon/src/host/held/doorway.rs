@@ -71,6 +71,8 @@ impl Doors {
     pub const GATEWAY: &str = "gateway.sock";
     /// The relay's socket.
     pub const RELAY: &str = "relay.sock";
+    /// The grants socket, which a run's git helper asks directly.
+    pub const GRANTS: &str = "grants.sock";
 
     pub fn new(runs: &Path) -> Self {
         Self {
@@ -94,17 +96,7 @@ impl Doors {
         name: &str,
         target: SocketAddr,
     ) -> io::Result<impl Future<Output = ()> + use<>> {
-        use std::os::unix::fs::DirBuilderExt as _;
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&self.folder)?;
-        let socket = self.socket(name);
-        match std::fs::remove_file(&socket) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            Ok(()) | Err(_) => {}
-        }
-        let listener = UnixListener::bind(&socket)?;
+        let listener = self.listen(name)?;
         Ok(async move {
             let mut passing = FuturesUnordered::new();
             loop {
@@ -118,6 +110,21 @@ impl Doors {
                 }
             }
         })
+    }
+
+    /// Listens on the socket called `name`, made afresh.
+    pub fn listen(&self, name: &str) -> io::Result<UnixListener> {
+        use std::os::unix::fs::DirBuilderExt as _;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&self.folder)?;
+        let socket = self.socket(name);
+        match std::fs::remove_file(&socket) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            Ok(()) | Err(_) => {}
+        }
+        UnixListener::bind(&socket)
     }
 
     async fn pass(mut stream: UnixStream, target: SocketAddr) {

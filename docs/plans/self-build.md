@@ -624,12 +624,42 @@ spec (phase 7):
       the listed registry twice, two unlisted hosts, and a plain `GET`
       were recorded and read back grouped; the session's inspector listed
       the three refusals first and the registry with its count.
+    - Built: grants. With `[github.app]` (an App's id, its key file, and
+      the REST API), the daemon reads a relayed run's checkout's `origin`
+      (`ren_git::Git::remote_url`, `RepositorySlug::of_remote`); a
+      repository listed under `[[github.repository]]` is granted
+      (`RelayedSpec.grant`, kept for a rejoin): the run may reach
+      `github.com:443`, and its git is given `ren credential` as its
+      helper for github.com (with the repository's path), the grants
+      socket (`REN_GRANTS`, `<data>/runs/.reach/grants.sock`), and
+      GitHub's SSH addresses read as HTTPS. The helper passes git's ask
+      with the run's proxy URL; the daemon (`Relaying::serve_grants`)
+      answers the run its ticket names with a token for its repository
+      (`ren_github::Installations`: the App signs its own RS256 token, the
+      repository's installation is looked up, and a token is minted for
+      that repository alone, contents and pull requests writable), reused
+      for 45 minutes (`Grants`); any other ask gets nothing. A relayed
+      run's container never mounts the SSH agent. The daemon's container
+      mounts the App's key read-only.
+    - Verified in the dev slot (`--contain all`, a fake App on the fake
+      provider): in a relayed run in `acme-api` (origin `acme/api`),
+      `git credential fill` got the grant for `acme/api` and nothing for
+      `acme/other`; `git ls-remote git@github.com:acme/api.git` went over
+      HTTPS through the relay to GitHub with the grant (refused there, as
+      the fake token is), recorded as a passage to `github.com:443`; the
+      container had no `SSH_AUTH_SOCK`.
+    - Deviation: the repository is read from the checkout's `origin`, not
+      the session's project, and granted only when `[[github.repository]]`
+      lists it: the run host's start knows the folder, not the project.
     - Deviation: shown on the session's page, not a run's: the UI shows a
       session with its runs, so the inspector merges its runs' passages.
     - Deviation: `[runs.container] reach`, not `[runs.reach]`: only a
       container's run is relayed, so what it reaches is the container's
       setting.
-    - Not yet: a relayed run cannot push over SSH (grants come next);
+    - Not yet: grants need a GitHub App the operator creates and installs;
+      none exists yet, so production's relayed runs cannot push. `gh` is
+      not given a grant (git only), so a run cannot open a pull request
+      itself yet. The watch still reads with `token_env`;
       Claude Code, Codex, Pi, and opencode have not been driven relayed,
       and what each connects to itself is declared from their sign-in
       flows, not observed.
@@ -638,7 +668,7 @@ spec (phase 7):
       it is listed (`[runs.reach]`, a manifest), so `ren-sandbox` keeps it.
     - Order: the relay and the private network first (the largest gain,
       and the gateway already carries the model calls), then passages on
-      the run's page (done), then grants, then the runtime. Each lands on its own
+      the run's page (done), then grants (done), then the runtime. Each lands on its own
       and is verified in the dev slot before production.
     - Not decided: the client's own sign-in. A run mounts its client's
       sign-in folder read-write, so it holds a credential that outlives it.

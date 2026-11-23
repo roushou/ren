@@ -196,3 +196,11 @@ prompt_bytes = 20971520
 # [[github.repository]]
 # project = "acme-web" # a project `ren project add` registered
 # github = "acme/web"
+#
+# A GitHub App installed on those repositories, allowed to write contents and
+# pull requests, grants a relayed run a token for its checkout's repository
+# alone (docs/deployment.md).
+# [github.app]
+# id = 123456
+# key_file = "/home/you/.config/ren/github-app.pem" # its private key, as GitHub gave it
+# api = "https://api.github.com"

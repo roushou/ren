@@ -90,6 +90,14 @@ impl FakeProvider {
         });
         Router::new()
             .route(FakeGithub::PATH, axum::routing::post(FakeGithub::answer))
+            .route(
+                FakeGithub::INSTALLATION,
+                axum::routing::get(FakeGithub::installation),
+            )
+            .route(
+                FakeGithub::ACCESS_TOKENS,
+                axum::routing::post(FakeGithub::access_tokens),
+            )
             .fallback(move |request: Request| {
                 let provider = provider.clone();
                 async move { provider.answer(request).await }

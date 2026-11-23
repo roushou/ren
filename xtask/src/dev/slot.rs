@@ -18,8 +18,8 @@ use crate::{
 };
 use ren_container::Engine;
 use ren_daemon::config::{
-    Config, GithubOptions, RunContainerOptions, RunHold, RunNetwork, RunsOptions, UpstreamConfig,
-    WatchedRepository,
+    Config, GithubApp, GithubOptions, RunContainerOptions, RunHold, RunNetwork, RunsOptions,
+    UpstreamConfig, WatchedRepository,
 };
 use ren_daemon::host::HeldRuns;
 use ren_gateway::{
@@ -303,6 +303,13 @@ impl Slot {
                 token_env: Self::GITHUB_TOKEN_ENV.into(),
                 poll_seconds: 30.try_into().map_err(|_| DevError::Config)?,
                 endpoint: fake("github/graphql"),
+                // The fake GitHub's App, which grants relayed runs a token
+                // for their fake repository.
+                app: Some(GithubApp {
+                    id: 1,
+                    key_file: self.app_key(),
+                    api: fake("github/api"),
+                }),
                 repository: Self::PROJECTS
                     .iter()
                     .chain(&["ren"])
@@ -413,6 +420,19 @@ program_at = "acme-lint"
                 git.init(&folder)
                     .and_then(|()| git.commit_all(&folder, "Start the fake project", &author))?;
             }
+            // Its fake repository on GitHub, so a relayed run working in it
+            // is granted it. Never fetched: the fake GitHub has no git.
+            if git.remote_url(&folder, "origin")?.is_none() {
+                let url = format!(
+                    "https://github.com/acme/{}.git",
+                    project.trim_start_matches("acme-")
+                );
+                Invocation::new("git")
+                    .arg("-C")
+                    .arg(&folder)
+                    .args(["remote", "add", "origin", url.as_str()])
+                    .succeeds(Echo::Hide)?;
+            }
             // Its manifest, so a worktree of it has checks and a preview.
             let manifest = folder.join(ren_manifest::Manifest::FILE);
             if !manifest.exists() {
@@ -474,12 +494,40 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
         format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
     }
 
+    /// The fake GitHub App's private key, beside the configuration.
+    fn app_key(&self) -> PathBuf {
+        self.config
+            .parent()
+            .unwrap_or(Path::new("/"))
+            .join("github-app.pem")
+    }
+
+    /// A key for the fake App, made once: the fake GitHub never checks
+    /// what it signs.
+    fn write_app_key(&self) -> Result<(), DevError> {
+        use aws_lc_rs::{encoding::AsDer as _, rsa::KeySize, signature};
+        use base64::Engine as _;
+        let path = self.app_key();
+        if path.exists() {
+            return Ok(());
+        }
+        let der = signature::RsaKeyPair::generate(KeySize::Rsa2048)
+            .and_then(|pair| pair.as_der())
+            .map_err(|_| DevError::Config)?;
+        let pem = format!(
+            "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\n",
+            base64::engine::general_purpose::STANDARD.encode(der.as_ref())
+        );
+        Ok(FileMode::Private.write(&path, pem.as_bytes())?)
+    }
+
     fn write_config(&self) -> Result<(), DevError> {
+        let dir = self.config.parent().unwrap_or(Path::new("/"));
+        fs::create_dir_all(dir).map_err(FileError::at(dir))?;
+        self.write_app_key()?;
         let config = self.config()?;
         config.check().map_err(|_| DevError::Config)?;
         let text = toml::to_string(&config).map_err(|_| DevError::Config)?;
-        let dir = self.config.parent().unwrap_or(Path::new("/"));
-        fs::create_dir_all(dir).map_err(FileError::at(dir))?;
         fs::create_dir_all(&self.data_dir).map_err(FileError::at(&self.data_dir))?;
         FileMode::Private.write(
             &self.config,

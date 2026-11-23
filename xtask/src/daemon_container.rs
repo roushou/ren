@@ -92,6 +92,14 @@ impl DaemonContainer {
             Mount::read_only(config_path),
             Mount::read_write(data_dir),
         ];
+        // The GitHub App's key, which it mints runs' grants with.
+        mounts.extend(
+            config
+                .github
+                .app
+                .iter()
+                .map(|app| Mount::read_only(anchored(&app.key_file))),
+        );
         mounts.extend(
             containers
                 .read_only
@@ -201,6 +209,9 @@ image = "localhost/ren-instance:abc"
 read_only = ["/usr", "~/.local/bin"]
 read_write = ["~/.cargo"]
 podman_socket = "/run/user/1000/podman/podman.sock"
+[github.app]
+id = 1
+key_file = "/home/op/.config/ren/github-app.pem"
 "#;
 
     fn container(text: &str) -> Result<DaemonContainer, DaemonContainerError> {
@@ -232,6 +243,7 @@ podman_socket = "/run/user/1000/podman/podman.sock"
                 "/home/op/.local/share/ren/builds/c0ffee/ren",
                 "/home/op/.config/ren/ren.toml",
                 "/home/op/.local/state/ren",
+                "/home/op/.config/ren/github-app.pem",
                 "/usr",
                 "/home/op/.local/bin",
                 "/home/op/.cargo",

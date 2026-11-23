@@ -9,9 +9,13 @@
 //!   one's [`Observation`]: waiting, seen, or failed with the last answer
 //!   kept apart.
 //!
+//! - [`Installations`] mints, for a GitHub [`App`], a [`RepositoryToken`]
+//!   that can push to one repository and open its pull requests.
+//!
 //! Values GitHub sends that this crate does not know are kept as
 //! [`Reported::Unknown`], never dropped or rounded to a known one.
 
+mod app;
 mod check;
 mod client;
 mod observation;
@@ -22,6 +26,10 @@ mod reported;
 mod repository;
 mod watch;
 
+pub use app::{
+    App, AppId, AppKey, AppKeyError, AppToken, InstallationId, Installations, MintError,
+    RepositoryToken, SignError,
+};
 pub use check::{Check, CheckState, ChecksState};
 pub use client::{Client, Endpoint, EndpointError, FetchError, Token};
 pub use observation::{Observation, Sighting};

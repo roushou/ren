@@ -165,8 +165,17 @@ its client list (Codex's and Claude Code's sign-in refresh, opencode's model
 catalogue), a name only at public addresses, and passes the connection through
 unread. Every connection is logged with its run; a refused one is a warning
 that names the destination and why. A run held through a daemon restart keeps
-its pass: the new daemon issues it again from the run's spec. A relayed run has
-no network for SSH, so it cannot push over SSH yet.
+its pass: the new daemon issues it again from the run's spec. A relayed run
+never holds the SSH agent. It pushes with a grant instead: with `[github.app]`
+set (a GitHub App installed on the repositories, allowed to write contents and
+pull requests), a run whose checkout's `origin` is one of the
+`[[github.repository]]` repositories may reach `github.com:443`, and its git
+asks `ren credential` for a token, which asks the daemon over
+`<data>/runs/.reach/grants.sock`. The daemon mints, with the App's key, a token
+for that repository alone, lasting an hour, and hands it out for 45 minutes. A
+checkout cloned over SSH is fetched and pushed over HTTPS through the relay.
+The App's key file must be readable by the daemon; `install-vps --contain all`
+mounts it into the daemon's container read-only.
 Systemd limits repeated startup failures to five in a minute; fix the cause and
 run `systemctl --user reset-failed ren` before restarting if it hits that limit.
 Launchd throttles respawns to at most once every 10 seconds. Neither manager's

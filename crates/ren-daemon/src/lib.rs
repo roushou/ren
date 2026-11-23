@@ -11,8 +11,8 @@ pub mod packages;
 
 use crate::config::RuntimeConfig;
 use crate::host::{
-    Doors, HeldRuns, Launcher, ObservationThread, ProcessHost, RandomIds, Relaying, RunReach,
-    SystemClock,
+    Doors, Grants, HeldRuns, Launcher, ObservationThread, ProcessHost, RandomIds, Relaying,
+    RunReach, SystemClock,
 };
 use crate::packages::HostPrograms;
 use crate::packages::{HostPackages, PackageStore, fetch::ReqwestFetch};
@@ -173,7 +173,7 @@ impl Daemon {
         // handed to components as capabilities.
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::start());
         let ids: Arc<dyn IdSource> = Arc::new(RandomIds);
-        let (held, passages) = Self::held(config, data_dir, address, &ids);
+        let (held, passages) = Self::held(config, data_dir, address, &ids, &clock);
         // The runs run hosts kept going are left open, to be taken up.
         let holding: Vec<_> = match &held {
             Some(held) => held
@@ -399,6 +399,7 @@ impl Daemon {
         data_dir: &std::path::Path,
         address: SocketAddr,
         ids: &Arc<dyn IdSource>,
+        clock: &Arc<dyn Clock>,
     ) -> (Option<HeldRuns>, Option<Passages>) {
         if config.runs().roots.is_empty() {
             return (None, None);
@@ -419,11 +420,22 @@ impl Daemon {
             &launcher,
             Launcher::Container(containers) if matches!(containers.network(), RunReach::Relayed(_))
         );
-        let held = HeldRuns::new(root.clone(), launcher, program);
+        let held = HeldRuns::new(root.clone(), launcher, program.clone());
         if !relayed {
             return (Some(held), None);
         }
-        match Self::relaying(&root, address, ids) {
+        let grants = config.github().and_then(|github| {
+            let installations = github.installations.clone()?;
+            Some(Arc::new(Grants::new(
+                installations,
+                github
+                    .projects
+                    .iter()
+                    .map(|(_, repository)| repository.clone()),
+                clock.clone(),
+            )))
+        });
+        match Self::relaying(&root, address, ids, program, grants) {
             Ok((relaying, passages)) => (Some(held.relaying(relaying)), Some(passages)),
             Err(error) => {
                 // Its runs are refused as they start, which says why.
@@ -440,6 +452,8 @@ impl Daemon {
         runs: &std::path::Path,
         gateway: SocketAddr,
         ids: &Arc<dyn IdSource>,
+        helper: PathBuf,
+        grants: Option<Arc<Grants>>,
     ) -> std::io::Result<(Relaying, Passages)> {
         let relay = Arc::new(Relay::new());
         let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
@@ -451,6 +465,14 @@ impl Daemon {
         let to_relay = doors.open(Doors::RELAY, relay_address)?;
         let (sender, passages) = tokio::sync::mpsc::unbounded_channel();
         let serving = relay.clone();
+        let mut relaying = Relaying::new(relay, doors.clone(), gateway, ids.clone(), helper);
+        let granting = match grants {
+            Some(grants) => {
+                relaying = relaying.granting(grants);
+                Some(relaying.serve_grants(doors.listen(Doors::GRANTS)?))
+            }
+            None => None,
+        };
         #[expect(
             clippy::disallowed_methods,
             reason = "process wiring: the daemon owns the relay's and its doors' tasks"
@@ -463,8 +485,11 @@ impl Daemon {
             });
             tokio::spawn(to_gateway);
             tokio::spawn(to_relay);
+            if let Some(granting) = granting {
+                tokio::spawn(granting);
+            }
         }
-        Ok((Relaying::new(relay, doors, gateway, ids.clone()), passages))
+        Ok((relaying, passages))
     }
 
     /// Record each passage the relay reports with its run, and log what a

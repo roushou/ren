@@ -65,6 +65,8 @@ enum Command {
     Project(commands::project::ProjectCmd),
     #[command(hide = true)]
     RunHost(commands::run_host::RunHostCmd),
+    #[command(hide = true)]
+    Credential(commands::credential::CredentialCmd),
 }
 
 impl Cli {
@@ -120,6 +122,7 @@ impl Cli {
             Command::Preview(cmd) => cmd.run(&ctx).await,
             Command::Project(cmd) => cmd.run(&ctx).await,
             Command::RunHost(cmd) => cmd.run().await,
+            Command::Credential(cmd) => cmd.run(&ctx.env).await,
         }
     }
 }

@@ -101,6 +101,12 @@ pub enum ConfigError {
     GithubProjectTwice(String),
     #[error("GitHub token variable {0} is not set, or not a token")]
     MissingGithubToken(String),
+    #[error("[github.app] api: {0}")]
+    GithubAppApi(ren_github::EndpointError),
+    #[error("[github.app] key_file {0} could not be read")]
+    GithubAppKeyFile(PathBuf, #[source] std::io::Error),
+    #[error("[github.app] key_file {0}: {1}")]
+    GithubAppKey(PathBuf, ren_github::AppKeyError),
 }
 
 /// Where operator keys come from while resolving.
@@ -175,6 +181,46 @@ pub struct GithubOptions {
     pub endpoint: String,
     /// The repositories watched, one per project.
     pub repository: Vec<WatchedRepository>,
+    /// The GitHub App that grants relayed runs a token for their
+    /// repository; none grants nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app: Option<GithubApp>,
+}
+
+/// The `[github.app]` section: a GitHub App installed on the watched
+/// repositories, with permission to write their contents and pull
+/// requests. A relayed run working in a checkout of one of them is
+/// granted a token for that repository alone.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GithubApp {
+    /// The App's id, from its settings page.
+    pub id: u64,
+    /// Its private key, as GitHub gave it (PEM).
+    pub key_file: PathBuf,
+    /// GitHub's REST API.
+    #[serde(default = "GithubApp::api")]
+    pub api: String,
+}
+
+impl GithubApp {
+    fn api() -> String {
+        ren_github::Installations::GITHUB.into()
+    }
+
+    /// The App's installations client, with its key read from its file.
+    fn installations(&self) -> Result<ren_github::Installations, ConfigError> {
+        let pem = std::fs::read_to_string(&self.key_file)
+            .map_err(|error| ConfigError::GithubAppKeyFile(self.key_file.clone(), error))?;
+        let key = ren_github::AppKey::from_pem(&pem)
+            .map_err(|error| ConfigError::GithubAppKey(self.key_file.clone(), error))?;
+        let api = Endpoint::parse(&self.api).map_err(ConfigError::GithubAppApi)?;
+        ren_github::Installations::new(
+            api,
+            ren_github::App::new(ren_github::AppId::new(self.id), key),
+        )
+        .map_err(ConfigError::GithubClient)
+    }
 }
 
 /// One project's repository on GitHub.
@@ -194,6 +240,7 @@ impl Default for GithubOptions {
             poll_seconds: PollPeriod::DEFAULT,
             endpoint: Endpoint::GITHUB.into(),
             repository: Vec::new(),
+            app: None,
         }
     }
 }
@@ -205,6 +252,9 @@ impl GithubOptions {
 
     pub fn validate(&self) -> Result<(), ConfigError> {
         Endpoint::parse(&self.endpoint).map_err(ConfigError::GithubEndpoint)?;
+        if let Some(app) = &self.app {
+            Endpoint::parse(&app.api).map_err(ConfigError::GithubAppApi)?;
+        }
         let mut projects = std::collections::BTreeSet::new();
         for watched in &self.repository {
             if !projects.insert(&watched.project) {
@@ -233,6 +283,12 @@ impl GithubOptions {
                 .iter()
                 .map(|watched| (watched.project.clone(), watched.github.clone()))
                 .collect(),
+            installations: self
+                .app
+                .as_ref()
+                .map(GithubApp::installations)
+                .transpose()?
+                .map(std::sync::Arc::new),
         }))
     }
 }
@@ -244,6 +300,9 @@ pub struct GithubSetup {
     pub client: Client,
     pub period: PollPeriod,
     pub projects: Vec<(ProjectName, RepositorySlug)>,
+    /// The App that grants runs a token for their repository, if one is
+    /// set up.
+    pub installations: Option<std::sync::Arc<ren_github::Installations>>,
 }
 
 /// The `[[packages]]` entries: catalog entries in the built-in catalog's
