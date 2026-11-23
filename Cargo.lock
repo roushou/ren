@@ -1768,6 +1768,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "ren-container"
+version = "0.1.0"
+
+[[package]]
 name = "ren-daemon"
 version = "0.1.0"
 dependencies = [
@@ -1781,6 +1785,7 @@ dependencies = [
  "http-body-util",
  "ignore",
  "pty-process",
+ "ren-container",
  "ren-depot",
  "ren-gateway",
  "ren-git",
@@ -3516,6 +3521,7 @@ dependencies = [
  "blake3",
  "clap",
  "futures-util",
+ "ren-container",
  "ren-daemon",
  "ren-gateway",
  "ren-git",

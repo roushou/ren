@@ -232,6 +232,15 @@ dependencies under "Crates" below. Read the code for current module ownership.
   sans-IO: which build an instance runs (`Build`, its `Revision` of a
   `ren_git::Commit` and `Tree`, and how two compare, `Comparison`). Its
   manifest allows only pure dependencies and `ren-git`, for those two types.
+- `crates/ren-container`: containers as Ren runs them, sans-IO, with
+  `Container` as its primary type. It depends on none of Ren's crates. A
+  `Container` is what one sees of the host (`Mount`, read-only or
+  read-write at its host path), how it lives (`Lifetime`: kept, removed
+  once it exits, or the caller's foreground process) and where
+  (`Placement`: the host's network as the operator, or a pod), its
+  `Environment` and `Privileges`, and what it runs; `Engine` (one variant,
+  `Podman`) gives the arguments that start it. The daemon's run hosts, and
+  xtask's daemon container and pods, are built as `Container`s.
 - `crates/ren-network`: the network Ren is reached through, with
   `Network` as its primary type (one variant, `Tailscale`, and the header
   it names a caller's login in). It depends on none of Ren's crates.
@@ -771,7 +780,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   branch as a replica on the worktree's ports and records it on the work
   items the branch names; `ren_supervisor::Worktree::preview_pod` names
   its pod, which removing the worktree removes. `pod` is how a replica
-  runs: a rootless Podman pod (`Pod`), one container per process, each
+  runs: a rootless Podman pod (`Pod`), one `ren-container` `Container` per process, each
   seeing only the kept build it runs (read-only) and the replica's own
   configuration and data at their host paths, on the host's network, from
   the image `deploy/instance/Containerfile` describes.
@@ -818,6 +827,7 @@ directly.
 | `ren-depot`                                | `Depot`, with its `ProgramHost` port                | none of ours      |
 | `ren-git`                                  | `Git`                                               | none of ours      |
 | `ren-release`                              | `Release`                                           | protocol, git     |
+| `ren-container`                            | `Container`                                         | none of ours      |
 | `ren-network`                              | `Network`                                           | none of ours      |
 | `ren-github`                               | `Client`                                            | none of ours      |
 | `ren-project`                              | `ProjectContract`                                   | none of ours      |

@@ -8,8 +8,8 @@
 //! It shares the host's network and runs as the operator, as a replica's
 //! does. What it sees is derived here, purely; starting it is the caller's.
 
+use ren_container::{Container, Engine, Environment, Lifetime, Mount, Placement, Privileges};
 use ren_daemon::config::Config;
-use ren_daemon::host::Mount;
 use ren_harness::{Harness, host::HostEnv};
 use ren_protocol::label::Labeled as _;
 use std::path::{Path, PathBuf};
@@ -188,42 +188,29 @@ impl DaemonContainer {
     /// main process: replacing a container of its name left behind, and
     /// removed when it exits.
     pub fn run_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "run".to_owned(),
-            "--rm".to_owned(),
-            "--replace".to_owned(),
-            format!("--name={}", self.name),
-            "--network=host".to_owned(),
-            "--userns=keep-id".to_owned(),
+        Engine::Podman.run_args(
+            &Container::new(
+                self.name.clone(),
+                self.image.clone(),
+                Lifetime::Foreground,
+                Placement::Host,
+            )
             // What its unit sets (keys, the search path its runs get) is
             // the daemon's, as it is for a daemon on the host.
-            "--env-host".to_owned(),
-            "--security-opt=no-new-privileges".to_owned(),
-            format!("--stop-timeout={}", Self::STOP_SECONDS),
-        ];
-        args.extend(self.mounts.iter().map(|mount| {
-            let access = match mount.access {
-                ren_daemon::host::Access::ReadOnly => "ro",
-                ren_daemon::host::Access::ReadWrite => "rw",
-            };
-            let path = mount.path.display();
-            format!("--volume={path}:{path}:{access}")
-        }));
-        args.extend(
-            self.env
-                .iter()
-                .map(|(key, value)| format!("--env={key}={value}")),
-        );
-        args.push(format!("--entrypoint={}", self.ren.display()));
-        args.push(self.image.clone());
-        args.extend([
-            "--config".to_owned(),
-            self.config.display().to_string(),
-            "--data-dir".to_owned(),
-            self.data_dir.display().to_string(),
-            "serve".to_owned(),
-        ]);
-        args
+            .environment(Environment::Host)
+            .privileges(Privileges::NoNew)
+            .stop_timeout(Self::STOP_SECONDS)
+            .mounts(self.mounts.iter().cloned())
+            .envs(self.env.iter().cloned())
+            .entrypoint(&self.ren)
+            .args([
+                "--config".to_owned(),
+                self.config.display().to_string(),
+                "--data-dir".to_owned(),
+                self.data_dir.display().to_string(),
+                "serve".to_owned(),
+            ]),
+        )
     }
 }
 

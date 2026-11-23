@@ -15,6 +15,7 @@ description = "Configuration, resource wiring, and lifecycle of the Ren LLM gate
 flate2.workspace = true
 futures-util.workspace = true
 ignore = "0.4.25"
+ren-container.workspace = true
 ren-depot.workspace = true
 ren-gateway.workspace = true
 ren-git.workspace = true

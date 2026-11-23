@@ -1,0 +1,15 @@
+[package]
+name = "ren-container"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Containers as the Ren LLM gateway runs them: what a container sees and how it lives, and the engine command that starts it."
+
+# Sans-IO: a container's specification and the engine's arguments for it.
+[dependencies]
+
+[lints]
+workspace = true

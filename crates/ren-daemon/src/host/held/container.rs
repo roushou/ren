@@ -6,51 +6,13 @@
 //! on the host's network so the client reaches the gateway on loopback.
 //! Every path it sees is mounted at its host path, so the run folder, the
 //! workdir, and the client's files keep the names the daemon gave them.
-//! This part is pure: what a run's container is, and the `podman run`
-//! that starts it. Finding what a run needs on the host is
+//! This part is pure: what a run's container is (a `ren-container`
+//! [`Container`]), and how Podman is reached to start it. Finding what a run needs on the host is
 //! [`super::HeldRuns`]'s.
 
+use ren_container::{Container, Engine, Lifetime, Mount, Placement};
 use ren_recorder::id::RunId;
 use std::path::{Path, PathBuf};
-
-/// What a run's container may do with a path it sees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Access {
-    ReadOnly,
-    ReadWrite,
-}
-
-/// A host path a run's container sees, at the same path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Mount {
-    pub path: PathBuf,
-    pub access: Access,
-}
-
-impl Mount {
-    pub fn read_only(path: impl Into<PathBuf>) -> Self {
-        Self {
-            path: path.into(),
-            access: Access::ReadOnly,
-        }
-    }
-
-    pub fn read_write(path: impl Into<PathBuf>) -> Self {
-        Self {
-            path: path.into(),
-            access: Access::ReadWrite,
-        }
-    }
-
-    fn arg(&self) -> String {
-        let access = match self.access {
-            Access::ReadOnly => "ro",
-            Access::ReadWrite => "rw",
-        };
-        let path = self.path.display();
-        format!("--volume={path}:{path}:{access}")
-    }
-}
 
 /// How the daemon reaches Podman to start a run's container, and so what
 /// watches the container until its host exits.
@@ -106,16 +68,8 @@ pub(super) struct RunNeeds {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
 pub(super) struct RunContainer {
-    name: String,
-    image: String,
     reach: PodmanReach,
-    mounts: Vec<Mount>,
-    env: Vec<(String, String)>,
-    /// The `ren` it runs as its entrypoint: never the image's own, which a
-    /// mount of the host's programs may hide.
-    host: PathBuf,
-    /// The run folder its host serves.
-    folder: PathBuf,
+    container: Container,
 }
 
 impl RunContainers {
@@ -147,28 +101,36 @@ impl RunContainers {
     }
 
     /// `run`'s container: the shared mounts, then what the run needs; the
-    /// run host serving `needs.folder`.
+    /// run host serving `needs.folder`, its entrypoint the `ren` it is,
+    /// never the image's own, which a mount of the host's programs may
+    /// hide.
     pub(super) fn container(&self, run: RunId, needs: &RunNeeds) -> RunContainer {
-        let mut mounts = self.shared.clone();
-        mounts.push(Mount::read_only(&needs.host));
-        mounts.extend(needs.reads.iter().map(Mount::read_only));
-        mounts.extend(needs.keeps.iter().map(Mount::read_write));
-        mounts.push(Mount::read_write(&needs.workdir));
-        mounts.extend(needs.git.iter().map(Mount::read_write));
-        mounts.push(Mount::read_write(&needs.folder));
-        let mut env = vec![("HOME".to_owned(), self.home.display().to_string())];
+        let mut container = Container::new(
+            Self::name(run),
+            self.image.clone(),
+            Lifetime::Removed,
+            Placement::Host,
+        )
+        .stop_timeout(RunContainer::STOP_TIMEOUT)
+        .mounts(self.shared.iter().cloned())
+        .mount(Mount::read_only(&needs.host))
+        .mounts(needs.reads.iter().map(Mount::read_only))
+        .mounts(needs.keeps.iter().map(Mount::read_write))
+        .mount(Mount::read_write(&needs.workdir))
+        .mounts(needs.git.iter().map(Mount::read_write))
+        .mount(Mount::read_write(&needs.folder));
         if let Some(agent) = &self.ssh_agent {
-            mounts.push(Mount::read_write(agent));
-            env.push(("SSH_AUTH_SOCK".to_owned(), agent.display().to_string()));
+            container = container.mount(Mount::read_write(agent));
+        }
+        container = container.env("HOME", self.home.display().to_string());
+        if let Some(agent) = &self.ssh_agent {
+            container = container.env("SSH_AUTH_SOCK", agent.display().to_string());
         }
         RunContainer {
-            name: Self::name(run),
-            image: self.image.clone(),
             reach: self.reach.clone(),
-            mounts,
-            env,
-            host: needs.host.clone(),
-            folder: needs.folder.clone(),
+            container: container
+                .entrypoint(&needs.host)
+                .args(["run-host".to_owned(), needs.folder.display().to_string()]),
         }
     }
 }
@@ -179,7 +141,7 @@ impl RunContainer {
     const STOP_TIMEOUT: u32 = 30;
 
     pub(super) fn name(&self) -> &str {
-        &self.name
+        self.container.name()
     }
 
     /// Whether it is started through the API socket, by a daemon in a
@@ -201,9 +163,9 @@ impl RunContainer {
                     "--scope".to_owned(),
                     "--quiet".to_owned(),
                     "--collect".to_owned(),
-                    format!("--unit={}", self.name),
+                    format!("--unit={}", self.name()),
                     "--".to_owned(),
-                    "podman".to_owned(),
+                    Engine::Podman.program().to_owned(),
                 ];
                 args.extend(self.run_args());
                 ("systemd-run", args)
@@ -211,7 +173,7 @@ impl RunContainer {
             PodmanReach::Socket(socket) => {
                 let mut args = vec![format!("--url=unix://{}", socket.display())];
                 args.extend(self.run_args());
-                ("podman", args)
+                (Engine::Podman.program(), args)
             }
         }
     }
@@ -219,32 +181,14 @@ impl RunContainer {
     /// `podman` arguments that start it, detached and removed once its run
     /// host exits.
     pub(super) fn run_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "run".to_owned(),
-            "--detach".to_owned(),
-            "--rm".to_owned(),
-            format!("--name={}", self.name),
-            "--network=host".to_owned(),
-            "--userns=keep-id".to_owned(),
-            format!("--stop-timeout={}", Self::STOP_TIMEOUT),
-        ];
-        args.extend(self.mounts.iter().map(Mount::arg));
-        args.extend(
-            self.env
-                .iter()
-                .map(|(key, value)| format!("--env={key}={value}")),
-        );
-        args.push(format!("--entrypoint={}", self.host.display()));
-        args.push(self.image.clone());
-        args.push("run-host".to_owned());
-        args.push(self.folder.display().to_string());
-        args
+        Engine::Podman.run_args(&self.container)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Mount, PodmanReach, RunContainers, RunNeeds};
+    use super::{PodmanReach, RunContainers, RunNeeds};
+    use ren_container::Mount;
     use ren_recorder::id::RunId;
 
     fn needs() -> RunNeeds {

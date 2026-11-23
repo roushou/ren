@@ -21,7 +21,7 @@ pub mod frame;
 mod link;
 mod serve;
 
-pub use container::{Access, Mount, PodmanReach, RunContainers};
+pub use container::{PodmanReach, RunContainers};
 pub use serve::RunHost;
 
 use container::RunNeeds;

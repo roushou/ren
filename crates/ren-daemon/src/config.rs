@@ -397,7 +397,7 @@ impl RunContainerOptions {
     /// How run hosts start in containers on a host whose environment is
     /// `env`: its home, and its SSH agent's socket when it has one.
     fn containers(&self, env: &HostEnv) -> Result<crate::host::RunContainers, ConfigError> {
-        use crate::host::Mount;
+        use ren_container::Mount;
         let image = self.image.clone().ok_or(ConfigError::RunImageMissing)?;
         let home = env
             .absolute_path("HOME")
@@ -1031,7 +1031,8 @@ mod tests {
         else {
             panic!("runs are held in containers");
         };
-        use crate::host::{Mount, PodmanReach, RunContainers};
+        use crate::host::{PodmanReach, RunContainers};
+        use ren_container::Mount;
         assert_eq!(
             containers,
             RunContainers::new(

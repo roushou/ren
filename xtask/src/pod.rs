@@ -12,6 +12,7 @@ use crate::{
     invocation::{Echo, Invocation, InvocationError},
     progress::Progress,
 };
+use ren_container::{Engine, Lifetime, Mount, Placement};
 use std::path::{Path, PathBuf};
 
 /// One pod, named `ren-<name>`; its containers `ren-<name>-<role>`.
@@ -32,26 +33,12 @@ pub struct Container {
     pub command: Vec<String>,
 }
 
-/// A host path a container sees at the same path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Mount {
-    pub path: PathBuf,
-    pub access: Access,
-}
-
-/// What a container may do with a mount.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Access {
-    ReadOnly,
-    ReadWrite,
-}
-
 impl Pod {
     /// The image's recipe, which names it.
     const CONTAINERFILE: &str = include_str!("../../deploy/instance/Containerfile");
     /// Seconds a container has to stop before it is killed: `ren` gives its
     /// requests 10, then drains capture.
-    const STOP_SECONDS: &str = "30";
+    const STOP_SECONDS: u32 = 30;
 
     pub fn new(name: &str) -> Self {
         Self {
@@ -103,7 +90,8 @@ impl Pod {
     pub fn remove(&self) -> Result<(), InvocationError> {
         if self.exists()? {
             Invocation::new("podman")
-                .args(["pod", "rm", "--force", "--time", Self::STOP_SECONDS])
+                .args(["pod", "rm", "--force", "--time"])
+                .arg(Self::STOP_SECONDS.to_string())
                 .arg(&self.name)
                 .succeeds(Echo::Hide)?;
         }
@@ -164,41 +152,29 @@ impl Pod {
     }
 
     fn run_args(&self, container: &Container) -> Vec<String> {
-        let mut args: Vec<String> = [
-            "run",
-            "--detach",
-            "--pod",
-            &self.name,
-            "--name",
-            &format!("{}-{}", self.name, container.role),
-            "--stop-timeout",
-            Self::STOP_SECONDS,
-        ]
-        .map(str::to_owned)
-        .into();
+        let mut spec = ren_container::Container::new(
+            format!("{}-{}", self.name, container.role),
+            Self::image(),
+            Lifetime::Kept,
+            Placement::Pod(self.name.clone()),
+        )
+        .stop_timeout(Self::STOP_SECONDS);
         if let Some(dir) = &container.workdir {
-            args.push(format!("--workdir={}", dir.display()));
+            spec = spec.workdir(dir);
         }
-        for mount in &container.mounts {
-            let access = match mount.access {
-                Access::ReadOnly => "ro",
-                Access::ReadWrite => "rw",
-            };
-            let path = mount.path.display();
-            args.push(format!("--volume={path}:{path}:{access}"));
-        }
-        for (name, value) in &container.environment {
-            args.push(format!("--env={name}={value}"));
-        }
-        args.push(Self::image());
-        args.extend(container.command.iter().cloned());
-        args
+        Engine::Podman.run_args(
+            &spec
+                .mounts(container.mounts.iter().cloned())
+                .envs(container.environment.iter().cloned())
+                .args(container.command.iter().cloned()),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Access, Container, Mount, Pod};
+    use super::{Container, Pod};
+    use ren_container::{Access, Mount};
     use std::path::PathBuf;
 
     #[test]
@@ -229,12 +205,9 @@ mod tests {
             [
                 "run",
                 "--detach",
-                "--pod",
-                "ren-canary",
-                "--name",
-                "ren-canary-daemon",
-                "--stop-timeout",
-                "30",
+                "--name=ren-canary-daemon",
+                "--pod=ren-canary",
+                "--stop-timeout=30",
                 "--volume=/home/op/.local/share/ren/builds/abc/ren:/home/op/.local/share/ren/builds/abc/ren:ro",
                 "--volume=/home/op/.local/state/ren-canary:/home/op/.local/state/ren-canary:rw",
                 "--env=ACME_KEY=placeholder",

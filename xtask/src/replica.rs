@@ -11,12 +11,13 @@ use crate::{
     dev::{DevError, slot::Slot},
     file::{FileError, FileMode},
     invocation::{Echo, Invocation, InvocationError},
-    pod::{Access, Container, Mount, Pod},
+    pod::{Container, Pod},
     progress::Progress,
     tailscale::{Tailnet, TailscaleError},
     ui::{UiBuild, UiBuildError},
     unit::{KillMode, Listener, TransientUnit},
 };
+use ren_container::{Access, Mount};
 use ren_daemon::config::{Config, ConfigError, GithubOptions, RunsOptions};
 use ren_gateway::preview::{PreviewRequests, Previews, Slot as PreviewSlot};
 use ren_gateway::{
