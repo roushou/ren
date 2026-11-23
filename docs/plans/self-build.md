@@ -519,9 +519,82 @@ spec (phase 7):
       image's user (`node`); Claude Code, Pi, and opencode runs in
       containers have not been driven.
 
+12. **A run's envelope: what it sees, reaches, holds, and runs on.**
+    Planned. Phase 11 limits what a run sees; it still reaches everything
+    (`--network=host`: the internet, and every listener on the host,
+    Ren's own included), holds the operator's credentials (the SSH agent,
+    its client's sign-in), and shares the host's kernel. An agent that is
+    misled by what it reads can send what it sees anywhere and push
+    anywhere the operator can. The common practice for coding agents is a
+    run with no network but a proxy that admits listed destinations,
+    credentials kept outside the run or scoped to it, and a boundary
+    stronger than a container's. Ren already carries every model call
+    through its gateway, so a run needs no other way out to its models.
+    - **`ren-relay` (new), `Relay`: the run's way out for everything that
+      is not a model call.** A forward proxy (HTTP `CONNECT`) that admits a
+      connection when its `RelayPolicy` lists the destination, passes the
+      bytes through unread (TLS stays end to end), and reports a
+      `Passage` once it closes: the run, the destination, the `Verdict`,
+      and the bytes each way. Sans-IO core (`RelayPolicy::decide`, a
+      `Destination`'s host pattern and port, `Verdict::{Admitted,
+      Refused}` with the refusal's reason); the listener is its shell.
+      Standalone, on none of Ren's crates, like `ren-github`. It is not the
+      gateway's: the gateway reads model protocols and records calls; the
+      relay passes opaque tunnels and records only who went where.
+    - **`ren-sandbox` (new), `Sandbox`: one run's envelope, declared.**
+      What it sees (`Sight`: the mounts phase 11 derives), reaches
+      (`Reach`: the gateway's address and the relay's policy), holds
+      (`Grant`s), and runs on (`Isolation`). It replaces `RunContainers`
+      and `RunNeeds` (`ren-daemon`'s `host/held/container.rs`) and builds
+      the `ren_container::Container` a run starts in. Its constructor
+      refuses what a run must never have: the host's network, Ren's data
+      or configuration, the SSH agent. Pure; on `ren-container`,
+      `ren-relay`, and `ren-harness`.
+    - **Reach is declared, in two places.** `ren.toml`'s `[runs.reach]`
+      lists what every run may reach (package registries, the source
+      host), and a project's manifest (`ren-manifest`) adds what its runs
+      need. Each `Destination` says why it is listed (`Purpose`), so a
+      refusal and the page that shows it can say which list lacks it.
+    - **A run's network is its own.** A run starts on a private network
+      with no route out: its only peers are the gateway and the relay,
+      listening for it (Podman's internal network, or `pasta` with no
+      outbound route). The client's base URL is the gateway's address on
+      that network, and `HTTPS_PROXY` the relay's. `ren-container`'s
+      `Placement` gains the private network beside `Host` and `Pod`.
+    - **Passages are recorded beside calls.** The daemon hands each
+      `Passage` to the recorder, which stores it with the run; a run's page
+      shows where it went and what it was refused, as a call's page shows
+      what it asked. A refused destination is one the operator can add,
+      not a silent failure.
+    - **Grants, not the SSH agent.** A run pushes and opens pull requests
+      with a `Grant`: a credential scoped to one repository, for a short
+      time, minted for that run outside it and handed to git through a
+      credential helper that asks over the run's socket. The SSH agent is
+      no longer mounted. Minting a repository-scoped token needs a GitHub
+      App installation (`ren-github`); a personal token cannot be scoped
+      per run.
+    - **`Isolation` chooses the boundary.** `ren-container` gains
+      `Runtime` (`Crun`, `Runsc`, `Kata`), a closed enum that sets Podman's
+      `--runtime`. gVisor (`runsc`) intercepts a run's system calls in a
+      kernel of its own in user space and needs no KVM; Kata gives each run
+      a microVM and needs KVM (the VPS has `/dev/kvm`). Containers stay the
+      default until each client is verified under the stronger runtime.
+    - Order: the relay and the private network first (the largest gain,
+      and the gateway already carries the model calls), then passages on
+      the run's page, then grants, then the runtime. Each lands on its own
+      and is verified in the dev slot before production.
+    - Not decided: the client's own sign-in. A run mounts its client's
+      sign-in folder read-write, so it holds a credential that outlives it.
+      Keeping that credential outside the run means the gateway sets it on
+      each model call, which breaks Ren's rule that clients sign in
+      themselves; keeping the rule means a run can read its client's
+      sign-in. Until this is decided, the envelope declares the client's
+      folders as phase 11 does.
+
 Phases 1 and 2 come first: without them, upgrading automatically only breaks
 things faster. Each phase is useful on its own. Phases 7 and 8 do not depend
 on each other; phase 9 needs both, and phase 10 needs only the canary.
+Phase 12 needs phase 11: it narrows the containers phase 11 runs.
 
 ## Open questions
 
@@ -532,12 +605,12 @@ on each other; phase 9 needs both, and phase 10 needs only the canary.
   them blocks promotion or only warns.
 - Whether previews need real clients at all, or the fake provider is enough
   for the UI changes they are mostly for.
-- Isolated runs beyond a container (phase 11 gives each run one). A
-  container shares the host's kernel and, in production, its network. A
-  microVM per run (Docker Sandboxes: KVM on Linux, a Docker account, and a
-  credential proxy whose key injection and missing client config must be
-  squared with Ren's rule that clients sign in themselves) is the
-  candidate if that is not enough.
+- Whether a run keeps its client's sign-in (phase 12): the gateway could
+  set the client's credential on each model call so a run never holds it,
+  at the cost of Ren's rule that clients sign in themselves.
+- Which runtime runs Ren's runs once containers are narrowed (phase 12):
+  gVisor needs nothing more on the VPS, but some tools behave differently
+  under it; Kata gives a kernel per run but is harder to run rootless.
 
 ## Deviations
 
