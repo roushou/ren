@@ -7,7 +7,7 @@ use crate::{
     host::HostEnv,
     opencode::{OpenCodeAcp, OpenCodeModels},
     pi::{PiCache, PiCacheError, PiModels, PiRpc},
-    profile::{ClientProfile, DefaultModel, HomeEntry, LaunchNotice, TokenCarrier},
+    profile::{ClientNeeds, ClientProfile, DefaultModel, LaunchNotice, TokenCarrier},
 };
 use ren_depot::package::Requirement;
 use serde::Serialize;
@@ -111,9 +111,9 @@ pub struct LaunchPlan {
     /// What Ren tells the operator when it runs the client itself.
     #[serde(skip)]
     notices: &'static [LaunchNotice],
-    /// What the client keeps under the home, which a run of it must see.
+    /// What a run of the client needs beyond its folder.
     #[serde(skip)]
-    keeps: &'static [HomeEntry],
+    needs: ClientNeeds,
 }
 
 impl Harness {
@@ -144,7 +144,7 @@ impl Harness {
     /// keeps its own sign-in. OpenCode is driven through its ACP mode.
     pub fn drive(self, gateway: &GatewayEndpoint, opening: &Opening) -> LaunchPlan {
         LaunchPlan {
-            keeps: self.profile().keeps,
+            needs: self.profile().needs,
             ..self.structured(gateway, Structured::Conversation(opening))
         }
     }
@@ -153,7 +153,7 @@ impl Harness {
     /// (`models::ModelListing`): its structured mode with no conversation.
     pub fn list_models(self, gateway: &GatewayEndpoint) -> LaunchPlan {
         LaunchPlan {
-            keeps: self.profile().keeps,
+            needs: self.profile().needs,
             ..self.structured(gateway, Structured::Listing)
         }
     }
@@ -242,7 +242,7 @@ impl LaunchPlan {
             environment,
             token: profile.token,
             notices: profile.notices,
-            keeps: profile.keeps,
+            needs: profile.needs,
         }
     }
 
@@ -255,14 +255,15 @@ impl LaunchPlan {
             environment: BTreeMap::new(),
             token: TokenCarrier::None,
             notices: &[],
-            keeps: &[],
+            needs: ClientNeeds::default(),
         }
     }
 
-    /// What the client keeps under the home: its sign-in, settings, and
-    /// sessions. None for a program that is not a client's run.
-    pub fn keeps(&self) -> &'static [HomeEntry] {
-        self.keeps
+    /// What a run of the client needs beyond its folder: what it keeps
+    /// under the home, and where it connects itself. None for a program
+    /// that is not a client's run.
+    pub fn needs(&self) -> ClientNeeds {
+        self.needs
     }
 
     /// The plan with `token` sent to the gateway on every request. Claude
@@ -441,19 +442,19 @@ mod tests {
     }
 
     /// A driven run is what a container holds: it must carry what its
-    /// client keeps, or its client starts there signed out.
+    /// client needs, or its client starts there signed out, or cut off.
     #[test]
-    fn a_driven_client_carries_what_it_keeps() {
+    fn a_driven_client_carries_what_it_needs() {
         let gateway = "http://127.0.0.1:8787".parse::<GatewayEndpoint>().unwrap();
         for harness in Harness::ALL {
             assert_eq!(
-                harness.drive(&gateway, &opening()).keeps(),
-                harness.profile().keeps,
+                harness.drive(&gateway, &opening()).needs(),
+                harness.profile().needs,
                 "{harness}"
             );
             assert_eq!(
-                harness.list_models(&gateway).keeps(),
-                harness.profile().keeps,
+                harness.list_models(&gateway).needs(),
+                harness.profile().needs,
                 "{harness}"
             );
         }

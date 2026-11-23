@@ -108,6 +108,13 @@ hold = "auto"
 # image = "localhost/ren-instance:<digest>"
 # read_only = ["/usr", "~/.rustup", "~/.bun"]
 # read_write = ["~/.cargo"]
+# What a run's container reaches: "host" (the host's network, the default) or
+# "relayed": no network but its loopback, where Ren's gateway and its relay
+# are, and the relay lets it out only to where `reach` and its client list
+# (host:port, or *.parent:port for any name under one; a name reaches only
+# public addresses). Each connection is logged, refusals as warnings.
+# network = "relayed"
+# reach = ["index.crates.io:443", "static.crates.io:443", "registry.npmjs.org:443"]
 
 [attachments]
 # Images uploaded to a session to go with a prompt (PNG, JPEG, GIF, WebP),

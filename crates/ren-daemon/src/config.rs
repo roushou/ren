@@ -310,9 +310,11 @@ pub struct RunsOptions {
     pub container: RunContainerOptions,
 }
 
-/// `[runs.container]`: what a run's container runs, and what every run
-/// sees besides what it works on and what its client keeps. Paths are
-/// absolute, or under the home as `~/…`, and mounted at the same path.
+/// `[runs.container]`: what a run's container runs, what every run sees
+/// besides what it works on and what its client keeps, and what it
+/// reaches. Paths are absolute, or under the home as `~/…`, and mounted at
+/// the same path.
+#[serde_with::serde_as]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RunContainerOptions {
@@ -330,6 +332,46 @@ pub struct RunContainerOptions {
     /// daemon on the host starts them with `podman` from a systemd scope.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub podman_socket: Option<PathBuf>,
+    /// What a run's container reaches: the host's network, or only Ren's
+    /// gateway and its relay (docs/plans/self-build.md, phase 12).
+    #[serde(skip_serializing_if = "RunNetwork::is_host")]
+    pub network: RunNetwork,
+    /// Where a relayed run may connect through the relay, besides where its
+    /// client does itself: `host:port`, or `*.parent:port` for any name
+    /// under one. A name reaches only public addresses.
+    #[serde_as(as = "Vec<serde_with::DisplayFromStr>")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reach: Vec<ren_relay::Destination>,
+}
+
+/// What a run's container reaches.
+#[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub enum RunNetwork {
+    /// The host's network: everything the host reaches.
+    #[default]
+    Host,
+    /// No network but its loopback, where Ren's gateway and its relay are
+    /// reached; the relay lets it out only where `reach` and its client
+    /// list.
+    Relayed,
+}
+
+impl RunNetwork {
+    fn is_host(&self) -> bool {
+        *self == Self::Host
+    }
 }
 
 /// Whether a run's client process outlives the daemon that started it.
@@ -420,12 +462,19 @@ impl RunContainerOptions {
             Some(socket) => ren_container::Reach::Socket(anchored(socket)),
             None => ren_container::Reach::Scope,
         };
+        let network = match self.network {
+            RunNetwork::Host => crate::host::RunReach::Host,
+            RunNetwork::Relayed => {
+                crate::host::RunReach::Relayed(ren_relay::RelayPolicy::new(self.reach.clone()))
+            }
+        };
         Ok(crate::host::RunContainers::new(
             image,
             reach,
             home.clone(),
             shared,
             env.absolute_path("SSH_AUTH_SOCK"),
+            network,
         ))
     }
 }
@@ -1045,10 +1094,67 @@ mod tests {
                     Mount::read_write("/home/op/.cargo"),
                 ],
                 Some("/run/agent".into()),
+                crate::host::RunReach::Host,
             )
         );
         let relative: Config = toml::from_str("[runs.container]\nread_only = [\"usr\"]\n").unwrap();
         assert!(relative.runs.validate().is_err());
+    }
+
+    #[test]
+    fn relayed_runs_reach_what_their_configuration_lists() {
+        let env = HostEnv::from_pairs([("HOME", "/home/op")]);
+        let config: Config = toml::from_str(
+            "[runs]\nhold = \"container\"\n[runs.container]\nimage = \"i\"\nnetwork = \"relayed\"\nreach = [\"index.crates.io:443\", \"*.npmjs.org:443\"]\n",
+        )
+        .unwrap();
+        let Ok(Some(crate::host::Launcher::Container(containers))) =
+            config.runs.hold.launcher(&env, &config.runs.container)
+        else {
+            panic!("runs are held in containers");
+        };
+        let crate::host::RunReach::Relayed(policy) = containers.network() else {
+            panic!("its runs are relayed");
+        };
+        assert_eq!(
+            policy
+                .destinations()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["index.crates.io:443", "*.npmjs.org:443"]
+        );
+        // Written back as it reads; a host network is the default, left out.
+        let written = toml::to_string(&config.runs.container).unwrap();
+        assert!(written.contains("network = \"relayed\""), "{written}");
+        assert!(written.contains("\"*.npmjs.org:443\""), "{written}");
+        assert!(
+            !toml::to_string(&RunContainerOptions::default())
+                .unwrap()
+                .contains("network")
+        );
+        for bad in [
+            "crates.io",
+            "*.crates.io",
+            "crates.io:0",
+            "https://crates.io",
+        ] {
+            let text = format!("[runs.container]\nreach = [\"{bad}\"]\n");
+            assert!(toml::from_str::<Config>(&text).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn every_clients_reach_reads_as_destinations() {
+        use ren_protocol::label::Labeled as _;
+        for harness in ren_harness::Harness::ALL {
+            for reach in harness.profile().needs.reaches {
+                assert!(
+                    reach.parse::<ren_relay::Destination>().is_ok(),
+                    "{harness}: {reach}"
+                );
+            }
+        }
     }
 
     #[test]

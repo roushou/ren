@@ -7,7 +7,9 @@
 use crate::{
     attachment::{Delivery, Takes},
     launch::LaunchPlan,
-    profile::{ClientProfile, DefaultModel, HomeEntry, LaunchNotice, TokenCarrier, sign_ins},
+    profile::{
+        ClientNeeds, ClientProfile, DefaultModel, HomeEntry, LaunchNotice, TokenCarrier, sign_ins,
+    },
     settings::Midway,
     tools::UserContext,
 };
@@ -31,7 +33,10 @@ impl ClientProfile {
             OpenaiApiKey => Terminal, EnterKey, || LaunchPlan::pi_auth_login("openai", "--api-key");
         },
         login_prompt: None,
-        keeps: &[HomeEntry::new(".pi")],
+        needs: ClientNeeds {
+            keeps: &[HomeEntry::new(".pi")],
+            reaches: &[],
+        },
         user_context: UserContext::NONE,
     };
 }

@@ -7,7 +7,7 @@ use super::CodexTool;
 use crate::{
     attachment::{Delivery, Takes},
     launch::LaunchPlan,
-    profile::{ClientProfile, DefaultModel, HomeEntry, TokenCarrier, sign_ins},
+    profile::{ClientNeeds, ClientProfile, DefaultModel, HomeEntry, TokenCarrier, sign_ins},
     settings::{ApprovalPolicy, Midway},
 };
 use ren_depot::package::PackageId;
@@ -28,7 +28,11 @@ impl ClientProfile {
             Chatgpt => Pipes, DeviceCode, LaunchPlan::codex_device_login;
         },
         login_prompt: None,
-        keeps: &[HomeEntry::new(".codex")],
+        needs: ClientNeeds {
+            keeps: &[HomeEntry::new(".codex")],
+            // Its ChatGPT sign-in's token refresh.
+            reaches: &["auth.openai.com:443"],
+        },
         user_context: CodexTool::CONTEXT,
     };
 }

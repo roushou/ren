@@ -14,26 +14,36 @@
 //! - `exit`: how the client exited, once it has;
 //! - `journal`: what the daemon gave the client (the supervisor's).
 //!
+//! A relayed run (phase 12) reaches out only through the doorways in
+//! `<data>/runs/.reach` ([`Doors`]): Ren's gateway, and the relay, which
+//! admits it by the ticket its spec carries ([`Relaying`]).
+//!
 //! The daemon's side is [`HeldRuns`]; the host's is [`RunHost`].
 
 mod container;
+mod doorway;
 pub mod frame;
 mod link;
 mod serve;
 
-pub use container::RunContainers;
+pub use container::{RunContainers, RunReach};
+pub use doorway::{Doors, Doorway};
 use ren_container::{Engine, EngineError, Launch, Reach};
 pub use serve::RunHost;
 
 use container::RunNeeds;
-use ren_harness::profile::HomeEntry;
+use ren_harness::profile::ClientNeeds;
 
-use ren_recorder::id::RunId;
+use ren_recorder::id::{IdSource, RunId};
+use ren_relay::{Destination, PassHandle, Relay, RelayPolicy, Ticket};
 use ren_supervisor::{AgentProcess, HeldRun, ProcessExit, Tenure};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io::{self, Read as _, Seek as _};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 /// How a run host is started.
@@ -60,6 +70,181 @@ pub struct HeldRuns {
     launcher: Launcher,
     /// The `ren` a host runs as.
     program: PathBuf,
+    /// How relayed runs reach out, when runs are relayed.
+    relaying: Option<Relaying>,
+}
+
+/// How relayed runs reach out: the relay that admits their tunnels, the
+/// doors their containers mount, the gateway's address (theirs too, on
+/// their own loopback), and the passes the relay holds for them.
+#[derive(Clone)]
+pub struct Relaying {
+    relay: Arc<Relay<RunId>>,
+    doors: Doors,
+    gateway: SocketAddr,
+    ids: Arc<dyn IdSource>,
+    passes: Arc<Mutex<HashMap<RunId, PassHandle<RunId>>>>,
+}
+
+/// What a relayed run's spec carries: the proxy URL its client is given
+/// (its ticket the password), where it may go, and the doorways its host
+/// opens.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayedSpec {
+    proxy: String,
+    reach: Vec<String>,
+    pub doorways: Vec<Doorway>,
+}
+
+impl std::fmt::Debug for RelayedSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RelayedSpec")
+            .field("proxy", &"<redacted>")
+            .field("reach", &self.reach)
+            .field("doorways", &self.doorways)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for Relaying {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Relaying")
+            .field("doors", &self.doors)
+            .field("gateway", &self.gateway)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Relaying {
+    /// Where a run reaches the relay on its own loopback: the port proxies
+    /// usually take, or the next when the gateway has it.
+    const RELAY_PORT: u16 = 3128;
+    /// What a relayed run connects to directly, never through the relay.
+    const NO_PROXY: &str = "127.0.0.1,localhost,::1";
+
+    pub fn new(
+        relay: Arc<Relay<RunId>>,
+        doors: Doors,
+        gateway: SocketAddr,
+        ids: Arc<dyn IdSource>,
+    ) -> Self {
+        Self {
+            relay,
+            doors,
+            gateway,
+            ids,
+            passes: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn relay_inside(&self) -> SocketAddr {
+        let port = if self.gateway.port() == Self::RELAY_PORT {
+            Self::RELAY_PORT + 1
+        } else {
+            Self::RELAY_PORT
+        };
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+    }
+
+    /// Admits `run` to where `policy` and its client's `needs` list: a
+    /// ticket minted for it and a pass the relay holds until it is
+    /// released. What its spec carries, and the variables its client gets.
+    fn admit(
+        &self,
+        run: RunId,
+        policy: &RelayPolicy,
+        needs: ClientNeeds,
+    ) -> io::Result<(RelayedSpec, Vec<(String, String)>)> {
+        let client = needs
+            .reaches
+            .iter()
+            .map(|text| text.parse::<Destination>().map_err(io::Error::other))
+            .collect::<io::Result<Vec<_>>>()?;
+        let reach: Vec<Destination> = policy
+            .destinations()
+            .iter()
+            .cloned()
+            .chain(client)
+            .collect();
+        let ticket = Ticket::new(format!(
+            "{}{}",
+            self.ids.next_uuid().simple(),
+            self.ids.next_uuid().simple()
+        ))
+        .map_err(io::Error::other)?;
+        let spec = RelayedSpec {
+            proxy: ticket.proxy_url("run", self.relay_inside()),
+            reach: reach.iter().map(ToString::to_string).collect(),
+            doorways: vec![
+                Doorway {
+                    inside: self.gateway,
+                    socket: self.doors.socket(Doors::GATEWAY),
+                },
+                Doorway {
+                    inside: self.relay_inside(),
+                    socket: self.doors.socket(Doors::RELAY),
+                },
+            ],
+        };
+        self.hold(run, ticket, RelayPolicy::new(reach))?;
+        let proxy = spec.proxy.clone();
+        let env = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]
+            .into_iter()
+            .map(|name| (name.to_owned(), proxy.clone()))
+            .chain(
+                ["NO_PROXY", "no_proxy"]
+                    .into_iter()
+                    .map(|name| (name.to_owned(), Self::NO_PROXY.to_owned())),
+            )
+            .collect();
+        Ok((spec, env))
+    }
+
+    /// Admits `run` again, as its spec says, for a daemon that took it
+    /// up: the pass went with the daemon that issued it.
+    fn readmit(&self, run: RunId, spec: &RelayedSpec) -> io::Result<()> {
+        if self
+            .passes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(&run)
+        {
+            return Ok(());
+        }
+        let ticket = spec
+            .proxy
+            .rsplit_once('@')
+            .and_then(|(credentials, _)| credentials.rsplit_once(':'))
+            .map(|(_, secret)| secret)
+            .ok_or_else(|| io::Error::other("a relayed run's spec has no ticket"))
+            .and_then(|secret| Ticket::new(secret).map_err(io::Error::other))?;
+        let reach = spec
+            .reach
+            .iter()
+            .map(|text| text.parse::<Destination>().map_err(io::Error::other))
+            .collect::<io::Result<Vec<_>>>()?;
+        self.hold(run, ticket, RelayPolicy::new(reach))
+    }
+
+    fn hold(&self, run: RunId, ticket: Ticket, policy: RelayPolicy) -> io::Result<()> {
+        let pass = self
+            .relay
+            .issue(ticket, run, policy)
+            .map_err(io::Error::other)?;
+        self.passes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(run, pass);
+        Ok(())
+    }
+
+    /// `run` reaches nothing more.
+    fn release(&self, run: RunId) {
+        self.passes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&run);
+    }
 }
 
 /// The command a run host starts: what the daemon would have run itself.
@@ -70,6 +255,9 @@ pub struct Spec {
     /// Variables set for it, over the host's own environment.
     pub env: Vec<(String, String)>,
     pub cwd: PathBuf,
+    /// What a relayed run reaches out through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relayed: Option<RelayedSpec>,
 }
 
 impl Spec {
@@ -94,6 +282,7 @@ impl Spec {
                 .get_current_dir()
                 .map(Path::to_path_buf)
                 .ok_or_else(|| io::Error::other("a run's command has no folder"))?,
+            relayed: None,
         })
     }
 }
@@ -162,7 +351,14 @@ impl HeldRuns {
             root,
             launcher,
             program,
+            relaying: None,
         }
+    }
+
+    /// These runs, relayed ones reaching out through `relaying`.
+    pub fn relaying(mut self, relaying: Relaying) -> Self {
+        self.relaying = Some(relaying);
+        self
     }
 
     /// The systemd unit a run's host runs in, under [`Launcher::Systemd`].
@@ -197,32 +393,59 @@ impl HeldRuns {
     }
 
     /// Start `command`, `run`'s client, under a run host, and attach to it.
-    /// `keeps` is what the client keeps under the home, which a run host
+    /// `needs` is what the client needs beyond its folder, which a run host
     /// in a container is given.
     pub fn start(
         &self,
         run: RunId,
         command: &std::process::Command,
-        keeps: &[HomeEntry],
+        needs: ClientNeeds,
+    ) -> io::Result<AgentProcess> {
+        let started = self.start_held(run, command, needs);
+        if started.is_err()
+            && let Some(relaying) = &self.relaying
+        {
+            relaying.release(run);
+        }
+        started
+    }
+
+    fn start_held(
+        &self,
+        run: RunId,
+        command: &std::process::Command,
+        needs: ClientNeeds,
     ) -> io::Result<AgentProcess> {
         let mut spec = Spec::of(command)?;
         let folder = self.folder(run);
         Self::private_dir(&self.root)?;
         Self::private_dir(&folder)?;
-        let needs = match &self.launcher {
+        let run_needs = match &self.launcher {
             Launcher::Container(containers) => {
                 // The container sees the program's file, not the folders on
                 // the path: it is started by the path it was found at.
                 let program = spec.program()?;
                 spec.program = program.display().to_string();
-                Some(self.needs(containers, &spec, &folder, keeps))
+                let doors = match containers.network() {
+                    RunReach::Host => None,
+                    RunReach::Relayed(policy) => {
+                        let relaying = self.relaying.as_ref().ok_or_else(|| {
+                            io::Error::other("a relayed run was started with no relay")
+                        })?;
+                        let (relayed, env) = relaying.admit(run, policy, needs)?;
+                        spec.env.extend(env);
+                        spec.relayed = Some(relayed);
+                        Some(relaying.doors.folder().to_path_buf())
+                    }
+                };
+                Some(self.needs(containers, &spec, &folder, needs, doors))
             }
             Launcher::Systemd | Launcher::Direct => None,
         };
         let json = serde_json::to_vec(&spec).map_err(io::Error::other)?;
         Self::private_file(&folder.join(Self::SPEC))?;
         std::fs::write(folder.join(Self::SPEC), json)?;
-        self.launch(run, &folder, needs.as_ref())?;
+        self.launch(run, &folder, run_needs.as_ref())?;
         let stream = Self::reach(&folder.join(Self::SOCKET))?;
         link::Link::open(stream, 0, self.journal(&folder)?)
     }
@@ -235,7 +458,8 @@ impl HeldRuns {
         containers: &RunContainers,
         spec: &Spec,
         folder: &Path,
-        keeps: &[HomeEntry],
+        needs: ClientNeeds,
+        doors: Option<PathBuf>,
     ) -> RunNeeds {
         let reads = std::iter::once(PathBuf::from(&spec.program))
             .chain(
@@ -252,11 +476,13 @@ impl HeldRuns {
             git: Spec::git_folder(&spec.cwd),
             host: self.program.clone(),
             reads,
-            keeps: keeps
+            keeps: needs
+                .keeps
                 .iter()
                 .map(|entry| entry.under(containers.home()))
                 .filter(|path| path.exists())
                 .collect(),
+            doors,
         }
     }
 
@@ -307,7 +533,18 @@ impl HeldRuns {
         let folder = self.folder(run);
         let journal = self.journal(&folder)?;
         match std::os::unix::net::UnixStream::connect(folder.join(Self::SOCKET)) {
-            Ok(stream) => link::Link::open(stream, from, journal),
+            Ok(stream) => {
+                // Its pass went with the daemon that issued it.
+                if let Some(relaying) = &self.relaying {
+                    let spec: Spec =
+                        serde_json::from_slice(&std::fs::read(folder.join(Self::SPEC))?)
+                            .map_err(io::Error::other)?;
+                    if let Some(relayed) = &spec.relayed {
+                        relaying.readmit(run, relayed)?;
+                    }
+                }
+                link::Link::open(stream, from, journal)
+            }
             Err(_) => {
                 let exit: ProcessExit =
                     serde_json::from_slice(&std::fs::read(folder.join(Self::EXIT))?)
@@ -319,6 +556,9 @@ impl HeldRuns {
 
     /// `run` has ended and its end is recorded: its folder goes.
     pub fn release(&self, run: RunId) {
+        if let Some(relaying) = &self.relaying {
+            relaying.release(run);
+        }
         let folder = self.folder(run);
         if let Err(error) = std::fs::remove_dir_all(&folder)
             && error.kind() != io::ErrorKind::NotFound
@@ -501,6 +741,7 @@ mod tests {
             args: Vec::new(),
             env: vec![("PATH".into(), bin.display().to_string())],
             cwd: dir.path().into(),
+            relayed: None,
         };
         assert_eq!(
             spec.program().unwrap(),

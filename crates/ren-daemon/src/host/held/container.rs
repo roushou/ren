@@ -3,7 +3,10 @@
 //! not the operator's home, Ren's data, or other runs.
 //!
 //! The container is rootless Podman's, as the operator (`--userns=keep-id`),
-//! on the host's network so the client reaches the gateway on loopback.
+//! on the host's network so the client reaches the gateway on loopback, or,
+//! relayed ([`RunReach::Relayed`], phase 12), with no network but its
+//! loopback, where the run host's doorways reach the gateway and the relay
+//! through the sockets in the folder it mounts read-only.
 //! Every path it sees is mounted at its host path, so the run folder, the
 //! workdir, and the client's files keep the names the daemon gave them.
 //! This part is pure: what a run's container is (a `ren-container`
@@ -14,6 +17,7 @@
 
 use ren_container::{Container, Lifetime, Mount, Placement, Reach};
 use ren_recorder::id::RunId;
+use ren_relay::RelayPolicy;
 use std::path::{Path, PathBuf};
 
 /// How run hosts start in containers: the image, how Podman is reached,
@@ -29,6 +33,18 @@ pub struct RunContainers {
     shared: Vec<Mount>,
     /// The SSH agent's socket, when the daemon has one.
     ssh_agent: Option<PathBuf>,
+    /// What its runs reach.
+    network: RunReach,
+}
+
+/// What a run's container reaches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunReach {
+    /// The host's network.
+    Host,
+    /// Only Ren's gateway and the relay, which lets it out where this
+    /// policy and its client list.
+    Relayed(RelayPolicy),
 }
 
 /// What one run needs to see, found on the host.
@@ -48,6 +64,8 @@ pub(super) struct RunNeeds {
     pub(super) reads: Vec<PathBuf>,
     /// What the client keeps under the home, that exists.
     pub(super) keeps: Vec<PathBuf>,
+    /// The folder of the doorways' sockets, for a relayed run.
+    pub(super) doors: Option<PathBuf>,
 }
 
 /// One run's container.
@@ -65,6 +83,7 @@ impl RunContainers {
         home: PathBuf,
         shared: Vec<Mount>,
         ssh_agent: Option<PathBuf>,
+        network: RunReach,
     ) -> Self {
         Self {
             image,
@@ -72,7 +91,13 @@ impl RunContainers {
             home,
             shared,
             ssh_agent,
+            network,
         }
+    }
+
+    /// What its runs reach.
+    pub fn network(&self) -> &RunReach {
+        &self.network
     }
 
     /// The container `run`'s host is named: the systemd unit's name, so
@@ -95,7 +120,10 @@ impl RunContainers {
             Self::name(run),
             self.image.clone(),
             Lifetime::Removed,
-            Placement::Host,
+            match self.network {
+                RunReach::Host => Placement::Host,
+                RunReach::Relayed(_) => Placement::Isolated,
+            },
         )
         .stop_timeout(RunContainer::STOP_TIMEOUT)
         .mounts(self.shared.iter().cloned())
@@ -104,7 +132,8 @@ impl RunContainers {
         .mounts(needs.keeps.iter().map(Mount::read_write))
         .mount(Mount::read_write(&needs.workdir))
         .mounts(needs.git.iter().map(Mount::read_write))
-        .mount(Mount::read_write(&needs.folder));
+        .mount(Mount::read_write(&needs.folder))
+        .mounts(needs.doors.iter().map(Mount::read_only));
         if let Some(agent) = &self.ssh_agent {
             container = container.mount(Mount::read_write(agent));
         }
@@ -141,7 +170,7 @@ impl RunContainer {
 
 #[cfg(test)]
 mod tests {
-    use super::{RunContainers, RunNeeds};
+    use super::{RunContainers, RunNeeds, RunReach};
     use ren_container::{Engine, Mount, Reach};
     use ren_recorder::id::RunId;
 
@@ -153,6 +182,7 @@ mod tests {
             host: "/home/op/.local/bin/ren".into(),
             reads: vec!["/home/op/.local/share/claude/versions/2.1.0".into()],
             keeps: vec!["/home/op/.claude".into(), "/home/op/.claude.json".into()],
+            doors: None,
         }
     }
 
@@ -166,6 +196,7 @@ mod tests {
                 Mount::read_write("/home/op/.cargo"),
             ],
             ssh_agent.map(Into::into),
+            RunReach::Host,
         )
     }
 
@@ -235,5 +266,27 @@ mod tests {
             with.iter()
                 .any(|arg| arg == "--env=SSH_AUTH_SOCK=/run/user/1000/agent")
         );
+    }
+
+    #[test]
+    fn a_relayed_run_has_no_network_and_sees_the_doors_read_only() {
+        let run = RunId::restore(uuid::Uuid::nil());
+        let relayed = RunContainers::new(
+            "localhost/ren-instance:abc".into(),
+            Reach::Scope,
+            "/home/op".into(),
+            Vec::new(),
+            None,
+            RunReach::Relayed(ren_relay::RelayPolicy::default()),
+        );
+        let needs = RunNeeds {
+            doors: Some("/home/op/.local/state/ren/runs/.reach".into()),
+            ..needs()
+        };
+        let args = Engine::Podman.run_args(relayed.container(run, &needs).spec());
+        assert!(args.iter().any(|arg| arg == "--network=none"), "{args:?}");
+        assert!(!args.iter().any(|arg| arg == "--network=host"), "{args:?}");
+        assert!(args.iter().any(|arg| arg
+            == "--volume=/home/op/.local/state/ren/runs/.reach:/home/op/.local/state/ren/runs/.reach:ro"));
     }
 }

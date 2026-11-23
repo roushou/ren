@@ -38,6 +38,9 @@ impl Engine {
             Placement::Host => {
                 args.extend(["--network=host".to_owned(), "--userns=keep-id".to_owned()])
             }
+            Placement::Isolated => {
+                args.extend(["--network=none".to_owned(), "--userns=keep-id".to_owned()])
+            }
             // The pod sets the network and the user namespace.
             Placement::Pod(pod) => args.push(format!("--pod={pod}")),
         }
@@ -162,5 +165,15 @@ mod tests {
                 "build",
             ]
         );
+    }
+
+    #[test]
+    fn an_isolated_container_has_no_network_but_its_loopback() {
+        let container =
+            Container::new("ren-run-2", "image", Lifetime::Removed, Placement::Isolated);
+        let args = Engine::Podman.run_args(&container);
+        assert!(args.iter().any(|arg| arg == "--network=none"), "{args:?}");
+        assert!(args.iter().any(|arg| arg == "--userns=keep-id"), "{args:?}");
+        assert!(!args.iter().any(|arg| arg == "--network=host"), "{args:?}");
     }
 }

@@ -31,6 +31,10 @@ pub enum Lifetime {
 pub enum Placement {
     /// On the host's network, as the operator's own user.
     Host,
+    /// With no network but its own loopback, as the operator's own user:
+    /// it reaches out only through what it is given to see (a socket in a
+    /// mounted folder).
+    Isolated,
     /// In the named pod, which sets its network and user.
     Pod(String),
 }

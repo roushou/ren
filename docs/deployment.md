@@ -152,6 +152,21 @@ the home, Ren's configuration and data, or other runs. `[runs.container]` names
 the image (the instance image) and adds what every run sees: the host's
 programs (`/usr`) and toolchains read-only, shared caches read-write. A program
 the run starts that is in none of these is not found in its container.
+
+`[runs.container] network = "relayed"` takes the host's network away from a
+run: its container has only its loopback (`--network=none`). There its run host
+listens on the gateway's address and on `127.0.0.1:3128`, and passes each
+connection through a Unix socket in `<data>/runs/.reach`, which the container
+sees read-only, to the daemon's gateway and to its relay (`ren-relay`). The
+client's base URL is unchanged; `HTTPS_PROXY` and `HTTP_PROXY` name the relay,
+with a ticket minted for the run as the password, and `NO_PROXY` keeps loopback
+direct. The relay lets a run connect only to where `[runs.container] reach` and
+its client list (Codex's and Claude Code's sign-in refresh, opencode's model
+catalogue), a name only at public addresses, and passes the connection through
+unread. Every connection is logged with its run; a refused one is a warning
+that names the destination and why. A run held through a daemon restart keeps
+its pass: the new daemon issues it again from the run's spec. A relayed run has
+no network for SSH, so it cannot push over SSH yet.
 Systemd limits repeated startup failures to five in a minute; fix the cause and
 run `systemctl --user reset-failed ren` before restarting if it hits that limit.
 Launchd throttles respawns to at most once every 10 seconds. Neither manager's

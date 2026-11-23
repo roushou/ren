@@ -114,7 +114,7 @@ impl DaemonContainer {
         mounts.extend(
             Harness::ALL
                 .iter()
-                .flat_map(|harness| harness.profile().keeps)
+                .flat_map(|harness| harness.profile().needs.keeps)
                 .map(|entry| entry.under(&home))
                 .filter(|path| path.exists())
                 .map(Mount::read_write),

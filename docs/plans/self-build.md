@@ -589,6 +589,34 @@ spec (phase 7):
       listed registry answered through the relay, TLS end to end, and an
       unlisted host was refused and reported. Not yet wired into the
       daemon or a run.
+    - Built: relayed runs. `[runs.container] network = "relayed"` starts
+      a run's container with no network (`ren-container`'s
+      `Placement::Isolated`); its run host opens a `Doorway` on its
+      loopback for the gateway (at the gateway's own address, so the
+      client's base URL is unchanged) and for the relay (`3128`), each
+      reaching a Unix socket the daemon listens on in `<data>/runs/.reach`
+      (`Doors`), mounted read-only. The daemon starts the relay on
+      loopback and, per run, mints a ticket (`Relaying`), issues its pass,
+      and gives the client `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY`;
+      the run's spec keeps the pass, so a daemon that takes the run up
+      again issues it again. A run reaches `[runs.container] reach` and what
+      its client needs (`ren-harness`'s `ClientNeeds`: what it keeps and
+      where it connects itself). Passages are logged, refusals as
+      warnings. The dev slot's contained runs are relayed.
+    - Verified in the dev slot (`--contain all`): a run's container had
+      only its loopback; the fake agent's turn reached the gateway through
+      its doorway; through the relay it reached the listed registry, and
+      unlisted hosts were refused and logged; directly, it reached neither
+      the internet nor the host's other listeners. The run outlived a
+      restart of the daemon's container, which issued its pass again: it
+      reached the registry and took a second turn.
+    - Deviation: `[runs.container] reach`, not `[runs.reach]`: only a
+      container's run is relayed, so what it reaches is the container's
+      setting.
+    - Not yet: a relayed run cannot push over SSH (grants come next);
+      Claude Code, Codex, Pi, and opencode have not been driven relayed,
+      and what each connects to itself is declared from their sign-in
+      flows, not observed; passages are logged, not recorded.
     - Deviation: `Purpose` is not the relay's. The relay records the
       destination that admitted a tunnel; why it is listed belongs to where
       it is listed (`[runs.reach]`, a manifest), so `ren-sandbox` keeps it.

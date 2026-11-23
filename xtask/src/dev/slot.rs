@@ -18,7 +18,7 @@ use crate::{
 };
 use ren_container::Engine;
 use ren_daemon::config::{
-    Config, GithubOptions, RunContainerOptions, RunHold, RunsOptions, UpstreamConfig,
+    Config, GithubOptions, RunContainerOptions, RunHold, RunNetwork, RunsOptions, UpstreamConfig,
     WatchedRepository,
 };
 use ren_daemon::host::HeldRuns;
@@ -283,6 +283,15 @@ impl Slot {
                             Contain::All => self.podman_socket.clone(),
                             Contain::None | Contain::Runs => None,
                         },
+                        // Relayed, as runs are meant to be (phase 12): the
+                        // fake agents need only the gateway, and one public
+                        // registry checks a run's way out.
+                        network: RunNetwork::Relayed,
+                        reach: vec![
+                            "index.crates.io:443"
+                                .parse()
+                                .map_err(|_| DevError::Config)?,
+                        ],
                     },
                 },
             },

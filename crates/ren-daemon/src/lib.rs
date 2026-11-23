@@ -10,7 +10,10 @@ pub mod host;
 pub mod packages;
 
 use crate::config::RuntimeConfig;
-use crate::host::{HeldRuns, ObservationThread, ProcessHost, RandomIds, SystemClock};
+use crate::host::{
+    Doors, HeldRuns, Launcher, ObservationThread, ProcessHost, RandomIds, Relaying, RunReach,
+    SystemClock,
+};
 use crate::packages::HostPrograms;
 use crate::packages::{HostPackages, PackageStore, fetch::ReqwestFetch};
 use ren_gateway::{
@@ -27,7 +30,12 @@ use ren_harness::{
 };
 use ren_recorder::CaptureOptionsError;
 use ren_recorder::secrets::SecretScanner;
-use ren_recorder::{Recorder, RecorderSetup, id::IdSource, time::Clock};
+use ren_recorder::{
+    Recorder, RecorderSetup,
+    id::{IdSource, RunId},
+    time::Clock,
+};
+use ren_relay::{Course, Passage, Relay, TunnelEnd};
 use ren_release::Build;
 use ren_store::StoreError;
 use ren_store::{Reader, Store, backup::Backup};
@@ -162,7 +170,7 @@ impl Daemon {
         // handed to components as capabilities.
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::start());
         let ids: Arc<dyn IdSource> = Arc::new(RandomIds);
-        let held = Self::held(config, data_dir);
+        let held = Self::held(config, data_dir, address, &ids);
         // The runs run hosts kept going are left open, to be taken up.
         let holding: Vec<_> = match &held {
             Some(held) => held
@@ -367,8 +375,14 @@ impl Daemon {
     }
 
     /// Where runs are held through run hosts, when runs are configured and
-    /// held here. A run host runs this same executable.
-    fn held(config: &RuntimeConfig, data_dir: &std::path::Path) -> Option<HeldRuns> {
+    /// held here. A run host runs this same executable. Relayed runs reach
+    /// out through the relay this starts, and the gateway at `address`.
+    fn held(
+        config: &RuntimeConfig,
+        data_dir: &std::path::Path,
+        address: SocketAddr,
+        ids: &Arc<dyn IdSource>,
+    ) -> Option<HeldRuns> {
         if config.runs().roots.is_empty() {
             return None;
         }
@@ -378,11 +392,90 @@ impl Daemon {
                 |error| tracing::warn!(%error, "runs are not held: no path to this executable"),
             )
             .ok()?;
-        Some(HeldRuns::new(
-            data_dir.join(HeldRuns::FOLDER),
-            launcher,
-            program,
-        ))
+        let root = data_dir.join(HeldRuns::FOLDER);
+        let relayed = matches!(
+            &launcher,
+            Launcher::Container(containers) if matches!(containers.network(), RunReach::Relayed(_))
+        );
+        let held = HeldRuns::new(root.clone(), launcher, program);
+        if !relayed {
+            return Some(held);
+        }
+        match Self::relaying(&root, address, ids) {
+            Ok(relaying) => Some(held.relaying(relaying)),
+            Err(error) => {
+                // Its runs are refused as they start, which says why.
+                tracing::error!(%error, "relayed runs cannot reach out: the relay did not start");
+                Some(held)
+            }
+        }
+    }
+
+    /// The relay relayed runs reach out through, on loopback, and the doors
+    /// in `runs` their containers mount: one to the gateway at `gateway`,
+    /// one to the relay. Each passage is logged as it ends.
+    fn relaying(
+        runs: &std::path::Path,
+        gateway: SocketAddr,
+        ids: &Arc<dyn IdSource>,
+    ) -> std::io::Result<Relaying> {
+        let relay = Arc::new(Relay::new());
+        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        listener.set_nonblocking(true)?;
+        let listener = TcpListener::from_std(listener)?;
+        let relay_address = listener.local_addr()?;
+        let doors = Doors::new(runs);
+        let to_gateway = doors.open(Doors::GATEWAY, gateway)?;
+        let to_relay = doors.open(Doors::RELAY, relay_address)?;
+        let (sender, mut passages) = tokio::sync::mpsc::unbounded_channel();
+        let serving = relay.clone();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "process wiring: the daemon owns the relay's and its doors' tasks"
+        )]
+        {
+            tokio::spawn(async move {
+                serving
+                    .serve(listener, sender, std::future::pending())
+                    .await;
+            });
+            tokio::spawn(to_gateway);
+            tokio::spawn(to_relay);
+            tokio::spawn(async move {
+                while let Some(passage) = passages.recv().await {
+                    Self::log_passage(&passage);
+                }
+            });
+        }
+        Ok(Relaying::new(relay, doors, gateway, ids.clone()))
+    }
+
+    /// A relayed run's passage, in the daemon's log: refusals and failures
+    /// as warnings, so the operator sees what a run could not reach.
+    fn log_passage(passage: &Passage<RunId>) {
+        let run = passage.holder();
+        match passage.course() {
+            Course::NotATunnel { method } => {
+                tracing::warn!(%run, %method, "a run asked the relay for something other than a tunnel");
+            }
+            Course::Tunnel { target, end } => match end {
+                TunnelEnd::Refused(refusal) => tracing::warn!(
+                    %run, %target, refusal = refusal.label(),
+                    "a run's connection was refused"
+                ),
+                TunnelEnd::Unreachable { why, .. } => tracing::warn!(
+                    %run, %target, why = why.label(),
+                    "a run's connection could not reach its target"
+                ),
+                TunnelEnd::Closed { sent, received, .. } => tracing::info!(
+                    %run, %target, sent, received,
+                    "a run's connection closed"
+                ),
+                TunnelEnd::Broken { .. } => {
+                    tracing::info!(%run, %target, "a run's connection broke");
+                }
+            },
+        }
     }
 
     /// The board of what is watched on GitHub, with `ren_github`'s poller

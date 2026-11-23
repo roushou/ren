@@ -59,7 +59,9 @@ async fn a_run_host_holds_its_client_while_no_daemon_watches() {
     command
         .args(["-c", "while read line; do echo \"got $line\"; done"])
         .current_dir(dir.path());
-    let started = held.start(run, &command, &[]).unwrap();
+    let started = held
+        .start(run, &command, ren_harness::profile::ClientNeeds::default())
+        .unwrap();
     let first = talk(started, "one").await;
     assert_eq!(first, "got one\n");
 
