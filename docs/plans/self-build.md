@@ -579,6 +579,19 @@ spec (phase 7):
       kernel of its own in user space and needs no KVM; Kata gives each run
       a microVM and needs KVM (the VPS has `/dev/kvm`). Containers stay the
       default until each client is verified under the stronger runtime.
+    - Built: `ren-relay`. A holder's pass is a `Ticket`, the password of
+      its proxy URL (`HTTPS_PROXY=http://run:<ticket>@relay`), which curl,
+      git, cargo, and npm send as `Proxy-Authorization`; the relay knows
+      no run, only the holder it was given. A listed name reaches only
+      public addresses (not this host, a private or shared network,
+      Tailscale's included); an address is reached only when listed as
+      itself. Anything but `CONNECT` is refused. Verified with curl: a
+      listed registry answered through the relay, TLS end to end, and an
+      unlisted host was refused and reported. Not yet wired into the
+      daemon or a run.
+    - Deviation: `Purpose` is not the relay's. The relay records the
+      destination that admitted a tunnel; why it is listed belongs to where
+      it is listed (`[runs.reach]`, a manifest), so `ren-sandbox` keeps it.
     - Order: the relay and the private network first (the largest gain,
       and the gateway already carries the model calls), then passages on
       the run's page, then grants, then the runtime. Each lands on its own

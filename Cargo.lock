@@ -1988,6 +1988,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-relay"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures-util",
+ "proptest",
+ "strum",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "ren-release"
 version = "0.1.0"
 dependencies = [

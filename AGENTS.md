@@ -259,6 +259,17 @@ dependencies under "Crates" below. Read the code for current module ownership.
   a `Publication` planned from those reports, then applied with Serve, and
   a Serve port turned off. xtask and `ren project preview` publish through
   it.
+- `crates/ren-relay`: a forward proxy that lets a sandboxed run's
+  connections out only to where its policy lists, with `Relay` as its
+  primary type (docs/plans/self-build.md, phase 12). It depends on none of
+  Ren's crates. A holder is issued a pass (`Relay::issue`, revoked when
+  its `PassHandle` drops): a `Ticket`, the password of its proxy URL, and
+  a `RelayPolicy` of `Destination`s (`host:port`, `*.parent:port`). Pure:
+  a request's `Head` read from bytes however they arrive, the `Verdict`,
+  the `Reachable` addresses (a name only at a `PublicAddress`), and the
+  `Answer`. `Relay::serve` is the shell: it drives every request in its
+  own future (no spawned task), passes an admitted tunnel's bytes through
+  unread, and reports a `Passage` once it ends.
 - `crates/ren-github`: a self-contained GitHub client for a repository's
   pull requests, with `Client` as its primary type
   (docs/plans/self-build.md, phase 8). It depends on none of Ren's crates
@@ -838,6 +849,7 @@ directly.
 | `ren-container`                            | `Container`                                         | none of ours      |
 | `ren-network`                              | `Network`                                           | none of ours      |
 | `ren-github`                               | `Client`                                            | none of ours      |
+| `ren-relay`                                | `Relay`                                             | none of ours      |
 | `ren-manifest`                             | `Manifest`                                          | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |
 | `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |

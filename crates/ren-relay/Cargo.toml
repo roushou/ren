@@ -1,0 +1,24 @@
+[package]
+name = "ren-relay"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "A forward proxy that lets a sandboxed run's connections out to the destinations its policy lists, passing them through unread, and reports each passage."
+
+# Self-contained: it depends on none of Ren's crates.
+[dependencies]
+base64.workspace = true
+futures-util.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "sync", "time"] }
+
+[dev-dependencies]
+proptest.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true
