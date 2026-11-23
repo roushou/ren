@@ -16,6 +16,7 @@ use crate::{
     ui::UiBuild,
     unit::{KillMode, Listener, TransientUnit},
 };
+use ren_container::Engine;
 use ren_daemon::config::{
     Config, GithubOptions, RunContainerOptions, RunHold, RunsOptions, UpstreamConfig,
     WatchedRepository,
@@ -640,7 +641,12 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                     vars,
                 )?;
                 Progress(&format!("In container {}", container.name())).show();
-                Unit::Daemon.start(None, &[Path::new("podman")], &container.run_args(), &[])?;
+                Unit::Daemon.start(
+                    None,
+                    &[Path::new(Engine::Podman.program())],
+                    &container.run_args(),
+                    &[],
+                )?;
             }
         }
         Self::wait_for(Self::DAEMON, "/health")?;
@@ -761,10 +767,7 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                 .succeeds(Echo::Hide)?;
             // A run host in a container: removing it stops it. Without
             // Podman there is no container to remove.
-            if let Err(error) = Invocation::new("podman")
-                .args(["rm", "--force", "--ignore", &HeldRuns::unit(run)])
-                .succeeds(Echo::Hide)
-            {
+            if let Err(error) = Engine::Podman.remove_container(&HeldRuns::unit(run)) {
                 println!("warning: run {run}'s container was not removed: {error}");
             }
         }

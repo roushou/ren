@@ -417,8 +417,8 @@ impl RunContainerOptions {
             )
             .collect();
         let reach = match &self.podman_socket {
-            Some(socket) => crate::host::PodmanReach::Socket(anchored(socket)),
-            None => crate::host::PodmanReach::Scope,
+            Some(socket) => ren_container::Reach::Socket(anchored(socket)),
+            None => ren_container::Reach::Scope,
         };
         Ok(crate::host::RunContainers::new(
             image,
@@ -1031,13 +1031,13 @@ mod tests {
         else {
             panic!("runs are held in containers");
         };
-        use crate::host::{PodmanReach, RunContainers};
-        use ren_container::Mount;
+        use crate::host::RunContainers;
+        use ren_container::{Mount, Reach};
         assert_eq!(
             containers,
             RunContainers::new(
                 "localhost/ren-instance:abc".into(),
-                PodmanReach::Scope,
+                Reach::Scope,
                 "/home/op".into(),
                 vec![
                     Mount::read_only("/usr"),

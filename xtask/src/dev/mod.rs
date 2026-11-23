@@ -231,6 +231,8 @@ pub enum DevError {
     #[error(transparent)]
     Invocation(#[from] InvocationError),
     #[error(transparent)]
+    Engine(#[from] ren_container::EngineError),
+    #[error(transparent)]
     File(#[from] FileError),
     #[error(transparent)]
     Tailscale(#[from] TailscaleError),

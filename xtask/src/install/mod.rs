@@ -94,6 +94,8 @@ pub enum InstallError {
     #[error(transparent)]
     Invocation(#[from] InvocationError),
     #[error(transparent)]
+    Engine(#[from] ren_container::EngineError),
+    #[error(transparent)]
     File(#[from] FileError),
     #[error("invalid configuration {}: {source}", path.display())]
     Config {

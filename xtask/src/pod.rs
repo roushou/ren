@@ -8,11 +8,8 @@
 //! published port cannot reach. Containers run as the operator's own user
 //! (`--userns=keep-id`), so what they write is the operator's.
 
-use crate::{
-    invocation::{Echo, Invocation, InvocationError},
-    progress::Progress,
-};
-use ren_container::{Engine, Lifetime, Mount, Placement};
+use crate::progress::Progress;
+use ren_container::{Engine, EngineError, Launch, Lifetime, Mount, Placement};
 use std::path::{Path, PathBuf};
 
 /// One pod, named `ren-<name>`; its containers `ren-<name>-<role>`.
@@ -57,54 +54,25 @@ impl Pod {
     }
 
     /// Builds the image from `repo`'s recipe unless it is built already.
-    pub fn ensure_image(repo: &Path) -> Result<(), InvocationError> {
+    pub fn ensure_image(repo: &Path) -> Result<(), EngineError> {
         let image = Self::image();
-        let built = Invocation::new("podman")
-            .args(["image", "exists"])
-            .arg(&image)
-            .succeeds(Echo::Hide)?;
-        if built {
+        if Engine::Podman.image_exists(&image)? {
             return Ok(());
         }
         let recipe = repo.join("deploy/instance");
         Progress(&format!("Building the instance image {image}")).show();
-        Invocation::new("podman")
-            .args(["build", "--quiet", "--tag"])
-            .arg(&image)
-            .arg("--file")
-            .arg(recipe.join("Containerfile"))
-            .arg(&recipe)
-            .capture()
-            .map(drop)
-    }
-
-    /// Whether the pod exists, running or not.
-    pub fn exists(&self) -> Result<bool, InvocationError> {
-        Invocation::new("podman")
-            .args(["pod", "exists"])
-            .arg(&self.name)
-            .succeeds(Echo::Hide)
+        Engine::Podman.build_image(&image, &recipe.join("Containerfile"), &recipe)
     }
 
     /// Removes the pod and its containers, giving each time to stop.
-    pub fn remove(&self) -> Result<(), InvocationError> {
-        if self.exists()? {
-            Invocation::new("podman")
-                .args(["pod", "rm", "--force", "--time"])
-                .arg(Self::STOP_SECONDS.to_string())
-                .arg(&self.name)
-                .succeeds(Echo::Hide)?;
-        }
-        Ok(())
+    pub fn remove(&self) -> Result<(), EngineError> {
+        Engine::Podman.remove_pod(&self.name, Some(Self::STOP_SECONDS))
     }
 
     /// Creates the pod, empty, in place of any earlier one.
-    pub fn create(&self) -> Result<(), InvocationError> {
+    pub fn create(&self) -> Result<(), EngineError> {
         self.remove()?;
-        Invocation::new("podman")
-            .args(self.create_args())
-            .capture()
-            .map(drop)
+        Engine::Podman.create_pod(&self.name)
     }
 
     /// Starts `container` in the pod, detached, from a transient systemd
@@ -113,13 +81,13 @@ impl Pod {
     /// cgroup it would end with the caller, as the canary timer's pass
     /// ends with its oneshot service. The pod's first container starts its
     /// infra container too, in the same scope.
-    pub fn start(&self, container: &Container) -> Result<(), InvocationError> {
-        Invocation::new("systemd-run")
-            .args(Self::scope_args(&self.scope(container.role)))
-            .arg("podman")
-            .args(self.run_args(container))
-            .capture()
-            .map(drop)
+    pub fn start(&self, container: &Container) -> Result<(), EngineError> {
+        Engine::Podman.start(
+            &self.spec(container),
+            &Launch::Scope {
+                unit: self.scope(container.role),
+            },
+        )
     }
 
     /// The scope a container is started from.
@@ -127,31 +95,7 @@ impl Pod {
         format!("ren-pod-{}-{role}", self.name.trim_start_matches("ren-"))
     }
 
-    fn scope_args(scope: &str) -> Vec<String> {
-        vec![
-            "--user".to_owned(),
-            "--scope".to_owned(),
-            "--quiet".to_owned(),
-            "--collect".to_owned(),
-            format!("--unit={scope}"),
-            "--".to_owned(),
-        ]
-    }
-
-    fn create_args(&self) -> Vec<String> {
-        [
-            "pod",
-            "create",
-            "--name",
-            &self.name,
-            "--userns=keep-id",
-            "--network=host",
-        ]
-        .map(str::to_owned)
-        .into()
-    }
-
-    fn run_args(&self, container: &Container) -> Vec<String> {
+    fn spec(&self, container: &Container) -> ren_container::Container {
         let mut spec = ren_container::Container::new(
             format!("{}-{}", self.name, container.role),
             Self::image(),
@@ -162,25 +106,22 @@ impl Pod {
         if let Some(dir) = &container.workdir {
             spec = spec.workdir(dir);
         }
-        Engine::Podman.run_args(
-            &spec
-                .mounts(container.mounts.iter().cloned())
-                .envs(container.environment.iter().cloned())
-                .args(container.command.iter().cloned()),
-        )
+        spec.mounts(container.mounts.iter().cloned())
+            .envs(container.environment.iter().cloned())
+            .args(container.command.iter().cloned())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Container, Pod};
-    use ren_container::{Access, Mount};
+    use ren_container::{Access, Engine, Mount};
     use std::path::PathBuf;
 
     #[test]
     fn a_container_sees_only_its_mounts_at_their_host_paths() {
         let pod = Pod::new("canary");
-        let args = pod.run_args(&Container {
+        let args = Engine::Podman.run_args(&pod.spec(&Container {
             role: "daemon",
             workdir: None,
             mounts: vec![
@@ -198,7 +139,7 @@ mod tests {
                 "/home/op/.local/share/ren/builds/abc/ren".into(),
                 "serve".into(),
             ],
-        });
+        }));
         let image = Pod::image();
         assert_eq!(
             args,
@@ -222,32 +163,7 @@ mod tests {
     fn each_container_starts_from_a_scope_of_its_own() {
         let pod = Pod::new("canary");
         assert_eq!(pod.scope("daemon"), "ren-pod-canary-daemon");
-        assert_eq!(
-            Pod::scope_args(&pod.scope("ui")),
-            [
-                "--user",
-                "--scope",
-                "--quiet",
-                "--collect",
-                "--unit=ren-pod-canary-ui",
-                "--"
-            ]
-        );
-    }
-
-    #[test]
-    fn the_pod_shares_the_host_network_as_the_operator() {
-        assert_eq!(
-            Pod::new("preview-ren-3").create_args(),
-            [
-                "pod",
-                "create",
-                "--name",
-                "ren-preview-ren-3",
-                "--userns=keep-id",
-                "--network=host",
-            ]
-        );
+        assert_eq!(pod.scope("ui"), "ren-pod-canary-ui");
         assert!(Pod::image().starts_with("localhost/ren-instance:"));
     }
 }

@@ -1,12 +1,15 @@
 //! A container as Ren runs one: what it sees of the host ([`Mount`]), how
 //! it lives ([`Lifetime`], [`Placement`]), what it runs, and the
-//! [`Engine`]'s arguments that start it. Pure: starting it is the
-//! caller's.
+//! [`Engine`]'s arguments that start it, all pure; and running the engine
+//! (`launch`): starting a container as a [`Launch`] says, and the pods,
+//! containers, and images it keeps.
 
 mod engine;
+mod launch;
 mod mount;
 
 pub use engine::Engine;
+pub use launch::{EngineError, Launch, Reach};
 pub use mount::{Access, Mount};
 use std::path::PathBuf;
 

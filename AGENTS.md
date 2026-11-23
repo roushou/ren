@@ -232,15 +232,20 @@ dependencies under "Crates" below. Read the code for current module ownership.
   sans-IO: which build an instance runs (`Build`, its `Revision` of a
   `ren_git::Commit` and `Tree`, and how two compare, `Comparison`). Its
   manifest allows only pure dependencies and `ren-git`, for those two types.
-- `crates/ren-container`: containers as Ren runs them, sans-IO, with
-  `Container` as its primary type. It depends on none of Ren's crates. A
+- `crates/ren-container`: containers as Ren runs them, with `Container`
+  as its primary type. It depends on none of Ren's crates. A
   `Container` is what one sees of the host (`Mount`, read-only or
   read-write at its host path), how it lives (`Lifetime`: kept, removed
   once it exits, or the caller's foreground process) and where
   (`Placement`: the host's network as the operator, or a pod), its
   `Environment` and `Privileges`, and what it runs; `Engine` (one variant,
-  `Podman`) gives the arguments that start it. The daemon's run hosts, and
-  xtask's daemon container and pods, are built as `Container`s.
+  `Podman`) gives the arguments that start it, all pure. `Engine` is also
+  the one place Ren runs the engine: it starts a container as a `Launch`
+  says (from a systemd scope of its own, or through the API socket; a
+  caller's setting is a `Reach`), and creates and removes pods, removes
+  containers, and builds images, failing with `EngineError`. The daemon's
+  run hosts, and xtask's daemon container and pods, are built and started
+  with it.
 - `crates/ren-network`: the network Ren is reached through, with
   `Network` as its primary type (one variant, `Tailscale`, and the header
   it names a caller's login in). It depends on none of Ren's crates.
