@@ -404,9 +404,9 @@ program_at = "acme-lint"
                 git.init(&folder)
                     .and_then(|()| git.commit_all(&folder, "Start the fake project", &author))?;
             }
-            // Its contract, so a worktree of it has checks and a preview.
-            let contract = folder.join(ren_project::ProjectContract::FILE);
-            if !contract.exists() {
+            // Its manifest, so a worktree of it has checks and a preview.
+            let manifest = folder.join(ren_manifest::Manifest::FILE);
+            if !manifest.exists() {
                 for (name, text) in Self::site(project) {
                     let path = folder.join(name);
                     if let Some(parent) = path.parent() {
@@ -424,7 +424,7 @@ program_at = "acme-lint"
         Ok(())
     }
 
-    /// A fake project's page and its contract: a static page served by
+    /// A fake project's page and its manifest: a static page served by
     /// Python's own server on the worktree's first port, checked by
     /// parsing it.
     fn site(project: &str) -> [(&'static str, String); 2] {
@@ -436,7 +436,7 @@ program_at = "acme-lint"
                 ),
             ),
             (
-                ren_project::ProjectContract::FILE,
+                ren_manifest::Manifest::FILE,
                 r#"# How Ren builds, serves, and checks this fake project.
 
 [[build]]
@@ -842,13 +842,13 @@ mod tests {
     }
 
     #[test]
-    fn every_fake_project_declares_a_contract_ren_reads() {
+    fn every_fake_project_declares_a_manifest_ren_reads() {
         for project in Slot::PROJECTS {
             let [_, (name, text)] = Slot::site(project);
-            assert_eq!(name, ren_project::ProjectContract::FILE);
-            let contract = ren_project::ProjectContract::read(&text).unwrap();
-            assert!(contract.serve().is_some() && !contract.checks().is_empty());
-            assert!(contract.deploy().is_some());
+            assert_eq!(name, ren_manifest::Manifest::FILE);
+            let manifest = ren_manifest::Manifest::read(&text).unwrap();
+            assert!(manifest.serve().is_some() && !manifest.checks().is_empty());
+            assert!(manifest.deploy().is_some());
         }
     }
 

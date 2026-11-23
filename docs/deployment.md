@@ -657,7 +657,7 @@ promote = "automatic" # or "manual", or a daily UTC window like "02:00-05:00"
 ```
 
 When it promotes (a passed build that follows the one deployed), the
-contract's `[deploy]` step runs in the checked build, and production is then
+manifest's `[deploy]` step runs in the checked build, and production is then
 that commit; a deploy that fails is marked and not tried again unless you
 promote it. A project that declares no deploy step is never promoted. The
 canary stays served on its worktree's port until the next pass.

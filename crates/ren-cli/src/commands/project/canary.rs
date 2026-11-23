@@ -4,13 +4,13 @@
 //! A pass fetches the project's `main`, checks its tip out, detached, in a
 //! worktree the factory keeps for the project (a folder in Ren's
 //! worktrees folder, so its slot's ports are its own), and runs its
-//! contract there: the build steps, the serve step until it answers its
+//! manifest there: the build steps, the serve step until it answers its
 //! health path, then each declared check, against it. The verdict, the build
 //! production runs (the last one deployed), and what the operator's policy
 //! decides make the project's release, kept in `<data>/projects/<name>`.
-//! When the policy promotes, the contract's deploy step runs in the checked
+//! When the policy promotes, the manifest's deploy step runs in the checked
 //! build; a deploy that fails is marked and not tried again on its own.
-//! A package the contract names that cannot be had fails the build check.
+//! A package the manifest names that cannot be had fails the build check.
 //! Each pass, and each promotion, closes the project's work items as Ren's
 //! canary closes Ren's: landed from `main`'s trailers, shipped by the build
 //! production runs.
@@ -26,7 +26,7 @@ use ren_gateway::api::{
     read::ReadBody,
 };
 use ren_git::{Branch, Commit, Git, Tree};
-use ren_project::{Place, ProjectContract};
+use ren_manifest::{Manifest, Place};
 use ren_protocol::label::Stored;
 use ren_recorder::{
     id::WorkItemId,
@@ -74,7 +74,7 @@ struct CanaryRecord {
 impl Steps {
     /// One step's outcome: a step that cannot expand or start fails, as one
     /// that exits unsuccessfully does.
-    fn outcome(&self, step: &ren_project::Step, place: &Place) -> Outcome {
+    fn outcome(&self, step: &ren_manifest::Step, place: &Place) -> Outcome {
         let ran = step
             .expand(place)
             .map_err(anyhow::Error::from)
@@ -99,7 +99,7 @@ impl ProjectFactory {
     const RELEASE: &str = "release.json";
     const CANARY: &str = "canary.json";
 
-    /// The factory of `project`, a registered one built by its contract.
+    /// The factory of `project`, a registered one built by its manifest.
     pub(super) fn new(ctx: &Context, project: &ProjectView) -> Result<Self> {
         match project.factory {
             Stored::Known(Factory::Contract) => {}
@@ -142,9 +142,9 @@ impl ProjectFactory {
             data: worktree.data(),
             ports: Some(worktree.ports()),
         };
-        let contract = ProjectCmd::contract(&place.worktree)?;
-        let steps = Steps::of(ctx, &contract);
-        let verdict = self.check(&steps, &contract, &place, &worktree).await?;
+        let manifest = ProjectCmd::manifest(&place.worktree)?;
+        let steps = Steps::of(ctx, &manifest);
+        let verdict = self.check(&steps, &manifest, &place, &worktree).await?;
         let commit = tip.clone();
         let canary = Canary::new(commit.clone(), verdict);
         let deployed = self.read()?.map(|release| release.production().clone());
@@ -153,7 +153,7 @@ impl ProjectFactory {
         if release.decision() == &Stored::Known(Decision::Promote) {
             // Only a build that passed is promoted, so its steps were had.
             let steps = steps.map_err(|error| anyhow!("{error:#}"))?;
-            self.deploy(&steps, &contract, &place, &commit)?;
+            self.deploy(&steps, &manifest, &place, &commit)?;
         }
         self.close_work(ctx, &tip).await?;
         Ok(ExitCode::SUCCESS)
@@ -175,10 +175,10 @@ impl ProjectFactory {
             data: worktree.data(),
             ports: Some(worktree.ports()),
         };
-        let contract = ProjectCmd::contract(&place.worktree)?;
-        let steps = Steps::of(ctx, &contract)?;
+        let manifest = ProjectCmd::manifest(&place.worktree)?;
+        let steps = Steps::of(ctx, &manifest)?;
         let _ = fs::remove_file(self.failed(&commit));
-        self.deploy(&steps, &contract, &place, &commit)?;
+        self.deploy(&steps, &manifest, &place, &commit)?;
         let tip = release.main().clone();
         self.close_work(ctx, &tip).await?;
         Ok(ExitCode::SUCCESS)
@@ -233,15 +233,15 @@ impl ProjectFactory {
     /// The project's checks of the checked-out build: its build steps, its
     /// serve step up and answering, then each declared check against it.
     /// A check that cannot run fails; steps that cannot be had (a package
-    /// the contract names is lacking) fail the build.
+    /// the manifest names is lacking) fail the build.
     async fn check(
         &self,
         steps: &Result<Steps>,
-        contract: &ProjectContract,
+        manifest: &Manifest,
         place: &Place,
         worktree: &Worktree,
     ) -> Result<Verdict> {
-        let declared: Vec<String> = contract
+        let declared: Vec<String> = manifest
             .checks()
             .iter()
             .map(|check| check.name().to_owned())
@@ -253,7 +253,7 @@ impl ProjectFactory {
             },
             Ok(steps) => {
                 let mut built = Outcome::Passed;
-                for step in contract.build() {
+                for step in manifest.build() {
                     built = steps.outcome(step, place);
                     if !matches!(built, Outcome::Passed) {
                         break;
@@ -264,12 +264,12 @@ impl ProjectFactory {
         };
         let built_ok = matches!(built, Outcome::Passed);
         checks.push(Check::new(CheckKind::Build, built));
-        let serving = match (steps, built_ok, contract.serve()) {
+        let serving = match (steps, built_ok, manifest.serve()) {
             (Err(_), _, _) | (_, false, _) => Outcome::Failed {
                 detail: "not run: the build failed".to_owned(),
             },
             (Ok(_), true, None) => Outcome::Failed {
-                detail: format!("{} declares no [serve] step", ProjectContract::FILE),
+                detail: format!("{} declares no [serve] step", Manifest::FILE),
             },
             (Ok(steps), true, Some(serve)) => Self::serve(steps, serve, place, worktree)
                 .await
@@ -282,7 +282,7 @@ impl ProjectFactory {
         };
         let served = matches!(serving, Outcome::Passed);
         checks.push(Check::new(CheckKind::Serve, serving));
-        for check in contract.checks() {
+        for check in manifest.checks() {
             let outcome = match (steps, served) {
                 (Ok(steps), true) => {
                     println!("==> {}", check.name());
@@ -309,7 +309,7 @@ impl ProjectFactory {
     /// Starts the serve step in the canary's worktree and waits for it.
     async fn serve(
         steps: &Steps,
-        serve: &ren_project::Serve,
+        serve: &ren_manifest::Serve,
         place: &Place,
         worktree: &Worktree,
     ) -> Result<()> {
@@ -374,14 +374,14 @@ impl ProjectFactory {
     fn deploy(
         &self,
         steps: &Steps,
-        contract: &ProjectContract,
+        manifest: &Manifest,
         place: &Place,
         commit: &Commit,
     ) -> Result<()> {
-        let Some(deploy) = contract.deploy() else {
+        let Some(deploy) = manifest.deploy() else {
             println!(
                 "{} declares no [deploy] step: nothing is promoted.",
-                ProjectContract::FILE
+                Manifest::FILE
             );
             return Ok(());
         };

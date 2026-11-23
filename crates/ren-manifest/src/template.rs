@@ -91,7 +91,7 @@ impl Placeholder {
             "port" => Ok(Self::Port(0)),
             "data" => Ok(Self::Data),
             // `{workspace}`, its name before the rename, is read the same
-            // for contracts written before it.
+            // for manifests written before it.
             "worktree" | "workspace" => Ok(Self::Worktree),
             other => other
                 .strip_prefix("port+")

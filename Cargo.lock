@@ -1925,6 +1925,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-manifest"
+version = "0.1.0"
+dependencies = [
+ "ren-depot",
+ "serde",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
 name = "ren-network"
 version = "0.1.0"
 dependencies = [
@@ -1932,16 +1942,6 @@ dependencies = [
  "serde_json",
  "serde_with",
  "thiserror",
-]
-
-[[package]]
-name = "ren-project"
-version = "0.1.0"
-dependencies = [
- "ren-depot",
- "serde",
- "thiserror",
- "toml",
 ]
 
 [[package]]
@@ -2015,8 +2015,8 @@ dependencies = [
  "ren-gateway",
  "ren-git",
  "ren-harness",
+ "ren-manifest",
  "ren-network",
- "ren-project",
  "ren-protocol",
  "ren-recorder",
  "ren-release",
@@ -3530,8 +3530,8 @@ dependencies = [
  "ren-git",
  "ren-github",
  "ren-harness",
+ "ren-manifest",
  "ren-network",
- "ren-project",
  "ren-protocol",
  "ren-recorder",
  "ren-release",

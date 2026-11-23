@@ -1,14 +1,14 @@
 [package]
-name = "ren-project"
+name = "ren-manifest"
 version.workspace = true
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "A project's contract with the Ren LLM gateway: how it is built, served, checked, and quiesced."
+description = "A project's manifest for the Ren LLM gateway: how it is built, served, checked, and quiesced."
 
-# Sans-IO: the contract, parsed from its file's text, and its steps expanded
+# Sans-IO: the manifest, parsed from its file's text, and its steps expanded
 # for a place. Only pure dependencies; running a step is the shell's.
 [dependencies]
 ren-depot.workspace = true

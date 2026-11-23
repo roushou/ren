@@ -1,6 +1,6 @@
-//! A project's contract with Ren (docs/plans/self-build.md, phase 6), pure:
+//! A project's manifest for Ren (docs/plans/self-build.md, phase 6), pure:
 //! how a repository is built, served, checked, and quiesced, declared in
-//! [`ProjectContract::FILE`] (`.ren/project.toml`), so a worktree of it gets checks
+//! [`Manifest::FILE`] (`.ren/project.toml`), so a worktree of it gets checks
 //! and a preview as Ren's own do.
 //!
 //! ```toml
@@ -34,15 +34,15 @@
 //!
 //! `packages` names the packages of Ren's depot its steps need (`ren
 //! packages list`); every step runs with Ren's package set first on its
-//! search path. The key was `tools` before; a contract that still says
+//! search path. The key was `tools` before; a manifest that still says
 //! `tools` is refused with its new name.
 //!
 //! Every command is an argv, never a shell line. Arguments and values may
 //! name the place a step runs for ([`Place`]): `{port}` (its first port),
 //! `{port+N}` (another of its ports), `{data}` (its data folder), and
 //! `{worktree}` (its folder; `{workspace}`, its old name, is read the
-//! same). The contract is parsed once
-//! ([`ProjectContract::read`]); an unknown placeholder is refused there, and
+//! same). The manifest is parsed once
+//! ([`Manifest::read`]); an unknown placeholder is refused there, and
 //! a port past the place's range when a step is expanded.
 
 mod template;
@@ -58,7 +58,7 @@ use std::{
 
 /// How a project is built, served, checked, and quiesced.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectContract {
+pub struct Manifest {
     packages: BTreeSet<PackageId>,
     build: Vec<Step>,
     serve: Option<Serve>,
@@ -108,9 +108,9 @@ pub struct Expanded {
     pub env: Vec<(String, String)>,
 }
 
-/// Why a contract does not read.
+/// Why a manifest does not read.
 #[derive(Debug, thiserror::Error)]
-pub enum ContractError {
+pub enum ManifestError {
     #[error(".ren/project.toml does not read: {0}")]
     Toml(#[from] toml::de::Error),
     #[error("a command in .ren/project.toml is empty")]
@@ -127,7 +127,7 @@ pub enum ContractError {
     Template(#[from] TemplateError),
 }
 
-/// The `tools` key, renamed to `packages`: a contract that still has it
+/// The `tools` key, renamed to `packages`: a manifest that still has it
 /// is refused with the new name rather than read without it.
 #[derive(Default)]
 struct RenamedTools;
@@ -140,10 +140,10 @@ impl<'de> Deserialize<'de> for RenamedTools {
     }
 }
 
-/// The file's own shape, read once and parsed into the contract.
+/// The file's own shape, read once and parsed into the manifest.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ContractFile {
+struct ManifestFile {
     #[serde(default)]
     packages: BTreeSet<PackageId>,
     /// `packages`' old name, refused by its new one.
@@ -193,14 +193,14 @@ struct CheckFile {
     env: BTreeMap<String, String>,
 }
 
-impl ProjectContract {
-    /// The contract's file, relative to the repository's root: in `.ren`,
+impl Manifest {
+    /// The manifest's file, relative to the repository's root: in `.ren`,
     /// the folder that holds what Ren reads from a repository.
     pub const FILE: &str = ".ren/project.toml";
 
-    /// The contract `text` declares.
-    pub fn read(text: &str) -> Result<Self, ContractError> {
-        let file: ContractFile = toml::from_str(text)?;
+    /// The manifest `text` declares.
+    pub fn read(text: &str) -> Result<Self, ManifestError> {
+        let file: ManifestFile = toml::from_str(text)?;
         let build = file
             .build
             .into_iter()
@@ -208,9 +208,9 @@ impl ProjectContract {
             .collect::<Result<_, _>>()?;
         let serve = file
             .serve
-            .map(|serve| -> Result<Serve, ContractError> {
+            .map(|serve| -> Result<Serve, ManifestError> {
                 if !serve.health.starts_with('/') {
-                    return Err(ContractError::Health(serve.health));
+                    return Err(ManifestError::Health(serve.health));
                 }
                 Ok(Serve {
                     step: Step::read(serve.run, serve.env)?,
@@ -223,10 +223,10 @@ impl ProjectContract {
         for check in file.check {
             let name = check.name.trim().to_owned();
             if name.is_empty() {
-                return Err(ContractError::UnnamedCheck);
+                return Err(ManifestError::UnnamedCheck);
             }
             if checks.iter().any(|known| known.name == name) {
-                return Err(ContractError::DuplicateCheck(name));
+                return Err(ManifestError::DuplicateCheck(name));
             }
             checks.push(NamedCheck {
                 name,
@@ -282,9 +282,9 @@ impl ProjectContract {
 }
 
 impl Step {
-    fn read(run: Vec<String>, env: BTreeMap<String, String>) -> Result<Self, ContractError> {
+    fn read(run: Vec<String>, env: BTreeMap<String, String>) -> Result<Self, ManifestError> {
         if run.first().is_none_or(|program| program.trim().is_empty()) {
-            return Err(ContractError::EmptyCommand);
+            return Err(ManifestError::EmptyCommand);
         }
         let env = env
             .into_iter()
@@ -297,10 +297,10 @@ impl Step {
                 if named {
                     Ok((name, value.parse()?))
                 } else {
-                    Err(ContractError::EnvName(name))
+                    Err(ManifestError::EnvName(name))
                 }
             })
-            .collect::<Result<_, ContractError>>()?;
+            .collect::<Result<_, ManifestError>>()?;
         Ok(Self {
             run: run
                 .iter()
@@ -355,10 +355,10 @@ impl NamedCheck {
 
 #[cfg(test)]
 mod tests {
-    use super::{ContractError, Place, ProjectContract};
+    use super::{Manifest, ManifestError, Place};
     use std::path::PathBuf;
 
-    const CONTRACT: &str = r#"
+    const MANIFEST: &str = r#"
 packages = ["node", "jq", "node"]
 
 [[build]]
@@ -393,18 +393,18 @@ run = ["./deploy.sh", "{worktree}"]
     }
 
     #[test]
-    fn a_contract_reads_and_expands_for_its_place() {
-        let contract = ProjectContract::read(CONTRACT).unwrap();
-        assert_eq!(contract.build().len(), 2);
+    fn a_manifest_reads_and_expands_for_its_place() {
+        let manifest = Manifest::read(MANIFEST).unwrap();
+        assert_eq!(manifest.build().len(), 2);
         assert_eq!(
-            contract
+            manifest
                 .packages()
                 .iter()
                 .map(|id| id.as_str())
                 .collect::<Vec<_>>(),
             ["jq", "node"]
         );
-        let serve = contract.serve().unwrap();
+        let serve = manifest.serve().unwrap();
         let expanded = serve.step().expand(&place()).unwrap();
         assert_eq!(
             expanded.argv,
@@ -425,24 +425,24 @@ run = ["./deploy.sh", "{worktree}"]
         );
         assert_eq!(serve.open(&place()).unwrap(), "http://127.0.0.1:20100");
         assert_eq!(serve.health(), "/health");
-        assert_eq!(contract.checks()[0].name(), "tests");
+        assert_eq!(manifest.checks()[0].name(), "tests");
         assert_eq!(
-            contract.quiesce().unwrap().expand(&place()).unwrap().argv[4],
+            manifest.quiesce().unwrap().expand(&place()).unwrap().argv[4],
             "http://127.0.0.1:20100/drain"
         );
         assert_eq!(
-            contract.deploy().unwrap().expand(&place()).unwrap().argv,
+            manifest.deploy().unwrap().expand(&place()).unwrap().argv,
             ["./deploy.sh", "/data/worktrees/acme-web-2"]
         );
-        // A contract may declare as little as nothing.
-        let empty = ProjectContract::read("").unwrap();
+        // A manifest may declare as little as nothing.
+        let empty = Manifest::read("").unwrap();
         assert!(
             empty.serve().is_none() && empty.checks().is_empty() && empty.packages().is_empty()
         );
     }
 
     #[test]
-    fn a_contract_that_cannot_run_is_refused_as_it_is_read() {
+    fn a_manifest_that_cannot_run_is_refused_as_it_is_read() {
         for (text, refused) in [
             ("[[build]]\nrun = []", "empty"),
             ("[[build]]\nrun = [\"make\"]\nshell = true", "unknown field"),
@@ -463,22 +463,22 @@ run = ["./deploy.sh", "{worktree}"]
                 "invalid name",
             ),
         ] {
-            let error = ProjectContract::read(text).unwrap_err();
+            let error = Manifest::read(text).unwrap_err();
             assert!(error.to_string().contains(refused), "{text}: {error}");
         }
         assert!(matches!(
-            ProjectContract::read("[[build]]\nrun = []"),
-            Err(ContractError::EmptyCommand)
+            Manifest::read("[[build]]\nrun = []"),
+            Err(ManifestError::EmptyCommand)
         ));
     }
 
     #[test]
     fn a_port_past_the_place_is_refused_when_expanded() {
-        let contract = ProjectContract::read("[[build]]\nrun = [\"x\", \"{port+100}\"]").unwrap();
-        assert!(contract.build()[0].expand(&place()).is_err());
-        let contract = ProjectContract::read("[[build]]\nrun = [\"x\", \"{port+99}\"]").unwrap();
+        let manifest = Manifest::read("[[build]]\nrun = [\"x\", \"{port+100}\"]").unwrap();
+        assert!(manifest.build()[0].expand(&place()).is_err());
+        let manifest = Manifest::read("[[build]]\nrun = [\"x\", \"{port+99}\"]").unwrap();
         assert_eq!(
-            contract.build()[0].expand(&place()).unwrap().argv[1],
+            manifest.build()[0].expand(&place()).unwrap().argv[1],
             "20199"
         );
     }

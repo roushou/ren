@@ -274,7 +274,7 @@ spec (phase 7):
 6. **Projects.** Built: a project's contract, checks, previews, canary,
    and promotion, shown in the Release view; with no timer of its own.
    - A repository declares in `.ren/project.toml` how it is built, served,
-     checked, and quiesced (`ren-project`, sans-IO): argv steps whose
+     checked, and quiesced (`ren-manifest`, sans-IO): argv steps whose
      values name the worktree's ports, data, and folder through parsed
      placeholders. Its `packages` name the depot packages its steps need;
      every step runs with Ren's current package set first on its `PATH`, and a

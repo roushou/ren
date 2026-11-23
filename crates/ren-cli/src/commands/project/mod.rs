@@ -1,5 +1,5 @@
 //! `ren project`: the projects this host's daemon has registered (`add`,
-//! `list`, `archive`, `unarchive`), and a project's declared contract
+//! `list`, `archive`, `unarchive`), and a project's declared manifest
 //! (`.ren/project.toml`) at work on this host: its checks (`check`), a
 //! preview of a worktree's branch (`preview up`, `preview down`), as Ren's
 //! own (`cargo xtask preview`) runs for Ren, and a registered project's
@@ -12,7 +12,7 @@
 //! view opens the marked page on it. Removing the worktree stops it.
 //!
 //! Every step runs with Ren's package set (`ren packages`) first on its
-//! search path, as Ren's runs do; a package the contract names
+//! search path, as Ren's runs do; a package the manifest names
 //! (`packages`) that the package set or the host lacks refuses the command
 //! before any step runs.
 //!
@@ -37,8 +37,8 @@ use ren_gateway::api::{
 };
 use ren_git::Git;
 use ren_harness::host::HostEnv;
+use ren_manifest::{Expanded, Manifest, Place};
 use ren_network::tailscale::{Cli, PublishError, Route};
-use ren_project::{Expanded, Place, ProjectContract};
 use ren_protocol::label::Stored;
 use ren_recorder::{
     id::WorkItemId,
@@ -176,28 +176,28 @@ impl ProjectCmd {
         }
     }
 
-    pub(super) fn contract(dir: &Path) -> Result<ProjectContract> {
-        let path = dir.join(ProjectContract::FILE);
+    pub(super) fn manifest(dir: &Path) -> Result<Manifest> {
+        let path = dir.join(Manifest::FILE);
         let text = std::fs::read_to_string(&path).with_context(|| {
             format!(
                 "{} declares how Ren builds, serves, and checks a project; none at {}",
-                ProjectContract::FILE,
+                Manifest::FILE,
                 path.display()
             )
         })?;
-        Ok(ProjectContract::read(&text)?)
+        Ok(Manifest::read(&text)?)
     }
 
     fn check(ctx: &Context, args: CheckArgs) -> Result<ExitCode> {
         let place = ProjectPlace::read(&ctx.env, args.dir)?;
-        let contract = Self::contract(&place.place.worktree)?;
-        if contract.checks().is_empty() {
-            println!("{} declares no checks.", ProjectContract::FILE);
+        let manifest = Self::manifest(&place.place.worktree)?;
+        if manifest.checks().is_empty() {
+            println!("{} declares no checks.", Manifest::FILE);
             return Ok(ExitCode::SUCCESS);
         }
-        let steps = Steps::of(ctx, &contract)?;
+        let steps = Steps::of(ctx, &manifest)?;
         let mut failed = Vec::new();
-        for check in contract.checks() {
+        for check in manifest.checks() {
             println!("==> {}", check.name());
             let step = check.step().expand(&place.place)?;
             if !steps.run(&step, &place.place.worktree)? {
@@ -216,15 +216,12 @@ impl ProjectCmd {
     async fn up(ctx: &Context, args: PreviewArgs) -> Result<ExitCode> {
         let place = ProjectPlace::read(&ctx.env, None)?;
         let worktree = place.worktree()?;
-        let contract = Self::contract(&place.place.worktree)?;
-        let serve = contract.serve().with_context(|| {
-            format!(
-                "{} declares no [serve] step to preview",
-                ProjectContract::FILE
-            )
-        })?;
-        let steps = Steps::of(ctx, &contract)?;
-        for step in contract.build() {
+        let manifest = Self::manifest(&place.place.worktree)?;
+        let serve = manifest
+            .serve()
+            .with_context(|| format!("{} declares no [serve] step to preview", Manifest::FILE))?;
+        let steps = Steps::of(ctx, &manifest)?;
+        for step in manifest.build() {
             let step = step.expand(&place.place)?;
             println!("==> {}", step.argv.join(" "));
             if !steps.run(&step, &place.place.worktree)? {
@@ -280,14 +277,14 @@ impl ProjectCmd {
     async fn down(ctx: &Context, args: PreviewArgs) -> Result<ExitCode> {
         let place = ProjectPlace::read(&ctx.env, None)?;
         let worktree = place.worktree()?;
-        let contract = Self::contract(&place.place.worktree)?;
-        if let Some(quiesce) = contract.quiesce() {
+        let manifest = Self::manifest(&place.place.worktree)?;
+        if let Some(quiesce) = manifest.quiesce() {
             let step = quiesce.expand(&place.place)?;
             println!("==> {}", step.argv.join(" "));
-            Steps::of(ctx, &contract)?.run(&step, &place.place.worktree)?;
+            Steps::of(ctx, &manifest)?.run(&step, &place.place.worktree)?;
         }
         Steps::stop(&Self::unit(worktree))?;
-        let port = contract
+        let port = manifest
             .serve()
             .and_then(|serve| serve.open(&place.place).ok())
             .and_then(|open| open.parse::<PreviewUrl>().ok())
@@ -447,11 +444,11 @@ impl ProjectPlace {
 }
 
 impl Steps {
-    /// The steps of `contract` on this host: Ren's current package set
+    /// The steps of `manifest` on this host: Ren's current package set
     /// goes first on their search path. Refused when a package the
-    /// contract names is lacking, or the package set it would come from
+    /// manifest names is lacking, or the package set it would come from
     /// cannot be read.
-    pub(super) fn of(ctx: &Context, contract: &ProjectContract) -> Result<Self> {
+    pub(super) fn of(ctx: &Context, manifest: &Manifest) -> Result<Self> {
         let config = ctx.config()?;
         let store =
             PackageStore::without_downloads(ctx.data_dir(&config)?.join(PackageStore::FOLDER));
@@ -460,7 +457,7 @@ impl Steps {
         };
         let set = match store.current() {
             Ok(set) => set,
-            Err(error) if contract.packages().is_empty() => {
+            Err(error) if manifest.packages().is_empty() => {
                 eprintln!(
                     "Ren's package set does not read ({error}); steps run with your PATH alone."
                 );
@@ -470,7 +467,7 @@ impl Steps {
                 return Err(error).with_context(|| {
                     format!(
                         "{} names packages, and Ren's package set does not read",
-                        ProjectContract::FILE
+                        Manifest::FILE
                     )
                 });
             }
@@ -479,7 +476,7 @@ impl Steps {
         let lacks = set.lacks(
             &config.packages.depot()?,
             &HostPrograms::new(search.clone()),
-            contract.packages(),
+            manifest.packages(),
         );
         if !lacks.is_empty() {
             bail!(Self::lacking(&lacks));
@@ -520,7 +517,7 @@ impl Steps {
             .collect();
         format!(
             "{} names packages its steps cannot have:\n{}",
-            ProjectContract::FILE,
+            Manifest::FILE,
             lines.join("\n")
         )
     }

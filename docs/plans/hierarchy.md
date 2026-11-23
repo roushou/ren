@@ -121,7 +121,7 @@ Records outside the tree stay, and each says why it is outside:
    - Ownership of the types: `ProjectId` joins the other identities in
      `ren-recorder` (`id`). `ProjectName`, `Factory`, and the stored
      project go in a `ren-recorder` `project` module beside `work`, since
-     the store and gateway consume them. `ren-project` stays the contract.
+     the store and gateway consume them. `ren-manifest` (then `ren-project`) stays the manifest.
      Labels (`factory`: `ren`, `contract`) are pinned in `labels.txt`.
    - Migration `0004_projects.sql` adds `projects`. It only adds, so the
      compatibility gate passes without a declaration. Its fixture is pinned
