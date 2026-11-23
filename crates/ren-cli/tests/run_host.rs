@@ -45,7 +45,10 @@ async fn talk(agent: AgentProcess, line: &str) -> String {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_run_host_holds_its_client_while_no_daemon_watches() {
-    let dir = tempfile::tempdir().unwrap();
+    // Under /tmp: a socket's path holds at most 104 bytes on macOS, and its
+    // own temporary folder (`/var/folders/…/T/`) leaves too few for
+    // `runs/<run>/host.sock`.
+    let dir = tempfile::tempdir_in("/tmp").unwrap();
     let held = HeldRuns::new(
         dir.path().join("runs"),
         Launcher::Direct,
