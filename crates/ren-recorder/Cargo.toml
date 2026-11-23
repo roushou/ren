@@ -21,6 +21,7 @@ ren-git.workspace = true
 ren-harness.workspace = true
 ren-network.workspace = true
 ren-protocol.workspace = true
+ren-relay.workspace = true
 ren-release.workspace = true
 serde.workspace = true
 serde_json.workspace = true

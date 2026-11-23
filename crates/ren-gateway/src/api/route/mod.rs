@@ -23,7 +23,7 @@ pub struct ApiRead(pub ReadRequest);
 
 impl ApiRead {
     /// The routes reads are served on, in the router's path syntax.
-    pub(crate) const ROUTES: [&str; 16] = [
+    pub(crate) const ROUTES: [&str; 17] = [
         "/api/calls",
         "/api/calls/{id}",
         "/api/calls/{id}/activity",
@@ -38,6 +38,7 @@ impl ApiRead {
         "/api/runs",
         "/api/runs/{id}",
         "/api/runs/{id}/conversation",
+        "/api/runs/{id}/passages",
         "/api/work",
         "/api/work/{id}",
     ];
@@ -123,6 +124,9 @@ impl ApiRead {
                 format!("/api/runs/{run}/conversation"),
                 QueryParams::default().bodies(*bodies),
             ),
+            ReadRequest::Passages(run) => {
+                (format!("/api/runs/{run}/passages"), QueryParams::default())
+            }
             ReadRequest::WorkItems {
                 limit,
                 shelf,
@@ -209,6 +213,7 @@ impl ApiRead {
                 run: Self::id(run)?,
                 bodies: Self::query::<RawConversationQuery>(uri)?.parse()?,
             },
+            ["runs", run, "passages"] => ReadRequest::Passages(Self::id(run)?),
             ["work"] => {
                 let (limit, shelf, project) = Self::query::<RawShelfQuery>(uri)?.parse()?;
                 ReadRequest::WorkItems {

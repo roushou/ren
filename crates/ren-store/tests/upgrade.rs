@@ -400,6 +400,7 @@ impl Reads {
         assert!(!runs.is_empty(), "runs");
         for run in &runs {
             serve(ReadRequest::Run(run.id)).await;
+            serve(ReadRequest::Passages(run.id)).await;
             serve(ReadRequest::Conversation {
                 run: run.id,
                 bodies: ren_store::query::ItemBodies::Kept,
@@ -485,7 +486,8 @@ impl Reads {
 
 /// What the fixture holds: a session whose run is driven through a turn,
 /// with the turn's model calls (one carrying a secret), a WebSocket call, a
-/// rate-limited call, an interrupted one, a refused one, an image attached,
+/// rate-limited call, an interrupted one, a refused one, where the run
+/// reached through the relay, an image attached,
 /// an operator action, a second run archived, work items, and two
 /// projects, one archived.
 struct Scenario {
@@ -495,6 +497,28 @@ struct Scenario {
 }
 
 impl Scenario {
+    /// A relayed run's ways out: a listed registry reached twice, and an
+    /// unlisted host refused.
+    fn passages(&self, run: RunId) {
+        let registry = || ren_relay::Course::Tunnel {
+            target: "index.crates.io:443".parse().unwrap(),
+            end: ren_relay::TunnelEnd::Closed {
+                through: "index.crates.io:443".parse().unwrap(),
+                sent: 700,
+                received: 5_000,
+            },
+        };
+        self.recorder.passage(run, &registry());
+        self.recorder.passage(run, &registry());
+        self.recorder.passage(
+            run,
+            &ren_relay::Course::Tunnel {
+                target: "example.com:443".parse().unwrap(),
+                end: ren_relay::TunnelEnd::Refused(ren_relay::Refusal::Unlisted),
+            },
+        );
+    }
+
     async fn record(dir: &Path) {
         let clock = Arc::new(ManualClock::at(UnixMillis::from_millis(START)));
         let ids = Arc::new(SequentialIds::default());
@@ -607,6 +631,7 @@ impl Scenario {
             effort: Some(Effort::Medium),
             approvals: Some(ApprovalPolicy::Edits),
         });
+        self.passages(tap.run());
         self.later(1_000);
         self.websocket();
         self.later(1_000);

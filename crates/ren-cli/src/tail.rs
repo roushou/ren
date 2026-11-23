@@ -140,6 +140,7 @@ impl Shown {
                 | ObservationKind::SessionAttachmentsSent
                 | ObservationKind::RunDetached
                 | ObservationKind::RunRejoined
+                | ObservationKind::RunPassed
                 | ObservationKind::WorkQueued
                 | ObservationKind::WorkSent
                 | ObservationKind::WorkLanded

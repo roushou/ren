@@ -14,9 +14,9 @@ use crate::{
     query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange, UsageScope},
     view::{
         AttachmentView, AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView,
-        ChannelView, Columns, DiskUsage, MessageView, OperatorActionView, ProjectActivity,
-        ProjectView, RecordingView, RunView, SessionView, StorageView, UsageGroup, UsageView,
-        WorkItemView,
+        ChannelView, Columns, DiskUsage, MessageView, OperatorActionView, PassageView,
+        ProjectActivity, ProjectView, RecordingView, RunView, SessionView, StorageView, UsageGroup,
+        UsageView, WorkItemView,
     },
     writer::BlobAccess,
 };
@@ -540,6 +540,22 @@ impl Reader {
             .as_ref()
             .map(RunView::from_row)
             .transpose()
+    }
+
+    /// Where `run` reached through the relay, grouped; `None` for a run the
+    /// store does not hold.
+    pub async fn passages(&self, run: RunId) -> Result<Option<Vec<PassageView>>, StoreError> {
+        if self.run(run).await?.is_none() {
+            return Ok(None);
+        }
+        sqlx::query(PassageView::SELECT)
+            .bind(run.to_string())
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(PassageView::from_row)
+            .collect::<Result<_, _>>()
+            .map(Some)
     }
 
     /// The body of `call` in `direction`: the request, or the final attempt's response.

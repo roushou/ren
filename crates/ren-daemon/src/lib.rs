@@ -40,8 +40,11 @@ use ren_release::Build;
 use ren_store::StoreError;
 use ren_store::{Reader, Store, backup::Backup};
 use ren_supervisor::{Supervisor, SupervisorError, SupervisorOptions, SupervisorTask, Warmup};
-use std::{io, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{convert::Infallible, io, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, task::JoinHandle};
+
+/// What the relay reports of each relayed run's requests, as they end.
+type Passages = tokio::sync::mpsc::UnboundedReceiver<Passage<RunId>>;
 
 /// Why the daemon could not start, run, or stop cleanly.
 #[derive(Debug, thiserror::Error)]
@@ -170,7 +173,7 @@ impl Daemon {
         // handed to components as capabilities.
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::start());
         let ids: Arc<dyn IdSource> = Arc::new(RandomIds);
-        let held = Self::held(config, data_dir, address, &ids);
+        let (held, passages) = Self::held(config, data_dir, address, &ids);
         // The runs run hosts kept going are left open, to be taken up.
         let holding: Vec<_> = match &held {
             Some(held) => held
@@ -236,6 +239,9 @@ impl Daemon {
                 return Err(error.into());
             }
         };
+        // Made once nothing can fail before the serving task owns it: it
+        // holds a recorder, which capture waits on to drain.
+        let passing = Self::record_passages(passages, recorder.clone());
         let shutdown = Shutdown::default();
         let controls = Arc::new(Controls::restore(operator));
         let token = ControlToken::generate(ids.as_ref());
@@ -281,26 +287,35 @@ impl Daemon {
             reason = "process wiring: the daemon owns its serving task"
         )]
         let task = tokio::spawn(async move {
-            let serve_result = ingress.serve(stop.clone(), Self::DRAIN_DEADLINE).await;
-            stop.abort();
-            match &serve_result {
-                Ok(Stopped::Drained) => {}
-                Ok(Stopped::Aborted) => {
-                    tracing::warn!("shutdown deadline passed; calls still running were cancelled")
-                }
-                Err(error) => tracing::error!(%error, "HTTP shutdown did not complete"),
-            }
-            // Runs stop once HTTP has, and record their ends before capture
-            // drains.
-            if let Some(task) = runs_task {
-                match tokio::time::timeout(Self::RUNS_DEADLINE, task).await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => tracing::error!(%error, "the supervisor task failed"),
-                    Err(_) => tracing::warn!(
-                        "runs did not stop in time; their ends will be recovered on restart"
+            let stopping = async {
+                let serve_result = ingress.serve(stop.clone(), Self::DRAIN_DEADLINE).await;
+                stop.abort();
+                match &serve_result {
+                    Ok(Stopped::Drained) => {}
+                    Ok(Stopped::Aborted) => tracing::warn!(
+                        "shutdown deadline passed; calls still running were cancelled"
                     ),
+                    Err(error) => tracing::error!(%error, "HTTP shutdown did not complete"),
                 }
-            }
+                // Runs stop once HTTP has, and record their ends before
+                // capture drains.
+                if let Some(task) = runs_task {
+                    match tokio::time::timeout(Self::RUNS_DEADLINE, task).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => tracing::error!(%error, "the supervisor task failed"),
+                        Err(_) => tracing::warn!(
+                            "runs did not stop in time; their ends will be recovered on restart"
+                        ),
+                    }
+                }
+                serve_result
+            };
+            // Passages are recorded while runs go on; once they have
+            // stopped, recording them ends, releasing its recorder.
+            let serve_result = tokio::select! {
+                serve_result = stopping => serve_result,
+                never = passing => match never {},
+            };
             // The server dropped every request owner, so the recorder's senders
             // are closing. Drain accepted capture before releasing the lock.
             let capture_result =
@@ -377,21 +392,28 @@ impl Daemon {
     /// Where runs are held through run hosts, when runs are configured and
     /// held here. A run host runs this same executable. Relayed runs reach
     /// out through the relay this starts, and the gateway at `address`.
+    /// With them, the passages the relay reports, for
+    /// [`Daemon::record_passages`].
     fn held(
         config: &RuntimeConfig,
         data_dir: &std::path::Path,
         address: SocketAddr,
         ids: &Arc<dyn IdSource>,
-    ) -> Option<HeldRuns> {
+    ) -> (Option<HeldRuns>, Option<Passages>) {
         if config.runs().roots.is_empty() {
-            return None;
+            return (None, None);
         }
-        let launcher = config.run_hold()?.clone();
-        let program = std::env::current_exe()
+        let Some(launcher) = config.run_hold().cloned() else {
+            return (None, None);
+        };
+        let Some(program) = std::env::current_exe()
             .inspect_err(
                 |error| tracing::warn!(%error, "runs are not held: no path to this executable"),
             )
-            .ok()?;
+            .ok()
+        else {
+            return (None, None);
+        };
         let root = data_dir.join(HeldRuns::FOLDER);
         let relayed = matches!(
             &launcher,
@@ -399,26 +421,26 @@ impl Daemon {
         );
         let held = HeldRuns::new(root.clone(), launcher, program);
         if !relayed {
-            return Some(held);
+            return (Some(held), None);
         }
         match Self::relaying(&root, address, ids) {
-            Ok(relaying) => Some(held.relaying(relaying)),
+            Ok((relaying, passages)) => (Some(held.relaying(relaying)), Some(passages)),
             Err(error) => {
                 // Its runs are refused as they start, which says why.
                 tracing::error!(%error, "relayed runs cannot reach out: the relay did not start");
-                Some(held)
+                (Some(held), None)
             }
         }
     }
 
     /// The relay relayed runs reach out through, on loopback, and the doors
     /// in `runs` their containers mount: one to the gateway at `gateway`,
-    /// one to the relay. Each passage is logged as it ends.
+    /// one to the relay, and the passages it reports as each ends.
     fn relaying(
         runs: &std::path::Path,
         gateway: SocketAddr,
         ids: &Arc<dyn IdSource>,
-    ) -> std::io::Result<Relaying> {
+    ) -> std::io::Result<(Relaying, Passages)> {
         let relay = Arc::new(Relay::new());
         let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
@@ -427,7 +449,7 @@ impl Daemon {
         let doors = Doors::new(runs);
         let to_gateway = doors.open(Doors::GATEWAY, gateway)?;
         let to_relay = doors.open(Doors::RELAY, relay_address)?;
-        let (sender, mut passages) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, passages) = tokio::sync::mpsc::unbounded_channel();
         let serving = relay.clone();
         #[expect(
             clippy::disallowed_methods,
@@ -441,17 +463,26 @@ impl Daemon {
             });
             tokio::spawn(to_gateway);
             tokio::spawn(to_relay);
-            tokio::spawn(async move {
-                while let Some(passage) = passages.recv().await {
-                    Self::log_passage(&passage);
-                }
-            });
         }
-        Ok(Relaying::new(relay, doors, gateway, ids.clone()))
+        Ok((Relaying::new(relay, doors, gateway, ids.clone()), passages))
     }
 
-    /// A relayed run's passage, in the daemon's log: refusals and failures
-    /// as warnings, so the operator sees what a run could not reach.
+    /// Record each passage the relay reports with its run, and log what a
+    /// run could not reach. Never ends: the daemon drops it once runs stop.
+    async fn record_passages(passages: Option<Passages>, recorder: Recorder) -> Infallible {
+        if let Some(mut passages) = passages {
+            while let Some(passage) = passages.recv().await {
+                Self::log_passage(&passage);
+                recorder.passage(*passage.holder(), passage.course());
+            }
+        }
+        // The relay stopped reporting, or there is none.
+        drop(recorder);
+        std::future::pending().await
+    }
+
+    /// A relayed run's passage, in the daemon's log when it went nowhere:
+    /// as a warning, so the operator sees what a run could not reach.
     fn log_passage(passage: &Passage<RunId>) {
         let run = passage.holder();
         match passage.course() {
@@ -467,13 +498,7 @@ impl Daemon {
                     %run, %target, why = why.label(),
                     "a run's connection could not reach its target"
                 ),
-                TunnelEnd::Closed { sent, received, .. } => tracing::info!(
-                    %run, %target, sent, received,
-                    "a run's connection closed"
-                ),
-                TunnelEnd::Broken { .. } => {
-                    tracing::info!(%run, %target, "a run's connection broke");
-                }
+                TunnelEnd::Closed { .. } | TunnelEnd::Broken { .. } => {}
             },
         }
     }

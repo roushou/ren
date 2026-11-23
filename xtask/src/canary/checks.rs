@@ -204,6 +204,7 @@ impl ReadSweep {
         if let Some(run) = first(runs, "runs", "id") {
             read(format!("/api/runs/{run}"));
             read(format!("/api/runs/{run}/conversation"));
+            read(format!("/api/runs/{run}/passages"));
         }
         swept
     }
@@ -252,6 +253,7 @@ mod tests {
             ReadRequest::Runs { .. } => "/api/runs?",
             ReadRequest::Run(_) => "/api/runs/{run}",
             ReadRequest::Conversation { .. } => "/api/runs/{run}/conversation",
+            ReadRequest::Passages(_) => "/api/runs/{run}/passages",
             ReadRequest::WorkItems { .. } => "/api/work?",
             ReadRequest::WorkItem(_) => "/api/work/{item}",
         }
@@ -268,7 +270,7 @@ mod tests {
             .skip(1)
             .filter_map(|arm| arm.split('"').next())
             .collect();
-        assert_eq!(paths.len(), 16, "one path per read");
+        assert_eq!(paths.len(), 17, "one path per read");
         for path in paths {
             let listed = ReadSweep::LISTINGS
                 .iter()

@@ -446,6 +446,7 @@
     <SessionInspector
       session={chosen}
       recording={current?.recorded?.recording ?? null}
+      runs={session.runs.map((run) => run.id)}
       steps={allSteps}
       project={scope.kind === 'project' ? scope.project.name : null}
       version={settledAt}

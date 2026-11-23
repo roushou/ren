@@ -10,6 +10,7 @@ import * as exit from '../src/lib/exit.ts';
 import * as runs from '../src/lib/runs.ts';
 import * as signIn from '../src/lib/signIn.ts';
 import * as packages from '../src/lib/packages.ts';
+import * as passages from '../src/lib/passages.ts';
 
 /** `<crate> <vocabulary>` → its labels, from every crate's pinned table. */
 const rust = new Map<string, string[]>();
@@ -71,6 +72,7 @@ const ui: [string, readonly string[]][] = [
   ['ren-protocol route::Transport', api.transports],
   ['ren-harness attachment::ImageFormat', attachments.IMAGE_FORMATS],
   ['ren-supervisor ImageTaking', attachments.IMAGE_TAKING],
+  ['ren-recorder passage::PassageEnd', passages.PASSAGE_ENDS],
   ['ren-harness settings::ApprovalPolicy', runs.APPROVAL_POLICIES],
   ['ren-harness commands::CommandKind', runs.COMMAND_KINDS],
   ['ren-harness settings::Effort', runs.EFFORTS],

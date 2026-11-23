@@ -1058,3 +1058,138 @@ async fn a_held_run_is_detached_left_open_and_rejoined() {
         .position(|kind| *kind == Stored::Known(ObservationKind::RunRejoined));
     assert!(detached.is_some() && rejoined > detached, "{kinds:?}");
 }
+
+/// A run recorded with four passages: two closed and one broken to a listed
+/// registry, and one refused.
+fn passages_of(harness: &Harness, run: ren_recorder::id::RunId) {
+    use ren_relay::{Course, Refusal, TunnelEnd};
+    let tap = harness
+        .recorder
+        .run(
+            run,
+            ren_recorder::RunSession::New(ren_recorder::id::SessionId::restore(
+                uuid::Uuid::from_u128(77),
+            )),
+            ren_harness::Harness::Codex,
+            "/work/acme".into(),
+            ren_harness::settings::RunSettings::default(),
+            None,
+        )
+        .unwrap();
+    let registry = |end| Course::Tunnel {
+        target: "registry.acme.dev:443".parse().unwrap(),
+        end,
+    };
+    let through = || "*.acme.dev:443".parse().unwrap();
+    for end in [
+        TunnelEnd::Closed {
+            through: through(),
+            sent: 100,
+            received: 2_000,
+        },
+        TunnelEnd::Closed {
+            through: through(),
+            sent: 50,
+            received: 1_000,
+        },
+        TunnelEnd::Broken { through: through() },
+    ] {
+        harness.recorder.passage(run, &registry(end));
+    }
+    harness.recorder.passage(
+        run,
+        &Course::Tunnel {
+            target: "example.com:443".parse().unwrap(),
+            end: TunnelEnd::Refused(Refusal::Unlisted),
+        },
+    );
+    tap.end(ren_recorder::capture::RunEnd::Exited, None);
+}
+
+#[tokio::test]
+async fn a_runs_passages_read_back_grouped_by_what_was_asked_and_how_it_ended() {
+    use ren_recorder::passage::PassageEnd;
+    let harness = Harness::new(CaptureOptions::default(), 8).await;
+    let run = ren_recorder::id::RunId::restore(uuid::Uuid::from_u128(7));
+    passages_of(&harness, run);
+    let (_dir, _, reader) = harness.drain().await;
+    let read: Vec<_> = reader
+        .passages(run)
+        .await
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .map(|passage| {
+            (
+                passage.asked,
+                passage.end,
+                passage.through,
+                passage.count,
+                passage.sent,
+                passage.received,
+            )
+        })
+        .collect();
+    let registry = "registry.acme.dev:443".to_owned();
+    let through = Some("*.acme.dev:443".to_owned());
+    // All at one moment: by what was asked, then how it ended.
+    assert_eq!(
+        read,
+        [
+            (
+                "example.com:443".to_owned(),
+                Stored::Known(PassageEnd::Unlisted),
+                None,
+                1,
+                0,
+                0
+            ),
+            (
+                registry.clone(),
+                Stored::Known(PassageEnd::Broken),
+                through.clone(),
+                1,
+                0,
+                0
+            ),
+            (
+                registry,
+                Stored::Known(PassageEnd::Closed),
+                through,
+                2,
+                150,
+                3_000
+            ),
+        ]
+    );
+    let unknown = ren_recorder::id::RunId::restore(uuid::Uuid::from_u128(8));
+    assert_eq!(reader.passages(unknown).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_deleted_run_takes_its_passages() {
+    use ren_recorder::batch::{Actor, HistoryChange, HistorySubject};
+    let harness = Harness::new(CaptureOptions::default(), 8).await;
+    let run = ren_recorder::id::RunId::restore(uuid::Uuid::from_u128(7));
+    passages_of(&harness, run);
+    harness.recorder.history_slot().unwrap().record(
+        Actor::Ren,
+        HistorySubject::Run(run),
+        HistoryChange::Delete,
+    );
+    let (dir, _, reader) = harness.drain().await;
+    assert_eq!(reader.passages(run).await.unwrap(), None);
+    reader.close().await;
+    assert_eq!(
+        count(dir.path(), "SELECT COUNT(*) FROM run_passages").await,
+        0
+    );
+    assert_eq!(
+        count(
+            dir.path(),
+            "SELECT COUNT(*) FROM observations WHERE kind = 'run_passed'"
+        )
+        .await,
+        0
+    );
+}

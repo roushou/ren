@@ -610,19 +610,35 @@ spec (phase 7):
       the internet nor the host's other listeners. The run outlived a
       restart of the daemon's container, which issued its pass again: it
       reached the registry and took a second turn.
+    - Built: passages recorded. The daemon hands each `Passage` the relay
+      reports to the recorder (`Recorder::passage`), which records it as a
+      run fact (`RunFact::Passed`, a `PassageRecord`: what was asked, how
+      it ended as one `PassageEnd`, through which destination, and the
+      bytes of one that closed); the store keeps it in `run_passages`
+      (migration 0007), deleted with its run, and serves a run's passages
+      grouped by what was asked and how it ended
+      (`/api/runs/{id}/passages`). A session's inspector lists where its
+      runs reached ("Reached"), refusals first. Refusals are still logged
+      as warnings; what closed is only recorded.
+    - Verified in the dev slot (`--contain all`): through a run's pass,
+      the listed registry twice, two unlisted hosts, and a plain `GET`
+      were recorded and read back grouped; the session's inspector listed
+      the three refusals first and the registry with its count.
+    - Deviation: shown on the session's page, not a run's: the UI shows a
+      session with its runs, so the inspector merges its runs' passages.
     - Deviation: `[runs.container] reach`, not `[runs.reach]`: only a
       container's run is relayed, so what it reaches is the container's
       setting.
     - Not yet: a relayed run cannot push over SSH (grants come next);
       Claude Code, Codex, Pi, and opencode have not been driven relayed,
       and what each connects to itself is declared from their sign-in
-      flows, not observed; passages are logged, not recorded.
+      flows, not observed.
     - Deviation: `Purpose` is not the relay's. The relay records the
       destination that admitted a tunnel; why it is listed belongs to where
       it is listed (`[runs.reach]`, a manifest), so `ren-sandbox` keeps it.
     - Order: the relay and the private network first (the largest gain,
       and the gateway already carries the model calls), then passages on
-      the run's page, then grants, then the runtime. Each lands on its own
+      the run's page (done), then grants, then the runtime. Each lands on its own
       and is verified in the dev slot before production.
     - Not decided: the client's own sign-in. A run mounts its client's
       sign-in folder read-write, so it holds a credential that outlives it.

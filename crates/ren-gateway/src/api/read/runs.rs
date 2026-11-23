@@ -12,6 +12,7 @@ use ren_recorder::capture::RunEnd;
 use ren_recorder::id::RecordingId;
 use ren_recorder::id::RunId;
 use ren_recorder::id::SessionId;
+use ren_recorder::passage::PassageEnd;
 use ren_recorder::time::UnixMillis;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -74,6 +75,63 @@ impl From<ren_store::view::RunEntryView> for RunEntryView {
             started_at,
             turn,
             event: event.into(),
+        }
+    }
+}
+
+/// A relayed run's passages through the relay, newest first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Passages {
+    pub passages: Vec<PassageView>,
+}
+
+/// Where a run reached through the relay: what it asked for, how those
+/// requests ended, and how many.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PassageView {
+    /// A tunnel's `host:port`, or the method of a request that was not one.
+    pub asked: String,
+    /// A `passage_end` label: `closed`, `broken`, a refusal (`unlisted`,
+    /// `private_address`, `not_a_tunnel`), or why it was not reached
+    /// (`unresolved`, `connect_refused`, `timed_out`).
+    #[ts(as = "String")]
+    pub end: Stored<PassageEnd>,
+    /// The listed destination that let it through, last time; `None` when
+    /// it was refused.
+    pub through: Option<String>,
+    pub count: u64,
+    /// Bytes each way over the ones that closed.
+    pub sent: u64,
+    pub received: u64,
+    #[ts(as = "u64")]
+    pub first_at: UnixMillis,
+    #[ts(as = "u64")]
+    pub last_at: UnixMillis,
+}
+
+impl From<ren_store::view::PassageView> for PassageView {
+    fn from(value: ren_store::view::PassageView) -> Self {
+        let ren_store::view::PassageView {
+            asked,
+            end,
+            through,
+            count,
+            sent,
+            received,
+            first_at,
+            last_at,
+        } = value;
+        Self {
+            asked,
+            end,
+            through,
+            count,
+            sent,
+            received,
+            first_at,
+            last_at,
         }
     }
 }

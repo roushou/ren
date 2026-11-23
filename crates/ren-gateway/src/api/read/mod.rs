@@ -1,5 +1,6 @@
 //! The read API's bodies: what `/api/calls`, `/api/recordings`, `/api/turns`,
-//! `/api/usage`, `/api/search`, `/api/exposures`, `/api/runs`, and
+//! `/api/usage`, `/api/search`, `/api/exposures`, `/api/runs` (with a run's
+//! conversation and passages), and
 //! `/api/work` send.
 //!
 //! These types are the API's contract. Each is converted once from the store
@@ -26,7 +27,7 @@ use calls::{CallDetail, CallPage};
 use recordings::RecordingView;
 use ren_store::read::{ReadRequest, ReadResponse};
 use report::RecordingReport;
-use runs::{ConversationView, RunView};
+use runs::{ConversationView, Passages, RunView};
 use search::{ExposureView, SearchPage};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -52,6 +53,7 @@ pub enum ReadBody {
     Runs(Runs),
     Run(Box<RunView>),
     Conversation(ConversationView),
+    Passages(Passages),
     WorkItems(WorkItems),
     WorkItem(Box<WorkItemView>),
 }
@@ -110,6 +112,9 @@ impl From<ReadResponse> for ReadBody {
             }),
             ReadResponse::Run(run) => Self::Run(Box::new((*run).into())),
             ReadResponse::Conversation(conversation) => Self::Conversation(conversation.into()),
+            ReadResponse::Passages { passages } => Self::Passages(Passages {
+                passages: passages.into_iter().map(Into::into).collect(),
+            }),
             ReadResponse::WorkItems { work } => Self::WorkItems(WorkItems {
                 work: work.into_iter().map(Into::into).collect(),
             }),
@@ -141,6 +146,7 @@ impl ReadBody {
             ReadRequest::Runs { .. } => Self::Runs(serde_json::from_value(body)?),
             ReadRequest::Run(_) => Self::Run(serde_json::from_value(body)?),
             ReadRequest::Conversation { .. } => Self::Conversation(serde_json::from_value(body)?),
+            ReadRequest::Passages(_) => Self::Passages(serde_json::from_value(body)?),
             ReadRequest::WorkItems { .. } => Self::WorkItems(serde_json::from_value(body)?),
             ReadRequest::WorkItem(_) => Self::WorkItem(serde_json::from_value(body)?),
         })

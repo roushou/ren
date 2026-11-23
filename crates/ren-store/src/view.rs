@@ -37,6 +37,7 @@ use ren_recorder::{
         AttachmentId, AttemptId, CallId, ChannelId, ProjectId, RecordingId, RunId, SessionId,
         TurnId, WorkItemId,
     },
+    passage::PassageEnd,
     project::{Factory, ProjectName, RepositoryPath},
     time::UnixMillis,
     work::{WorkOrder, WorkPreview, WorkState, WorkStateKind},
@@ -734,6 +735,43 @@ pub struct HistoryTarget {
     pub open_calls: u64,
     /// Its runs that have not ended.
     pub running_runs: u64,
+}
+
+/// Where a run reached through the relay: what it asked for, how those
+/// requests ended, and how many, newest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PassageView {
+    /// A tunnel's `host:port`, or the method of a request that was not one.
+    pub asked: String,
+    pub end: Stored<PassageEnd>,
+    /// The listed destination that let it through, last time; `None` when
+    /// it was refused.
+    pub through: Option<String>,
+    pub count: u64,
+    /// Bytes each way over the ones that closed.
+    pub sent: u64,
+    pub received: u64,
+    pub first_at: UnixMillis,
+    pub last_at: UnixMillis,
+}
+
+impl PassageView {
+    /// A run's passages, grouped by what was asked and how it ended.
+    pub(super) const SELECT: &'static str = "SELECT asked, end, MAX(through) AS through, COUNT(*) AS count, COALESCE(SUM(sent), 0) AS sent, COALESCE(SUM(received), 0) AS received, MIN(at) AS first_at, MAX(at) AS last_at FROM run_passages WHERE run = ? GROUP BY asked, end ORDER BY last_at DESC, asked, end";
+
+    pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
+        let row = Columns(row);
+        Ok(Self {
+            asked: row.text("asked")?.ok_or(StoreError::Corrupt("passage"))?,
+            end: row.label("end")?,
+            through: row.text("through")?,
+            count: row.count("count")?,
+            sent: row.count("sent")?,
+            received: row.count("received")?,
+            first_at: row.time("first_at")?,
+            last_at: row.time("last_at")?,
+        })
+    }
 }
 
 /// One agent run, as recorded.

@@ -26,6 +26,7 @@ pub mod inspection;
 mod item;
 mod metrics;
 mod options;
+pub mod passage;
 pub mod progress;
 pub mod project;
 #[cfg(test)]
@@ -213,6 +214,26 @@ impl Recorder {
     /// recorder has no room.
     pub fn project_slot(&self) -> Option<ProjectSlot> {
         ProjectSlot::reserve(self.shared.clone())
+    }
+
+    /// Record what became of one request `run` made of the relay. Never
+    /// blocks: without room it is counted as unrecorded.
+    pub fn passage(&self, run: crate::id::RunId, course: &ren_relay::Course) {
+        match self.shared.reserve_close() {
+            Some((slot, permit)) => {
+                slot.send(item::Item::Run {
+                    record: batch::RunRecord {
+                        at: self.shared.clock.now(),
+                        run,
+                        fact: batch::RunFact::Passed {
+                            passage: passage::PassageRecord::of(course),
+                        },
+                    },
+                    _slot: permit,
+                });
+            }
+            None => self.shared.counters.omit(capture::Omission::Unrecorded, 1),
+        }
     }
 
     /// Record the start of `run`, serving `session` (recorded first when it

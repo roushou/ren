@@ -269,7 +269,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the `Reachable` addresses (a name only at a `PublicAddress`), and the
   `Answer`. `Relay::serve` is the shell: it drives every request in its
   own future (no spawned task), passes an admitted tunnel's bytes through
-  unread, and reports a `Passage` once it ends.
+  unread, and reports a `Passage` once it ends, which the daemon records
+  with its run (`ren_recorder::passage`).
 - `crates/ren-github`: a self-contained GitHub client for a repository's
   pull requests, with `Client` as its primary type
   (docs/plans/self-build.md, phase 8). It depends on none of Ren's crates
@@ -406,7 +407,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `src/purity.rs` keeps the pure modules free of runtime and I/O. Omissions are counted by reason in
   `RecorderMetrics`, readable after shutdown through `RecorderMeter`. It also
   owns what is recorded: Ren's identities and `IdSource` (`id`), `Clock`
-  (`time`), terminals and other recorded facts (`capture`), routing facts and
+  (`time`), terminals and other recorded facts (`capture`), what a relayed run
+  reached through the relay (`passage`: `PassageRecord`, read once from
+  `ren-relay`'s `Course`, and its `PassageEnd`), routing facts and
   `OperatorRevision` (`routing`), who called (`caller`: `UserId` and
   `Caller`, with `ren-network`'s `Login`), work items (`work`, pure: `WorkOrder`, what
   was marked, checked by `WorkOrder::checked`, and the `WorkState` machine,
@@ -430,7 +433,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   serves (`runs.operator_session`); `Reader::sessions` and `Reader::session`
   read them with their runs (`SessionView`); a session's attachments are in
   `attachments` (`Reader::attachments`), their files in the daemon's data folder. Each driven run's conversation is in `run_entries`, whole, and
-  `Reader::conversation` reads it across the runs on one client thread. It
+  `Reader::conversation` reads it across the runs on one client thread; what a
+  relayed run reached through the relay is in `run_passages`
+  (`Reader::passages`, grouped by what was asked and how it ended). It
   contains typed query parameters and read views, turn and call
   activity assembled from the calls' stored digests (`activity`, with the
   recording context and cost report in `activity::report`), the full-text search
