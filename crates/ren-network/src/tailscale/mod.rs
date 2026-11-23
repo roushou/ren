@@ -1,12 +1,52 @@
-//! What Tailscale reports, pure: the node's state and name (`tailscale
-//! status --json`) and how a Serve port is routed (`tailscale serve status
+//! Tailscale: the login Serve names a request's caller by
+//! (`Tailscale-User-Login`), the node's state and name (`tailscale status
+//! --json`), and how a Serve port is routed (`tailscale serve status
 //! --json`), read only as far as publishing a local listener on the tailnet
-//! needs. Running `tailscale` is the caller's: xtask publishes the gateway,
-//! the UI, the canary, and previews; `ren project preview` a project's.
+//! needs; and running `tailscale` for them ([`Cli`]): xtask publishes the
+//! gateway, the UI, the canary, and previews; `ren project preview` a
+//! project's.
+
+mod cli;
+pub use cli::{Change, Cli, CliError, Publication, PublishError};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_with::DeserializeFromStr;
 use std::{collections::BTreeMap, fmt};
+
+/// A tailnet login name, as Tailscale Serve reports it in
+/// `Tailscale-User-Login`: 1 to 256 visible ASCII characters.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, DeserializeFromStr)]
+#[serde(transparent)]
+pub struct Login(Box<str>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("Tailscale logins are 1 to 256 visible ASCII characters")]
+pub struct InvalidLogin;
+
+impl Login {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::str::FromStr for Login {
+    type Err = InvalidLogin;
+
+    fn from_str(login: &str) -> Result<Self, Self::Err> {
+        if (1..=256).contains(&login.len()) && login.bytes().all(|byte| byte.is_ascii_graphic()) {
+            Ok(Self(login.into()))
+        } else {
+            Err(InvalidLogin)
+        }
+    }
+}
+
+impl fmt::Display for Login {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// The node's connection state and name (`tailscale status --json`).
 #[derive(Deserialize)]
@@ -169,7 +209,7 @@ impl fmt::Display for Route {
 
 #[cfg(test)]
 mod tests {
-    use super::{NodeStatus, Route, ServeStatus};
+    use super::{Login, NodeStatus, Route, ServeStatus};
 
     const TARGET: &str = "http://127.0.0.1:8787";
 
@@ -241,5 +281,13 @@ mod tests {
         let down = NodeStatus::parse(r#"{"BackendState":"NeedsLogin","Self":null}"#).unwrap();
         assert_eq!(down.not_running(), Some("NeedsLogin"));
         assert_eq!(down.dns_name(), None);
+    }
+
+    #[test]
+    fn logins_parse_only_their_grammar() {
+        assert!("alice@example.com".parse::<Login>().is_ok());
+        for bad in ["", "a b", "é", &"a".repeat(257)] {
+            assert!(bad.parse::<Login>().is_err(), "{bad:?}");
+        }
     }
 }

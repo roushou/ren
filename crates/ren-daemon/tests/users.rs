@@ -16,9 +16,10 @@ use ren_daemon::config::{Config, UpstreamConfig};
 use ren_gateway::EntryIngress;
 use ren_gateway::user::{TokenDigest, UserConfig, Users};
 use ren_harness::endpoint::UserToken;
+use ren_network::tailscale::Login;
 use ren_protocol::{label::Stored, route::Provider};
 use ren_recorder::{
-    caller::{CallerKind, TailscaleLogin, UserId},
+    caller::{CallerKind, UserId},
     capture::CallRejection,
     id::SequentialIds,
     routing::UpstreamId,
@@ -55,7 +56,7 @@ fn config(mock: &Mock, tokens: &Tokens) -> Config {
         users: vec![
             UserConfig {
                 id: "alice".parse::<UserId>().unwrap(),
-                tailscale_logins: vec!["alice@example.com".parse::<TailscaleLogin>().unwrap()],
+                tailscale_logins: vec!["alice@example.com".parse::<Login>().unwrap()],
                 token_blake3: None,
                 max_concurrent: None,
             },

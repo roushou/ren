@@ -12,10 +12,11 @@ use crate::{
     daemon_container::{Contain, DaemonContainer},
     invocation::{Echo, Invocation, InvocationError},
     pod::Pod,
-    tailscale::{TailscaleCli, TailscaleError},
+    tailscale::{Tailnet, TailscaleError},
     ui::UiBuild,
     unit::{KillMode, Listener, TransientUnit},
 };
+use ren_container::Engine;
 use ren_daemon::config::{
     Config, GithubOptions, RunContainerOptions, RunHold, RunsOptions, UpstreamConfig,
     WatchedRepository,
@@ -27,11 +28,9 @@ use ren_gateway::{
 };
 use ren_git::{Author, Git, Repository};
 use ren_harness::{endpoint::UserToken, host::HostEnv};
+use ren_network::tailscale::Login;
 use ren_protocol::route::{Provider, Wire};
-use ren_recorder::{
-    caller::{TailscaleLogin, UserId},
-    routing::UpstreamId,
-};
+use ren_recorder::{caller::UserId, routing::UpstreamId};
 use std::{
     fs,
     net::SocketAddr,
@@ -110,7 +109,7 @@ pub struct RunWait {
 #[derive(Debug, Clone, Copy)]
 pub enum Preview {
     /// Published on the tailnet with Tailscale Serve.
-    Tailnet(TailscaleCli),
+    Tailnet(Tailnet),
     /// Only on this host's loopback.
     Local,
 }
@@ -216,7 +215,7 @@ impl Slot {
         let id = |text: &str| text.parse::<UpstreamId>().map_err(|_| DevError::Config);
         let user = |text: &str| text.parse::<UserId>().map_err(|_| DevError::Config);
         let login = "alice@example.com"
-            .parse::<TailscaleLogin>()
+            .parse::<Login>()
             .map_err(|_| DevError::Config)?;
         Ok(Config {
             listen: Self::DAEMON,
@@ -642,7 +641,12 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                     vars,
                 )?;
                 Progress(&format!("In container {}", container.name())).show();
-                Unit::Daemon.start(None, &[Path::new("podman")], &container.run_args(), &[])?;
+                Unit::Daemon.start(
+                    None,
+                    &[Path::new(Engine::Podman.program())],
+                    &container.run_args(),
+                    &[],
+                )?;
             }
         }
         Self::wait_for(Self::DAEMON, "/health")?;
@@ -763,10 +767,7 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                 .succeeds(Echo::Hide)?;
             // A run host in a container: removing it stops it. Without
             // Podman there is no container to remove.
-            if let Err(error) = Invocation::new("podman")
-                .args(["rm", "--force", "--ignore", &HeldRuns::unit(run)])
-                .succeeds(Echo::Hide)
-            {
+            if let Err(error) = Engine::Podman.remove_container(&HeldRuns::unit(run)) {
                 println!("warning: run {run}'s container was not removed: {error}");
             }
         }
@@ -775,7 +776,7 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
 
     /// Remove the dev preview's Serve routes, each only if it still proxies
     /// to the slot; the installed service's routes are never touched.
-    pub fn unpublish(tailscale: TailscaleCli) -> Result<(), DevError> {
+    pub fn unpublish(tailscale: Tailnet) -> Result<(), DevError> {
         Ok(tailscale.unpublish(&[
             (Self::GATEWAY_PORT, format!("http://{}", Self::DAEMON)),
             (Self::UI_PORT, format!("http://{}", Self::UI)),

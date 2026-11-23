@@ -11,12 +11,13 @@ use crate::{
     dev::{DevError, slot::Slot},
     file::{FileError, FileMode},
     invocation::{Echo, Invocation, InvocationError},
-    pod::{Access, Container, Mount, Pod},
+    pod::{Container, Pod},
     progress::Progress,
-    tailscale::{TailscaleCli, TailscaleError},
+    tailscale::{Tailnet, TailscaleError},
     ui::{UiBuild, UiBuildError},
     unit::{KillMode, Listener, TransientUnit},
 };
+use ren_container::{Access, Mount};
 use ren_daemon::config::{Config, ConfigError, GithubOptions, RunsOptions};
 use ren_gateway::preview::{PreviewRequests, Previews, Slot as PreviewSlot};
 use ren_gateway::{
@@ -103,6 +104,8 @@ pub enum ReplicaError {
     WorkAnswer(String),
     #[error(transparent)]
     Invocation(#[from] InvocationError),
+    #[error(transparent)]
+    Engine(#[from] ren_container::EngineError),
     #[error(transparent)]
     File(#[from] FileError),
     #[error(transparent)]
@@ -589,7 +592,7 @@ impl Replica {
         ren: &Path,
         ui_dir: &Path,
         keys: &[String],
-        publish: Option<(TailscaleCli, u16, u16)>,
+        publish: Option<(Tailnet, u16, u16)>,
     ) -> Result<Reached, ReplicaError> {
         Pod::ensure_image(repo)?;
         self.stop_units()?;
@@ -719,11 +722,7 @@ impl Replica {
 
     /// Removes its Serve routes on `ports` (the gateway's, then the UI's),
     /// each only while it still points at this replica.
-    pub fn unpublish(
-        &self,
-        tailscale: TailscaleCli,
-        ports: (u16, u16),
-    ) -> Result<(), ReplicaError> {
+    pub fn unpublish(&self, tailscale: Tailnet, ports: (u16, u16)) -> Result<(), ReplicaError> {
         Ok(tailscale.unpublish(&[
             (ports.0, format!("http://{}", self.daemon)),
             (ports.1, format!("http://{}", self.ui)),

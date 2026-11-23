@@ -1,12 +1,14 @@
 [workspace]
 members = [
   "crates/ren-cli",
+  "crates/ren-container",
   "crates/ren-daemon",
   "crates/ren-depot",
   "crates/ren-gateway",
   "crates/ren-git",
   "crates/ren-github",
   "crates/ren-harness",
+  "crates/ren-network",
   "crates/ren-project",
   "crates/ren-protocol",
   "crates/ren-recorder",
@@ -18,12 +20,14 @@ members = [
 # xtask (repository tasks) builds only when asked for.
 default-members = [
   "crates/ren-cli",
+  "crates/ren-container",
   "crates/ren-daemon",
   "crates/ren-depot",
   "crates/ren-gateway",
   "crates/ren-git",
   "crates/ren-github",
   "crates/ren-harness",
+  "crates/ren-network",
   "crates/ren-project",
   "crates/ren-protocol",
   "crates/ren-recorder",
@@ -58,12 +62,14 @@ http = "1.5"
 http-body = "1.1"
 http-body-util = "0.1.5"
 proptest = { version = "1", default-features = false, features = ["std"] }
+ren-container = { path = "crates/ren-container", version = "0.1.0" }
 ren-daemon = { path = "crates/ren-daemon", version = "0.1.0" }
 ren-depot = { path = "crates/ren-depot", version = "0.1.0" }
 ren-gateway = { path = "crates/ren-gateway", version = "0.1.0" }
 ren-git = { path = "crates/ren-git", version = "0.1.0" }
 ren-github = { path = "crates/ren-github", version = "0.1.0" }
 ren-harness = { path = "crates/ren-harness", version = "0.1.0" }
+ren-network = { path = "crates/ren-network", version = "0.1.0" }
 ren-project = { path = "crates/ren-project", version = "0.1.0" }
 ren-protocol = { path = "crates/ren-protocol", version = "0.1.0" }
 ren-recorder = { path = "crates/ren-recorder", version = "0.1.0" }

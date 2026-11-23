@@ -21,7 +21,8 @@ pub mod frame;
 mod link;
 mod serve;
 
-pub use container::{Access, Mount, PodmanReach, RunContainers};
+pub use container::RunContainers;
+use ren_container::{Engine, EngineError, Launch, Reach};
 pub use serve::RunHost;
 
 use container::RunNeeds;
@@ -369,32 +370,33 @@ impl HeldRuns {
                     io::Error::other("a run host in a container was started without its needs")
                 })?;
                 let container = containers.container(run, needs);
-                let (program, args) = container.start();
-                let mut podman = std::process::Command::new(program);
-                podman.args(args);
-                if container.through_socket() {
-                    // In a container, the home's folders and the runtime
-                    // folder are made for its mounts and are not the
-                    // operator's, which the Podman client refuses: it keeps
-                    // its settings and runtime files here instead.
-                    let settings = self.root.join(Self::PODMAN_SETTINGS);
-                    let runtime = settings.join("run");
-                    Self::private_dir(&settings)?;
-                    Self::private_dir(&runtime)?;
-                    podman
-                        .env("XDG_CONFIG_HOME", settings)
-                        .env("XDG_RUNTIME_DIR", runtime);
-                }
-                let output = podman.stdin(std::process::Stdio::null()).output()?;
-                if output.status.success() {
-                    Ok(())
-                } else {
-                    Err(io::Error::other(format!(
-                        "podman could not start the run host {}: {}",
-                        container.name(),
-                        String::from_utf8_lossy(&output.stderr).trim()
-                    )))
-                }
+                let launch = match container.reach() {
+                    Reach::Scope => Launch::Scope {
+                        unit: container.name().to_owned(),
+                    },
+                    Reach::Socket(socket) => {
+                        // In a container, the home's folders and the runtime
+                        // folder are made for its mounts and are not the
+                        // operator's, which the Podman client refuses: it keeps
+                        // its settings and runtime files here instead.
+                        let settings = self.root.join(Self::PODMAN_SETTINGS);
+                        Self::private_dir(&settings)?;
+                        Self::private_dir(&settings.join("run"))?;
+                        Launch::Socket {
+                            socket: socket.clone(),
+                            settings: Some(settings),
+                        }
+                    }
+                };
+                Engine::Podman
+                    .start(container.spec(), &launch)
+                    .map_err(|error| match error {
+                        EngineError::Spawn { source, .. } => source,
+                        EngineError::Failed { stderr, .. } => io::Error::other(format!(
+                            "podman could not start the run host {}: {stderr}",
+                            container.name(),
+                        )),
+                    })
             }
             Launcher::Direct => {
                 use std::os::unix::process::CommandExt as _;

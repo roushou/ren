@@ -12,7 +12,7 @@ mod work;
 use crate::daemon_container::Contain;
 use crate::file::FileError;
 use crate::invocation::InvocationError;
-use crate::tailscale::{TailscaleCli, TailscaleError};
+use crate::tailscale::{Tailnet, TailscaleError};
 use crate::{
     daemon::{RunPolicy, StillBusy},
     install::publish::{Publish, PublishError},
@@ -24,6 +24,7 @@ use agent::{
 use clap::{Args, Subcommand};
 use provider::{FakeProvider, ProviderError};
 use ren_harness::host::HostEnv;
+use ren_network::tailscale::Cli;
 use seed::{Scenario, SeedError, Seeder};
 use shot::{Camera, Page};
 use slot::{Preview, RunWait, Slot};
@@ -133,15 +134,15 @@ struct TailnetArgs {
 
 impl TailnetArgs {
     /// How to run `tailscale`: as asked, else as install-vps last did.
-    fn cli(&self, env: &HostEnv) -> Result<TailscaleCli, DevError> {
+    fn cli(&self, env: &HostEnv) -> Result<Tailnet, DevError> {
         let home = env
             .absolute_path("HOME")
             .ok_or(DevError::MissingEnv("HOME"))?;
         let saved = Publish::default().resolve(&Publish::path(&home))?;
         Ok(if self.sudo_tailscale || saved.sudo_tailscale {
-            TailscaleCli::Sudo
+            Tailnet::new(Cli::Sudo)
         } else {
-            TailscaleCli::Direct
+            Tailnet::new(Cli::Direct)
         })
     }
 }
@@ -229,6 +230,8 @@ pub enum DevError {
     Ui(#[from] UiBuildError),
     #[error(transparent)]
     Invocation(#[from] InvocationError),
+    #[error(transparent)]
+    Engine(#[from] ren_container::EngineError),
     #[error(transparent)]
     File(#[from] FileError),
     #[error(transparent)]

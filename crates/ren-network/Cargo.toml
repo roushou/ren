@@ -1,0 +1,21 @@
+[package]
+name = "ren-network"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The network the Ren LLM gateway is reached through: the logins Tailscale vouches for, its reports, and publishing a listener with Serve."
+
+# What the network reports and vouches for, parsed purely, and the one place
+# Ren runs `tailscale`. It performs process I/O, but has no async runtime,
+# HTTP, database, or CLI dependency.
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_with.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

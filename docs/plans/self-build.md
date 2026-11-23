@@ -496,7 +496,7 @@ spec (phase 7):
       by `install-vps --contain all` as `ren.service`'s foreground
       `podman run`, or as the dev slot's daemon unit. It starts its runs'
       containers through the operator's Podman API socket
-      (`[runs.container] podman_socket`, `PodmanReach::Socket`), whose
+      (`[runs.container] podman_socket`, `ren_container::Reach::Socket`), whose
       service watches them apart from the daemon. The install's pause and
       backup talk to the running daemon with the build being installed.
     - Deviation: no pod. The daemon and the UI are each one container that

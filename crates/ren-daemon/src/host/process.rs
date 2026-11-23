@@ -4,6 +4,7 @@
 
 use super::HeldRuns;
 use crate::packages::PackageStore;
+use ren_container::Engine;
 use ren_depot::package_set::Generation;
 use ren_git::{Git, GitError, Head, Repository};
 use ren_harness::{launch::LaunchPlan, pi::PiCache, sign_in::LocalRedirect};
@@ -666,26 +667,17 @@ impl ProcessHost {
         reason = "stopping a removed worktree's preview, by its exact names"
     )]
     fn stop_preview(worktree: &Worktree) {
-        let commands = [
-            (
-                "podman",
-                vec![
-                    "pod".to_owned(),
-                    "rm".to_owned(),
-                    "--force".to_owned(),
-                    "--ignore".to_owned(),
-                    worktree.preview_pod(),
-                ],
-            ),
-            (
-                "systemctl",
-                vec![
-                    "--user".to_owned(),
-                    "stop".to_owned(),
-                    worktree.preview_unit(),
-                ],
-            ),
-        ];
+        if let Err(error) = Engine::Podman.remove_pod(&worktree.preview_pod(), None) {
+            tracing::debug!(%error, "nothing to stop a worktree's preview pod with");
+        }
+        let commands = [(
+            "systemctl",
+            vec![
+                "--user".to_owned(),
+                "stop".to_owned(),
+                worktree.preview_unit(),
+            ],
+        )];
         for (program, args) in commands {
             let stopped = std::process::Command::new(program)
                 .args(args)

@@ -5,9 +5,10 @@
 use super::{MetadataTx, StoredChunk};
 use crate::StoreError;
 use crate::millis::SqlMillis;
+use ren_network::tailscale::Login;
 use ren_protocol::{direction::Direction, label::Labeled, route::Transport};
 use ren_recorder::Observation;
-use ren_recorder::caller::{TailscaleLogin, UserId};
+use ren_recorder::caller::UserId;
 use ren_recorder::digest::CallDigest;
 use ren_recorder::{
     batch::{
@@ -184,7 +185,7 @@ impl MetadataTx<'_> {
             .bind(open.plan.as_ref().map(|plan| plan.as_str()))
             .bind(open.caller.kind().label())
             .bind(open.caller.user().map(UserId::as_str))
-            .bind(open.caller.login().map(TailscaleLogin::as_str))
+            .bind(open.caller.login().map(Login::as_str))
             .execute(&mut *self.tx)
             .await?;
         self.open_body(BodyKey::Request(stamp.call)).await?;

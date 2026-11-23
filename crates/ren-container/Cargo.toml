@@ -1,0 +1,18 @@
+[package]
+name = "ren-container"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Containers as the Ren LLM gateway runs them: what a container sees and how it lives, and running the engine that starts it."
+
+# A container's specification and the engine's arguments for it, pure, and
+# the one place Ren runs the container engine. It performs process I/O, but
+# has no async runtime, HTTP, database, or CLI dependency.
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

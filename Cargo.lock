@@ -1768,6 +1768,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "ren-container"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "ren-daemon"
 version = "0.1.0"
 dependencies = [
@@ -1781,11 +1788,13 @@ dependencies = [
  "http-body-util",
  "ignore",
  "pty-process",
+ "ren-container",
  "ren-depot",
  "ren-gateway",
  "ren-git",
  "ren-github",
  "ren-harness",
+ "ren-network",
  "ren-protocol",
  "ren-recorder",
  "ren-release",
@@ -1844,6 +1853,7 @@ dependencies = [
  "ren-git",
  "ren-github",
  "ren-harness",
+ "ren-network",
  "ren-protocol",
  "ren-recorder",
  "ren-release",
@@ -1915,6 +1925,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-network"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror",
+]
+
+[[package]]
 name = "ren-project"
 version = "0.1.0"
 dependencies = [
@@ -1954,6 +1974,7 @@ dependencies = [
  "ren-depot",
  "ren-git",
  "ren-harness",
+ "ren-network",
  "ren-protocol",
  "ren-release",
  "serde",
@@ -1994,6 +2015,7 @@ dependencies = [
  "ren-gateway",
  "ren-git",
  "ren-harness",
+ "ren-network",
  "ren-project",
  "ren-protocol",
  "ren-recorder",
@@ -2024,6 +2046,7 @@ dependencies = [
  "ren-depot",
  "ren-git",
  "ren-harness",
+ "ren-network",
  "ren-protocol",
  "ren-recorder",
  "ren-release",
@@ -3501,11 +3524,13 @@ dependencies = [
  "blake3",
  "clap",
  "futures-util",
+ "ren-container",
  "ren-daemon",
  "ren-gateway",
  "ren-git",
  "ren-github",
  "ren-harness",
+ "ren-network",
  "ren-project",
  "ren-protocol",
  "ren-recorder",

@@ -27,7 +27,7 @@ use crate::{
     invocation::{Echo, Invocation, InvocationError},
     pod::Pod,
     progress::Progress,
-    tailscale::{TailscaleCli, TailscaleError},
+    tailscale::{Tailnet, TailscaleError},
     ui::UiBuildError,
 };
 use clap::Args;
@@ -35,6 +35,7 @@ use ren_daemon::config::{Config, ConfigError};
 use ren_git::Commit;
 use ren_git::{Git, GitError, Published, Tree};
 use ren_harness::host::HostEnv;
+use ren_network::tailscale::Cli;
 use ren_recorder::project::{Factory, ProjectName, RepositoryPath};
 use serde::Deserialize;
 use std::{
@@ -92,6 +93,8 @@ pub enum InstallError {
     MissingEnv(&'static str),
     #[error(transparent)]
     Invocation(#[from] InvocationError),
+    #[error(transparent)]
+    Engine(#[from] ren_container::EngineError),
     #[error(transparent)]
     File(#[from] FileError),
     #[error("invalid configuration {}: {source}", path.display())]
@@ -404,9 +407,9 @@ impl InstallVps {
         let saved = Publish::path(&layout.home);
         let publish = self.publish.resolve(&saved)?;
         let tailscale = if publish.sudo_tailscale {
-            TailscaleCli::Sudo
+            Tailnet::new(Cli::Sudo)
         } else {
-            TailscaleCli::Direct
+            Tailnet::new(Cli::Direct)
         };
         let ui = match publish.ui_https_port {
             Some(_) => Some(UiDeploy::new(env, &layout.home, &layout.repo)?),
