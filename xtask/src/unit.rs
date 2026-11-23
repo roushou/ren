@@ -1,6 +1,7 @@
 //! A transient systemd user unit xtask starts (`systemd-run --user`) and
 //! stops by its exact name, never by a pattern that could match the
-//! installed service: the dev slot's and the canary's processes.
+//! installed service: the dev slot's and the canary's processes. And an
+//! installed unit made to run a container in the foreground.
 
 use crate::invocation::{Echo, Invocation, InvocationError};
 use std::{
@@ -87,6 +88,63 @@ impl TransientUnit {
             run = run.arg(format!("--setenv={name}={value}"));
         }
         run.arg("--").args(command).args(args).run()
+    }
+}
+
+/// An installed unit's main process as a container run in the foreground:
+/// `podman run` with these arguments, as systemd starts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+pub struct ContainerUnit {
+    run_args: Vec<String>,
+}
+
+/// A rendered unit with no `ExecStart` line to run a container in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the rendered unit has no ExecStart line to run the container")]
+pub struct NoExecStart;
+
+impl ContainerUnit {
+    pub fn new(run_args: Vec<String>) -> Self {
+        Self { run_args }
+    }
+
+    /// `rendered`, a unit written for a process on the host, made to run
+    /// the container in the foreground instead: its `ExecStart` is `podman
+    /// run`. `NoNewPrivileges` goes, since rootless Podman maps the
+    /// operator's user through a setuid helper; the container itself runs
+    /// with no new privileges.
+    pub fn render(&self, rendered: &str) -> Result<String, NoExecStart> {
+        let quoted = |arg: &str| {
+            format!(
+                "\"{}\"",
+                arg.replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('%', "%%")
+            )
+        };
+        let exec = std::iter::once(quoted("/usr/bin/podman"))
+            .chain(self.run_args.iter().map(|arg| quoted(arg)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut replaced = false;
+        let lines: Vec<String> = rendered
+            .lines()
+            .filter(|line| !line.starts_with("NoNewPrivileges="))
+            .map(|line| {
+                if line.starts_with("ExecStart=") {
+                    replaced = true;
+                    format!("ExecStart=:{exec}")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        if replaced {
+            Ok(lines.join("\n") + "\n")
+        } else {
+            Err(NoExecStart)
+        }
     }
 }
 

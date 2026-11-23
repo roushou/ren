@@ -170,7 +170,11 @@ keeps what `ren.service`'s drop-ins set (keys, the search path), which the
 container inherits. Upgrades, their pause and backup, the rollback, and
 `ren doctor` are as for the host install; the pause and backup talk to the
 running daemon with the build being installed, which reads the configuration as
-the new daemon will. The choice is saved with the publishing flags.
+the new daemon will. With `--ui-https-port`, the UI runs in a container too,
+`ren-production-ui`, as `ren-ui.service`'s main process, on the instance
+image's Node: it sees only its deployed copy and the control token file
+`ui.env` names, both read-only, and takes `ui.env` from its unit. The choice
+is saved with the publishing flags.
 
 The renderer validates configuration and the executable, resolves paths to absolute
 paths, and fixes the data directory through a CLI override. It rejects an ephemeral

@@ -87,6 +87,8 @@ pub enum InstallError {
     NotLinux,
     #[error(transparent)]
     Contain(#[from] DaemonContainerError),
+    #[error(transparent)]
+    Unit(#[from] crate::unit::NoExecStart),
     #[error("run as the regular user that owns the service, not root")]
     Root,
     #[error("{0} is not set")]
@@ -462,11 +464,14 @@ impl InstallVps {
             (&ui, publish.ui_https_port, publish.https_port)
         {
             let dns = dns.as_deref().ok_or(TailscaleError::NoDnsName)?;
-            ui.install(&UiUrls {
-                gateway: format!("http://{}", config.listen),
-                public_gateway: format!("https://{dns}:{port}"),
-                origin: format!("https://{dns}:{ui_port}"),
-            })?;
+            ui.install(
+                &UiUrls {
+                    gateway: format!("http://{}", config.listen),
+                    public_gateway: format!("https://{dns}:{port}"),
+                    origin: format!("https://{dns}:{ui_port}"),
+                },
+                publish.contain,
+            )?;
             tailscale.publish(ui_port, UiDeploy::TARGET)?;
             println!("\nUI: {}\n", Self::url(Some(dns), ui_port));
         }

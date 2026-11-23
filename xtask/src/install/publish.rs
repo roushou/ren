@@ -36,8 +36,8 @@ pub struct Publish {
     /// untouched.
     #[arg(long, requires = "https_port", value_parser = clap::value_parser!(u16).range(1..))]
     pub ui_https_port: Option<u16>,
-    /// What runs in containers: `all` runs the daemon in a container of its
-    /// own, which needs its runs held in containers through Podman's socket
+    /// What runs in containers: `all` runs the daemon and the UI each in a
+    /// container of its own, which needs its runs held in containers through Podman's socket
     /// (`[runs] hold = "container"`, `[runs.container] podman_socket`).
     #[arg(long, value_enum, default_value = "none")]
     pub contain: Contain,

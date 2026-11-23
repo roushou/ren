@@ -2,12 +2,14 @@
 //! runs from wherever it is put (ui/README.md): the build, `package.json`,
 //! `bun.lock`, the workspace packages, and production dependencies.
 //! `install-vps` deploys the copy as `ren-ui.service` (`install::ui`); the
-//! dev slot runs it as a transient unit.
+//! dev slot runs it as a transient unit. Either may run it in a container
+//! of its own ([`UiContainer`]).
 use crate::{
     file::FileError,
     invocation::{Invocation, InvocationError},
     progress::Progress,
 };
+use ren_container::{Container, Engine, Environment, Lifetime, Mount, Placement, Privileges};
 use ren_harness::host::HostEnv;
 use std::{
     fs,
@@ -135,5 +137,120 @@ impl UiBuild {
     /// The Node that runs the UI.
     pub fn node(&self) -> &Path {
         &self.node
+    }
+}
+
+/// A deployed copy of the UI in a container of its own, run by the instance
+/// image's Node (docs/plans/self-build.md, phase 11). It sees, each at its
+/// host path and read-only, only the copy it runs and the daemon's control
+/// token file, which the daemon rewrites in place; it shares the host's
+/// network and its unit's environment, and runs as the operator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+pub struct UiContainer {
+    name: String,
+    image: String,
+    dir: PathBuf,
+    token: Option<PathBuf>,
+}
+
+impl UiContainer {
+    /// Seconds Podman gives the UI to stop before killing it.
+    const STOP_SECONDS: u32 = 30;
+
+    /// `name`'s UI, running the copy deployed in `dir` from `image`, reading
+    /// the control token at `token` when it is given one.
+    pub fn new(name: &str, image: String, dir: &Path, token: Option<&Path>) -> Self {
+        Self {
+            name: format!("ren-{name}-ui"),
+            image,
+            dir: dir.to_path_buf(),
+            token: token.map(Path::to_path_buf),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// `podman run` arguments that run it in the foreground, as a unit's
+    /// main process: replacing a container of its name left behind, and
+    /// removed when it exits.
+    pub fn run_args(&self) -> Vec<String> {
+        Engine::Podman.run_args(
+            &Container::new(
+                self.name.clone(),
+                self.image.clone(),
+                Lifetime::Foreground,
+                Placement::Host,
+            )
+            // Its listener, the daemon's address, and the token file's path
+            // are its unit's, as they are for a UI on the host.
+            .environment(Environment::Host)
+            .privileges(Privileges::NoNew)
+            .stop_timeout(Self::STOP_SECONDS)
+            .workdir(&self.dir)
+            .mount(Mount::read_only(&self.dir))
+            .mounts(self.token.iter().map(Mount::read_only))
+            .args(["node".to_owned(), UiBuild::entry().display().to_string()]),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UiContainer;
+    use std::path::Path;
+
+    #[test]
+    fn it_sees_its_copy_and_the_token_read_only_and_nothing_else() {
+        let container = UiContainer::new(
+            "production",
+            "localhost/ren-instance:abc".to_owned(),
+            Path::new("/home/op/.local/share/ren-ui"),
+            Some(Path::new("/home/op/.local/state/ren/control.token")),
+        );
+        assert_eq!(container.name(), "ren-production-ui");
+        let args = container.run_args();
+        let volumes: Vec<&str> = args
+            .iter()
+            .filter_map(|arg| arg.strip_prefix("--volume="))
+            .collect();
+        assert_eq!(
+            volumes,
+            [
+                "/home/op/.local/share/ren-ui:/home/op/.local/share/ren-ui:ro",
+                "/home/op/.local/state/ren/control.token:/home/op/.local/state/ren/control.token:ro",
+            ]
+        );
+        for flag in [
+            "--env-host",
+            "--network=host",
+            "--userns=keep-id",
+            "--security-opt=no-new-privileges",
+            "--workdir=/home/op/.local/share/ren-ui",
+        ] {
+            assert!(args.iter().any(|arg| arg == flag), "{flag} in {args:?}");
+        }
+        assert_eq!(
+            args[args.len() - 3..],
+            ["localhost/ren-instance:abc", "node", "apps/web/build"]
+        );
+    }
+
+    #[test]
+    fn without_a_token_it_sees_only_its_copy() {
+        let container = UiContainer::new(
+            "dev",
+            "localhost/ren-instance:abc".to_owned(),
+            Path::new("/home/op/.local/share/ren-dev/ui"),
+            None,
+        );
+        let volumes = container
+            .run_args()
+            .iter()
+            .filter(|arg| arg.starts_with("--volume="))
+            .count();
+        assert_eq!(volumes, 1);
     }
 }
