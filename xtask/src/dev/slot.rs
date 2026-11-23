@@ -9,13 +9,16 @@ use crate::file::{FileError, FileMode};
 use crate::progress::Progress;
 use crate::{
     daemon::{Busy, Ending, RunPolicy, Runs, StillBusy},
+    daemon_container::{Contain, DaemonContainer},
     invocation::{Echo, Invocation, InvocationError},
+    pod::Pod,
     tailscale::{TailscaleCli, TailscaleError},
     ui::UiBuild,
     unit::{KillMode, Listener, TransientUnit},
 };
 use ren_daemon::config::{
-    Config, GithubOptions, RunHold, RunsOptions, UpstreamConfig, WatchedRepository,
+    Config, GithubOptions, RunContainerOptions, RunHold, RunsOptions, UpstreamConfig,
+    WatchedRepository,
 };
 use ren_daemon::host::HeldRuns;
 use ren_gateway::{
@@ -127,6 +130,14 @@ pub struct Slot {
     places_dir: PathBuf,
     /// Where its scratch runs get their folders.
     scratch_dir: PathBuf,
+    /// What of it runs in containers.
+    contain: Contain,
+    /// The operator's Podman API socket, which a daemon in a container
+    /// starts its runs' containers through.
+    podman_socket: Option<PathBuf>,
+    /// The host's environment, which a daemon in a container is given
+    /// its home and SSH agent from.
+    env: HostEnv,
 }
 
 impl Slot {
@@ -174,7 +185,19 @@ impl Slot {
             work_dir: share.join("work"),
             places_dir: share.join("config"),
             scratch_dir: share.join("scratch"),
+            contain: Contain::None,
+            podman_socket: env
+                .absolute_path("XDG_RUNTIME_DIR")
+                .map(|runtime| runtime.join("podman/podman.sock")),
+            env: env.clone(),
         })
+    }
+
+    /// The slot, with what `contain` says in containers.
+    #[must_use]
+    pub fn containing(mut self, contain: Contain) -> Self {
+        self.contain = contain;
+        self
     }
 
     /// The dev user `ci`'s token. Fixed, since the slot's data is fake and
@@ -243,10 +266,26 @@ impl Slot {
                 roots: vec![self.work_dir.clone()],
                 places: vec![self.places_dir.clone()],
                 scratch: Some(self.scratch_dir.clone()),
-                // Held as the installed service holds them, so a restart
-                // of the slot leaves its runs going.
-                hold: RunHold::Auto,
+                // Held, so a restart of the slot leaves its runs going.
+                hold: match self.contain {
+                    Contain::None => RunHold::Auto,
+                    Contain::Runs | Contain::All => RunHold::Container,
+                },
                 worktree_env: Default::default(),
+                container: match self.contain {
+                    Contain::None => RunContainerOptions::default(),
+                    // The host's programs; the fake agent, which is this
+                    // slot's xtask and keeps its state in the slot's data.
+                    Contain::Runs | Contain::All => RunContainerOptions {
+                        image: Some(Pod::image()),
+                        read_only: vec!["/usr".into(), self.bin_dir.clone()],
+                        read_write: vec![self.data_dir.clone()],
+                        podman_socket: match self.contain {
+                            Contain::All => self.podman_socket.clone(),
+                            Contain::None | Contain::Runs => None,
+                        },
+                    },
+                },
             },
             packages: toml::from_str::<Config>(Self::PACKAGES)
                 .map_err(|_| DevError::Config)?
@@ -521,6 +560,17 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
 
     fn start_core(&self, wait: RunWait) -> Result<(), DevError> {
         self.build()?;
+        match self.contain {
+            Contain::None => {}
+            Contain::Runs => Pod::ensure_image(&self.repo)?,
+            Contain::All => {
+                Pod::ensure_image(&self.repo)?;
+                // The socket its daemon starts runs' containers through.
+                Invocation::new("systemctl")
+                    .args(["--user", "enable", "--now", "podman.socket"])
+                    .run()?;
+            }
+        }
         self.write_config()?;
         let ending = self.settle_runs(wait)?;
         ending.announce();
@@ -545,27 +595,56 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
         )?;
         Self::wait_for(Self::PROVIDER, "/anthropic/v1/models")?;
         Progress(&format!("Starting the dev daemon on {}", Self::DAEMON)).show();
-        Unit::Daemon.start(
-            None,
-            &[&ren],
-            &[
-                "--config".into(),
-                self.config.display().to_string(),
-                "serve".into(),
-            ],
-            &[
-                (Self::OPERATOR_KEY_ENV, Self::OPERATOR_KEY.into()),
-                (Self::GITHUB_TOKEN_ENV, Self::GITHUB_TOKEN.into()),
-                // Runs start the fake agent as `codex`, never a real client.
-                (
-                    "PATH",
-                    format!(
-                        "{}:/usr/local/bin:/usr/bin:/bin",
-                        self.agent_dir().display()
-                    ),
+        let vars = vec![
+            (
+                Self::OPERATOR_KEY_ENV.to_owned(),
+                Self::OPERATOR_KEY.to_owned(),
+            ),
+            (
+                Self::GITHUB_TOKEN_ENV.to_owned(),
+                Self::GITHUB_TOKEN.to_owned(),
+            ),
+            // Runs start the fake agent as `codex`, never a real client.
+            (
+                "PATH".to_owned(),
+                format!(
+                    "{}:/usr/local/bin:/usr/bin:/bin",
+                    self.agent_dir().display()
                 ),
-            ],
-        )?;
+            ),
+        ];
+        match self.contain {
+            Contain::None | Contain::Runs => {
+                let vars: Vec<(&str, String)> = vars
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.clone()))
+                    .collect();
+                Unit::Daemon.start(
+                    None,
+                    &[&ren],
+                    &[
+                        "--config".into(),
+                        self.config.display().to_string(),
+                        "serve".into(),
+                    ],
+                    &vars,
+                )?;
+            }
+            Contain::All => {
+                let config = self.config()?;
+                let container = DaemonContainer::new(
+                    "dev",
+                    Pod::image(),
+                    &ren,
+                    (&self.config, &config),
+                    &self.data_dir,
+                    &self.env,
+                    vars,
+                )?;
+                Progress(&format!("In container {}", container.name())).show();
+                Unit::Daemon.start(None, &[Path::new("podman")], &container.run_args(), &[])?;
+            }
+        }
         Self::wait_for(Self::DAEMON, "/health")?;
         self.register_projects();
         ending.remind();
@@ -667,7 +746,7 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
     }
 
     /// Stop the slot's units, then its runs' run hosts, which outlive its
-    /// daemon: each in a unit of its own, named for the run.
+    /// daemon: each in a unit or a container of its own, named for the run.
     pub fn down(&self) -> Result<(), DevError> {
         for unit in Unit::ALL {
             Progress(&format!("Stopping {}", unit.name())).show();
@@ -682,6 +761,14 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
             Invocation::new("systemctl")
                 .args(["--user", "reset-failed", &unit])
                 .succeeds(Echo::Hide)?;
+            // A run host in a container: removing it stops it. Without
+            // Podman there is no container to remove.
+            if let Err(error) = Invocation::new("podman")
+                .args(["rm", "--force", "--ignore", &HeldRuns::unit(run)])
+                .succeeds(Echo::Hide)
+            {
+                println!("warning: run {run}'s container was not removed: {error}");
+            }
         }
         Ok(())
     }

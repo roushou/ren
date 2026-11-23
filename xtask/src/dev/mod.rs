@@ -9,6 +9,7 @@ pub(crate) mod slot;
 mod traffic;
 mod work;
 
+use crate::daemon_container::Contain;
 use crate::file::FileError;
 use crate::invocation::InvocationError;
 use crate::tailscale::{TailscaleCli, TailscaleError};
@@ -114,6 +115,10 @@ struct UpArgs {
     /// Keep the preview on this host's loopback; do not touch Tailscale.
     #[arg(long, requires = "ui")]
     local: bool,
+    /// What runs in containers: nothing, the slot's runs, or its daemon
+    /// too.
+    #[arg(long, value_enum, default_value = "none")]
+    contain: Contain,
     #[command(flatten)]
     tailnet: TailnetArgs,
 }
@@ -214,6 +219,8 @@ struct ProviderArgs {
 pub enum DevError {
     #[error(transparent)]
     Provider(#[from] ProviderError),
+    #[error(transparent)]
+    DaemonContainer(#[from] crate::daemon_container::DaemonContainerError),
     #[error("{0} is not set")]
     MissingEnv(&'static str),
     #[error(transparent)]
@@ -268,7 +275,7 @@ impl Dev {
                 }
             },
             DevAction::Up(args) => {
-                let slot = Slot::new(env)?;
+                let slot = Slot::new(env)?.containing(args.contain);
                 let wait = RunWait {
                     policy: if args.drain_runs {
                         RunPolicy::Drain

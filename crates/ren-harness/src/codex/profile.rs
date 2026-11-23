@@ -7,7 +7,7 @@ use super::CodexTool;
 use crate::{
     attachment::{Delivery, Takes},
     launch::LaunchPlan,
-    profile::{ClientProfile, DefaultModel, TokenCarrier, sign_ins},
+    profile::{ClientProfile, DefaultModel, HomeEntry, TokenCarrier, sign_ins},
     settings::{ApprovalPolicy, Midway},
 };
 use ren_depot::package::PackageId;
@@ -28,6 +28,7 @@ impl ClientProfile {
             Chatgpt => Pipes, DeviceCode, LaunchPlan::codex_device_login;
         },
         login_prompt: None,
+        keeps: &[HomeEntry::new(".codex")],
         user_context: CodexTool::CONTEXT,
     };
 }

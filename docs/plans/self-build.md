@@ -327,8 +327,8 @@ spec (phase 7):
    - The pod publishes one loopback port. Ren's tailnet route points at
      it, as `--publish` does now. Stopping an instance removes its pod and
      its volume; nothing is left in the user's units or folders.
-   - Production stays a host install in this phase: the laptop story and
-     `install-vps`'s rollback do not change.
+   - Production stays a host install in this phase (phase 11 moves it):
+     the laptop story and `install-vps`'s rollback do not change.
    - The canary and previews keep their rules: no runs, a placeholder for
      every operator key.
    - Built: `Replica` runs as the pod `ren-<name>` (`xtask/src/pod.rs`),
@@ -444,6 +444,74 @@ spec (phase 7):
     - Each rule is data in `ren-release`; a rule that cannot run fails, as
       every check does now.
 
+11. **Production in a pod, each run in a container.** In progress: runs in
+    containers are built (`[runs] hold = "container"`), and so is the daemon
+    in a container (`install-vps --contain all`, `cargo xtask dev up --contain
+    all`); production has not been switched. Every instance runs the same
+    way, so the canary checks what production runs, and a run sees only
+    what it works on.
+    - Runs first, while production is still a host install. A run host
+      starts in a container of its own, `ren-run-<run>`, from the instance
+      image: `Launcher::Container`, beside `Systemd` and `Direct`. It sees,
+      at their host paths, only the run folder (spec, socket, spool,
+      journal), the run's workdir read-write, the package generation the
+      run is pinned to read-only, its client's own sign-in folders, and the
+      SSH agent's socket. The run-host protocol does not change: the daemon
+      reaches the socket in the run folder, and a held run outlives the
+      daemon, as now.
+    - Which folders a client keeps its sign-in in is the harness's to
+      declare (`ren-harness`), beside its launch plan. A client whose
+      folders are not declared does not start in a container.
+    - Then production as the pod `ren-production`, from the instance image:
+      its daemon and UI see its kept build read-only, its configuration,
+      and its data folder read-write, on loopback `8787` and `3000` as now,
+      so clients and Tailscale Serve do not change. The daemon starts run
+      containers through the operator's rootless Podman socket, mounted
+      into it.
+    - Promotion swaps the pod: back up with the running daemon, stop the
+      pod, start it on the new kept build over the same data, and wait for
+      `/health`; on failure, start the previous build's pod again.
+    - The new build reads production's configuration before anything
+      stops, so a configuration the new build refuses fails the canary
+      pass, not production. A configuration only the new build reads does
+      not stop the backup: the backup is the running daemon's.
+    - The dev slot becomes a pod of the checkout with its scenario, which
+      closes phase 7.
+    - `install-vps` stays the host install a laptop uses. Whether the VPS
+      keeps it as a fallback is decided once the pod swap is verified.
+    - Built: `Launcher::Container` (`ren-daemon`'s `host/held/container.rs`)
+      starts `ren run-host` as its container's entrypoint, from a transient
+      scope of its own (`ren-run-<run>.scope`), so its monitor outlives the
+      daemon's unit. Each client's profile declares what it keeps under the
+      home (`ren-harness`'s `HomeEntry`). The client's program is the file
+      found on the run's path; anything else a run starts must be under
+      `[runs.container]`'s paths. `cargo xtask dev up --hold container` holds
+      the dev slot's runs this way.
+    - Verified in the dev slot: a Codex run in a worktree saw its worktree,
+      the repository's git folder, `.codex`, and the SSH agent, and not
+      `~/.config` or the main checkout; it was taken up again through a
+      daemon restart; stopping it removed its container and its scope.
+    - Built: the daemon in a container (`DaemonContainer`, xtask), started
+      by `install-vps --contain all` as `ren.service`'s foreground
+      `podman run`, or as the dev slot's daemon unit. It starts its runs'
+      containers through the operator's Podman API socket
+      (`[runs.container] podman_socket`, `PodmanReach::Socket`), whose
+      service watches them apart from the daemon. The install's pause and
+      backup talk to the running daemon with the build being installed.
+    - Deviation: no pod. The daemon and the UI are each one container that
+      a systemd unit runs in the foreground, on the host's network: the unit
+      keeps the instance across boots, restarts, logs, and rollback as it
+      did, and a pod would add nothing on the host's network. The UI is not
+      yet in a container.
+    - Verified in the dev slot with `--contain all`: the daemon in its
+      container started a run's container through the socket; the run
+      outlived a restart of the daemon's container and took a second turn;
+      stopping it removed its container. The daemon's container did not see
+      production's configuration or data, the main checkout, or `~/.ssh`.
+    - Not yet: production switched; the UI in a container; inside a
+      container the operator's uid is named for the image's user (`node`);
+      a real client's run in a container has not been driven.
+
 Phases 1 and 2 come first: without them, upgrading automatically only breaks
 things faster. Each phase is useful on its own. Phases 7 and 8 do not depend
 on each other; phase 9 needs both, and phase 10 needs only the canary.
@@ -457,12 +525,12 @@ on each other; phase 9 needs both, and phase 10 needs only the canary.
   them blocks promotion or only warns.
 - Whether previews need real clients at all, or the fake provider is enough
   for the UI changes they are mostly for.
-- Isolated runs. A preview that runs agents must not reach production's
-  files, units, or network. Candidates are a microVM per run (Docker
-  Sandboxes: KVM on Linux, a Docker account, and a credential proxy whose
-  key injection and missing client config must be squared with Ren's rule
-  that clients sign in themselves) or a container per run. Deferred until
-  phases 7 to 10 are built.
+- Isolated runs beyond a container (phase 11 gives each run one). A
+  container shares the host's kernel and, in production, its network. A
+  microVM per run (Docker Sandboxes: KVM on Linux, a Docker account, and a
+  credential proxy whose key injection and missing client config must be
+  squared with Ren's rule that clients sign in themselves) is the
+  candidate if that is not enough.
 
 ## Deviations
 

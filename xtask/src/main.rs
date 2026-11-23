@@ -3,6 +3,7 @@ mod builds;
 mod canary;
 mod compat;
 mod daemon;
+mod daemon_container;
 mod dev;
 mod file;
 mod install;

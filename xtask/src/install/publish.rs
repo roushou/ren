@@ -5,6 +5,7 @@
 //! parser, so there is one vocabulary. A run given any of these flags uses
 //! exactly those and saves them after it succeeds; a run given none uses the
 //! saved ones.
+use crate::daemon_container::Contain;
 use crate::file::{FileError, FileMode};
 use crate::progress::Progress;
 use clap::{Args, Parser};
@@ -35,6 +36,11 @@ pub struct Publish {
     /// untouched.
     #[arg(long, requires = "https_port", value_parser = clap::value_parser!(u16).range(1..))]
     pub ui_https_port: Option<u16>,
+    /// What runs in containers: `all` runs the daemon in a container of its
+    /// own, which needs its runs held in containers through Podman's socket
+    /// (`[runs] hold = "container"`, `[runs.container] podman_socket`).
+    #[arg(long, value_enum, default_value = "none")]
+    pub contain: Contain,
 }
 
 /// Saved flags, parsed as if given on the command line.
@@ -68,6 +74,11 @@ impl Publish {
         }
         if self.sudo_tailscale {
             args.push("--sudo-tailscale".to_owned());
+        }
+        match self.contain {
+            Contain::None => {}
+            Contain::Runs => args.extend(["--contain".to_owned(), "runs".to_owned()]),
+            Contain::All => args.extend(["--contain".to_owned(), "all".to_owned()]),
         }
         args
     }
@@ -124,6 +135,7 @@ mod tests {
             https_port: Some(8443),
             sudo_tailscale: true,
             ui_https_port: Some(8444),
+            contain: Contain::All,
         }
     }
 
@@ -141,7 +153,7 @@ mod tests {
         all().save(&path).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "args = [\"--https-port\", \"8443\", \"--ui-https-port\", \"8444\", \"--sudo-tailscale\"]\n"
+            "args = [\"--https-port\", \"8443\", \"--ui-https-port\", \"8444\", \"--sudo-tailscale\", \"--contain\", \"all\"]\n"
         );
         assert_eq!(
             Publish::default().resolve(&path).unwrap(),

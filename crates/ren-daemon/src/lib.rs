@@ -373,7 +373,7 @@ impl Daemon {
         if config.runs().roots.is_empty() {
             return None;
         }
-        let launcher = config.run_hold()?;
+        let launcher = config.run_hold()?.clone();
         let program = std::env::current_exe()
             .inspect_err(
                 |error| tracing::warn!(%error, "runs are not held: no path to this executable"),

@@ -22,8 +22,10 @@ use crate::{
         AfterPause, Busy, CheckStatus, ControlState, DoctorReport, Ending, Quiesce, RunPolicy,
         Runs, StillBusy,
     },
+    daemon_container::{Contain, DaemonContainer, DaemonContainerError},
     file::{FileError, FileMode},
     invocation::{Echo, Invocation, InvocationError},
+    pod::Pod,
     progress::Progress,
     tailscale::{TailscaleCli, TailscaleError},
     ui::UiBuildError,
@@ -82,6 +84,8 @@ pub struct InstallVps {
 pub enum InstallError {
     #[error("install-vps requires Linux with a systemd user manager")]
     NotLinux,
+    #[error(transparent)]
+    Contain(#[from] DaemonContainerError),
     #[error("run as the regular user that owns the service, not root")]
     Root,
     #[error("{0} is not set")]
@@ -235,6 +239,10 @@ struct Layout {
     config: PathBuf,
     data_dir: PathBuf,
     unit: PathBuf,
+    /// The `ren` that talks to the running daemon (its state, pause,
+    /// backup): the build being installed, which reads the configuration
+    /// as the daemon about to run will, where the installed one may not.
+    client: PathBuf,
 }
 
 const SERVICE: &str = "ren.service";
@@ -335,6 +343,7 @@ impl Layout {
                 .unwrap_or_else(|| PathBuf::from("cargo")),
             user,
             binary: bin_dir.join("ren"),
+            client: bin_dir.join("ren"),
             rollback: bin_dir.join("ren.rollback"),
             bin_dir,
             config: home.join(".config/ren/ren.toml"),
@@ -344,6 +353,11 @@ impl Layout {
     }
 
     /// `ren` with this layout's configuration and data directory.
+    /// This layout, talking to the running daemon with `client`.
+    fn talking_with(self, client: PathBuf) -> Self {
+        Self { client, ..self }
+    }
+
     fn ren(&self, binary: &Path) -> Invocation {
         Invocation::new(binary)
             .arg("--config")
@@ -415,11 +429,18 @@ impl InstallVps {
                 (tree, built)
             }
         };
+        let layout = layout.talking_with(built.clone());
         Self::seed_config(&layout)?;
         let config = Self::load_config(&layout)?;
+        // Made before anything stops: a configuration whose runs cannot be
+        // held from a daemon in a container is refused here.
+        let contained = match publish.contain {
+            Contain::None | Contain::Runs => None,
+            Contain::All => Some(Self::contain(&layout, &config, env)?),
+        };
         let quiesced = Self::quiesce(&layout, self.idle_timeout, policy)?;
         quiesced.ending.announce();
-        let replaced = Self::replace(&layout, &built, backup, tree);
+        let replaced = Self::replace(&layout, &built, backup, tree, contained.as_ref());
         Self::release(&layout, quiesced.admission);
         replaced?;
         Self::register(&layout);
@@ -654,7 +675,7 @@ impl InstallVps {
 
     fn control_state(layout: &Layout) -> Result<ControlState, InstallError> {
         Ok(layout
-            .ren(&layout.binary)
+            .ren(&layout.client)
             .args(["control", "state"])
             .json("ren control state", ControlState::parse)?)
     }
@@ -675,7 +696,7 @@ impl InstallVps {
                 ending: Ending::default(),
             });
         }
-        let ren = || layout.ren(&layout.binary);
+        let ren = || layout.ren(&layout.client);
         let polls = idle_timeout.div_ceil(Self::POLL.as_secs()).max(1);
         let mut reported = None;
         for _ in 0..polls {
@@ -734,7 +755,7 @@ impl InstallVps {
 
     fn control(layout: &Layout, args: &[&str]) -> Result<(), InstallError> {
         layout
-            .ren(&layout.binary)
+            .ren(&layout.client)
             .arg("control")
             .args(args)
             .capture()?;
@@ -760,11 +781,35 @@ impl InstallVps {
     }
 
     /// Everything that changes a running installation.
+    /// The daemon's container, its image built and the Podman socket its
+    /// runs' containers are started through turned on.
+    fn contain(
+        layout: &Layout,
+        config: &Config,
+        env: &HostEnv,
+    ) -> Result<DaemonContainer, InstallError> {
+        let container = DaemonContainer::new(
+            "production",
+            Pod::image(),
+            &layout.binary,
+            (&layout.config, config),
+            &layout.data_dir,
+            env,
+            Vec::new(),
+        )?;
+        Pod::ensure_image(&layout.repo)?;
+        Invocation::new("systemctl")
+            .args(["--user", "enable", "--now", "podman.socket"])
+            .run()?;
+        Ok(container)
+    }
+
     fn replace(
         layout: &Layout,
         built: &Path,
         backup: Backup,
         tree: Tree,
+        contained: Option<&DaemonContainer>,
     ) -> Result<(), InstallError> {
         let held = Self::hold_binary(layout, backup)?;
         Upgrade::attempt(
@@ -774,7 +819,7 @@ impl InstallVps {
                 Progress(&format!("Installing {}", layout.binary.display())).show();
                 let contents = fs::read(built).map_err(FileError::at(built))?;
                 FileMode::Executable.write(&layout.binary, &contents)?;
-                Self::install_unit(layout)?;
+                Self::install_unit(layout, contained)?;
                 Self::enable_linger(layout)?;
                 Self::doctor(layout)?;
                 Self::verify_build(layout, tree)
@@ -841,7 +886,7 @@ impl InstallVps {
                 Backup::Run => {
                     Progress("Backing up history with the running daemon").show();
                     if !layout
-                        .ren(&layout.binary)
+                        .ren(&layout.client)
                         .args(["control", "backup"])
                         .succeeds(Echo::Show)?
                     {
@@ -862,13 +907,22 @@ impl InstallVps {
         Held::hold(&layout.binary, &layout.rollback, &layout.unit)
     }
 
-    fn install_unit(layout: &Layout) -> Result<(), InstallError> {
+    /// The unit `ren service render` writes, running the daemon in
+    /// `contained` when given.
+    fn install_unit(
+        layout: &Layout,
+        contained: Option<&DaemonContainer>,
+    ) -> Result<(), InstallError> {
         let rendered = layout
             .ren(&layout.binary)
             .args(["service", "render", "--manager", "systemd", "--binary"])
             .arg(&layout.binary)
             .capture()?;
-        Self::start_unit(&layout.unit, &rendered, SERVICE)
+        let unit = match contained {
+            Some(container) => container.unit(&rendered)?,
+            None => rendered,
+        };
+        Self::start_unit(&layout.unit, &unit, SERVICE)
     }
 
     /// Writes `rendered` to `unit` if it differs (verified first), then

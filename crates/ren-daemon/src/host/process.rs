@@ -495,7 +495,7 @@ impl AgentHost for ProcessHost {
                 std::env::join_paths(self.search_dirs(packages)).map_err(io::Error::other)?,
             );
         }
-        held.start(run, &command)
+        held.start(run, &command, plan.keeps())
     }
 
     fn held(&self) -> io::Result<Vec<HeldRun>> {

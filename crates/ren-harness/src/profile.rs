@@ -42,8 +42,28 @@ pub struct ClientProfile {
     /// The prompt its login prints with no newline, so it begins the next
     /// line read; none where it prints none.
     pub login_prompt: Option<&'static str>,
+    /// What it keeps under the home: its sign-in, settings, and sessions.
+    /// A run that sees only what it needs sees these.
+    pub keeps: &'static [HomeEntry],
     /// The context it adds to a user's prompt.
     pub(crate) user_context: UserContext,
+}
+
+/// A file or folder under the operator's home, by its path relative to it
+/// (`.claude`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HomeEntry(&'static str);
+
+impl HomeEntry {
+    /// `relative`, a path under the home that does not leave it.
+    pub const fn new(relative: &'static str) -> Self {
+        Self(relative)
+    }
+
+    /// Where it is under `home`.
+    pub fn under(self, home: &std::path::Path) -> std::path::PathBuf {
+        home.join(self.0)
+    }
 }
 
 /// How a launched session sends a user token to the gateway.
@@ -173,6 +193,24 @@ impl Harness {
 mod tests {
     use crate::Harness;
     use ren_protocol::label::Labeled;
+
+    /// A run in a container sees only what its client keeps: a client that
+    /// keeps nothing would start there signed out.
+    #[test]
+    fn every_client_keeps_something_under_the_home() {
+        let home = std::path::Path::new("/home/op");
+        for harness in Harness::ALL {
+            let keeps = harness.profile().keeps;
+            assert!(!keeps.is_empty(), "{harness}");
+            for entry in keeps {
+                let path = entry.under(home);
+                assert!(
+                    path.starts_with(home) && path != home,
+                    "{harness}: {path:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn every_sign_in_method_has_one_plan_in_its_order() {
