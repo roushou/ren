@@ -6,7 +6,7 @@
 //! it is stopped by name and never by a pattern that could match the
 //! installed service or another instance.
 
-use super::{DevError, index::DevIndex};
+use super::{DevError, claims::DevClaims, index::DevIndex};
 use crate::file::{FileError, FileMode};
 use crate::gvisor_service::GvisorService;
 use crate::progress::Progress;
@@ -120,6 +120,59 @@ pub enum Preview {
     Local,
 }
 
+/// The host's [`DevClaims`], in their file, changed under a lock so two
+/// checkouts starting at once never take the same instance.
+pub struct ClaimsFile {
+    path: PathBuf,
+}
+
+impl ClaimsFile {
+    pub fn new(env: &HostEnv) -> Result<Self, DevError> {
+        let home = env
+            .absolute_path("HOME")
+            .ok_or(DevError::MissingEnv("HOME"))?;
+        Ok(Self {
+            path: home.join(".local/state").join(DevClaims::FILE),
+        })
+    }
+
+    /// The claims as they stand; none before the first.
+    pub fn read(&self) -> Result<DevClaims, DevError> {
+        match fs::read(&self.path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| DevError::Claims {
+                path: self.path.clone(),
+                why: error.to_string(),
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(DevClaims::default()),
+            Err(error) => Err(FileError::at(&self.path)(error).into()),
+        }
+    }
+
+    /// Changes the claims with `change`, under the file's lock.
+    pub fn change<T>(
+        &self,
+        change: impl FnOnce(DevClaims) -> Result<(DevClaims, T), DevError>,
+    ) -> Result<T, DevError> {
+        let dir = self.path.parent().unwrap_or(Path::new("/"));
+        fs::create_dir_all(dir).map_err(FileError::at(dir))?;
+        let lock_path = self.path.with_extension("lock");
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .map_err(FileError::at(&lock_path))?;
+        lock.lock().map_err(FileError::at(&lock_path))?;
+        let (claims, answer) = change(self.read()?)?;
+        let text = serde_json::to_string_pretty(&claims).map_err(|error| DevError::Claims {
+            path: self.path.clone(),
+            why: error.to_string(),
+        })?;
+        FileMode::Private.write(&self.path, text.as_bytes())?;
+        Ok(answer)
+    }
+}
+
 /// Where a dev instance lives and listens.
 pub struct DevInstance {
     pub index: DevIndex,
@@ -156,6 +209,13 @@ impl DevInstance {
     /// Seconds between checks for runs mid-way.
     const RUN_POLL: Duration = Duration::from_secs(2);
 
+    /// The checkout this xtask was built from, which its instance builds.
+    pub fn checkout() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+    }
+
     pub fn new(env: &HostEnv, index: DevIndex) -> Result<Self, DevError> {
         let home = env
             .absolute_path("HOME")
@@ -164,9 +224,7 @@ impl DevInstance {
         let share = home.join(".local/share").join(&name);
         Ok(Self {
             index,
-            repo: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
+            repo: Self::checkout(),
             cargo: env
                 .absolute_path("CARGO")
                 .unwrap_or_else(|| PathBuf::from("cargo")),
@@ -424,6 +482,8 @@ program_at = "acme-lint"
             );
             FileMode::Executable.write(&dir.join(program), script.as_bytes())?;
         }
+        // Its runs' scratch folders' parent, which a contained daemon mounts.
+        fs::create_dir_all(&self.scratch_dir).map_err(FileError::at(&self.scratch_dir))?;
         for place in Self::PLACES {
             let folder = self.places_dir.join(place);
             fs::create_dir_all(&folder).map_err(FileError::at(&folder))?;
