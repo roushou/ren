@@ -444,7 +444,13 @@ A pass fetches `main` from `origin` and checks its tip out, detached, in
 Ren's own worktree, `~/.local/share/ren/factory`, then goes on with that
 commit's own xtask, so a commit is checked by its own checks. It builds the
 commit once into `~/.local/share/ren/builds/<commit>` (the release `ren`
-and the UI's deployable copy; the newest few are kept). It backs up
+and the UI's deployable copy; the newest few are kept). A commit may be a pull
+request's, so its build runs none of its code on the host: its dependencies
+are fetched by its lockfiles (`cargo fetch --locked`, `bun install
+--ignore-scripts`) into `~/.local/share/ren/build-cache`, and each step that
+runs its code (compiling, the UI's build, the binary's `--version`) runs in a
+container (`ren-build`) with no network and no home, seeing only the checkout,
+the host's programs and toolchains read-only, and that cache. It backs up
 production's history with the running daemon (`ren control backup`) and
 starts the build as the canary on a copy of it: the rootless Podman pod
 `ren-canary`, its daemon and UI each a container (`ren-canary-daemon`,

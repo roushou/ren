@@ -833,7 +833,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the runs that end), building the UI (`ui`), transient user units and the
   listeners they answer on (`unit`: `TransientUnit`, `Listener`), and builds
   made once per commit (`builds`: `Builds`, `StoredBuild`, which
-  `install-vps --build` installs).
+  `install-vps --build` installs): a commit's dependencies fetched by its
+  lockfiles on the host, running none of its code, into the builds' own
+  caches (`~/.local/share/ren/build-cache`), and each step that runs its
+  code in a container of its own (`build_job`: `BuildJob`, with no network
+  and no home, seeing the checkout, the toolchains read-only, and those
+  caches).
   `replica`: Ren on a copy of production's history (`ProductionPlace`,
   production and its work item API, and `Replica`, the canary's and each
   preview's instance). `cargo xtask preview` (`preview`) runs a worktree's

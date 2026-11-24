@@ -58,6 +58,8 @@ pub struct Invocation {
     program: OsString,
     args: Vec<OsString>,
     dir: Option<PathBuf>,
+    /// Variables set for it, over the caller's environment.
+    env: Vec<(OsString, OsString)>,
 }
 
 impl Invocation {
@@ -66,7 +68,15 @@ impl Invocation {
             program: program.as_ref().to_owned(),
             args: Vec::new(),
             dir: None,
+            env: Vec::new(),
         }
+    }
+
+    /// Runs with `name` set to `value`.
+    pub fn env(mut self, name: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Self {
+        self.env
+            .push((name.as_ref().to_owned(), value.as_ref().to_owned()));
+        self
     }
 
     /// Runs in `dir` instead of the current directory.
@@ -98,7 +108,10 @@ impl Invocation {
 
     fn command(&self) -> Command {
         let mut command = Command::new(&self.program);
-        command.args(&self.args).stdin(Stdio::null());
+        command
+            .args(&self.args)
+            .envs(self.env.iter().map(|(name, value)| (name, value)))
+            .stdin(Stdio::null());
         if let Some(dir) = &self.dir {
             command.current_dir(dir);
         }

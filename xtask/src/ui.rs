@@ -79,9 +79,47 @@ impl UiBuild {
             .current_dir(&self.source)
             .run()?;
         Invocation::new(&self.bun)
-            .args(["run", "build"])
+            .args(self.build_argv().iter().skip(1))
             .current_dir(&self.source)
             .run()?;
+        self.stage(staged)
+    }
+
+    /// Fetches the UI's dependencies by its lockfile into the checkout,
+    /// through the download cache `cache`, running none of their scripts:
+    /// what a build in a container with no network needs first.
+    pub fn fetch(&self, cache: &Path) -> Result<(), UiBuildError> {
+        Invocation::new(&self.bun)
+            .args(["install", "--frozen-lockfile", "--ignore-scripts"])
+            .env("BUN_INSTALL_CACHE_DIR", cache)
+            .current_dir(&self.source)
+            .run()?;
+        Ok(())
+    }
+
+    /// The UI's build, as an argv run in its sources ([`Self::source`]).
+    pub fn build_argv(&self) -> Vec<String> {
+        vec![
+            self.bun.display().to_string(),
+            "run".to_owned(),
+            "build".to_owned(),
+        ]
+    }
+
+    /// The UI's sources: the Bun workspace's root.
+    pub fn source(&self) -> &Path {
+        &self.source
+    }
+
+    /// The Bun that builds it.
+    pub fn bun(&self) -> &Path {
+        &self.bun
+    }
+
+    /// Stages a complete deployable copy of the UI already built in
+    /// `staged`: the build, `package.json`, `bun.lock`, the workspace
+    /// packages, and production dependencies, installed with no scripts.
+    pub fn stage(&self, staged: &Path) -> Result<(), UiBuildError> {
         Progress(&format!("Staging the UI in {}", staged.display())).show();
         if staged.exists() {
             fs::remove_dir_all(staged).map_err(FileError::at(staged))?;

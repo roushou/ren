@@ -130,11 +130,26 @@ What already points the right way, and is kept:
    from a file the old code wrote, passed unchanged; and the dev slot,
    built from this change, served a `previews.json` in the shape
    production's older build wrote as it did.
-2. **Builds in containers.** Planned. A build job per project and commit,
-   in a container as above, its result kept; Ren's build declared in its
-   manifest. The factory's pass uses it, so builds stop running on the
-   host. Verified by a pull request's build that tries to read the home
-   and reach an unlisted host, and cannot.
+2. **Builds in containers.** Built, for Ren's builds. `Builds::make`, which
+   the canary and the previews pass both build through, runs none of a
+   commit's code on the host: it fetches the commit's dependencies by its
+   lockfiles (`cargo fetch --locked`, `bun install --frozen-lockfile
+   --ignore-scripts`) into the builds' own caches
+   (`~/.local/share/ren/build-cache`), then runs each step that runs the
+   commit's code (`cargo build --offline`, the binary's `--version`, the
+   UI's `bun run build`) in a container (`xtask`'s `BuildJob`, `ren-build`)
+   with no network, no new privileges, and a home of its own in the
+   checkout's `target`, seeing the checkout and the cargo cache
+   read-write, and read-only `/usr`, `/etc/alternatives`, the toolchains of
+   the programs that build (found from `cargo`, Bun, and Node as the host
+   resolves them), and the repository's git folder (from which the build
+   names its commit). The UI is staged on the host as before, its
+   production dependencies installed with no scripts. Verified, by two
+   tests run by hand: a step that lists the home finds only the folders
+   above its mounts, and cannot read `~/.ssh` or `~/.gitconfig`, has no SSH
+   agent, resolves no name, and reaches no address; and `HEAD` was built
+   end to end into a store of its own, its binary naming its commit and its
+   UI built, in about two minutes of compiling once fetched.
 3. **Started on demand.** Planned. The daemon carries out the actions
    itself, through Podman: the control API, `ren instance`, and the UI;
    addresses from the published range; the factory's pass no longer runs
@@ -192,6 +207,19 @@ does. Each lands on its own and passes every check.
   becomes a field in the phase that gives it a second: data and upstream
   with phase 5's scenarios, lifetime and project with phase 3's on-demand
   instances.
+- **Phase 2: fetched first, built offline, not relayed.** The plan gave a
+  build a relayed run's network; the factory runs in xtask, with no relay.
+  Instead the host downloads by the lockfiles, which runs none of the
+  commit's code, and the build, where its code runs, has no network at
+  all: stronger, with nothing more to run.
+- **Phase 2: Ren's build stays xtask's.** Manifests have no build outputs
+  (the binary and the UI the store keeps), so Ren's `.ren/project.toml`
+  waits until projects' instances share these build jobs, and gains
+  outputs then.
+- **Phase 2: what a build still sees.** The repository's git folder (its
+  history and configuration) and `~/.bun` (Bun's global installs and
+  cache) are read-only in a build; with no network, nothing it reads
+  leaves but through what it builds.
 - **Phase 1: the factory's commands keep their names.** `cargo xtask
   canary previews` and `ren preview` stay as they are until phases 3 and
   4 replace them.
