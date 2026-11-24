@@ -206,9 +206,28 @@ What already points the right way, and is kept:
    answered throughout. Instance 0's configuration and units were compared
    before and after the first step: unchanged. A fresh instance had no
    scratch folder for its contained daemon to mount; it is made now.
-6. **The canary, as an instance.** Planned. The follower of `main` on a
-   replica; its checks and promotion stay as they are, on top. Verified by
-   a promotion through it.
+6. **The canary, as an instance.** Built, as the follower of `main`. The
+   GitHub watch's `Follower` (now in `ren-gateway`'s `factory` module,
+   beside the protocol it speaks) asks for a canary pass, per project
+   watched on the repository, when its default branch's head moves from
+   one seen before; never on a daemon's first sighting, so a promotion's
+   restart starts none. The factory service takes `canary <project>` for
+   the project it builds (another's is `not_built`), `promote` (the
+   Release page's request, which the control API now asks at once), and
+   `previews`, one pass at a time in that order; while it listens, the
+   timer's pass hands it the canary, and a lock keeps two canary passes
+   from overlapping. The canary's checks, release, and promotion are as
+   they were, on top. Verified in the dev rehearsal (`--of dev`): the fake
+   GitHub's `acme/ren` `main` moved (`fake-github.toml`), and the service
+   started a canary pass 12 seconds later: it fetched `main`, checked its
+   tip out, and handed on to that commit's own xtask, which, predating
+   `[factory]`, refused the dev configuration (see the deviations). A
+   whole pass of this commit (`--source checkout`) then built it in its
+   container, started the canary on a copy of the dev history, and passed
+   doctor, reads, and pages; the Release page's promotion request for it
+   was answered `202` in 13 ms, and the service took it up at once (and
+   dropped it, as the dev rehearsal is never promoted into). A promotion
+   of production through it waits for the operator.
 
 Phases 1 and 2 change nothing the operator sees; 3 is the first that
 does. Each lands on its own and passes every check.
@@ -300,3 +319,13 @@ does. Each lands on its own and passes every check.
   instances. `ren instance` waits for the instances' own API.
 - **Phase 5: the canary rehearses against instance 0** (`--of dev`), and
   the dev factory socket is instance 0's: one rehearsal is enough.
+- **Phase 6: the canary is followed, not modeled as an `Instance`.** Its
+  state stays `release.json` (a build, its checks, the policy's decision)
+  rather than a slot in `previews.json`: production's older gateway reads
+  that file's shape, and the canary has no slot. What made it an instance
+  is that it follows a source (`main`) on a replica and starts when its
+  source moves.
+- **Phase 6: `[factory]` waits for the builds that read it.** A canary pass
+  checks `main` against production's configuration, so the section goes
+  into production's only after the promotion that ships it; the dev
+  rehearsal of a `main` that predates it refuses the dev configuration.

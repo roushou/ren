@@ -498,9 +498,10 @@ shows all of it: the three builds, each check, the pages the canary
 captured (kept in production's data folder, `release-shots`), what the
 policy decided, the work items production's build shipped and those on
 `main` waiting for it, and each project's release. The view's Promote asks
-for the canary's passed build; the next pass installs it, as `canary
+for the canary's passed build; the factory installs it, as `canary
 promote` would, and drops a request that is no longer the canary's passed
-build. With `canary enable`, that is within one timer period.
+build: at once when the factory service listens (below), else at the next
+pass, within one timer period.
 
 When the build passed and follows production's commit, the policy in
 `~/.config/ren/release.toml` decides:
@@ -609,16 +610,35 @@ asks that arrive during one are taken by the next. While the service
 listens, the timer's pass hands its previews pass to it. Follow it with
 `journalctl --user -u ren-factory`.
 
-Previews of pull requests follow them the same way: when production's
-GitHub watch (`[github]`) sees a watched repository's pull requests that
-want a preview (open, not drafts) open, close, become ready or drafts, or
-move their heads, the daemon asks the factory for a pass. A preview of a
-pull request starts, moves, or stops within one poll (`poll_seconds`); the
-timer's pass is left to catch up on what a stopped factory missed. In the
-dev slot, `~/.config/ren-dev/fake-pulls.toml` opens, moves, and closes
-`acme/ren`'s fake pull requests by hand, read at each poll:
+Previews of pull requests follow them the same way, and the canary follows
+`main`: when production's GitHub watch (`[github]`) sees a watched
+repository's pull requests that want a preview (open, not drafts) open,
+close, become ready or drafts, or move their heads, the daemon asks the
+factory for a previews pass; when it sees the repository's default branch
+move from a head it saw before, it asks for a canary pass for each project
+watched on it, which the factory runs for the project it builds (`canary
+serve --project`, `ren` by default). A preview of a pull request starts,
+moves, or stops, and a canary pass over a new `main` starts, within one
+poll (`poll_seconds`). A daemon's first sighting starts no canary pass, so
+a promotion's restart does not start another. The service runs one pass at
+a time: a promotion asked for, then the canary, then the previews. While it
+listens, the timer's pass hands the canary to it, and is left to catch up
+on what a stopped service missed; a lock keeps two canary passes from
+overlapping.
+
+Set `[factory] socket` in production's configuration only once production
+and `main` both know the section (after the promotion that ships it): a
+canary pass checks `main` against production's configuration, and a build
+that predates `[factory]` refuses it.
+
+In the dev slot, `~/.config/ren-dev/fake-github.toml` writes the fake
+`acme/ren` by hand, read at each poll: its `main` moved, and its pull
+requests opened, moved, and closed (what it leaves out stays invented;
+`pull = []` closes them all):
 
 ```toml
+main = "<a commit of this repository>"
+
 [[pull]]
 number = 8
 head = "<a commit of this repository>"

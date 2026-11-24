@@ -316,9 +316,13 @@ dependencies under "Crates" below. Read the code for current module ownership.
   a commit in one); a report that does not fit is refused (`StaleReport`)
   and changes nothing. A failed build is not tried again for its commit.
   A pull request wants a preview of its head unless it is a draft
-  (`Wanted::pull`), and `PullFollower` says when what a repository's pull
-  requests want moved (`Followed`), which the daemon's GitHub watch asks
-  the factory to plan at once (`[factory] socket`).
+  (`Wanted::pull`). `ren-gateway`'s `factory` module (pure, but the
+  `Factory` trait) is the factory's one-line protocol (`FactoryRequest`:
+  previews, a project's canary, a promotion; `FactoryAnswer`) and the
+  `Follower`, which turns what the daemon's GitHub watch sees into requests:
+  previews when pull requests move, the canary when a default branch moves
+  from a head seen before. The daemon asks them of the factory service
+  (`[factory] socket`, `xtask canary serve`).
   The factory keeps it in production's data folder (`Instances::FILE`,
   still `previews.json`, in the shape production's gateway reads). The
   gateway's `src/purity.rs` keeps the module free of I/O.
@@ -880,8 +884,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   conversations it plays as each client), with live traffic whose
   settings both the generator and the fake provider reread (`dev::traffic`,
   with its loopback control API for the dev UI's toolbar), a fake GitHub
-  whose `acme/ren` pull requests can be written by hand (`fake-pulls.toml`
-  beside the config, reread at each poll), an optional private
+  whose `acme/ren` can be written by hand (its `main` and pull requests,
+  in `fake-github.toml` beside the config, reread at each poll), an optional private
   preview on the tailnet, and
   headless screenshots (`dev::shot`).
 - `deploy`: systemd units, and in `deploy/container` the compose file, Podman
