@@ -18,7 +18,7 @@ impl FactorySocket {
         Self { path }
     }
 
-    async fn ask(path: PathBuf, request: FactoryRequest) -> Result<FactoryAnswer, FactoryError> {
+    async fn send(path: PathBuf, request: FactoryRequest) -> Result<FactoryAnswer, FactoryError> {
         let mut stream = tokio::net::UnixStream::connect(&path)
             .await
             .map_err(FactoryError::Unreachable)?;
@@ -36,15 +36,18 @@ impl FactorySocket {
 }
 
 impl Factory for FactorySocket {
-    fn plan(&self) -> BoxFuture<'static, Result<FactoryAnswer, FactoryError>> {
-        Box::pin(Self::ask(self.path.clone(), FactoryRequest::Previews))
+    fn ask(
+        &self,
+        request: FactoryRequest,
+    ) -> BoxFuture<'static, Result<FactoryAnswer, FactoryError>> {
+        Box::pin(Self::send(self.path.clone(), request))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::FactorySocket;
-    use ren_gateway::factory::{Factory, FactoryAnswer, FactoryError};
+    use ren_gateway::factory::{Factory, FactoryAnswer, FactoryError, FactoryRequest};
     use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
     #[tokio::test]
@@ -61,12 +64,12 @@ mod tests {
             line
         };
         let socket = FactorySocket::new(path.clone());
-        let (answer, asked) = tokio::join!(socket.plan(), factory);
+        let (answer, asked) = tokio::join!(socket.ask(FactoryRequest::Previews), factory);
         assert_eq!(answer.unwrap(), FactoryAnswer::Planned);
         assert_eq!(asked, "previews\n");
         drop(dir);
         assert!(matches!(
-            socket.plan().await,
+            socket.ask(FactoryRequest::Promote).await,
             Err(FactoryError::Unreachable(_))
         ));
     }

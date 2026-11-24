@@ -1,13 +1,20 @@
-//! The factory as a service (docs/plans/instances.md, phase 3): it listens
-//! on a Unix socket and runs a previews pass for each ask, one at a time,
-//! so a preview asked for starts now, not at the canary timer's next pass.
-//! Asks that arrive while a pass runs are taken together by the next one.
-//! Each asker is answered once the pass planned which previews run
-//! ([`FactoryAnswer::Planned`]), or that it failed before it did; the pass
-//! then goes on building and starting them.
+//! The factory as a service (docs/plans/instances.md, phases 3 and 6): it
+//! listens on a Unix socket and takes up what it is asked at once, not at
+//! the canary timer's next pass, one pass at a time. Asks that arrive while
+//! a pass runs are taken together by the next round, in order: a promotion
+//! the operator asked for, a canary pass over `main` (for the project it
+//! builds; another's is [`FactoryAnswer::NotBuilt`]), then the previews.
+//! A promotion's or the canary's askers are answered as its pass starts
+//! ([`FactoryAnswer::Started`]); the previews' once the pass planned which
+//! run ([`FactoryAnswer::Planned`]), or that it failed before it did.
 
-use super::{CanaryError, Factory, PublishArgs, previews::PreviewPass};
-use crate::{progress::Progress, replica::ProductionPlace};
+use super::{
+    CanaryError, Factory, PublishArgs, RunArgs, Source, TargetArgs, previews::PreviewPass,
+};
+use crate::{
+    progress::Progress,
+    replica::{Production, ProductionPlace},
+};
 use ren_gateway::factory::{FactoryAnswer, FactoryRequest};
 use ren_harness::host::HostEnv;
 use std::{
@@ -21,6 +28,8 @@ use std::{
 pub(super) struct FactoryService<'a> {
     pub factory: &'a Factory,
     pub production: &'a ProductionPlace,
+    /// Which instance `production` is: what the canary checks against.
+    pub of: Production,
     pub publish: PublishArgs,
     pub project: &'a str,
 }
@@ -50,10 +59,7 @@ impl FactoryService<'_> {
                 }
             };
             let askers = Self::askers(&listener, first);
-            if askers.is_empty() {
-                continue;
-            }
-            self.pass(env, askers);
+            self.round(env, askers);
         }
     }
 
@@ -75,9 +81,9 @@ impl FactoryService<'_> {
         UnixListener::bind(socket).map_err(CanaryError::Serve)
     }
 
-    /// `first` and every ask already waiting, each that asked for the
-    /// previews; one that asked for something else is told so.
-    fn askers(listener: &UnixListener, first: UnixStream) -> Vec<UnixStream> {
+    /// `first` and every ask already waiting, each with what it asked; one
+    /// that asked nothing the factory takes is told so.
+    fn askers(listener: &UnixListener, first: UnixStream) -> Vec<(UnixStream, FactoryRequest)> {
         let mut streams = vec![first];
         if listener.set_nonblocking(true).is_ok() {
             while let Ok((stream, _)) = listener.accept() {
@@ -88,7 +94,7 @@ impl FactoryService<'_> {
         streams
             .into_iter()
             .filter_map(|stream| match Self::request(&stream) {
-                Some(FactoryRequest::Previews) => Some(stream),
+                Some(request) => Some((stream, request)),
                 None => {
                     Self::answer(
                         vec![stream],
@@ -106,6 +112,47 @@ impl FactoryService<'_> {
         let mut line = String::new();
         BufReader::new(stream).read_line(&mut line).ok()?;
         FactoryRequest::read(&line)
+    }
+
+    /// One round for `askers`: each pass asked for, once, in order.
+    fn round(&self, env: &HostEnv, askers: Vec<(UnixStream, FactoryRequest)>) {
+        let mut promote = Vec::new();
+        let mut canary = Vec::new();
+        let mut previews = Vec::new();
+        let mut not_built = Vec::new();
+        for (stream, request) in askers {
+            match request {
+                FactoryRequest::Promote => promote.push(stream),
+                FactoryRequest::Canary(project) if project.as_str() == self.project => {
+                    canary.push(stream);
+                }
+                FactoryRequest::Canary(_) => not_built.push(stream),
+                FactoryRequest::Previews => previews.push(stream),
+            }
+        }
+        Self::answer(not_built, &FactoryAnswer::NotBuilt);
+        if !promote.is_empty() {
+            Self::answer(promote, &FactoryAnswer::Started);
+            Progress("Carrying out the promotion the operator asked for").show();
+            if let Err(error) = self.factory.requested(env, self.production) {
+                println!("warning: the promotion failed: {error}");
+            }
+        }
+        if !canary.is_empty() {
+            Self::answer(canary, &FactoryAnswer::Started);
+            Progress("main moved: a canary pass").show();
+            let pass = RunArgs {
+                source: Source::Main,
+                target: TargetArgs { of: self.of },
+                publish: self.publish,
+            };
+            if let Err(error) = self.factory.delegate(&pass) {
+                println!("warning: the canary pass failed: {error}");
+            }
+        }
+        if !previews.is_empty() {
+            self.pass(env, previews);
+        }
     }
 
     /// One previews pass for `askers`, each answered once it has planned.
@@ -137,13 +184,11 @@ impl FactoryService<'_> {
         }
     }
 
-    /// Asks the factory listening on `socket` for a pass, without waiting
-    /// for it: whether one listens.
-    pub fn nudge(socket: &Path) -> bool {
+    /// Asks the factory listening on `socket` for `request`, without
+    /// waiting for it: whether one listens.
+    pub fn nudge(socket: &Path, request: &FactoryRequest) -> bool {
         match UnixStream::connect(socket) {
-            Ok(mut stream) => stream
-                .write_all(FactoryRequest::Previews.line().as_bytes())
-                .is_ok(),
+            Ok(mut stream) => stream.write_all(request.line().as_bytes()).is_ok(),
             Err(_) => false,
         }
     }

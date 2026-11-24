@@ -33,6 +33,7 @@ use crate::{
 };
 use clap::{Args, Subcommand, ValueEnum};
 use ren_daemon::host::SystemClock;
+use ren_gateway::factory::FactoryRequest;
 use ren_git::{Branch, Commit, Git, GitError, Tree};
 use ren_harness::host::HostEnv;
 use ren_network::tailscale::Cli;
@@ -278,9 +279,33 @@ impl Factory {
         }))
     }
 
+    /// A pass over main's tip: handed to the factory service when it
+    /// listens for production (it runs one pass at a time, and the timer's
+    /// would race it), else run here.
+    fn follow(&self, env: &HostEnv, args: &RunArgs) -> Result<(), CanaryError> {
+        let served = match args.target.of {
+            Production::Installed => {
+                let ren = Self::REN
+                    .parse()
+                    .map_err(|_| CanaryError::Commit(Self::REN.to_owned()))?;
+                FactoryService::socket(env).is_some_and(|socket| {
+                    FactoryService::nudge(&socket, &FactoryRequest::Canary(ren))
+                })
+            }
+            Production::Dev => false,
+        };
+        if served {
+            Progress("The factory service runs the canary pass").show();
+            return Ok(());
+        }
+        self.delegate(args)
+    }
+
     /// Fetches main, checks its tip out in the factory's worktree, and goes
-    /// on there with that commit's own xtask.
+    /// on there with that commit's own xtask. One at a time: a second waits
+    /// for the first.
     fn delegate(&self, args: &RunArgs) -> Result<(), CanaryError> {
+        let lock = self.lock()?;
         let main: Branch = Self::MAIN
             .parse()
             .map_err(|_| CanaryError::Commit(Self::MAIN.to_owned()))?;
@@ -306,7 +331,24 @@ impl Factory {
         if args.publish.publish {
             pass = pass.arg("--publish");
         }
-        Ok(pass.run()?)
+        let ran = pass.run();
+        drop(lock);
+        Ok(ran?)
+    }
+
+    /// The canary's lock, held while a pass runs over main.
+    fn lock(&self) -> Result<fs::File, CanaryError> {
+        let dir = self.home.join(".local/share/ren");
+        fs::create_dir_all(&dir).map_err(FileError::at(&dir))?;
+        let path = dir.join("canary.lock");
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(FileError::at(&path))?;
+        file.lock().map_err(FileError::at(&path))?;
+        Ok(file)
     }
 
     /// One pass over this checkout's commit.
@@ -347,8 +389,8 @@ impl Factory {
         WorkLedger::new(&production).close(self, &id)?;
         // The factory service, when it listens, runs the previews: two
         // passes at once would race over them. Its previews are kept.
-        let served =
-            FactoryService::socket(env).is_some_and(|socket| FactoryService::nudge(&socket));
+        let served = FactoryService::socket(env)
+            .is_some_and(|socket| FactoryService::nudge(&socket, &FactoryRequest::Previews));
         let running = || -> Vec<Commit> {
             production
                 .previews()
@@ -655,7 +697,7 @@ impl Canary {
         let factory = Factory::new(env)?;
         match self.action {
             CanaryAction::Run(args) => match args.source {
-                Source::Main => factory.delegate(&args),
+                Source::Main => factory.follow(env, &args),
                 Source::Checkout => factory.pass(env, &args),
             },
             CanaryAction::Promote(target) => factory.promote_now(env, target),
@@ -689,6 +731,7 @@ impl Canary {
                 FactoryService {
                     factory: &factory,
                     production: &production,
+                    of: args.previews.target.of,
                     publish: args.previews.publish,
                     project: &args.previews.project,
                 }

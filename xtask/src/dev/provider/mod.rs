@@ -67,7 +67,7 @@ impl FakeProvider {
     pub fn serve(
         address: SocketAddr,
         settings: Option<PathBuf>,
-        pulls: Option<PathBuf>,
+        written: Option<PathBuf>,
     ) -> Result<(), ProviderError> {
         if !address.ip().is_loopback() {
             return Err(ProviderError::NotLoopback(address));
@@ -81,18 +81,18 @@ impl FakeProvider {
                 .await
                 .map_err(|source| ProviderError::Bind { address, source })?;
             println!("fake provider listening on http://{address}");
-            axum::serve(listener, Self::router(settings, pulls))
+            axum::serve(listener, Self::router(settings, written))
                 .await
                 .map_err(ProviderError::Serve)
         })
     }
 
-    fn router(settings: Option<PathBuf>, pulls: Option<PathBuf>) -> Router {
+    fn router(settings: Option<PathBuf>, written: Option<PathBuf>) -> Router {
         let provider = Arc::new(Self {
             serial: AtomicU64::new(1),
             settings,
         });
-        let github = Arc::new(FakeGithub { pulls });
+        let github = Arc::new(FakeGithub { written });
         Router::new()
             .route(
                 FakeGithub::PATH,

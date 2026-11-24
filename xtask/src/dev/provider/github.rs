@@ -4,9 +4,10 @@
 //! requests in the states the project page draws: passing and approved,
 //! failing, behind with checks running, conflicting, blocked, and a draft.
 //! Any other repository is not found, as GitHub says for one a token
-//! cannot read. `acme/ren`'s pull requests can instead be opened, moved,
-//! and closed by hand, in a file read for each answer ([`OpenedPulls`]),
-//! so the factory's previews can be seen following them.
+//! cannot read. `acme/ren` can instead be written by hand, in a file read
+//! for each answer ([`HandWritten`]): its `main` moved, and its pull
+//! requests opened, moved, and closed, so the factory's canary and
+//! previews can be seen following them.
 
 use axum::{Json, http::StatusCode};
 use serde::Deserialize;
@@ -15,23 +16,26 @@ use std::path::PathBuf;
 
 /// The fake GitHub.
 pub(super) struct FakeGithub {
-    /// The file of `acme/ren`'s pull requests, when one is given.
-    pub pulls: Option<PathBuf>,
+    /// The file `acme/ren` is written in by hand, when one is given.
+    pub written: Option<PathBuf>,
 }
 
-/// `acme/ren`'s open pull requests, as the operator writes them:
+/// `acme/ren` as the operator writes it; what it leaves out stays
+/// invented:
 ///
 /// ```toml
-/// [[pull]]
+/// main = "<a commit id>"   # its default branch's head
+///
+/// [[pull]]                 # its open pull requests; `pull = []` for none
 /// number = 8
 /// head = "<a commit id>"
 /// draft = false
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct OpenedPulls {
-    #[serde(default)]
-    pull: Vec<OpenedPull>,
+struct HandWritten {
+    main: Option<String>,
+    pull: Option<Vec<OpenedPull>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,10 +104,14 @@ impl FakeGithub {
     pub(super) async fn answer(&self, Json(query): Json<Value>) -> (StatusCode, Json<Value>) {
         let owner = query["variables"]["owner"].as_str().unwrap_or_default();
         let name = query["variables"]["name"].as_str().unwrap_or_default();
+        let written = match (owner, name) {
+            ("acme", "ren") => self.written(),
+            _ => HandWritten::default(),
+        };
         let pulls = match (owner, name) {
             ("acme", "web") => Self::web(),
             ("acme", "api") => Self::api(),
-            ("acme", "ren") => self.opened().unwrap_or_else(Self::ren),
+            ("acme", "ren") => written.pull.map_or_else(Self::ren, Self::opened),
             _ => {
                 return (
                     StatusCode::OK,
@@ -126,42 +134,45 @@ impl FakeGithub {
         (
             StatusCode::OK,
             Json(json!({ "data": { "repository": {
-                "defaultBranchRef": { "name": "main", "target": { "oid": FakePull::oid(0xa0) } },
+                "defaultBranchRef": { "name": "main", "target": {
+                    "oid": written.main.unwrap_or_else(|| FakePull::oid(0xa0)),
+                } },
                 "manifest": manifest,
                 "pullRequests": { "pageInfo": { "hasNextPage": false }, "nodes": nodes },
             } } })),
         )
     }
 
-    /// `acme/ren`'s pull requests from the file, when it is given and
-    /// reads; a file that does not read is said, and the invented ones
-    /// stand.
-    fn opened(&self) -> Option<Vec<FakePull>> {
-        let path = self.pulls.as_deref()?;
-        let text = std::fs::read_to_string(path).ok()?;
-        let opened: OpenedPulls = match toml::from_str(&text) {
-            Ok(opened) => opened,
-            Err(error) => {
-                println!("warning: {} does not read: {error}", path.display());
-                return None;
-            }
+    /// `acme/ren` from the file, when it is given and reads; a file that
+    /// does not read is said, and everything stays invented.
+    fn written(&self) -> HandWritten {
+        let Some(path) = self.written.as_deref() else {
+            return HandWritten::default();
         };
-        Some(
-            opened
-                .pull
-                .into_iter()
-                .map(|pull| FakePull {
-                    number: pull.number,
-                    title: "feat: a pull request opened by hand",
-                    branch: "by-hand",
-                    head: Some(pull.head),
-                    merge: "CLEAN",
-                    review: None,
-                    checks: None,
-                    draft: pull.draft,
-                })
-                .collect(),
-        )
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return HandWritten::default();
+        };
+        toml::from_str(&text).unwrap_or_else(|error| {
+            println!("warning: {} does not read: {error}", path.display());
+            HandWritten::default()
+        })
+    }
+
+    /// The pull requests written by hand, as GitHub would list them.
+    fn opened(pulls: Vec<OpenedPull>) -> Vec<FakePull> {
+        pulls
+            .into_iter()
+            .map(|pull| FakePull {
+                number: pull.number,
+                title: "feat: a pull request opened by hand",
+                branch: "by-hand",
+                head: Some(pull.head),
+                merge: "CLEAN",
+                review: None,
+                checks: None,
+                draft: pull.draft,
+            })
+            .collect()
     }
 
     fn web() -> Vec<FakePull> {

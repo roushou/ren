@@ -1,9 +1,11 @@
 //! `POST /control/v1/release/promote`: the operator asks that production
 //! take the canary's build. The gateway records the request
-//! (`ren_release::PromotionRequest`); the factory's next pass carries it out
-//! with the install's steps, since an install restarts the daemon that
-//! would otherwise run it. Refused, `409` `not_promotable`, unless the commit
-//! is the canary's and its build passed.
+//! (`ren_release::PromotionRequest`); the factory carries it out with the
+//! install's steps, since an install restarts the daemon that would
+//! otherwise run it: at once with a [`Factory`] on the host, which is asked
+//! to ([`FactoryRequest::Promote`]), else at its next timed pass. Refused,
+//! `409` `not_promotable`, unless the commit is the canary's and its build
+//! passed.
 //!
 //! `POST /control/v1/previews/ask` and `/previews/withdraw`: the operator
 //! asks for a preview of a commit, or withdraws the ask
@@ -19,7 +21,7 @@ use super::{
     request::{PreviewAskRequest, PromoteRequest},
 };
 use crate::api::release::ReleaseFolder;
-use crate::factory::{Factory, FactoryAnswer};
+use crate::factory::{Factory, FactoryAnswer, FactoryRequest};
 use crate::instance::CommitAsks;
 use axum::{
     Json, Router,
@@ -39,8 +41,8 @@ pub(super) struct ReleaseApi {
 }
 
 impl ReleaseApi {
-    /// How long an ask waits for the factory to plan: a pass already
-    /// building plans the ask only once it is done.
+    /// How long an ask waits for the factory to take it up: a pass already
+    /// building takes it only once it is done.
     const PLAN_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
     pub fn router(self) -> Router {
@@ -84,6 +86,9 @@ impl ReleaseApi {
             tracing::warn!(%error, "the promotion request was not recorded");
             return ControlRefusal::Unavailable.into_response();
         }
+        if let Some(factory) = &api.factory {
+            api.ask(factory.as_ref(), FactoryRequest::Promote).await;
+        }
         (StatusCode::ACCEPTED, ControlApi::answer(request)).into_response()
     }
 
@@ -99,16 +104,20 @@ impl ReleaseApi {
         .await
     }
 
-    /// Asks the factory to plan now; what it answers is for the log alone:
-    /// the ask is recorded either way, and a later pass takes it up.
-    async fn plan(&self, factory: &dyn Factory) {
-        match tokio::time::timeout(Self::PLAN_WAIT, factory.plan()).await {
-            Ok(Ok(FactoryAnswer::Planned)) => {}
+    /// Asks the factory `request` now; what it answers is for the log
+    /// alone: the request is recorded either way, and a later pass takes it
+    /// up.
+    async fn ask(&self, factory: &dyn Factory, request: FactoryRequest) {
+        match tokio::time::timeout(Self::PLAN_WAIT, factory.ask(request)).await {
+            Ok(Ok(FactoryAnswer::Planned | FactoryAnswer::Started)) => {}
+            Ok(Ok(FactoryAnswer::NotBuilt)) => {
+                tracing::warn!("the factory does not build what was asked of it");
+            }
             Ok(Ok(FactoryAnswer::Failed(why))) => {
-                tracing::warn!(%why, "the factory could not plan the previews");
+                tracing::warn!(%why, "the factory could not take up the request");
             }
             Ok(Err(error)) => tracing::warn!(%error, "the factory was not asked"),
-            // Busy with a pass: the ask waits for the next.
+            // Busy with a pass: the request waits for the next.
             Err(_) => {}
         }
     }
@@ -146,7 +155,7 @@ impl ReleaseApi {
         {
             Ok((true, requests)) => {
                 if let Some(factory) = &self.factory {
-                    self.plan(factory.as_ref()).await;
+                    self.ask(factory.as_ref(), FactoryRequest::Previews).await;
                 }
                 (StatusCode::ACCEPTED, ControlApi::answer(requests)).into_response()
             }

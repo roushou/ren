@@ -756,8 +756,8 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                 self.index.provider().to_string(),
                 "--settings".into(),
                 self.traffic_settings().display().to_string(),
-                "--pulls".into(),
-                self.fake_pulls().display().to_string(),
+                "--github".into(),
+                self.fake_github().display().to_string(),
             ],
             &[],
         )?;
@@ -927,11 +927,11 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
         self.config.with_file_name("traffic.toml")
     }
 
-    /// The fake GitHub's `acme/ren` pull requests, when written by hand
-    /// (`[[pull]]`, each a `number`, a `head`, and whether it is a
-    /// `draft`); without it, the invented ones.
-    pub fn fake_pulls(&self) -> PathBuf {
-        self.config.with_file_name("fake-pulls.toml")
+    /// The fake GitHub's `acme/ren`, when written by hand (its `main`, and
+    /// `[[pull]]`, each a `number`, a `head`, and whether it is a
+    /// `draft`); without it, invented.
+    pub fn fake_github(&self) -> PathBuf {
+        self.config.with_file_name("fake-github.toml")
     }
 
     /// Stop the slot's units, then its runs' run hosts, which outlive its

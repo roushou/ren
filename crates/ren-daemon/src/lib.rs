@@ -20,9 +20,8 @@ use crate::packages::{HostPackages, PackageStore, fetch::ReqwestFetch};
 use ren_gateway::{
     ControlToken, Gateway, ManagementSetup, ReleaseFolder, ReqwestUpstream, Shutdown, Stopped,
     control::Controls,
-    factory::{Factory, FactoryAnswer},
+    factory::{Factory, FactoryAnswer, FactoryRequest, Follower},
     github::PullBoard,
-    instance::{Followed, PullFollower},
     operator::{OperatorState, Pause, RestoreError},
 };
 use ren_gateway::{IngressError, UpstreamConfigError};
@@ -626,8 +625,8 @@ impl Daemon {
         let Some(setup) = config.github() else {
             return PullBoard::default();
         };
-        let nudges = factory.map(Self::follow_pulls);
-        let mut follower = PullFollower::default();
+        let asks = factory.map(Self::follow);
+        let mut follower = Follower::watching(setup.projects.iter().cloned());
         Self::learn_folders(setup, projects.clone(), reader.clone(), shutdown.clone());
         let board = PullBoard::watching(setup.projects.iter().cloned());
         let poller = Poller::new(setup.client.clone(), setup.period, board.repositories());
@@ -648,12 +647,12 @@ impl Daemon {
                         }
                         recording.record(repository, observation);
                         // Recorded first: the pass reads what was seen.
-                        if let Some(nudges) = &nudges
-                            && follower.see(repository, observation) == Followed::Moved
-                        {
-                            // One waiting is enough: the pass it starts
-                            // reads every repository.
-                            let _ = nudges.try_send(());
+                        if let Some(asks) = &asks {
+                            for request in follower.see(repository, observation) {
+                                // A full queue already holds passes that
+                                // read every repository.
+                                let _ = asks.try_send(request);
+                            }
                         }
                     },
                     || {
@@ -666,30 +665,42 @@ impl Daemon {
         });
         board
     }
-    /// Asks the factory for a pass each time a nudge arrives, one at a
-    /// time (docs/plans/instances.md, phase 4): previews follow their pull
-    /// requests as the watch sees them move, not at the factory's timer.
-    /// Ends when the watch, which holds the sender, ends.
-    fn follow_pulls(factory: Arc<dyn Factory>) -> tokio::sync::mpsc::Sender<()> {
-        let (nudges, mut nudged) = tokio::sync::mpsc::channel(1);
+    /// Asks the factory what the GitHub watch's sightings ask of it, one
+    /// at a time (docs/plans/instances.md, phases 4 and 6): previews follow
+    /// their pull requests, and the canary follows `main`, as the watch sees
+    /// them move, not at the factory's timer. Each ask waits a few seconds
+    /// for its answer: a busy factory takes it up after its pass. Ends when
+    /// the watch, which holds the sender, ends.
+    fn follow(factory: Arc<dyn Factory>) -> tokio::sync::mpsc::Sender<FactoryRequest> {
+        const ANSWER_WAIT: Duration = Duration::from_secs(5);
+        let (asks, mut asked) = tokio::sync::mpsc::channel::<FactoryRequest>(8);
         #[expect(
             clippy::disallowed_methods,
-            reason = "process wiring: the daemon owns the pull requests' follower task"
+            reason = "process wiring: the daemon owns the GitHub follower's task"
         )]
         tokio::spawn(async move {
-            while nudged.recv().await.is_some() {
-                match factory.plan().await {
-                    Ok(FactoryAnswer::Planned) => {}
-                    Ok(FactoryAnswer::Failed(why)) => {
-                        tracing::warn!(%why, "the factory could not plan the pull requests' previews");
+            while let Some(request) = asked.recv().await {
+                let line = request.line();
+                match tokio::time::timeout(ANSWER_WAIT, factory.ask(request)).await {
+                    Ok(Ok(FactoryAnswer::Planned | FactoryAnswer::Started)) => {}
+                    Ok(Ok(FactoryAnswer::NotBuilt)) => {
+                        tracing::debug!(
+                            request = line.trim_end(),
+                            "the factory does not build that project"
+                        );
                     }
-                    Err(error) => {
-                        tracing::warn!(%error, "the factory was not asked to follow the pull requests");
+                    Ok(Ok(FactoryAnswer::Failed(why))) => {
+                        tracing::warn!(%why, request = line.trim_end(), "the factory could not take up what GitHub showed");
                     }
+                    Ok(Err(error)) => {
+                        tracing::warn!(%error, "the factory was not asked to follow GitHub");
+                    }
+                    // Busy with a pass: it takes the ask up after.
+                    Err(_) => {}
                 }
             }
         });
-        nudges
+        asks
     }
 
     /// Keeps `projects` told which folder each watched project is
