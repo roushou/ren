@@ -1058,3 +1058,172 @@ async fn a_held_run_is_detached_left_open_and_rejoined() {
         .position(|kind| *kind == Stored::Known(ObservationKind::RunRejoined));
     assert!(detached.is_some() && rejoined > detached, "{kinds:?}");
 }
+
+/// A run recorded with four passages: two closed and one broken to a listed
+/// registry, and one refused.
+fn passages_of(harness: &Harness, run: ren_recorder::id::RunId, session: ren_recorder::RunSession) {
+    use ren_recorder::passage::{PassageRecord, Purpose};
+    use ren_relay::{Course, Refusal, TunnelEnd};
+    let tap = harness
+        .recorder
+        .run(
+            run,
+            session,
+            ren_harness::Harness::Codex,
+            "/work/acme".into(),
+            ren_harness::settings::RunSettings::default(),
+            None,
+        )
+        .unwrap();
+    let registry = |end| Course::Tunnel {
+        target: "registry.acme.dev:443".parse().unwrap(),
+        end,
+    };
+    let through = || "*.acme.dev:443".parse().unwrap();
+    for end in [
+        TunnelEnd::Closed {
+            through: through(),
+            sent: 100,
+            received: 2_000,
+        },
+        TunnelEnd::Closed {
+            through: through(),
+            sent: 50,
+            received: 1_000,
+        },
+        TunnelEnd::Broken { through: through() },
+    ] {
+        harness.recorder.passage(
+            run,
+            PassageRecord::of(&registry(end), |_| Some(Purpose::Project)),
+        );
+    }
+    harness.recorder.passage(
+        run,
+        PassageRecord::of(
+            &Course::Tunnel {
+                target: "example.com:443".parse().unwrap(),
+                end: TunnelEnd::Refused(Refusal::Unlisted),
+            },
+            |_| None,
+        ),
+    );
+    tap.end(ren_recorder::capture::RunEnd::Exited, None);
+}
+
+#[tokio::test]
+async fn a_sessions_passages_read_back_across_its_runs_grouped_by_what_was_asked_and_how_it_ended()
+{
+    use ren_recorder::{
+        RunSession,
+        id::{RunId, SessionId},
+        passage::{PassageEnd, Purpose},
+    };
+    // Room for both runs' records at once.
+    let harness = Harness::new(CaptureOptions::default(), 32).await;
+    let session = SessionId::restore(uuid::Uuid::from_u128(77));
+    passages_of(
+        &harness,
+        RunId::restore(uuid::Uuid::from_u128(7)),
+        RunSession::New(session),
+    );
+    passages_of(
+        &harness,
+        RunId::restore(uuid::Uuid::from_u128(9)),
+        RunSession::Existing(session),
+    );
+    let (_dir, _, reader) = harness.drain().await;
+    let read: Vec<_> = reader
+        .passages(session)
+        .await
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .map(|passage| {
+            (
+                passage.asked,
+                passage.end,
+                passage.through,
+                passage.listed_by,
+                passage.count,
+                passage.sent,
+                passage.received,
+            )
+        })
+        .collect();
+    let registry = "registry.acme.dev:443".to_owned();
+    let through = Some("*.acme.dev:443".to_owned());
+    let project = Some(Stored::Known(Purpose::Project));
+    // All at one moment: by what was asked, then how it ended.
+    assert_eq!(
+        read,
+        [
+            (
+                "example.com:443".to_owned(),
+                Stored::Known(PassageEnd::Unlisted),
+                None,
+                None,
+                2,
+                0,
+                0
+            ),
+            (
+                registry.clone(),
+                Stored::Known(PassageEnd::Broken),
+                through.clone(),
+                project.clone(),
+                2,
+                0,
+                0
+            ),
+            (
+                registry,
+                Stored::Known(PassageEnd::Closed),
+                through,
+                project,
+                4,
+                300,
+                6_000
+            ),
+        ]
+    );
+    let unknown = SessionId::restore(uuid::Uuid::from_u128(78));
+    assert_eq!(reader.passages(unknown).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_deleted_run_takes_its_passages() {
+    use ren_recorder::batch::{Actor, HistoryChange, HistorySubject};
+    let harness = Harness::new(CaptureOptions::default(), 8).await;
+    let run = ren_recorder::id::RunId::restore(uuid::Uuid::from_u128(7));
+    let session = ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(77));
+    passages_of(&harness, run, ren_recorder::RunSession::New(session));
+    harness.recorder.history_slot().unwrap().record(
+        Actor::Ren,
+        HistorySubject::Run(run),
+        HistoryChange::Delete,
+    );
+    let (dir, _, reader) = harness.drain().await;
+    // Its session went with its one run, or is left with no passages.
+    assert!(
+        reader
+            .passages(session)
+            .await
+            .unwrap()
+            .unwrap_or_default()
+            .is_empty()
+    );
+    reader.close().await;
+    assert_eq!(
+        count(dir.path(), "SELECT COUNT(*) FROM run_passages").await,
+        0
+    );
+    assert_eq!(
+        count(
+            dir.path(),
+            "SELECT COUNT(*) FROM observations WHERE kind = 'run_passed'"
+        )
+        .await,
+        0
+    );
+}

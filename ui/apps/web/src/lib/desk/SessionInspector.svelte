@@ -2,12 +2,14 @@
   import { Elapsed } from '#lib/time.ts';
   /*
     The session's inspector, beside its conversation: context turn by turn,
-    what its calls add up to, where its time went, the files it touched, and
-    the work item it works on. The report is read as the session opens and
+    what its calls add up to, where its time went, the files it touched,
+    where its relayed runs reached through the relay, and the work item it
+    works on. The report and the passages are read as the session opens and
     again each time a turn ends (`version`).
   */
   import { ManagementApi, type RecordingId, type RecordingReport } from '#lib/api.ts';
   import type { SessionId } from '#lib/runs.ts';
+  import { Reached, type Passage } from '#lib/passages.ts';
   import { SessionInspector } from '#lib/inspector.ts';
 
   import { Work, WorkApi, type WorkItem } from '#lib/work.ts';
@@ -65,6 +67,23 @@
     return () => abort.abort();
   });
   const workItem = $derived(item && item.session === session ? item.item : null);
+
+  let reached = $state.raw<{ session: SessionId; passages: Passage[] } | null>(null);
+  $effect(() => {
+    void version;
+    const target = session;
+    const abort = new AbortController();
+    api.passages(target, abort.signal).then(
+      (passages) => (reached = { session: target, passages }),
+      () => {
+        // Without them, no passages show.
+      },
+    );
+    return () => abort.abort();
+  });
+  const reach = $derived(
+    reached && reached.session === session ? Reached.rows(reached.passages) : [],
+  );
 
   const context = $derived(read ? SessionInspector.context(read) : null);
   const totals = $derived(read ? SessionInspector.totals(read) : null);
@@ -186,6 +205,21 @@
             <span class="path">{file.path}</span>
             <span class="meta count">{file.reads || '—'}</span>
             <span class="meta count" class:edited={file.edits > 0}>{file.edits || '—'}</span>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
+  {#if reach.length}
+    <section class="block files">
+      <div class="head pad"><span class="cap">Reached · {reach.length}</span></div>
+      <ul>
+        {#each reach as row (`${row.end} ${row.asked}`)}
+          <li class="reach" title={row.said}>
+            <Glyph mark={row.mark} label={row.said} />
+            <span class="path">{row.asked}</span>
+            <span class="meta count">{row.count}</span>
           </li>
         {/each}
       </ul>
@@ -366,6 +400,9 @@
     align-items: center;
     height: 24px;
     padding: 0 14px;
+  }
+  .files li.reach {
+    grid-template-columns: 8px minmax(0, 1fr) 32px;
   }
   .path {
     overflow: hidden;

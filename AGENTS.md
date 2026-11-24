@@ -9,7 +9,7 @@ call. One executable and one storage format serve both a laptop and a VPS
 reached through Tailscale.
 
 [`docs/architecture.md`](docs/architecture.md) describes how Ren is built and
-lists its known limitations. Section 4 below maps the ten crates and the `xtask` package.
+lists its known limitations. Section 4 below maps the crates and the `xtask` package.
 
 - All code follows the principles (section 2) and the workspace lints.
 - Never describe unbuilt functionality as working. Read the source before assuming
@@ -181,7 +181,7 @@ saturation, and persistence recovery.
 
 ## 4. Worktree map
 
-This map describes the code as it is: the ten crates, listed with their
+This map describes the code as it is: the crates, listed with their
 dependencies under "Crates" below. Read the code for current module ownership.
 
 - `docs/architecture.md`: how Ren is built, and its known limitations. The other
@@ -220,7 +220,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   CLI dependency.
 - `crates/ren-manifest`: a project's manifest for Ren (`Manifest`,
   read from `.ren/project.toml`): the depot packages its steps need
-  (`packages`), its build, serve, check, and quiesce steps,
+  (`packages`), where its relayed runs may connect (`egress`, each an
+  `EgressEntry`, a host name and port or `*.parent:port`, read by the manifest
+  itself; the daemon turns them into the relay's `Destination`s), its build, serve, check, and quiesce steps,
   each an argv with the environment it adds, never a shell line, whose
   values name the `Place` a step runs for through a parsed `Template`
   (`{port}`, `{port+N}`, `{data}`, `{worktree}`, read from its old name
@@ -240,12 +242,18 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Container` is what one sees of the host (`Mount`, read-only or
   read-write at its host path), how it lives (`Lifetime`: kept, removed
   once it exits, or the caller's foreground process) and where
-  (`Placement`: the host's network as the operator, or a pod), its
+  (`Placement`: the host's network as the operator, no network but its
+  loopback under a `Runtime`, the host's kernel or gVisor's `runsc`
+  (rootless, no cgroups, sockets shared with the host through its mounts),
+  or a pod), its
   `Environment` and `Privileges`, and what it runs; `Engine` (one variant,
   `Podman`) gives the arguments that start it, all pure. `Engine` is also
   the one place Ren runs the engine: it starts a container as a `Launch`
-  says (from a systemd scope of its own, or through the API socket; a
-  caller's setting is a `Reach`), and creates and removes pods, removes
+  says (from a systemd scope of its own, or through the API socket, whose
+  service must run the container's `Runtime`, checked before each start;
+  a caller's setting is a `Reach`), gives the arguments of an API service
+  that runs its containers under a `Runtime` (`service_args`, xtask's
+  `ren-gvisor` units), and creates and removes pods, removes
   containers, and builds images, failing with `EngineError`. The daemon's
   run hosts, and xtask's daemon container and pods, are built and started
   with it.
@@ -259,6 +267,18 @@ dependencies under "Crates" below. Read the code for current module ownership.
   a `Publication` planned from those reports, then applied with Serve, and
   a Serve port turned off. xtask and `ren project preview` publish through
   it.
+- `crates/ren-relay`: a forward proxy that lets a sandboxed run's
+  connections out only to where its policy lists, with `Relay` as its
+  primary type (docs/plans/self-build.md, phase 12). It depends on none of
+  Ren's crates. A holder is issued a pass (`Relay::issue`, revoked when
+  its `PassHandle` drops): a `Ticket`, the password of its proxy URL, and
+  a `RelayPolicy` of `Destination`s (`host:port`, `*.parent:port`). Pure:
+  a request's `Head` read from bytes however they arrive, the `Verdict`,
+  the `Reachable` addresses (a name only at a `PublicAddress`), and the
+  `Answer`. `Relay::serve` is the shell: it drives every request in its
+  own future (no spawned task), passes an admitted tunnel's bytes through
+  unread, and reports a `Passage` once it ends, which the daemon records
+  with its run (`ren_recorder::passage`).
 - `crates/ren-github`: a self-contained GitHub client for a repository's
   pull requests, with `Client` as its primary type
   (docs/plans/self-build.md, phase 8). It depends on none of Ren's crates
@@ -267,15 +287,21 @@ dependencies under "Crates" below. Read the code for current module ownership.
   branch's head `Oid` and each open `PullRequest`: its `PullNumber`,
   author's `Login`, head, `Readiness`, `MergeState`, `ReviewDecision`, and
   each `Check` with its `CheckState`, summed up as `ChecksState`), and
-  whether the listing was cut (`Listing`); `Client` sends it to an
+  whether the listing was cut (`Listing`), and the default branch's
+  `.ren/project.toml` as text (`Watch::MANIFEST`); `Client` sends it to an
   `Endpoint` (HTTPS, or HTTP to loopback) with a `Token` that is never
   shown; a `Poller` reads repositories once a `PollPeriod`, keeping each
   one's `Observation` (waiting, `Seen`, or `Failed` with the last
   `Sighting` kept apart), with the time its caller gives it. A value
   GitHub sends that it does not know is `Reported::Unknown`, never rounded
-  to a known one. Ren adapts
+  to a known one. For a GitHub `App` (its `AppId` and `AppKey`, never
+  shown), `Installations` mints a `RepositoryToken` scoped to one
+  repository, to push and open pull requests (phase 12's grants);
+  `RepositorySlug::of_remote` reads a git remote URL. Ren adapts
   on its side: the daemon's `[github]` section maps projects to
-  repositories and runs the poller; the gateway's `PullBoard` keeps its
+  repositories and runs the poller, and `[github.app]` sets up
+  `ren_daemon::host::Grants`, which a relayed run's git asks through
+  `ren credential`; the gateway's `PullBoard` keeps its
   observations by project and serves them.
 - `ren-gateway`'s `preview` module: which previews of Ren run, sans-IO, in
   `Previews` (docs/plans/self-build.md, phase 9): each
@@ -395,7 +421,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `src/purity.rs` keeps the pure modules free of runtime and I/O. Omissions are counted by reason in
   `RecorderMetrics`, readable after shutdown through `RecorderMeter`. It also
   owns what is recorded: Ren's identities and `IdSource` (`id`), `Clock`
-  (`time`), terminals and other recorded facts (`capture`), routing facts and
+  (`time`), terminals and other recorded facts (`capture`), what a relayed run
+  reached through the relay (`passage`: `PassageRecord`, read once from
+  `ren-relay`'s `Course`, its `PassageEnd`, and the `Purpose` of the list
+  that let it through), routing facts and
   `OperatorRevision` (`routing`), who called (`caller`: `UserId` and
   `Caller`, with `ren-network`'s `Login`), work items (`work`, pure: `WorkOrder`, what
   was marked, checked by `WorkOrder::checked`, and the `WorkState` machine,
@@ -419,7 +448,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   serves (`runs.operator_session`); `Reader::sessions` and `Reader::session`
   read them with their runs (`SessionView`); a session's attachments are in
   `attachments` (`Reader::attachments`), their files in the daemon's data folder. Each driven run's conversation is in `run_entries`, whole, and
-  `Reader::conversation` reads it across the runs on one client thread. It
+  `Reader::conversation` reads it across the runs on one client thread; what a
+  relayed run reached through the relay is in `run_passages`
+  (`Reader::passages`, grouped by what was asked and how it ended). It
   contains typed query parameters and read views, turn and call
   activity assembled from the calls' stored digests (`activity`, with the
   recording context and cost report in `activity::report`), the full-text search
@@ -620,7 +651,25 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the run hosts that hold runs through a restart (`[runs] hold`, `RunHold`):
   `HeldRuns` starts each, `ren run-host <folder>` (`RunHost`, the hidden
   command), in a systemd user unit of its own (`ren-run-<run>`, outside
-  `ren.service`) and attaches to it without spawning a task; the host keeps
+  `ren.service`) and attaches to it without spawning a task, or in a
+  rootless Podman container that is the run's `Sandbox` (`host::held::
+  sandbox`, pure, with a purity test): made by `SandboxSettings`
+  (`[runs.container]`) from the run's `RunFiles`, reaching the host's network
+  with the SSH agent or relayed under a `Runtime` (`RunNetwork`, held only
+  with its relay: `HeldRuns`' `Hold`), and
+  refused (`SandboxError`) when it would see Ren's data or configuration
+  whole or every run would see inside Ren's data; a relayed run's
+  `Listing` (`host::held::listing`, pure) is where it may go and why
+  (Ren's configuration, its client, its project's manifest on its default
+  branch on GitHub, or its grant), held with its pass by the relay
+  (`RelayedRun`), so each passage is recorded with its `Purpose`, and
+  kept with its ticket and grant as its `Admission` in `<data>/runs/.admitted`,
+  never in the run's own folder; `WatchedProjects` (`host::held::watched`)
+  says which watched project a run works on, by its registered folder or
+  a worktree named after it, never by its checkout, and learns each one's
+  manifest from the watch; a relayed run's gateway doorway reaches a
+  listener that serves model forwarding alone (`Ingress::with_runs`); the
+  host keeps
   the client's stdin open and its output in the run folder's spool, writes
   its exit, and serves one daemon at a time over a socket whose frames
   (`frame`, pure, kept when unknown: a host may be an older build) are a
@@ -838,6 +887,7 @@ directly.
 | `ren-container`                            | `Container`                                         | none of ours      |
 | `ren-network`                              | `Network`                                           | none of ours      |
 | `ren-github`                               | `Client`                                            | none of ours      |
+| `ren-relay`                                | `Relay`                                             | none of ours      |
 | `ren-manifest`                             | `Manifest`                                          | none of ours      |
 | `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |
 | `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |

@@ -2,14 +2,14 @@
 //! images it keeps. What to start is a [`Container`]'s; how it is started,
 //! and so what watches it until it exits, is a [`Launch`]'s.
 
-use crate::{Container, Engine};
+use crate::{Container, Engine, Runtime};
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus, Stdio};
 
 /// How the engine is reached to start containers: the setting a caller
 /// keeps, from which each container's [`Launch`] is made.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Reach {
+pub enum EngineAccess {
     /// The engine's program here, each container started from a transient
     /// systemd user scope of its own.
     Scope,
@@ -52,6 +52,14 @@ pub enum EngineError {
         status: ExitStatus,
         stderr: String,
     },
+    /// The API service runs its containers under another runtime than the
+    /// container is to run under: the service is not the one it needs.
+    #[error("the engine's service at {socket} runs containers under {served:?}, not {wanted:?}")]
+    Runtime {
+        socket: PathBuf,
+        wanted: Runtime,
+        served: crate::ReportedRuntime,
+    },
 }
 
 impl EngineError {
@@ -87,19 +95,60 @@ impl Engine {
                 ("systemd-run", args)
             }
             Launch::Socket { socket, .. } => {
-                let mut args = vec![format!("--url=unix://{}", socket.display())];
-                args.extend(self.run_args(container));
+                let mut args = vec![Self::url(socket)];
+                args.extend(self.remote_run_args(container));
                 (self.program(), args)
             }
         }
     }
 
     /// Starts `container` as `launch` says, and waits for the engine to
-    /// have started it.
+    /// have started it. Through the API service, only when the service runs
+    /// containers under the container's runtime, which it cannot be told.
     pub fn start(self, container: &Container, launch: &Launch) -> Result<(), EngineError> {
+        if let (Launch::Socket { socket, .. }, Some(wanted)) = (launch, container.runtime()) {
+            let served = self.served_runtime(launch)?;
+            if served != crate::ReportedRuntime::Known(wanted) {
+                return Err(EngineError::Runtime {
+                    socket: socket.clone(),
+                    wanted,
+                    served,
+                });
+            }
+        }
         let (program, args) = self.launch_args(container, launch);
         let mut command = Command::new(program);
         command.args(&args);
+        Self::settle(&mut command, launch);
+        let described = Self::describe(program, &args);
+        Self::capture(command, described).map(drop)
+    }
+
+    /// The runtime the engine at `launch` runs its containers under.
+    fn served_runtime(self, launch: &Launch) -> Result<crate::ReportedRuntime, EngineError> {
+        let mut args = Vec::new();
+        if let Launch::Socket { socket, .. } = launch {
+            args.push(Self::url(socket));
+        }
+        args.extend(Self::info_runtime_args().map(str::to_owned));
+        let mut command = Command::new(self.program());
+        command.args(&args);
+        Self::settle(&mut command, launch);
+        let described = Self::describe(self.program(), &args);
+        Self::capture(command, described).map(|name| Runtime::reported(&name))
+    }
+
+    fn info_runtime_args() -> [&'static str; 3] {
+        ["info", "--format", "{{.Host.OCIRuntime.Name}}"]
+    }
+
+    fn url(socket: &std::path::Path) -> String {
+        format!("--url=unix://{}", socket.display())
+    }
+
+    /// The environment the engine's client keeps its settings in, for a
+    /// caller whose own folders are not the operator's.
+    fn settle(command: &mut Command, launch: &Launch) {
         if let Launch::Socket {
             settings: Some(settings),
             ..
@@ -109,8 +158,6 @@ impl Engine {
                 .env("XDG_CONFIG_HOME", settings)
                 .env("XDG_RUNTIME_DIR", settings.join("run"));
         }
-        let described = Self::describe(program, &args);
-        Self::capture(command, described).map(drop)
     }
 
     /// Creates the empty pod `name`, on the host's network, its containers
@@ -273,7 +320,7 @@ mod tests {
         let (program, args) = Engine::Podman.launch_args(&container(), &launch);
         assert_eq!(program, "podman");
         assert_eq!(args[0], "--url=unix:///run/user/1000/podman/podman.sock");
-        assert_eq!(&args[1..], Engine::Podman.run_args(&container()));
+        assert_eq!(&args[1..], Engine::Podman.remote_run_args(&container()));
     }
 
     #[test]

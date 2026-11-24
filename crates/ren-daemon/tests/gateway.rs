@@ -152,6 +152,48 @@ async fn native_axum_routes_forward_only_registered_methods_and_paths() {
 }
 
 #[tokio::test]
+async fn sandboxed_runs_reach_model_forwarding_alone_for_as_long_as_the_gateway_serves() {
+    let upstream = mock(Router::new().fallback(|request: Request| async move {
+        format!("{} {}", request.method(), request.uri())
+    }))
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config(&upstream);
+    config.control.tailscale_logins = vec!["operator@example.com".parse().unwrap()];
+    let gateway = TestGateway::start(&config, dir.path()).await;
+    let client = client();
+    // Well past any shutdown deadline: the runs' listener is still served.
+    tokio::time::sleep(TestGateway::DRAIN_DEADLINE * 6).await;
+    let runs = format!("http://{}", gateway.runs_address());
+    let models = client
+        .get(format!("{runs}/anthropic/v1/models"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(models.status(), StatusCode::OK);
+    assert_eq!(models.text().await.unwrap(), "GET /v1/models");
+    // Nothing but forwarding: not the read API, its health, or the control
+    // API, whatever login a run claims.
+    for path in ["/api/runs", "/health", "/control/v1/state"] {
+        let response = client
+            .get(format!("{runs}{path}"))
+            .header("tailscale-user-login", "operator@example.com")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+    }
+    // The gateway's own listener still serves them.
+    let health = client
+        .get(format!("http://{}/health", gateway.address()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(health.status(), StatusCode::OK);
+    gateway.stop().await;
+}
+
+#[tokio::test]
 async fn resolved_destinations_use_distinct_transports_and_preserve_recorded_labels() {
     let anthropic = mock(Router::new().fallback(|| async { "anthropic fixture" })).await;
     let codex = mock(Router::new().fallback(|| async { "codex fixture" })).await;

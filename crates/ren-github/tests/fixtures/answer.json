@@ -2,6 +2,7 @@
   "data": {
     "repository": {
       "defaultBranchRef": { "name": "main", "target": { "oid": "1111111111111111111111111111111111111111" } },
+      "manifest": { "text": "egress = [\"registry.npmjs.org:443\"]\n", "isTruncated": false },
       "pullRequests": {
         "pageInfo": { "hasNextPage": false },
         "nodes": [

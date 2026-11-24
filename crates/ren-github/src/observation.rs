@@ -71,6 +71,7 @@ mod tests {
                 default_branch: None,
                 pull_requests: Vec::new(),
                 listing: Listing::Complete,
+                manifest: None,
             },
             at: at(seconds),
         }

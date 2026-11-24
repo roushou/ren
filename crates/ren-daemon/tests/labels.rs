@@ -54,7 +54,7 @@ macro_rules! table {
 #[test]
 fn every_label_is_pinned() {
     use ren_daemon::config;
-    let table = table![config::RunHold];
+    let table = table![config::RunHold, config::RunRuntime];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(
         table == pinned,

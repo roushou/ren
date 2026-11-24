@@ -83,6 +83,7 @@ fn every_read() -> Vec<ReadRequest> {
             run: RunId::restore(Uuid::from_u128(4)),
             bodies: ren_store::query::ItemBodies::Omitted,
         },
+        ReadRequest::Passages(ren_recorder::id::SessionId::restore(Uuid::from_u128(4))),
         ReadRequest::WorkItems {
             limit,
             shelf: Shelf::Current,

@@ -21,8 +21,10 @@ ren-gateway.workspace = true
 ren-git.workspace = true
 ren-github.workspace = true
 ren-harness.workspace = true
+ren-manifest.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
+ren-relay.workspace = true
 ren-release.workspace = true
 ren-store.workspace = true
 ren-supervisor.workspace = true
@@ -41,7 +43,9 @@ uuid = { workspace = true, features = ["v4"] }
 zip = { version = "9.5.0", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
+aws-lc-rs.workspace = true
 axum.workspace = true
+base64.workspace = true
 brotli.workspace = true
 bytes.workspace = true
 http.workspace = true

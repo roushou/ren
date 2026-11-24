@@ -6,6 +6,7 @@
 
 use super::DevError;
 use crate::file::{FileError, FileMode};
+use crate::gvisor_service::GvisorService;
 use crate::progress::Progress;
 use crate::{
     daemon::{Busy, Ending, RunPolicy, Runs, StillBusy},
@@ -18,8 +19,8 @@ use crate::{
 };
 use ren_container::Engine;
 use ren_daemon::config::{
-    Config, GithubOptions, RunContainerOptions, RunHold, RunsOptions, UpstreamConfig,
-    WatchedRepository,
+    Config, GithubApp, GithubOptions, RelayedOptions, RunContainerOptions, RunHold, RunRuntime,
+    RunsOptions, UpstreamConfig, WatchedRepository,
 };
 use ren_daemon::host::HeldRuns;
 use ren_gateway::{
@@ -131,9 +132,8 @@ pub struct Slot {
     scratch_dir: PathBuf,
     /// What of it runs in containers.
     contain: Contain,
-    /// The operator's Podman API socket, which a daemon in a container
-    /// starts its runs' containers through.
-    podman_socket: Option<PathBuf>,
+    /// What runs its contained runs' processes.
+    runtime: RunRuntime,
     /// The host's environment, which a daemon in a container is given
     /// its home and SSH agent from.
     env: HostEnv,
@@ -185,9 +185,7 @@ impl Slot {
             places_dir: share.join("config"),
             scratch_dir: share.join("scratch"),
             contain: Contain::None,
-            podman_socket: env
-                .absolute_path("XDG_RUNTIME_DIR")
-                .map(|runtime| runtime.join("podman/podman.sock")),
+            runtime: RunRuntime::HostKernel,
             env: env.clone(),
         })
     }
@@ -196,6 +194,23 @@ impl Slot {
     #[must_use]
     pub fn containing(mut self, contain: Contain) -> Self {
         self.contain = contain;
+        self
+    }
+
+    /// The Podman API socket a daemon in a container starts runs through:
+    /// Podman's own, or the one whose service runs gVisor.
+    fn podman_socket(&self) -> Option<PathBuf> {
+        let runtime_dir = self.env.absolute_path("XDG_RUNTIME_DIR")?;
+        Some(match self.runtime {
+            RunRuntime::HostKernel => runtime_dir.join("podman/podman.sock"),
+            RunRuntime::Gvisor => GvisorService::socket(&runtime_dir),
+        })
+    }
+
+    /// The slot, its contained runs run by `runtime`.
+    #[must_use]
+    pub fn running_on(mut self, runtime: RunRuntime) -> Self {
+        self.runtime = runtime;
         self
     }
 
@@ -274,15 +289,26 @@ impl Slot {
                 container: match self.contain {
                     Contain::None => RunContainerOptions::default(),
                     // The host's programs; the fake agent, which is this
-                    // slot's xtask and keeps its state in the slot's data.
+                    // slot's xtask, and its state beside it, never the data.
                     Contain::Runs | Contain::All => RunContainerOptions {
                         image: Some(Pod::image()),
                         read_only: vec!["/usr".into(), self.bin_dir.clone()],
-                        read_write: vec![self.data_dir.clone()],
+                        read_write: vec![self.agent_state()],
                         podman_socket: match self.contain {
-                            Contain::All => self.podman_socket.clone(),
+                            Contain::All => self.podman_socket(),
                             Contain::None | Contain::Runs => None,
                         },
+                        // Relayed, as runs are meant to be (phase 12): the
+                        // fake agents need only the gateway, and one public
+                        // registry checks a run's way out.
+                        relayed: Some(RelayedOptions {
+                            runtime: self.runtime,
+                            egress: vec![
+                                "index.crates.io:443"
+                                    .parse()
+                                    .map_err(|_| DevError::Config)?,
+                            ],
+                        }),
                     },
                 },
             },
@@ -294,6 +320,13 @@ impl Slot {
                 token_env: Self::GITHUB_TOKEN_ENV.into(),
                 poll_seconds: 30.try_into().map_err(|_| DevError::Config)?,
                 endpoint: fake("github/graphql"),
+                // The fake GitHub's App, which grants relayed runs a token
+                // for their fake repository.
+                app: Some(GithubApp {
+                    id: ren_github::AppId::new(1),
+                    key_file: self.app_key(),
+                    api: fake("github/api").parse().map_err(|_| DevError::Config)?,
+                }),
                 repository: Self::PROJECTS
                     .iter()
                     .chain(&["ren"])
@@ -360,11 +393,19 @@ program_at = "acme-lint"
         self.bin_dir.join("agent")
     }
 
+    /// Where the fake agent keeps its state, which its runs see: beside its
+    /// program, never in the dev daemon's data.
+    fn agent_state(&self) -> PathBuf {
+        self.bin_dir.with_file_name("agent-state")
+    }
+
     /// Put the fake agent first on the dev daemon's PATH as `codex`,
     /// `claude`, and `pi`, and create the fake projects under the run root.
     fn write_agent(&self) -> Result<(), DevError> {
         let dir = self.agent_dir();
         fs::create_dir_all(&dir).map_err(FileError::at(&dir))?;
+        let state = self.agent_state();
+        fs::create_dir_all(&state).map_err(FileError::at(&state))?;
         for (program, client, name) in [
             ("codex", "codex", "Codex"),
             ("claude", "claude", "Claude Code"),
@@ -372,9 +413,9 @@ program_at = "acme-lint"
             ("opencode", "opencode", "OpenCode"),
         ] {
             let script = format!(
-                "#!/bin/sh\n# The dev slot's fake {name} (`cargo xtask dev agent`); never the real one.\nexec {} dev agent --client {client} --data-dir {} \"$@\"\n",
+                "#!/bin/sh\n# The dev slot's fake {name} (`cargo xtask dev agent`); never the real one.\nexec {} dev agent --client {client} --state-dir {} \"$@\"\n",
                 Self::quote(&self.bin_dir.join("xtask")),
-                Self::quote(&self.data_dir),
+                Self::quote(&state),
             );
             FileMode::Executable.write(&dir.join(program), script.as_bytes())?;
         }
@@ -465,12 +506,40 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
         format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
     }
 
+    /// The fake GitHub App's private key, beside the configuration.
+    fn app_key(&self) -> PathBuf {
+        self.config
+            .parent()
+            .unwrap_or(Path::new("/"))
+            .join("github-app.pem")
+    }
+
+    /// A key for the fake App, made once: the fake GitHub never checks
+    /// what it signs.
+    fn write_app_key(&self) -> Result<(), DevError> {
+        use aws_lc_rs::{encoding::AsDer as _, rsa::KeySize, signature};
+        use base64::Engine as _;
+        let path = self.app_key();
+        if path.exists() {
+            return Ok(());
+        }
+        let der = signature::RsaKeyPair::generate(KeySize::Rsa2048)
+            .and_then(|pair| pair.as_der())
+            .map_err(|_| DevError::Config)?;
+        let pem = format!(
+            "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\n",
+            base64::engine::general_purpose::STANDARD.encode(der.as_ref())
+        );
+        Ok(FileMode::Private.write(&path, pem.as_bytes())?)
+    }
+
     fn write_config(&self) -> Result<(), DevError> {
+        let dir = self.config.parent().unwrap_or(Path::new("/"));
+        fs::create_dir_all(dir).map_err(FileError::at(dir))?;
+        self.write_app_key()?;
         let config = self.config()?;
         config.check().map_err(|_| DevError::Config)?;
         let text = toml::to_string(&config).map_err(|_| DevError::Config)?;
-        let dir = self.config.parent().unwrap_or(Path::new("/"));
-        fs::create_dir_all(dir).map_err(FileError::at(dir))?;
         fs::create_dir_all(&self.data_dir).map_err(FileError::at(&self.data_dir))?;
         FileMode::Private.write(
             &self.config,
@@ -579,6 +648,10 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                 Invocation::new("systemctl")
                     .args(["--user", "enable", "--now", "podman.socket"])
                     .run()?;
+                match self.runtime {
+                    RunRuntime::HostKernel => {}
+                    RunRuntime::Gvisor => GvisorService::new(&self.env)?.ensure()?,
+                }
             }
         }
         self.write_config()?;

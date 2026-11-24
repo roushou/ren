@@ -33,6 +33,7 @@ uuid.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
+ren-relay.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 

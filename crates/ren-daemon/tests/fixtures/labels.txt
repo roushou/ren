@@ -1,1 +1,2 @@
 config::RunHold: auto systemd container off
+config::RunRuntime: host_kernel gvisor

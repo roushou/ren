@@ -156,11 +156,23 @@ impl<U: Upstream> Gateway<U> {
         }
     }
 
-    /// Assemble forwarding, management, and control routes on one listener.
-    /// Transfers ownership of the gateway and management resources to the server.
+    /// Assemble forwarding, management, and control routes on one listener,
+    /// and, with `runs`, model forwarding alone on that one: what sandboxed
+    /// runs reach. Transfers ownership of the gateway and management
+    /// resources to the server.
     #[must_use]
-    pub fn into_ingress(self, listener: TcpListener, management: ManagementSetup) -> Ingress {
-        Ingress::new(listener, Arc::new(self).router(management))
+    pub fn into_ingress(
+        self,
+        listener: TcpListener,
+        runs: Option<TcpListener>,
+        management: ManagementSetup,
+    ) -> Ingress {
+        let gateway = Arc::new(self);
+        let ingress = Ingress::new(listener, gateway.clone().router(management));
+        match runs {
+            Some(runs) => ingress.with_runs(runs, gateway.forwarding_router()),
+            None => ingress,
+        }
     }
 
     /// All HTTP routes. Tests can drive this same router without a connection.

@@ -37,6 +37,7 @@ use ren_recorder::{
         AttachmentId, AttemptId, CallId, ChannelId, ProjectId, RecordingId, RunId, SessionId,
         TurnId, WorkItemId,
     },
+    passage::{PassageEnd, Purpose},
     project::{Factory, ProjectName, RepositoryPath},
     time::UnixMillis,
     work::{WorkOrder, WorkPreview, WorkState, WorkStateKind},
@@ -734,6 +735,48 @@ pub struct HistoryTarget {
     pub open_calls: u64,
     /// Its runs that have not ended.
     pub running_runs: u64,
+}
+
+/// Where a run reached through the relay: what it asked for, how those
+/// requests ended, and how many, newest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PassageView {
+    /// A tunnel's `host:port`, or the method of a request that was not one.
+    pub asked: String,
+    pub end: Stored<PassageEnd>,
+    /// The listed destination that let it through, last time; `None` when
+    /// it was refused.
+    pub through: Option<String>,
+    /// Why that destination is listed, last time; `None` when refused or
+    /// not known.
+    pub listed_by: Option<Stored<Purpose>>,
+    pub count: u64,
+    /// Bytes each way over the ones that closed.
+    pub sent: u64,
+    pub received: u64,
+    pub first_at: UnixMillis,
+    pub last_at: UnixMillis,
+}
+
+impl PassageView {
+    /// A session's passages, across its runs, grouped by what was asked
+    /// and how it ended; each group's destination and purpose its latest.
+    pub(super) const SELECT: &'static str = "SELECT p.asked AS asked, p.end AS end, (SELECT l.through FROM run_passages AS l JOIN runs AS lr ON lr.id = l.run WHERE lr.operator_session = ?1 AND l.asked = p.asked AND l.end = p.end ORDER BY l.at DESC, l.seq DESC LIMIT 1) AS through, (SELECT l.listed_by FROM run_passages AS l JOIN runs AS lr ON lr.id = l.run WHERE lr.operator_session = ?1 AND l.asked = p.asked AND l.end = p.end ORDER BY l.at DESC, l.seq DESC LIMIT 1) AS listed_by, COUNT(*) AS count, COALESCE(SUM(p.sent), 0) AS sent, COALESCE(SUM(p.received), 0) AS received, MIN(p.at) AS first_at, MAX(p.at) AS last_at FROM run_passages AS p JOIN runs AS r ON r.id = p.run WHERE r.operator_session = ?1 GROUP BY p.asked, p.end ORDER BY last_at DESC, asked, end";
+
+    pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
+        let row = Columns(row);
+        Ok(Self {
+            asked: row.text("asked")?.ok_or(StoreError::Corrupt("passage"))?,
+            end: row.label("end")?,
+            through: row.text("through")?,
+            listed_by: row.optional_label("listed_by")?,
+            count: row.count("count")?,
+            sent: row.count("sent")?,
+            received: row.count("received")?,
+            first_at: row.time("first_at")?,
+            last_at: row.time("last_at")?,
+        })
+    }
 }
 
 /// One agent run, as recorded.

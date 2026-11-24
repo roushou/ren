@@ -37,6 +37,31 @@ struct FakeCheck {
 impl FakeGithub {
     /// Where the fake provider serves it.
     pub(super) const PATH: &str = "/github/graphql";
+    /// Where it serves an App's installation of a repository.
+    pub(super) const INSTALLATION: &str = "/github/api/repos/{owner}/{name}/installation";
+    /// Where it mints an installation's token.
+    pub(super) const ACCESS_TOKENS: &str = "/github/api/app/installations/{id}/access_tokens";
+
+    /// The fake App's one installation, on the fake repositories alone.
+    pub(super) async fn installation(
+        axum::extract::Path((owner, name)): axum::extract::Path<(String, String)>,
+    ) -> (StatusCode, Json<Value>) {
+        match (owner.as_str(), name.as_str()) {
+            ("acme", "web" | "api" | "ren") => (StatusCode::OK, Json(json!({ "id": 1 }))),
+            _ => (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "message": "Not Found" })),
+            ),
+        }
+    }
+
+    /// A token for the repositories asked for. Invented: it opens nothing.
+    pub(super) async fn access_tokens() -> (StatusCode, Json<Value>) {
+        (
+            StatusCode::CREATED,
+            Json(json!({ "token": "ghs_dev-fake-grant", "expires_at": "2099-01-01T00:00:00Z" })),
+        )
+    }
 
     /// The answer to one query.
     pub(super) async fn answer(Json(query): Json<Value>) -> (StatusCode, Json<Value>) {
@@ -57,10 +82,19 @@ impl FakeGithub {
             }
         };
         let nodes: Vec<Value> = pulls.iter().map(|pull| pull.node(name)).collect();
+        // acme/api's default branch lists a registry of its own for its
+        // runs; the others have no manifest.
+        let manifest = match name {
+            "api" => {
+                json!({ "text": "egress = [\"static.crates.io:443\"]\n", "isTruncated": false })
+            }
+            _ => Value::Null,
+        };
         (
             StatusCode::OK,
             Json(json!({ "data": { "repository": {
                 "defaultBranchRef": { "name": "main", "target": { "oid": FakePull::oid(0xa0) } },
+                "manifest": manifest,
                 "pullRequests": { "pageInfo": { "hasNextPage": false }, "nodes": nodes },
             } } })),
         )

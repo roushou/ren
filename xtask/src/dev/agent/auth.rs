@@ -24,8 +24,8 @@ use std::{
 struct SignedOut(std::path::PathBuf);
 
 impl SignedOut {
-    fn of(data_dir: &Path, client: &str) -> Self {
-        Self(data_dir.join(format!("{client}-signed-out")))
+    fn of(state_dir: &Path, client: &str) -> Self {
+        Self(state_dir.join(format!("{client}-signed-out")))
     }
 
     fn signed_out(&self) -> bool {
@@ -57,8 +57,8 @@ impl FakeClaudeAuth {
         arguments.first().is_some_and(|first| first == "auth")
     }
 
-    pub fn run(data_dir: &Path, arguments: &[String]) -> Result<(), AgentError> {
-        let marker = SignedOut::of(data_dir, "claude");
+    pub fn run(state_dir: &Path, arguments: &[String]) -> Result<(), AgentError> {
+        let marker = SignedOut::of(state_dir, "claude");
         let mut out = std::io::stdout().lock();
         match arguments.get(1).map(String::as_str) {
             Some("status") => {
@@ -108,8 +108,8 @@ impl FakeCodexAuth {
         arguments.first().is_some_and(|first| first == "login")
     }
 
-    pub fn run(data_dir: &Path, arguments: &[String]) -> Result<(), AgentError> {
-        let marker = SignedOut::of(data_dir, "codex");
+    pub fn run(state_dir: &Path, arguments: &[String]) -> Result<(), AgentError> {
+        let marker = SignedOut::of(state_dir, "codex");
         let mut err = std::io::stderr().lock();
         match arguments.get(1).map(String::as_str) {
             Some("status") => {
@@ -152,8 +152,8 @@ impl FakePiAuth {
         arguments.first().is_some_and(|first| first == "auth")
     }
 
-    pub fn run(data_dir: &Path, arguments: &[String]) -> Result<(), AgentError> {
-        let marker = SignedOut::of(data_dir, "pi");
+    pub fn run(state_dir: &Path, arguments: &[String]) -> Result<(), AgentError> {
+        let marker = SignedOut::of(state_dir, "pi");
         let mut out = std::io::stdout().lock();
         let words: Vec<&str> = arguments.iter().map(String::as_str).collect();
         match words.as_slice() {
@@ -214,8 +214,8 @@ impl FakeOpenCodeAuth {
         arguments.first().is_some_and(|first| first == "auth")
     }
 
-    pub fn run(data_dir: &Path, arguments: &[String]) -> Result<(), AgentError> {
-        let marker = SignedOut::of(data_dir, "opencode");
+    pub fn run(state_dir: &Path, arguments: &[String]) -> Result<(), AgentError> {
+        let marker = SignedOut::of(state_dir, "opencode");
         let mut out = std::io::stdout().lock();
         let words: Vec<&str> = arguments.iter().map(String::as_str).collect();
         match words.as_slice() {

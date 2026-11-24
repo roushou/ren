@@ -11,6 +11,7 @@ fn pure_modules_stay_free_of_runtime_and_io_dependencies() {
         ("digest/replay.rs", include_str!("digest/replay.rs")),
         ("options.rs", include_str!("options.rs")),
         ("progress.rs", include_str!("progress.rs")),
+        ("passage.rs", include_str!("passage.rs")),
     ];
     let forbidden = [
         "tokio",

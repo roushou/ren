@@ -8,10 +8,11 @@ use crate::activity::{ActivityBudget, CallActivity, TurnActivity, TurnSummary};
 use crate::query::{CallQuery, Cursor, ItemBodies, PageLimit, Shelf, TimeRange, UsageScope};
 use crate::search::{ExposureQuery, ExposureView, SearchPage, SearchQuery};
 use crate::view::{
-    CallDetail, CallPage, ConversationView, RecordingView, RunView, UsageView, WorkItemView,
+    CallDetail, CallPage, ConversationView, PassageView, RecordingView, RunView, UsageView,
+    WorkItemView,
 };
 use crate::{Reader, StoreError};
-use ren_recorder::id::{CallId, RecordingId, RunId, TurnId, WorkItemId};
+use ren_recorder::id::{CallId, RecordingId, RunId, SessionId, TurnId, WorkItemId};
 use ren_recorder::project::ProjectName;
 
 /// A read of recorded history.
@@ -60,6 +61,9 @@ pub enum ReadRequest {
         run: RunId,
         bodies: ItemBodies,
     },
+    /// Where a relayed run reached through the relay, grouped by what it
+    /// asked for and how that ended.
+    Passages(SessionId),
     /// Work items, most recently changed first; with a project, its only.
     WorkItems {
         limit: PageLimit,
@@ -94,6 +98,9 @@ pub enum ReadResponse {
     },
     Run(Box<RunView>),
     Conversation(ConversationView),
+    Passages {
+        passages: Vec<PassageView>,
+    },
     /// Serialized as the read API's `work`.
     WorkItems {
         work: Vec<WorkItemView>,
@@ -156,6 +163,9 @@ impl Reader {
                     .await?
                     .ok_or(StoreError::NotFound)?,
             ),
+            ReadRequest::Passages(session) => ReadResponse::Passages {
+                passages: self.passages(*session).await?.ok_or(StoreError::NotFound)?,
+            },
             ReadRequest::WorkItems {
                 limit,
                 shelf,

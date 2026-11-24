@@ -12,6 +12,7 @@ members = [
   "crates/ren-network",
   "crates/ren-protocol",
   "crates/ren-recorder",
+  "crates/ren-relay",
   "crates/ren-release",
   "crates/ren-store",
   "crates/ren-supervisor",
@@ -29,6 +30,7 @@ default-members = [
   "crates/ren-harness",
   "crates/ren-network",
   "crates/ren-manifest",
+  "crates/ren-relay",
   "crates/ren-protocol",
   "crates/ren-recorder",
   "crates/ren-release",
@@ -50,7 +52,9 @@ rust-version = "1.99"
 # crates carry a version so they can be published; keep it equal to
 # `workspace.package.version`.
 [workspace.dependencies]
+aws-lc-rs = "1.19"
 axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
 blake3 = "1.8.7"
 brotli = "8.0"
 brotli-decompressor = "5.0"
@@ -73,6 +77,7 @@ ren-manifest = { path = "crates/ren-manifest", version = "0.1.0" }
 ren-network = { path = "crates/ren-network", version = "0.1.0" }
 ren-protocol = { path = "crates/ren-protocol", version = "0.1.0" }
 ren-recorder = { path = "crates/ren-recorder", version = "0.1.0" }
+ren-relay = { path = "crates/ren-relay", version = "0.1.0" }
 ren-release = { path = "crates/ren-release", version = "0.1.0" }
 ren-store = { path = "crates/ren-store", version = "0.1.0" }
 ren-supervisor = { path = "crates/ren-supervisor", version = "0.1.0" }
@@ -80,7 +85,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "s
 semver = { version = "1.0.28", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
-serde_with = { version = "3.24", default-features = false, features = ["macros"] }
+serde_with = { version = "3.24", default-features = false, features = ["alloc", "macros"] }
 sha2 = "0.11"
 strum = { version = "0.28", features = ["derive"] }
 tempfile = "3.27"

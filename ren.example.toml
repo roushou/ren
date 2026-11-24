@@ -108,6 +108,21 @@ hold = "auto"
 # image = "localhost/ren-instance:<digest>"
 # read_only = ["/usr", "~/.rustup", "~/.bun"]
 # read_write = ["~/.cargo"]
+# Relayed runs: with this table, a run's container has no network but its
+# loopback, where Ren's gateway (model calls alone) and its relay are, and the
+# relay lets it out only to where `egress`, its client, its project's
+# manifest, and its grant list (host:port, or *.parent:port for any name under
+# one; a name reaches only public addresses). Each passage is recorded with the
+# run; a refused one shows on its session's page. Without the table, a run is
+# on the host's network.
+# [runs.container.relayed]
+# egress = ["index.crates.io:443", "static.crates.io:443", "registry.npmjs.org:443"]
+# What runs a relayed run's processes: "host_kernel" (Podman's own runtime, the
+# default) or "gvisor" (runsc, from gVisor's apt repository): a kernel of its
+# own in user space between the run and the host's. A daemon in a container
+# starts gVisor runs through the ren-gvisor Podman service the install sets
+# up: set podman_socket = "/run/user/<uid>/ren-gvisor/podman.sock" above.
+# runtime = "gvisor"
 
 [attachments]
 # Images uploaded to a session to go with a prompt (PNG, JPEG, GIF, WebP),
@@ -189,3 +204,11 @@ prompt_bytes = 20971520
 # [[github.repository]]
 # project = "acme-web" # a project `ren project add` registered
 # github = "acme/web"
+#
+# A GitHub App installed on those repositories, allowed to write contents and
+# pull requests, grants a relayed run a token for its checkout's repository
+# alone (docs/deployment.md).
+# [github.app]
+# id = 123456
+# key_file = "/home/you/.config/ren/github-app.pem" # its private key, as GitHub gave it
+# api = "https://api.github.com"

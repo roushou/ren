@@ -226,6 +226,22 @@ impl MetadataTx<'_> {
             // Observations alone: the gap between them is the time no daemon
             // watched the run.
             RunFact::Detached | RunFact::Rejoined => {}
+            RunFact::Passed { passage } => {
+                let bytes = passage.bytes();
+                sqlx::query(
+                    "INSERT INTO run_passages(run, seq, at, asked, end, through, listed_by, sent, received) VALUES (?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM run_passages WHERE run = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                )
+                .bind(&id)
+                .bind(at)
+                .bind(passage.asked())
+                .bind(passage.end().label())
+                .bind(passage.through())
+                .bind(passage.listed_by().map(Labeled::label))
+                .bind(bytes.map(|bytes| i64::try_from(bytes.sent).unwrap_or(i64::MAX)))
+                .bind(bytes.map(|bytes| i64::try_from(bytes.received).unwrap_or(i64::MAX)))
+                .execute(&mut *self.tx)
+                .await?;
+            }
             RunFact::Opened { thread } => {
                 sqlx::query("UPDATE runs SET thread = ? WHERE id = ?")
                     .bind(thread.to_string())
@@ -375,16 +391,21 @@ impl MetadataTx<'_> {
                             .await?
                             .rows_affected();
                     if ended > 0 {
-                        sqlx::query("DELETE FROM run_entries WHERE run = ?")
+                        for table in ["run_entries", "run_passages"] {
+                            sqlx::query(AssertSqlSafe(format!(
+                                "DELETE FROM {table} WHERE run = ?"
+                            )))
                             .bind(run)
                             .execute(&mut *self.tx)
                             .await?;
-                        sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?, ?) AND json_extract(payload, '$.run') = ?")
+                        }
+                        sqlx::query("DELETE FROM observations WHERE call IS NULL AND kind IN (?, ?, ?, ?, ?, ?) AND json_extract(payload, '$.run') = ?")
                             .bind(ObservationKind::RunStarted.label())
                             .bind(ObservationKind::RunOpened.label())
                             .bind(ObservationKind::RunConfigured.label())
                             .bind(ObservationKind::RunEnded.label())
                             .bind(ObservationKind::RunRecovered.label())
+                            .bind(ObservationKind::RunPassed.label())
                             .bind(run)
                             .execute(&mut *self.tx)
                             .await?;

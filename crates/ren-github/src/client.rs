@@ -13,7 +13,7 @@ use std::{fmt, net::IpAddr, time::Duration};
 #[derive(Clone)]
 pub struct Token(String);
 
-/// A GraphQL endpoint: GitHub's, or a stand-in on loopback. HTTPS, or
+/// One of GitHub's APIs (GraphQL, or REST's base), or a stand-in on loopback. HTTPS, or
 /// plain HTTP to a loopback host only, so a token never travels in clear
 /// text off the machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +60,14 @@ impl Token {
     }
 }
 
+impl Token {
+    /// The token's text, to hand to the one it is for (git, as a
+    /// credential); never to show.
+    pub fn reveal(&self) -> &str {
+        &self.0
+    }
+}
+
 impl fmt::Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Token(<redacted>)")
@@ -69,6 +77,10 @@ impl fmt::Debug for Token {
 impl Endpoint {
     /// GitHub's own GraphQL endpoint.
     pub const GITHUB: &str = "https://api.github.com/graphql";
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
 
     pub fn parse(text: &str) -> Result<Self, EndpointError> {
         let url = reqwest::Url::parse(text).map_err(|_| EndpointError::NotAUrl)?;
@@ -92,6 +104,20 @@ impl Endpoint {
         } else {
             Err(EndpointError::Insecure)
         }
+    }
+}
+
+impl std::str::FromStr for Endpoint {
+    type Err = EndpointError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::parse(text)
+    }
+}
+
+impl std::fmt::Display for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

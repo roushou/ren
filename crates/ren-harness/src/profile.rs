@@ -42,11 +42,24 @@ pub struct ClientProfile {
     /// The prompt its login prints with no newline, so it begins the next
     /// line read; none where it prints none.
     pub login_prompt: Option<&'static str>,
-    /// What it keeps under the home: its sign-in, settings, and sessions.
-    /// A run that sees only what it needs sees these.
-    pub keeps: &'static [HomeEntry],
+    /// What a run of it needs beyond its folder: what it keeps under the
+    /// home, and where it connects other than Ren's gateway.
+    pub needs: ClientNeeds,
     /// The context it adds to a user's prompt.
     pub(crate) user_context: UserContext,
+}
+
+/// What a run of a client needs beyond its folder. A run that sees only
+/// what it needs sees what it keeps; a relayed run reaches where it
+/// connects, besides what its configuration lists.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClientNeeds {
+    /// What it keeps under the home: its sign-in, settings, and sessions.
+    pub keeps: &'static [HomeEntry],
+    /// Where it connects itself, never through Ren's gateway: its
+    /// sign-in's token refresh, its model catalogue. Each is `host:port`,
+    /// or `*.parent:port` for any name under one.
+    pub reaches: &'static [&'static str],
 }
 
 /// A file or folder under the operator's home, by its path relative to it
@@ -200,7 +213,7 @@ mod tests {
     fn every_client_keeps_something_under_the_home() {
         let home = std::path::Path::new("/home/op");
         for harness in Harness::ALL {
-            let keeps = harness.profile().keeps;
+            let keeps = harness.profile().needs.keeps;
             assert!(!keeps.is_empty(), "{harness}");
             for entry in keeps {
                 let path = entry.under(home);

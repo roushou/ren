@@ -152,6 +152,56 @@ the home, Ren's configuration and data, or other runs. `[runs.container]` names
 the image (the instance image) and adds what every run sees: the host's
 programs (`/usr`) and toolchains read-only, shared caches read-write. A program
 the run starts that is in none of these is not found in its container.
+A run is refused, and the daemon logs why, when anything it would see is
+Ren's data folder or holds it, or Ren's configuration file or holds it, or
+when `[runs.container]` names a path inside Ren's data; only what Ren made for
+the run there (its run folder, its worktree, and the doors) is seen.
+
+`[runs.container.relayed]` takes the host's network away from a run: its container has only its loopback (`--network=none`). There its run host
+listens on the gateway's address and on `127.0.0.1:3128`, and passes each
+connection through a Unix socket in `<data>/runs/.doors`, which the container
+sees read-only, to a listener of the daemon's that serves model forwarding
+alone (never the read or control APIs) and to its relay (`ren-relay`). The
+client's base URL is unchanged; `HTTPS_PROXY` and `HTTP_PROXY` name the relay,
+with a ticket minted for the run as the password, and `NO_PROXY` keeps loopback
+direct. The relay lets a run connect only to where its `egress`, its client
+(Codex's and Claude Code's sign-in refresh, opencode's model catalogue), its
+project, and its grant list, a name only at public addresses, and passes the
+connection through unread. Every passage is recorded with its run and which
+list let it through, and a session's page lists where its runs reached,
+refusals first; refusals are not logged. A project lists what its runs need in
+its `.ren/project.toml` (`egress = ["registry.npmjs.org:443"]`, host names only): Ren reads it
+from the repository's default branch on GitHub, for a repository watched under
+`[[github.repository]]`, never from a run's checkout, which the run could
+change; a manifest that does not read lists nothing, with a warning. Each
+recorded passage says which list let it through. A run held through a daemon restart keeps
+its pass: the daemon keeps it in `<data>/runs/.admitted`, which no run sees, and
+issues it again from there. A relayed run
+never holds the SSH agent. It pushes with a grant instead: with `[github.app]`
+set (a GitHub App installed on the repositories, allowed to write contents and
+pull requests), a run working in the registered folder of a project under
+`[[github.repository]]`, or in a worktree of it, may reach `github.com:443`, and its git
+asks `ren credential` for a token, which asks the daemon over
+`<data>/runs/.doors/grants.sock`. The daemon mints, with the App's key, a token
+for that repository alone, lasting an hour, and hands it out for 45 minutes. A
+checkout cloned over SSH is fetched and pushed over HTTPS through the relay.
+The App's key file must be readable by the daemon; `install-vps --contain all`
+mounts it into the daemon's container read-only.
+
+`[runs.container.relayed] runtime = "gvisor"` runs a relayed run's processes under
+gVisor (`runsc`): its system calls are served by a kernel of its own in user
+space, not the host's. It needs no KVM and runs rootless, with no network but
+its loopback, which is why it is a relayed run's setting. Install gVisor from its own
+apt repository (gvisor.dev/docs/user_guide/install); Ubuntu's `runsc` package
+(20240729, built with a newer Go than it supports) panics in its kernel on some
+starts. Podman's API socket cannot choose a container's runtime, so a daemon in
+a container starts gVisor runs through a Podman service of their own,
+`ren-gvisor` (socket-activated, at `/run/user/<uid>/ren-gvisor/podman.sock`),
+which `install-vps --contain all` sets up when the configuration asks for
+gVisor; set `[runs.container] podman_socket` to it. Before each start through
+a socket, the daemon checks the service runs the run's runtime, and refuses
+the run if not. The default, `host_kernel`, is Podman's own runtime.
+
 Systemd limits repeated startup failures to five in a minute; fix the cause and
 run `systemctl --user reset-failed ren` before restarting if it hits that limit.
 Launchd throttles respawns to at most once every 10 seconds. Neither manager's

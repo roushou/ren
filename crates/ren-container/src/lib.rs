@@ -1,5 +1,5 @@
 //! A container as Ren runs one: what it sees of the host ([`Mount`]), how
-//! it lives ([`Lifetime`], [`Placement`]), what it runs, and the
+//! it lives ([`Lifetime`], [`Placement`], [`Runtime`]), what it runs, and the
 //! [`Engine`]'s arguments that start it, all pure; and running the engine
 //! (`launch`): starting a container as a [`Launch`] says, and the pods,
 //! containers, and images it keeps.
@@ -9,7 +9,7 @@ mod launch;
 mod mount;
 
 pub use engine::Engine;
-pub use launch::{EngineError, Launch, Reach};
+pub use launch::{EngineAccess, EngineError, Launch};
 pub use mount::{Access, Mount};
 use std::path::PathBuf;
 
@@ -29,10 +29,70 @@ pub enum Lifetime {
 /// Where a container runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Placement {
-    /// On the host's network, as the operator's own user.
+    /// On the host's network, as the operator's own user, on the host's
+    /// kernel.
     Host,
-    /// In the named pod, which sets its network and user.
+    /// With no network but its own loopback, as the operator's own user,
+    /// under `Runtime`: it reaches out only through what it is given to see
+    /// (a socket in a mounted folder).
+    Isolated(Runtime),
+    /// In the named pod, which sets its network and user, under the
+    /// engine's own runtime, as its pod's other containers.
     Pod(String),
+}
+
+/// The runtime an engine says it runs containers under, as it names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReportedRuntime {
+    Known(Runtime),
+    /// A runtime Ren does not know: never taken for one it does.
+    Unknown(String),
+}
+
+/// What runs a container's processes, and so the boundary between them and
+/// the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Runtime {
+    /// The engine's own: the container's processes run on the host's
+    /// kernel, apart only by namespaces.
+    HostKernel,
+    /// gVisor (`runsc`): the container's system calls are served by a
+    /// kernel of its own in user space, and only what that kernel needs
+    /// reaches the host's. Needs no KVM, so it runs rootless; with no
+    /// network but its loopback, as rootless it cannot take a network of
+    /// the host's.
+    Gvisor,
+}
+
+impl Runtime {
+    /// Podman's own arguments, before or after its command, that run its
+    /// containers under it. Rootless, gVisor cannot make the cgroup Podman
+    /// asks for; it keeps only its loopback, or has no network at all; and
+    /// it connects to a socket on the host, or makes one the host sees,
+    /// only when told to (a run host serves the daemon on a socket in its
+    /// folder, and reaches out through its doors).
+    pub(crate) fn podman_args(self) -> &'static [&'static str] {
+        match self {
+            Self::HostKernel => &[],
+            Self::Gvisor => &[
+                "--runtime=runsc",
+                "--runtime-flag=ignore-cgroups",
+                "--runtime-flag=network=none",
+                "--runtime-flag=host-uds=all",
+            ],
+        }
+    }
+
+    /// The runtime an engine reports by its program's name: gVisor's
+    /// `runsc`, or one on the host's kernel (`crun`, `runc`, `youki`); any
+    /// other is not known to be either.
+    pub fn reported(name: &str) -> ReportedRuntime {
+        match name.trim() {
+            "runsc" => ReportedRuntime::Known(Self::Gvisor),
+            "crun" | "runc" | "youki" => ReportedRuntime::Known(Self::HostKernel),
+            other => ReportedRuntime::Unknown(other.to_owned()),
+        }
+    }
 }
 
 /// The environment a container starts with, besides what it is given.
@@ -100,6 +160,15 @@ impl Container {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// What runs its processes; a pod's are its pod's.
+    pub fn runtime(&self) -> Option<Runtime> {
+        match &self.placement {
+            Placement::Host => Some(Runtime::HostKernel),
+            Placement::Isolated(runtime) => Some(*runtime),
+            Placement::Pod(_) => None,
+        }
     }
 
     pub fn environment(self, environment: Environment) -> Self {

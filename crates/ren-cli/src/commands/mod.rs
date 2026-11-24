@@ -1,4 +1,5 @@
 pub mod control;
+pub mod credential;
 pub mod doctor;
 pub mod history;
 pub mod init;

@@ -21,6 +21,7 @@ import {
   tagged,
   type Variant,
 } from './decode.ts';
+import { passages, type Passage } from './passages.ts';
 import type { Build as WireBuild } from './wire/Build.ts';
 import type { CanaryView as WireCanaryView } from './wire/CanaryView.ts';
 import type { CheckView as WireCheckView } from './wire/CheckView.ts';
@@ -337,6 +338,7 @@ export const observationKinds = [
   'project_archived',
   'project_unarchived',
   'session_assigned',
+  'run_passed',
 ] as const;
 export const channelEnds = [
   'client_closed',
@@ -1928,6 +1930,11 @@ export class ManagementApi {
   /** Where a recording's context and cache tokens went, from its call records. */
   report(id: RecordingId, signal?: AbortSignal): Promise<RecordingReport> {
     return this.#read(`/api/recordings/${id}/report`, recordingReport, signal);
+  }
+  /** Where a relayed run reached through the relay, grouped by what it
+   * asked for and how that ended; none for a run that was not relayed. */
+  async passages(session: string, signal?: AbortSignal): Promise<Passage[]> {
+    return (await this.#read(`/api/sessions/${session}/passages`, passages, signal)).passages;
   }
   /** What one turn did, read from its calls' bodies. */
   turn(id: TurnId, signal?: AbortSignal): Promise<TurnActivity> {

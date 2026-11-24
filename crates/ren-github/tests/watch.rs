@@ -20,6 +20,7 @@ fn the_query_names_the_repository() {
     let query: serde_json::Value = serde_json::from_slice(&watch().query()).unwrap();
     assert_eq!(query["variables"]["owner"], "acme");
     assert_eq!(query["variables"]["name"], "web");
+    assert_eq!(query["variables"]["manifest"], "HEAD:.ren/project.toml");
     assert!(
         query["query"]
             .as_str()
@@ -36,6 +37,10 @@ fn an_answer_reads_into_a_snapshot() {
     let (branch, head) = snapshot.default_branch.unwrap();
     assert_eq!((branch.as_str(), head.short()), ("main", "111111111111"));
     assert_eq!(snapshot.listing, Listing::Complete);
+    assert_eq!(
+        snapshot.manifest.as_deref(),
+        Some("egress = [\"registry.npmjs.org:443\"]\n")
+    );
 
     let [landing, layout] = snapshot.pull_requests.as_slice() else {
         panic!("two pull requests: {:?}", snapshot.pull_requests);
@@ -71,6 +76,27 @@ fn an_answer_reads_into_a_snapshot() {
     );
     assert_eq!(layout.checks, Reported::Known(ChecksState::None));
     assert!(layout.check_list.is_empty());
+}
+
+#[test]
+fn a_manifest_cut_short_or_missing_is_none() {
+    let answer = include_str!("fixtures/answer.json");
+    for changed in [
+        answer.replacen("\"isTruncated\": false", "\"isTruncated\": true", 1),
+        answer.replacen(
+            "\"manifest\": { \"text\": \"egress = [\\\"registry.npmjs.org:443\\\"]\\n\", \"isTruncated\": false },",
+            "\"manifest\": null,",
+            1,
+        ),
+        answer.replacen(
+            "\"manifest\": { \"text\": \"egress = [\\\"registry.npmjs.org:443\\\"]\\n\", \"isTruncated\": false },",
+            "",
+            1,
+        ),
+    ] {
+        assert_ne!(changed, answer);
+        assert_eq!(watch().read(changed.as_bytes()).unwrap().manifest, None);
+    }
 }
 
 #[test]

@@ -376,6 +376,7 @@ impl ProjectCmd {
             | ReadBody::Runs(_)
             | ReadBody::Run(_)
             | ReadBody::Conversation(_)
+            | ReadBody::Passages(_)
             | ReadBody::WorkItem(_) => {
                 bail!("the daemon answered a work listing with another read")
             }

@@ -5,6 +5,7 @@
 //!
 //! ```toml
 //! packages = ["node"]
+//! egress = ["registry.npmjs.org:443", "*.example.com:443"]
 //!
 //! [[build]]
 //! run = ["npm", "ci"]
@@ -29,6 +30,12 @@
 //! run = ["./deploy.sh", "production"]
 //! ```
 //!
+//! `egress` lists where the project's relayed runs may connect through
+//! Ren's relay, besides what Ren's configuration and each client list:
+//! `host:port`, or `*.parent:port` for any name under one. Ren reads it
+//! from the default branch on GitHub, never from a run's checkout, which
+//! the run could change.
+//!
 //! Deploying runs in a build the canary checked, when the operator's
 //! promotion policy says (`ren project canary`, `ren project promote`).
 //!
@@ -45,8 +52,10 @@
 //! ([`Manifest::read`]); an unknown placeholder is refused there, and
 //! a port past the place's range when a step is expanded.
 
+mod egress;
 mod template;
 
+pub use egress::{EgressEntry, NotAnEgressEntry};
 pub use template::{Template, TemplateError};
 
 use ren_depot::package::PackageId;
@@ -60,6 +69,7 @@ use std::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
     packages: BTreeSet<PackageId>,
+    egress: Vec<EgressEntry>,
     build: Vec<Step>,
     serve: Option<Serve>,
     checks: Vec<NamedCheck>,
@@ -125,6 +135,8 @@ pub enum ManifestError {
     EnvName(String),
     #[error(transparent)]
     Template(#[from] TemplateError),
+    #[error("egress in .ren/project.toml lists {0}")]
+    Reach(#[from] NotAnEgressEntry),
 }
 
 /// The `tools` key, renamed to `packages`: a manifest that still has it
@@ -157,6 +169,8 @@ struct ManifestFile {
     check: Vec<CheckFile>,
     quiesce: Option<StepFile>,
     deploy: Option<StepFile>,
+    #[serde(default)]
+    egress: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -241,6 +255,11 @@ impl Manifest {
             .deploy
             .map(|step| Step::read(step.run, step.env))
             .transpose()?;
+        let egress = file
+            .egress
+            .into_iter()
+            .map(|text| text.parse::<EgressEntry>())
+            .collect::<Result<_, _>>()?;
         Ok(Self {
             packages: file.packages,
             build,
@@ -248,7 +267,14 @@ impl Manifest {
             checks,
             quiesce,
             deploy,
+            egress,
         })
+    }
+
+    /// Where its relayed runs may connect through the relay, besides what
+    /// Ren's configuration and their clients list.
+    pub fn egress(&self) -> &[EgressEntry] {
+        &self.egress
     }
 
     /// The depot's packages its steps need.
@@ -458,6 +484,7 @@ run = ["./deploy.sh", "{worktree}"]
             ("[[build]]\nrun = [\"x\", \"{home}\"]", "placeholder"),
             ("packages = [\"Node 22\"]", "package"),
             ("tools = [\"node\"]", "renamed to `packages`"),
+            ("egress = [\"crates.io\"]", "not `host:port`"),
             (
                 "[[build]]\nrun = [\"x\"]\nenv = { \"1BAD\" = \"v\" }",
                 "invalid name",
@@ -470,6 +497,22 @@ run = ["./deploy.sh", "{worktree}"]
             Manifest::read("[[build]]\nrun = []"),
             Err(ManifestError::EmptyCommand)
         ));
+    }
+
+    #[test]
+    fn a_manifest_lists_where_its_runs_connect_and_none_without_egress() {
+        let manifest =
+            Manifest::read("egress = [\"registry.npmjs.org:443\", \"*.Example.com:443\"]\n")
+                .unwrap();
+        assert_eq!(
+            manifest
+                .egress()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["registry.npmjs.org:443", "*.example.com:443"]
+        );
+        assert!(Manifest::read(MANIFEST).unwrap().egress().is_empty());
     }
 
     #[test]

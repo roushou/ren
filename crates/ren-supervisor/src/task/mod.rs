@@ -499,6 +499,7 @@ impl<H: AgentHost> SupervisorTask<H> {
         let agent = match self.host.start_run(run, &plan, &workdir, &packages) {
             Ok(agent) => agent,
             Err(source) => {
+                tracing::warn!(%run, error = %source, "a run's client could not start");
                 let (process, effects) = Process::unstarted(serving);
                 let mut live = Live {
                     process,

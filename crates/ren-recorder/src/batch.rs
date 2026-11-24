@@ -16,6 +16,7 @@ use crate::{
         AttachmentId, AttemptId, CallId, ChannelId, ProjectId, RecordingId, RunId, SessionId,
         WorkItemId,
     },
+    passage::PassageRecord,
     project::ProjectRegistration,
     routing::{ConfigRevision, OperatorRevision, UpstreamId},
     time::{Moment, UnixMillis},
@@ -508,6 +509,8 @@ pub enum RunFact {
     /// A daemon took the run up again from its run host. What the run did
     /// while detached is recorded from here, as this daemon reads it.
     Rejoined,
+    /// The run asked the relay for a way out, and this became of it.
+    Passed { passage: PassageRecord },
     Ended {
         end: RunEnd,
         exit: Option<ProcessExit>,
@@ -522,6 +525,7 @@ impl RunFact {
             Self::Configured { .. } => ObservationKind::RunConfigured,
             Self::Detached => ObservationKind::RunDetached,
             Self::Rejoined => ObservationKind::RunRejoined,
+            Self::Passed { .. } => ObservationKind::RunPassed,
             Self::Ended { .. } => ObservationKind::RunEnded,
         }
     }
@@ -622,6 +626,8 @@ pub enum ObservationKind {
     ProjectUnarchived,
     /// A session was given a project, or none.
     SessionAssigned,
+    /// A relayed run's request to the relay ended.
+    RunPassed,
 }
 
 /// Where an operation belongs and when it happened. Every observation has it.

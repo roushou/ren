@@ -14,26 +14,48 @@
 //! - `exit`: how the client exited, once it has;
 //! - `journal`: what the daemon gave the client (the supervisor's).
 //!
+//! A relayed run (phase 12) reaches out only through the doorways in
+//! `<data>/runs/.doors` ([`Doors`]): Ren's gateway, and the relay, which
+//! admits it by the ticket its spec carries ([`Relaying`]). A run working
+//! in a checkout of a repository the GitHub App is granted pushes to it
+//! with a token git asks the grants door for ([`Grants`]).
+//!
 //! The daemon's side is [`HeldRuns`]; the host's is [`RunHost`].
 
-mod container;
+mod doorway;
 pub mod frame;
+mod grant;
 mod link;
+mod listing;
+#[cfg(test)]
+mod purity;
+mod sandbox;
 mod serve;
+mod watched;
 
-pub use container::RunContainers;
-use ren_container::{Engine, EngineError, Launch, Reach};
+pub use doorway::{Doors, Doorway};
+pub use grant::{CredentialAsk, Grants};
+pub use listing::{Listing, RelayedRun};
+use ren_container::{Engine, EngineAccess, EngineError, Launch};
+pub use sandbox::{RunNetwork, SandboxError, SandboxSettings};
 pub use serve::RunHost;
+pub use watched::{ProjectEgressError, WatchedProjects};
 
-use container::RunNeeds;
-use ren_harness::profile::HomeEntry;
+use ren_harness::profile::ClientNeeds;
+use sandbox::{RenFolders, RunFiles, Sandbox};
 
-use ren_recorder::id::RunId;
+use ren_github::RepositorySlug;
+use ren_recorder::id::{IdSource, RunId};
+use ren_recorder::passage::Purpose;
+use ren_relay::{Destination, PassHandle, Relay, RelayPolicy, Ticket};
 use ren_supervisor::{AgentProcess, HeldRun, ProcessExit, Tenure};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io::{self, Read as _, Seek as _};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 /// How a run host is started.
@@ -46,20 +68,459 @@ pub enum Launcher {
     /// the daemon's process, not its service's stop: for tests, and hosts
     /// without a user manager.
     Direct,
-    /// In a rootless Podman container of its own, `ren-run-<run>`, that
-    /// sees only what the run works on and what its client keeps, started
-    /// from a systemd scope of its own.
-    Container(RunContainers),
+    /// In a rootless Podman container of its own, `ren-run-<run>`, its
+    /// run's [`sandbox::Sandbox`]: it sees only what the run works on and
+    /// what its client keeps, and reaches what its reach says.
+    Container(SandboxSettings),
+}
+
+/// How one run's host is started: as its [`Launcher`] says, a container's
+/// with the run's sandbox made.
+enum Start {
+    Systemd,
+    Direct,
+    Sandbox(Box<Sandbox>),
 }
 
 /// The runs this daemon holds through run hosts: their folders, and how a
 /// host is started.
 #[derive(Debug, Clone)]
 pub struct HeldRuns {
+    /// Ren's data folder, as the host resolves it: what no run sees whole.
+    data: PathBuf,
+    /// `<data>/runs`.
     root: PathBuf,
-    launcher: Launcher,
+    hold: Hold,
     /// The `ren` a host runs as.
     program: PathBuf,
+}
+
+/// How run hosts are started, with what a relayed run reaches out through.
+#[derive(Debug, Clone)]
+enum Hold {
+    Systemd,
+    Direct,
+    /// In a container on the host's network.
+    Contained(SandboxSettings),
+    /// In a container with no network but its loopback, reaching out
+    /// through its relay.
+    Relayed(Box<RelayedHold>),
+}
+
+/// Relayed runs' containers, and the relay they reach out through where
+/// `policy` lists.
+#[derive(Debug, Clone)]
+struct RelayedHold {
+    sandboxes: SandboxSettings,
+    policy: RelayPolicy,
+    relaying: Relaying,
+}
+
+/// Why runs cannot be held as asked.
+#[derive(Debug, thiserror::Error)]
+pub enum HoldError {
+    #[error("runs are relayed, but the daemon has no relay for them")]
+    NoRelay,
+    #[error("a relay was given for runs that are not relayed")]
+    UnusedRelay,
+}
+
+/// How relayed runs reach out: the relay that admits their tunnels, the
+/// doors their containers mount, the gateway's address (theirs too, on
+/// their own loopback), and the passes the relay holds for them.
+#[derive(Clone)]
+pub struct Relaying {
+    relay: Arc<Relay<RelayedRun>>,
+    doors: Doors,
+    gateway: SocketAddr,
+    ids: Arc<dyn IdSource>,
+    passes: Arc<Mutex<HashMap<RunId, PassHandle<RelayedRun>>>>,
+    /// What each watched project's manifest lets its runs reach.
+    projects: WatchedProjects,
+    /// The GitHub App's grants, when one is set up.
+    grants: Option<Arc<Grants>>,
+    /// The `ren` git runs as its credential helper inside a run.
+    helper: PathBuf,
+    /// Where each client connects itself, read once from its profile.
+    clients: Arc<[(&'static [&'static str], Vec<Destination>)]>,
+    /// Where a granted run reaches GitHub, read once.
+    github: Destination,
+    /// Where each relayed run's [`Admission`] is kept: in the runs' root,
+    /// which no run sees, never in a run's own folder, which it writes.
+    admitted: PathBuf,
+}
+
+/// What a relayed run's spec carries for its host: the doorways it opens.
+/// Where the run may go is the daemon's ([`Admission`]), never the spec's,
+/// which the run can write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayedSpec {
+    pub doorways: Vec<Doorway>,
+}
+
+/// A relayed run's pass as the daemon keeps it, so a daemon that takes the
+/// run up again issues the same: its ticket, where it may go and why, and
+/// the repository it may push to.
+#[derive(Clone, Serialize, Deserialize)]
+struct Admission {
+    #[serde(
+        serialize_with = "Admission::write_ticket",
+        deserialize_with = "Admission::read_ticket"
+    )]
+    ticket: Ticket,
+    reach: Listing,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    grant: Option<RepositorySlug>,
+}
+
+impl Admission {
+    /// The file `run`'s admission is kept in, under `admitted`.
+    fn file(admitted: &Path, run: RunId) -> PathBuf {
+        admitted.join(format!("{run}.json"))
+    }
+
+    fn write_ticket<S: serde::Serializer>(ticket: &Ticket, to: S) -> Result<S::Ok, S::Error> {
+        to.serialize_str(ticket.reveal())
+    }
+
+    fn read_ticket<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Ticket, D::Error> {
+        let secret = String::deserialize(from)?;
+        Ticket::new(secret).map_err(serde::de::Error::custom)
+    }
+}
+
+impl std::fmt::Debug for Admission {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Admission")
+            .field("ticket", &self.ticket)
+            .field("reach", &self.reach)
+            .field("grant", &self.grant)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for Relaying {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Relaying")
+            .field("doors", &self.doors)
+            .field("gateway", &self.gateway)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Relaying {
+    /// Where a run reaches the relay on its own loopback: the port proxies
+    /// usually take, or the next when the gateway has it.
+    const RELAY_PORT: u16 = 3128;
+    /// What a relayed run connects to directly, never through the relay.
+    const NO_PROXY: &str = "127.0.0.1,localhost,::1";
+
+    /// Where a granted run reaches GitHub, through the relay.
+    const GITHUB: &str = "github.com:443";
+    /// The folder of relayed runs' admissions, in the runs' root.
+    pub const ADMITTED: &str = ".admitted";
+
+    /// Fails when a client's profile, or GitHub's address, lists what is
+    /// not a destination: Ren's own constants, checked once here.
+    pub fn new(
+        relay: Arc<Relay<RelayedRun>>,
+        doors: Doors,
+        gateway: SocketAddr,
+        ids: Arc<dyn IdSource>,
+        helper: PathBuf,
+        projects: WatchedProjects,
+        admitted: PathBuf,
+    ) -> Result<Self, ren_relay::NotADestination> {
+        let clients = <ren_harness::Harness as ren_protocol::label::Labeled>::ALL
+            .iter()
+            .map(|harness| {
+                let reaches = harness.profile().needs.reaches;
+                reaches
+                    .iter()
+                    .map(|text| text.parse::<Destination>())
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|parsed| (reaches, parsed))
+            })
+            .collect::<Result<Arc<[_]>, _>>()?;
+        Ok(Self {
+            clients,
+            github: Self::GITHUB.parse()?,
+            relay,
+            doors,
+            gateway,
+            ids,
+            passes: Arc::new(Mutex::new(HashMap::new())),
+            projects,
+            grants: None,
+            helper,
+            admitted,
+        })
+    }
+
+    /// Where a client whose profile lists `reaches` connects itself.
+    fn client(&self, reaches: &[&str]) -> Vec<Destination> {
+        self.clients
+            .iter()
+            .find(|(listed, _)| *listed == reaches)
+            .map(|(_, parsed)| parsed.clone())
+            .unwrap_or_default()
+    }
+
+    /// Runs working in a repository `grants` covers are granted it.
+    pub fn granting(mut self, grants: Arc<Grants>) -> Self {
+        self.grants = Some(grants);
+        self
+    }
+
+    /// Answers each ask on the grants socket `listener` until the returned
+    /// future is dropped: a token for the asking run's repository, or
+    /// nothing.
+    pub fn serve_grants(
+        &self,
+        listener: tokio::net::UnixListener,
+    ) -> impl std::future::Future<Output = ()> + use<> {
+        use futures_util::{StreamExt as _, stream::FuturesUnordered};
+        let relaying = self.clone();
+        async move {
+            let mut answering = FuturesUnordered::new();
+            loop {
+                tokio::select! {
+                    accepted = listener.accept() => {
+                        if let Ok((stream, _)) = accepted {
+                            answering.push(relaying.clone().answer(stream));
+                        }
+                    }
+                    Some(()) = answering.next(), if !answering.is_empty() => {}
+                }
+            }
+        }
+    }
+
+    /// One helper's ask, answered.
+    async fn answer(self, mut stream: tokio::net::UnixStream) {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let mut read = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        while read.len() < CredentialAsk::LIMIT && !read.ends_with(b"\n\n") {
+            match stream.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => read.extend_from_slice(&chunk[..n]),
+            }
+        }
+        let ask = CredentialAsk::read(&String::from_utf8_lossy(&read));
+        // The run the ticket's pass is held for, and its grant: what the
+        // relay holds, not what the ask says.
+        let granted = ask
+            .ticket()
+            .and_then(|ticket| self.relay.holder(ticket))
+            .and_then(|held| held.grant().cloned());
+        let answer = match (&self.grants, granted) {
+            (Some(grants), Some(repository)) if ask.is_for(&repository) => {
+                match grants.token(&repository).await {
+                    Ok(token) => CredentialAsk::answer(&token),
+                    Err(error) => {
+                        tracing::warn!(%repository, %error, "a run's grant could not be minted");
+                        "\n".to_owned()
+                    }
+                }
+            }
+            (Some(_) | None, _) => "\n".to_owned(),
+        };
+        let _ = stream.write_all(answer.as_bytes()).await;
+        let _ = stream.shutdown().await;
+    }
+
+    fn relay_inside(&self) -> SocketAddr {
+        let port = if self.gateway.port() == Self::RELAY_PORT {
+            Self::RELAY_PORT + 1
+        } else {
+            Self::RELAY_PORT
+        };
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+    }
+
+    /// Admits `run` to where `policy`, its client's `needs`, its project's
+    /// manifest, and its grant list: a ticket minted for it and a pass the
+    /// relay holds until it is released. What its spec carries, and the
+    /// variables its client gets.
+    fn admit(
+        &self,
+        run: RunId,
+        policy: &RelayPolicy,
+        needs: ClientNeeds,
+        workdir: &Path,
+    ) -> io::Result<(RelayedSpec, Vec<(String, String)>)> {
+        // Its project by its folder, as Ren registered it; never by what
+        // its checkout says, which the run can change.
+        let repository = self.projects.repository_of(workdir);
+        let grant = repository.clone().filter(|repository| {
+            self.grants
+                .as_ref()
+                .is_some_and(|grants| grants.covers(repository))
+        });
+        let client = self.client(needs.reaches);
+        let github = grant.as_ref().map(|_| self.github.clone());
+        let reach = Listing::default()
+            .list(
+                Purpose::Configuration,
+                policy.destinations().iter().cloned(),
+            )
+            .list(Purpose::Client, client)
+            .list(
+                Purpose::Project,
+                repository
+                    .iter()
+                    .flat_map(|repository| self.projects.egress_of(repository)),
+            )
+            .list(Purpose::Grant, github);
+        let ticket = Ticket::new(format!(
+            "{}{}",
+            self.ids.next_uuid().simple(),
+            self.ids.next_uuid().simple()
+        ))
+        .map_err(io::Error::other)?;
+        let admission = Admission {
+            ticket,
+            reach,
+            grant,
+        };
+        self.keep(run, &admission)?;
+        self.pass(run, &admission)?;
+        let spec = RelayedSpec {
+            doorways: vec![
+                Doorway {
+                    inside: self.gateway,
+                    socket: self.doors.socket(Doors::GATEWAY),
+                },
+                Doorway {
+                    inside: self.relay_inside(),
+                    socket: self.doors.socket(Doors::RELAY),
+                },
+            ],
+        };
+        let proxy = admission.ticket.proxy_url("run", self.relay_inside());
+        let git = admission
+            .grant
+            .as_ref()
+            .map(|_| self.git_env())
+            .unwrap_or_default();
+        let env = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]
+            .into_iter()
+            .map(|name| (name.to_owned(), proxy.clone()))
+            .chain(
+                ["NO_PROXY", "no_proxy"]
+                    .into_iter()
+                    .map(|name| (name.to_owned(), Self::NO_PROXY.to_owned())),
+            )
+            .chain(git)
+            .collect();
+        Ok((spec, env))
+    }
+
+    /// What a granted run's git is given: `ren credential` as its helper
+    /// for github.com, asking with the repository's path, the grants
+    /// socket it asks, and GitHub's SSH addresses read as HTTPS, so a
+    /// checkout cloned over SSH pushes through the relay.
+    fn git_env(&self) -> Vec<(String, String)> {
+        let config = [
+            (
+                "credential.https://github.com.helper",
+                format!("{} credential", self.helper.display()),
+            ),
+            (
+                "credential.https://github.com.useHttpPath",
+                "true".to_owned(),
+            ),
+            (
+                "url.https://github.com/.insteadOf",
+                "git@github.com:".to_owned(),
+            ),
+            (
+                "url.https://github.com/.insteadOf",
+                "ssh://git@github.com/".to_owned(),
+            ),
+        ];
+        let mut env = vec![("GIT_CONFIG_COUNT".to_owned(), config.len().to_string())];
+        for (index, (key, value)) in config.into_iter().enumerate() {
+            env.push((format!("GIT_CONFIG_KEY_{index}"), key.to_owned()));
+            env.push((format!("GIT_CONFIG_VALUE_{index}"), value));
+        }
+        env.push((
+            Grants::SOCKET_VARIABLE.to_owned(),
+            self.doors.socket(Doors::GRANTS).display().to_string(),
+        ));
+        env
+    }
+
+    /// Admits `run` again, as the daemon kept it, for a daemon that took
+    /// it up: the pass went with the daemon that issued it. A run with no
+    /// kept admission is not relayed.
+    fn readmit(&self, run: RunId) -> io::Result<()> {
+        if self
+            .passes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(&run)
+        {
+            return Ok(());
+        }
+        match self.admission(run)? {
+            Some(admission) => self.pass(run, &admission),
+            None => Ok(()),
+        }
+    }
+
+    /// `run`'s kept admission, if it has one.
+    fn admission(&self, run: RunId) -> io::Result<Option<Admission>> {
+        match std::fs::read(Admission::file(&self.admitted, run)) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(io::Error::other),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Keeps `run`'s admission where no run sees it, readable by the
+    /// operator alone.
+    fn keep(&self, run: RunId, admission: &Admission) -> io::Result<()> {
+        HeldRuns::private_dir(&self.admitted)?;
+        let file = Admission::file(&self.admitted, run);
+        HeldRuns::private_file(&file)?;
+        std::fs::write(
+            &file,
+            serde_json::to_vec(admission).map_err(io::Error::other)?,
+        )
+    }
+
+    /// The relay holds `admission`'s pass for `run`, with its grant.
+    fn pass(&self, run: RunId, admission: &Admission) -> io::Result<()> {
+        let policy = admission.reach.policy();
+        let held = RelayedRun::new(run, admission.reach.clone(), admission.grant.clone());
+        let pass = self
+            .relay
+            .issue(admission.ticket.clone(), held, policy)
+            .map_err(io::Error::other)?;
+        self.passes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(run, pass);
+        Ok(())
+    }
+
+    /// `run` reaches nothing more.
+    fn release(&self, run: RunId) {
+        let kept = Admission::file(&self.admitted, run);
+        if let Err(error) = std::fs::remove_file(&kept)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            tracing::warn!(%run, %error, "could not remove a relayed run's admission");
+        }
+        self.passes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&run);
+    }
 }
 
 /// The command a run host starts: what the daemon would have run itself.
@@ -70,6 +531,9 @@ pub struct Spec {
     /// Variables set for it, over the host's own environment.
     pub env: Vec<(String, String)>,
     pub cwd: PathBuf,
+    /// What a relayed run reaches out through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relayed: Option<RelayedSpec>,
 }
 
 impl Spec {
@@ -94,6 +558,7 @@ impl Spec {
                 .get_current_dir()
                 .map(Path::to_path_buf)
                 .ok_or_else(|| io::Error::other("a run's command has no folder"))?,
+            relayed: None,
         })
     }
 }
@@ -155,19 +620,55 @@ impl HeldRuns {
     /// in a container.
     const PODMAN_SETTINGS: &str = ".podman";
 
-    /// Runs held under `root` (`<data>/runs`), their hosts started by
-    /// `launcher` running `program`.
-    pub fn new(root: PathBuf, launcher: Launcher, program: PathBuf) -> Self {
-        Self {
-            root,
-            launcher,
+    /// Runs held in Ren's data folder `data` (under `<data>/runs`), their
+    /// hosts started by `launcher` running `program`; relayed ones, and only
+    /// they, reach out through `relaying`.
+    pub fn new(
+        data: &Path,
+        launcher: Launcher,
+        program: PathBuf,
+        relaying: Option<Relaying>,
+    ) -> Result<Self, HoldError> {
+        let hold = match (launcher, relaying) {
+            (Launcher::Systemd, None) => Hold::Systemd,
+            (Launcher::Direct, None) => Hold::Direct,
+            (Launcher::Container(sandboxes), relaying) => match (sandboxes.network(), relaying) {
+                (RunNetwork::Host { .. }, None) => Hold::Contained(sandboxes),
+                (RunNetwork::Relayed { policy, .. }, Some(relaying)) => {
+                    Hold::Relayed(Box::new(RelayedHold {
+                        policy: policy.clone(),
+                        sandboxes,
+                        relaying,
+                    }))
+                }
+                (RunNetwork::Relayed { .. }, None) => return Err(HoldError::NoRelay),
+                (RunNetwork::Host { .. }, Some(_)) => return Err(HoldError::UnusedRelay),
+            },
+            (Launcher::Systemd | Launcher::Direct, Some(_)) => {
+                return Err(HoldError::UnusedRelay);
+            }
+        };
+        // Resolved as the host has it, as the sandbox's mounts are.
+        let data = std::fs::canonicalize(data).unwrap_or_else(|_| data.to_path_buf());
+        Ok(Self {
+            root: data.join(Self::FOLDER),
+            data,
+            hold,
             program,
+        })
+    }
+
+    /// What relayed runs reach out through, when runs are relayed.
+    fn relaying(&self) -> Option<&Relaying> {
+        match &self.hold {
+            Hold::Relayed(relayed) => Some(&relayed.relaying),
+            Hold::Systemd | Hold::Direct | Hold::Contained(_) => None,
         }
     }
 
     /// The systemd unit a run's host runs in, under [`Launcher::Systemd`].
     pub fn unit(run: RunId) -> String {
-        format!("ren-run-{run}")
+        SandboxSettings::name(run)
     }
 
     /// The runs whose folders are under `root`, by their names: what
@@ -197,46 +698,89 @@ impl HeldRuns {
     }
 
     /// Start `command`, `run`'s client, under a run host, and attach to it.
-    /// `keeps` is what the client keeps under the home, which a run host
+    /// `needs` is what the client needs beyond its folder, which a run host
     /// in a container is given.
     pub fn start(
         &self,
         run: RunId,
         command: &std::process::Command,
-        keeps: &[HomeEntry],
+        needs: ClientNeeds,
+    ) -> io::Result<AgentProcess> {
+        let started = self.start_held(run, command, needs);
+        if started.is_err()
+            && let Some(relaying) = self.relaying()
+        {
+            relaying.release(run);
+        }
+        started
+    }
+
+    fn start_held(
+        &self,
+        run: RunId,
+        command: &std::process::Command,
+        needs: ClientNeeds,
     ) -> io::Result<AgentProcess> {
         let mut spec = Spec::of(command)?;
         let folder = self.folder(run);
         Self::private_dir(&self.root)?;
         Self::private_dir(&folder)?;
-        let needs = match &self.launcher {
-            Launcher::Container(containers) => {
-                // The container sees the program's file, not the folders on
-                // the path: it is started by the path it was found at.
-                let program = spec.program()?;
-                spec.program = program.display().to_string();
-                Some(self.needs(containers, &spec, &folder, keeps))
+        let start = match &self.hold {
+            Hold::Systemd => Start::Systemd,
+            Hold::Direct => Start::Direct,
+            Hold::Contained(sandboxes) => {
+                self.contained(sandboxes, run, &mut spec, &folder, needs)?
             }
-            Launcher::Systemd | Launcher::Direct => None,
+            Hold::Relayed(held) => {
+                let (relayed, env) = held.relaying.admit(run, &held.policy, needs, &spec.cwd)?;
+                spec.env.extend(env);
+                spec.relayed = Some(relayed);
+                self.contained(&held.sandboxes, run, &mut spec, &folder, needs)?
+            }
         };
         let json = serde_json::to_vec(&spec).map_err(io::Error::other)?;
         Self::private_file(&folder.join(Self::SPEC))?;
         std::fs::write(folder.join(Self::SPEC), json)?;
-        self.launch(run, &folder, needs.as_ref())?;
+        self.launch(run, &folder, start)?;
         let stream = Self::reach(&folder.join(Self::SOCKET))?;
         link::Link::open(stream, 0, self.journal(&folder)?)
     }
 
-    /// What `spec`'s run needs to see in its container: its folder, its
+    /// How `run`'s host starts in its container: `spec` started by its
+    /// program's path, as the container sees that file, not the folders on
+    /// the search path; its sandbox made of what it needs to see.
+    fn contained(
+        &self,
+        sandboxes: &SandboxSettings,
+        run: RunId,
+        spec: &mut Spec,
+        folder: &Path,
+        needs: ClientNeeds,
+    ) -> io::Result<Start> {
+        let program = spec.program()?;
+        spec.program = program.display().to_string();
+        let files = self.files(sandboxes, spec, folder, needs);
+        let ren = RenFolders {
+            data: self.data.clone(),
+            doors: Doors::new(&self.root).folder().to_path_buf(),
+        };
+        Ok(Start::Sandbox(Box::new(
+            sandboxes
+                .sandbox(run, &files, &ren)
+                .map_err(io::Error::other)?,
+        )))
+    }
+
+    /// What `spec`'s run needs to see in its sandbox: its folder, its
     /// workdir and the repository's git folder, this `ren`, the files its
     /// command reads, and what its client keeps that exists.
-    fn needs(
+    fn files(
         &self,
-        containers: &RunContainers,
+        sandboxes: &SandboxSettings,
         spec: &Spec,
         folder: &Path,
-        keeps: &[HomeEntry],
-    ) -> RunNeeds {
+        needs: ClientNeeds,
+    ) -> RunFiles {
         let reads = std::iter::once(PathBuf::from(&spec.program))
             .chain(
                 spec.args
@@ -246,15 +790,16 @@ impl HeldRuns {
                     .map(Path::to_path_buf),
             )
             .collect();
-        RunNeeds {
+        RunFiles {
             folder: folder.to_path_buf(),
             workdir: spec.cwd.clone(),
             git: Spec::git_folder(&spec.cwd),
             host: self.program.clone(),
             reads,
-            keeps: keeps
+            keeps: needs
+                .keeps
                 .iter()
-                .map(|entry| entry.under(containers.home()))
+                .map(|entry| entry.under(sandboxes.home()))
                 .filter(|path| path.exists())
                 .collect(),
         }
@@ -307,7 +852,13 @@ impl HeldRuns {
         let folder = self.folder(run);
         let journal = self.journal(&folder)?;
         match std::os::unix::net::UnixStream::connect(folder.join(Self::SOCKET)) {
-            Ok(stream) => link::Link::open(stream, from, journal),
+            Ok(stream) => {
+                // Its pass went with the daemon that issued it.
+                if let Some(relaying) = self.relaying() {
+                    relaying.readmit(run)?;
+                }
+                link::Link::open(stream, from, journal)
+            }
             Err(_) => {
                 let exit: ProcessExit =
                     serde_json::from_slice(&std::fs::read(folder.join(Self::EXIT))?)
@@ -319,6 +870,9 @@ impl HeldRuns {
 
     /// `run` has ended and its end is recorded: its folder goes.
     pub fn release(&self, run: RunId) {
+        if let Some(relaying) = self.relaying() {
+            relaying.release(run);
+        }
         let folder = self.folder(run);
         if let Err(error) = std::fs::remove_dir_all(&folder)
             && error.kind() != io::ErrorKind::NotFound
@@ -341,9 +895,9 @@ impl HeldRuns {
         clippy::disallowed_methods,
         reason = "the one sanctioned place that starts run hosts"
     )]
-    fn launch(&self, run: RunId, folder: &Path, needs: Option<&RunNeeds>) -> io::Result<()> {
-        match &self.launcher {
-            Launcher::Systemd => {
+    fn launch(&self, run: RunId, folder: &Path, start: Start) -> io::Result<()> {
+        match start {
+            Start::Systemd => {
                 let output = std::process::Command::new("systemd-run")
                     .args(["--user", "--quiet", "--collect"])
                     .arg(format!("--unit={}", Self::unit(run)))
@@ -365,16 +919,12 @@ impl HeldRuns {
                     )))
                 }
             }
-            Launcher::Container(containers) => {
-                let needs = needs.ok_or_else(|| {
-                    io::Error::other("a run host in a container was started without its needs")
-                })?;
-                let container = containers.container(run, needs);
-                let launch = match container.reach() {
-                    Reach::Scope => Launch::Scope {
-                        unit: container.name().to_owned(),
+            Start::Sandbox(sandbox) => {
+                let launch = match sandbox.engine() {
+                    EngineAccess::Scope => Launch::Scope {
+                        unit: sandbox.name().to_owned(),
                     },
-                    Reach::Socket(socket) => {
+                    EngineAccess::Socket(socket) => {
                         // In a container, the home's folders and the runtime
                         // folder are made for its mounts and are not the
                         // operator's, which the Podman client refuses: it keeps
@@ -389,16 +939,17 @@ impl HeldRuns {
                     }
                 };
                 Engine::Podman
-                    .start(container.spec(), &launch)
+                    .start(sandbox.spec(), &launch)
                     .map_err(|error| match error {
                         EngineError::Spawn { source, .. } => source,
                         EngineError::Failed { stderr, .. } => io::Error::other(format!(
                             "podman could not start the run host {}: {stderr}",
-                            container.name(),
+                            sandbox.name(),
                         )),
+                        error @ EngineError::Runtime { .. } => io::Error::other(error.to_string()),
                     })
             }
-            Launcher::Direct => {
+            Start::Direct => {
                 use std::os::unix::process::CommandExt as _;
                 std::process::Command::new(&self.program)
                     .arg("run-host")
@@ -454,6 +1005,209 @@ mod tests {
     use super::Spec;
     use std::{fs, path::Path};
 
+    /// A relayed run working in a granted repository: its git is given
+    /// `ren credential` and the grants socket, and its ask there is
+    /// answered with a token for that repository alone. Any other ask,
+    /// or a run not granted it, gets nothing.
+    #[tokio::test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the test spawns the stand-in and the door the daemon would"
+    )]
+    async fn a_granted_runs_git_gets_a_token_for_its_repository_only() {
+        use super::{Admission, WatchedProjects};
+        use super::{Doors, Grants, Relaying};
+        use aws_lc_rs::{encoding::AsDer as _, rsa::KeySize, signature};
+        use base64::Engine as _;
+        use ren_harness::profile::ClientNeeds;
+        use ren_recorder::id::{RunId, SequentialIds};
+        use ren_recorder::passage::Purpose;
+        use ren_recorder::time::{ManualClock, UnixMillis};
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let router = axum::Router::new()
+            .route(
+                "/repos/acme/web/installation",
+                axum::routing::get(|| async { axum::Json(serde_json::json!({ "id": 7 })) }),
+            )
+            .route(
+                "/app/installations/7/access_tokens",
+                axum::routing::post(|| async {
+                    (
+                        axum::http::StatusCode::CREATED,
+                        axum::Json(serde_json::json!({
+                            "token": "ghs_FIXTURE",
+                            "expires_at": "2027-01-15T10:00:00Z",
+                        })),
+                    )
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let pair = signature::RsaKeyPair::generate(KeySize::Rsa2048).unwrap();
+        let pem = format!(
+            "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\n",
+            base64::engine::general_purpose::STANDARD.encode(pair.as_der().unwrap().as_ref())
+        );
+        let installations = ren_github::Installations::new(
+            ren_github::Endpoint::parse(&api).unwrap(),
+            ren_github::App::new(
+                ren_github::AppId::new(1),
+                ren_github::AppKey::from_pem(&pem).unwrap(),
+            ),
+        )
+        .unwrap();
+        let grants = Grants::new(
+            Arc::new(installations),
+            ["acme/web".parse().unwrap()],
+            Arc::new(ManualClock::at(UnixMillis::from_millis(1_800_000_000_000))),
+        );
+
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let doors = Doors::new(dir.path());
+        // acme/web's default branch lists the registry its runs need.
+        let projects = WatchedProjects::new(None);
+        projects.learn_folders([
+            (dir.path().join("web"), "acme/web".parse().unwrap()),
+            (dir.path().join("other"), "acme/other".parse().unwrap()),
+        ]);
+        projects
+            .learn_manifest(
+                &"acme/web".parse().unwrap(),
+                &ren_github::Snapshot {
+                    default_branch: None,
+                    pull_requests: Vec::new(),
+                    listing: ren_github::Listing::Complete,
+                    manifest: Some("egress = [\"registry.npmjs.org:443\"]\n".to_owned()),
+                },
+            )
+            .unwrap();
+        let relaying = Relaying::new(
+            Arc::new(ren_relay::Relay::new()),
+            doors.clone(),
+            "127.0.0.1:8787".parse().unwrap(),
+            Arc::new(SequentialIds::default()),
+            "/opt/ren/bin/ren".into(),
+            projects,
+            dir.path().join(Relaying::ADMITTED),
+        )
+        .unwrap()
+        .granting(Arc::new(grants));
+        tokio::spawn(relaying.serve_grants(doors.listen(Doors::GRANTS).unwrap()));
+
+        let policy = ren_relay::RelayPolicy::default();
+        let (_, env) = relaying
+            .admit(
+                RunId::restore(uuid::Uuid::from_u128(1)),
+                &policy,
+                ClientNeeds::default(),
+                &dir.path().join("web"),
+            )
+            .unwrap();
+        let variable = |name: &str| {
+            env.iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(
+            variable("GIT_CONFIG_VALUE_0").as_deref(),
+            Some("/opt/ren/bin/ren credential")
+        );
+        let github = "github.com:443".parse().unwrap();
+        let registry = "registry.npmjs.org:443".parse().unwrap();
+        // Kept where the run cannot write: in the runs' root, not its folder.
+        let granted = relaying
+            .admission(RunId::restore(uuid::Uuid::from_u128(1)))
+            .unwrap()
+            .unwrap();
+        assert!(
+            dir.path()
+                .join(Relaying::ADMITTED)
+                .join(format!("{}.json", RunId::restore(uuid::Uuid::from_u128(1))))
+                .is_file()
+        );
+        assert_eq!(granted.reach.purpose(&github), Some(Purpose::Grant));
+        assert_eq!(granted.reach.purpose(&registry), Some(Purpose::Project));
+        let (_, other_env) = relaying
+            .admit(
+                RunId::restore(uuid::Uuid::from_u128(2)),
+                &policy,
+                ClientNeeds::default(),
+                &dir.path().join("other"),
+            )
+            .unwrap();
+        assert!(
+            !other_env
+                .iter()
+                .any(|(key, _)| key.starts_with("GIT_CONFIG"))
+        );
+        let other = relaying
+            .admission(RunId::restore(uuid::Uuid::from_u128(2)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(other.reach.purpose(&github), None);
+        assert_eq!(other.reach.purpose(&registry), None);
+        let proxy = |admission: &Admission| {
+            admission
+                .ticket
+                .proxy_url("run", "127.0.0.1:3128".parse().unwrap())
+        };
+
+        let ask = |proxy: String, path: &'static str| {
+            let socket = doors.socket(Doors::GRANTS);
+            async move {
+                let mut stream = tokio::net::UnixStream::connect(socket).await.unwrap();
+                stream
+                    .write_all(
+                        format!("proxy={proxy}\nprotocol=https\nhost=github.com\npath={path}\n\n")
+                            .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                let mut answer = String::new();
+                stream.read_to_string(&mut answer).await.unwrap();
+                answer
+            }
+        };
+        assert_eq!(
+            ask(proxy(&granted), "acme/web.git").await,
+            "username=x-access-token\npassword=ghs_FIXTURE\n\n"
+        );
+        assert_eq!(ask(proxy(&granted), "acme/other.git").await, "\n");
+        assert_eq!(ask(proxy(&other), "acme/other.git").await, "\n");
+        // A daemon that took the run up issues its pass as it was kept.
+        let again = Relaying::new(
+            Arc::new(ren_relay::Relay::new()),
+            doors.clone(),
+            "127.0.0.1:8787".parse().unwrap(),
+            Arc::new(SequentialIds::default()),
+            "/opt/ren/bin/ren".into(),
+            WatchedProjects::new(None),
+            dir.path().join(Relaying::ADMITTED),
+        )
+        .unwrap();
+        again
+            .readmit(RunId::restore(uuid::Uuid::from_u128(1)))
+            .unwrap();
+        assert!(
+            again
+                .passes
+                .lock()
+                .unwrap()
+                .contains_key(&RunId::restore(uuid::Uuid::from_u128(1)))
+        );
+        relaying.release(RunId::restore(uuid::Uuid::from_u128(1)));
+        assert_eq!(ask(proxy(&granted), "acme/web.git").await, "\n");
+        assert!(
+            relaying
+                .admission(RunId::restore(uuid::Uuid::from_u128(1)))
+                .unwrap()
+                .is_none()
+        );
+    }
+
     #[test]
     fn a_workdir_at_its_repositorys_root_needs_no_other_git_folder() {
         let dir = tempfile::tempdir().unwrap();
@@ -501,6 +1255,7 @@ mod tests {
             args: Vec::new(),
             env: vec![("PATH".into(), bin.display().to_string())],
             cwd: dir.path().into(),
+            relayed: None,
         };
         assert_eq!(
             spec.program().unwrap(),

@@ -45,6 +45,17 @@ impl RunHost {
     pub async fn serve(self) -> io::Result<()> {
         let spec: Spec = serde_json::from_slice(&std::fs::read(self.path(HeldRuns::SPEC))?)
             .map_err(io::Error::other)?;
+        // A relayed run's ways out listen before its client starts, so it
+        // finds its gateway from its first request.
+        let mut doorways = Vec::new();
+        for doorway in spec.relayed.iter().flat_map(|relayed| &relayed.doorways) {
+            doorways.push(doorway.open().await?);
+        }
+        // Never done on its own: with no doorways, there is nothing to pass.
+        let passing = async move {
+            futures_util::future::join_all(doorways).await;
+            std::future::pending::<()>().await;
+        };
         let mut child = Self::start(&spec)?;
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             return Err(io::Error::other("the client's pipes were not opened"));
@@ -98,7 +109,12 @@ impl RunHost {
                 }
             }
         };
-        tokio::join!(ended, serving);
+        // The doorways pass connections for as long as the host holds the
+        // client, and close with it.
+        tokio::select! {
+            ((), ()) = async { tokio::join!(ended, serving) } => {}
+            () = passing => {}
+        }
         let _ = std::fs::remove_file(&socket);
         Ok(())
     }

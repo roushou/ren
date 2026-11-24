@@ -101,6 +101,10 @@ pub enum ConfigError {
     GithubProjectTwice(String),
     #[error("GitHub token variable {0} is not set, or not a token")]
     MissingGithubToken(String),
+    #[error("[github.app] key_file {0} could not be read")]
+    GithubAppKeyFile(PathBuf, #[source] std::io::Error),
+    #[error("[github.app] key_file {0}: {1}")]
+    GithubAppKey(PathBuf, ren_github::AppKeyError),
 }
 
 /// Where operator keys come from while resolving.
@@ -115,6 +119,10 @@ enum Keys<'a> {
 #[serde(default, deny_unknown_fields)]
 /// Editable TOML representation. Use `resolve` before constructing a daemon.
 pub struct Config {
+    /// The file it was read from, which no run may see; none when it was
+    /// built in memory. Not part of the file.
+    #[serde(skip)]
+    pub source: Option<PathBuf>,
     pub version: u32,
     pub listen: SocketAddr,
     pub data_dir: Option<PathBuf>,
@@ -175,6 +183,49 @@ pub struct GithubOptions {
     pub endpoint: String,
     /// The repositories watched, one per project.
     pub repository: Vec<WatchedRepository>,
+    /// The GitHub App that grants relayed runs a token for their
+    /// repository; none grants nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app: Option<GithubApp>,
+}
+
+/// The `[github.app]` section: a GitHub App installed on the watched
+/// repositories, with permission to write their contents and pull
+/// requests. A relayed run working in a checkout of one of them is
+/// granted a token for that repository alone.
+#[serde_with::serde_as]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GithubApp {
+    /// The App's id, from its settings page.
+    pub id: ren_github::AppId,
+    /// Its private key, as GitHub gave it (PEM).
+    pub key_file: PathBuf,
+    /// GitHub's REST API.
+    #[serde(default = "GithubApp::api")]
+    #[serde_as(as = "serde_with::DisplayFromStr")]
+    pub api: Endpoint,
+}
+
+impl GithubApp {
+    #[expect(
+        clippy::expect_used,
+        reason = "GitHub's own address, a constant that the test below reads"
+    )]
+    fn api() -> Endpoint {
+        Endpoint::parse(ren_github::Installations::GITHUB).expect("GitHub's API address reads")
+    }
+
+    /// The App's installations client, with its key read from its file.
+    fn installations(&self) -> Result<ren_github::Installations, ConfigError> {
+        let pem = std::fs::read_to_string(&self.key_file)
+            .map_err(|error| ConfigError::GithubAppKeyFile(self.key_file.clone(), error))?;
+        let key = ren_github::AppKey::from_pem(&pem)
+            .map_err(|error| ConfigError::GithubAppKey(self.key_file.clone(), error))?;
+        let api = self.api.clone();
+        ren_github::Installations::new(api, ren_github::App::new(self.id, key))
+            .map_err(ConfigError::GithubClient)
+    }
 }
 
 /// One project's repository on GitHub.
@@ -194,6 +245,7 @@ impl Default for GithubOptions {
             poll_seconds: PollPeriod::DEFAULT,
             endpoint: Endpoint::GITHUB.into(),
             repository: Vec::new(),
+            app: None,
         }
     }
 }
@@ -233,6 +285,12 @@ impl GithubOptions {
                 .iter()
                 .map(|watched| (watched.project.clone(), watched.github.clone()))
                 .collect(),
+            installations: self
+                .app
+                .as_ref()
+                .map(GithubApp::installations)
+                .transpose()?
+                .map(std::sync::Arc::new),
         }))
     }
 }
@@ -244,6 +302,9 @@ pub struct GithubSetup {
     pub client: Client,
     pub period: PollPeriod,
     pub projects: Vec<(ProjectName, RepositorySlug)>,
+    /// The App that grants runs a token for their repository, if one is
+    /// set up.
+    pub installations: Option<std::sync::Arc<ren_github::Installations>>,
 }
 
 /// The `[[packages]]` entries: catalog entries in the built-in catalog's
@@ -310,9 +371,11 @@ pub struct RunsOptions {
     pub container: RunContainerOptions,
 }
 
-/// `[runs.container]`: what a run's container runs, and what every run
-/// sees besides what it works on and what its client keeps. Paths are
-/// absolute, or under the home as `~/…`, and mounted at the same path.
+/// `[runs.container]`: what a run's container runs, what every run sees
+/// besides what it works on and what its client keeps, and what it
+/// reaches. Paths are absolute, or under the home as `~/…`, and mounted at
+/// the same path.
+#[serde_with::serde_as]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RunContainerOptions {
@@ -330,6 +393,66 @@ pub struct RunContainerOptions {
     /// daemon on the host starts them with `podman` from a systemd scope.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub podman_socket: Option<PathBuf>,
+    /// Relayed runs (docs/plans/self-build.md, phase 12): with this table,
+    /// a run's container has no network but its loopback, and reaches out
+    /// only through Ren's gateway and its relay. Without it, a run is on
+    /// the host's network.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relayed: Option<RelayedOptions>,
+}
+
+/// `[runs.container.relayed]`: what a relayed run runs on, and where it may
+/// connect through the relay besides where its client and its project do.
+#[serde_with::serde_as]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RelayedOptions {
+    /// What runs a relayed run's processes: the host's kernel, or gVisor's.
+    #[serde(skip_serializing_if = "RunRuntime::is_host_kernel")]
+    pub runtime: RunRuntime,
+    /// `host:port`, or `*.parent:port` for any name under one. A name
+    /// reaches only public addresses; an address, as it is.
+    #[serde_as(as = "Vec<serde_with::DisplayFromStr>")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub egress: Vec<ren_relay::Destination>,
+}
+
+/// What runs a relayed run's processes (`[runs.container.relayed] runtime`).
+#[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub enum RunRuntime {
+    /// Podman's own: on the host's kernel.
+    #[default]
+    HostKernel,
+    /// gVisor (`runsc`, installed on the host): a kernel of its own in
+    /// user space between the run and the host's. Through `podman_socket`, the socket must be a Podman service that
+    /// runs gVisor (`ren-gvisor`, which the install sets up); a run is
+    /// refused otherwise.
+    Gvisor,
+}
+
+impl RunRuntime {
+    fn is_host_kernel(&self) -> bool {
+        *self == Self::HostKernel
+    }
+
+    fn runtime(self) -> ren_container::Runtime {
+        match self {
+            Self::HostKernel => ren_container::Runtime::HostKernel,
+            Self::Gvisor => ren_container::Runtime::Gvisor,
+        }
+    }
 }
 
 /// Whether a run's client process outlives the daemon that started it.
@@ -369,11 +492,14 @@ impl RunHold {
         self,
         env: &HostEnv,
         container: &RunContainerOptions,
+        config: Option<&Path>,
     ) -> Result<Option<crate::host::Launcher>, ConfigError> {
         Ok(match self {
             Self::Off => None,
             Self::Systemd => Some(crate::host::Launcher::Systemd),
-            Self::Container => Some(crate::host::Launcher::Container(container.containers(env)?)),
+            Self::Container => Some(crate::host::Launcher::Container(
+                container.sandboxes(env, config)?,
+            )),
             Self::Auto => {
                 let systemd = cfg!(target_os = "linux")
                     // Set by systemd for the services it runs.
@@ -394,9 +520,14 @@ impl RunContainerOptions {
         *self == Self::default()
     }
 
-    /// How run hosts start in containers on a host whose environment is
-    /// `env`: its home, and its SSH agent's socket when it has one.
-    fn containers(&self, env: &HostEnv) -> Result<crate::host::RunContainers, ConfigError> {
+    /// What every run's sandbox starts from on a host whose environment is
+    /// `env`: its home, its SSH agent's socket when it has one, and Ren's
+    /// configuration file at `config`, which no run sees.
+    fn sandboxes(
+        &self,
+        env: &HostEnv,
+        config: Option<&Path>,
+    ) -> Result<crate::host::SandboxSettings, ConfigError> {
         use ren_container::Mount;
         let image = self.image.clone().ok_or(ConfigError::RunImageMissing)?;
         let home = env
@@ -406,26 +537,42 @@ impl RunContainerOptions {
             Ok(rest) => home.join(rest),
             Err(_) => path.clone(),
         };
+        // Resolved as the host has them, so what a sandbox refuses to show
+        // (Ren's data, its configuration) is not seen through a link.
+        let resolved = |path: &PathBuf| {
+            let path = anchored(path);
+            std::fs::canonicalize(&path).unwrap_or(path)
+        };
         let shared = self
             .read_only
             .iter()
-            .map(|path| Mount::read_only(anchored(path)))
+            .map(|path| Mount::read_only(resolved(path)))
             .chain(
                 self.read_write
                     .iter()
-                    .map(|path| Mount::read_write(anchored(path))),
+                    .map(|path| Mount::read_write(resolved(path))),
             )
             .collect();
         let reach = match &self.podman_socket {
-            Some(socket) => ren_container::Reach::Socket(anchored(socket)),
-            None => ren_container::Reach::Scope,
+            Some(socket) => ren_container::EngineAccess::Socket(anchored(socket)),
+            None => ren_container::EngineAccess::Scope,
         };
-        Ok(crate::host::RunContainers::new(
+        let network = match &self.relayed {
+            None => crate::host::RunNetwork::Host {
+                ssh_agent: env.absolute_path("SSH_AUTH_SOCK"),
+            },
+            Some(relayed) => crate::host::RunNetwork::Relayed {
+                policy: ren_relay::RelayPolicy::new(relayed.egress.clone()),
+                runtime: relayed.runtime.runtime(),
+            },
+        };
+        Ok(crate::host::SandboxSettings::new(
             image,
             reach,
             home.clone(),
             shared,
-            env.absolute_path("SSH_AUTH_SOCK"),
+            network,
+            config.map(Path::to_path_buf),
         ))
     }
 }
@@ -551,6 +698,7 @@ impl UpstreamConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            source: None,
             version: 1,
             listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8787),
             data_dir: None,
@@ -683,7 +831,11 @@ impl Config {
                 Keys::Unchecked => Vec::new(),
             },
             run_hold: match keys {
-                Keys::Env(env) => self.runs.hold.launcher(env, &self.runs.container)?,
+                Keys::Env(env) => {
+                    self.runs
+                        .hold
+                        .launcher(env, &self.runs.container, self.source.as_deref())?
+                }
                 Keys::Unchecked => None,
             },
             depot,
@@ -713,6 +865,7 @@ impl Config {
             }
             None => Self::default(),
         };
+        config.source = path.map(Path::to_path_buf);
         if let (Some(path), Some(dir)) = (path, config.data_dir.as_mut())
             && dir.is_relative()
         {
@@ -1018,7 +1171,10 @@ mod tests {
         let env = HostEnv::from_pairs([("HOME", "/home/op"), ("SSH_AUTH_SOCK", "/run/agent")]);
         let without: Config = toml::from_str("[runs]\nhold = \"container\"\n").unwrap();
         assert!(matches!(
-            without.runs.hold.launcher(&env, &without.runs.container),
+            without
+                .runs
+                .hold
+                .launcher(&env, &without.runs.container, None),
             Err(ConfigError::RunImageMissing)
         ));
         let config: Config = toml::from_str(
@@ -1027,28 +1183,190 @@ mod tests {
         .unwrap();
         assert!(config.runs.validate().is_ok());
         let Ok(Some(crate::host::Launcher::Container(containers))) =
-            config.runs.hold.launcher(&env, &config.runs.container)
+            config
+                .runs
+                .hold
+                .launcher(&env, &config.runs.container, None)
         else {
             panic!("runs are held in containers");
         };
-        use crate::host::RunContainers;
-        use ren_container::{Mount, Reach};
+        use crate::host::SandboxSettings;
+        use ren_container::{EngineAccess, Mount};
         assert_eq!(
             containers,
-            RunContainers::new(
+            SandboxSettings::new(
                 "localhost/ren-instance:abc".into(),
-                Reach::Scope,
+                EngineAccess::Scope,
                 "/home/op".into(),
                 vec![
                     Mount::read_only("/usr"),
                     Mount::read_only("/home/op/.rustup"),
                     Mount::read_write("/home/op/.cargo"),
                 ],
-                Some("/run/agent".into()),
+                crate::host::RunNetwork::Host {
+                    ssh_agent: Some("/run/agent".into()),
+                },
+                None,
             )
         );
         let relative: Config = toml::from_str("[runs.container]\nread_only = [\"usr\"]\n").unwrap();
         assert!(relative.runs.validate().is_err());
+    }
+
+    #[test]
+    fn a_configuration_read_from_a_file_keeps_its_path_for_runs_to_never_see() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ren.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "[runs]\nhold = \"container\"\n[runs.container]\nimage = \"i\"\nread_only = [\"{}\"]\n",
+                dir.path().display()
+            ),
+        )
+        .unwrap();
+        let config = Config::load(Some(&path)).unwrap();
+        assert_eq!(config.source.as_deref(), Some(path.as_path()));
+        // Not written back: it is where the file is, not what it says.
+        assert!(!toml::to_string(&config).unwrap().contains("source"));
+        let env = HostEnv::from_pairs([("HOME", "/home/op")]);
+        let Ok(Some(crate::host::Launcher::Container(sandboxes))) =
+            config
+                .runs
+                .hold
+                .launcher(&env, &config.runs.container, config.source.as_deref())
+        else {
+            panic!("runs are held in containers");
+        };
+        assert_eq!(
+            sandboxes,
+            crate::host::SandboxSettings::new(
+                "i".into(),
+                ren_container::EngineAccess::Scope,
+                "/home/op".into(),
+                vec![ren_container::Mount::read_only(dir.path())],
+                crate::host::RunNetwork::Host { ssh_agent: None },
+                Some(path),
+            )
+        );
+    }
+
+    #[test]
+    fn relayed_runs_run_on_the_hosts_kernel_unless_gvisor_is_chosen() {
+        let config: Config = toml::from_str(
+            "[runs]\nhold = \"container\"\n[runs.container]\nimage = \"i\"\n[runs.container.relayed]\nruntime = \"gvisor\"\n",
+        )
+        .unwrap();
+        let env = HostEnv::from_pairs([("HOME", "/home/op")]);
+        let Ok(Some(crate::host::Launcher::Container(containers))) =
+            config
+                .runs
+                .hold
+                .launcher(&env, &config.runs.container, None)
+        else {
+            panic!("runs are held in containers");
+        };
+        assert!(matches!(
+            containers.network(),
+            crate::host::RunNetwork::Relayed {
+                runtime: ren_container::Runtime::Gvisor,
+                ..
+            }
+        ));
+        let written = toml::to_string(&config.runs.container).unwrap();
+        assert!(written.contains("runtime = \"gvisor\""), "{written}");
+        // The host's kernel is the default, left out.
+        assert_eq!(RelayedOptions::default().runtime, RunRuntime::HostKernel);
+        assert!(
+            !toml::to_string(&RelayedOptions::default())
+                .unwrap()
+                .contains("runtime")
+        );
+        assert!(
+            toml::from_str::<Config>("[runs.container.relayed]\nruntime = \"kata\"\n").is_err()
+        );
+        // A runtime belongs to relayed runs: there is no key for it elsewhere.
+        assert!(toml::from_str::<Config>("[runs.container]\nruntime = \"gvisor\"\n").is_err());
+    }
+
+    #[test]
+    fn an_apps_api_is_githubs_unless_set() {
+        assert_eq!(GithubApp::api().as_str(), "https://api.github.com/");
+        let app: GithubApp =
+            toml::from_str("id = 7\nkey_file = \"/k.pem\"\napi = \"http://127.0.0.1:9/api\"\n")
+                .unwrap();
+        assert_eq!(app.id, ren_github::AppId::new(7));
+        assert_eq!(app.api.as_str(), "http://127.0.0.1:9/api");
+        assert!(
+            toml::from_str::<GithubApp>(
+                "id = 7\nkey_file = \"/k\"\napi = \"http://example.com\"\n"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn relayed_runs_reach_what_their_configuration_lists() {
+        let env = HostEnv::from_pairs([("HOME", "/home/op")]);
+        let config: Config = toml::from_str(
+            "[runs]\nhold = \"container\"\n[runs.container]\nimage = \"i\"\n[runs.container.relayed]\negress = [\"index.crates.io:443\", \"*.npmjs.org:443\"]\n",
+        )
+        .unwrap();
+        let Ok(Some(crate::host::Launcher::Container(containers))) =
+            config
+                .runs
+                .hold
+                .launcher(&env, &config.runs.container, None)
+        else {
+            panic!("runs are held in containers");
+        };
+        let crate::host::RunNetwork::Relayed {
+            policy,
+            runtime: ren_container::Runtime::HostKernel,
+        } = containers.network()
+        else {
+            panic!("its runs are relayed");
+        };
+        assert_eq!(
+            policy
+                .destinations()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["index.crates.io:443", "*.npmjs.org:443"]
+        );
+        // Written back as it reads; without the table, runs are on the
+        // host's network and nothing is written.
+        let written = toml::to_string(&config.runs.container).unwrap();
+        assert!(written.contains("[relayed]"), "{written}");
+        assert!(written.contains("\"*.npmjs.org:443\""), "{written}");
+        assert!(
+            !toml::to_string(&RunContainerOptions::default())
+                .unwrap()
+                .contains("relayed")
+        );
+        for bad in [
+            "crates.io",
+            "*.crates.io",
+            "crates.io:0",
+            "https://crates.io",
+        ] {
+            let text = format!("[runs.container.relayed]\negress = [\"{bad}\"]\n");
+            assert!(toml::from_str::<Config>(&text).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn every_clients_reach_reads_as_destinations() {
+        use ren_protocol::label::Labeled as _;
+        for harness in ren_harness::Harness::ALL {
+            for reach in harness.profile().needs.reaches {
+                assert!(
+                    reach.parse::<ren_relay::Destination>().is_ok(),
+                    "{harness}: {reach}"
+                );
+            }
+        }
     }
 
     #[test]

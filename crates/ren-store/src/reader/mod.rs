@@ -14,9 +14,9 @@ use crate::{
     query::{CallQuery, Cursor, PageLimit, Shelf, TimeRange, UsageScope},
     view::{
         AttachmentView, AttemptView, BodyPrefix, BodyView, CallDetail, CallPage, CallView,
-        ChannelView, Columns, DiskUsage, MessageView, OperatorActionView, ProjectActivity,
-        ProjectView, RecordingView, RunView, SessionView, StorageView, UsageGroup, UsageView,
-        WorkItemView,
+        ChannelView, Columns, DiskUsage, MessageView, OperatorActionView, PassageView,
+        ProjectActivity, ProjectView, RecordingView, RunView, SessionView, StorageView, UsageGroup,
+        UsageView, WorkItemView,
     },
     writer::BlobAccess,
 };
@@ -540,6 +540,30 @@ impl Reader {
             .as_ref()
             .map(RunView::from_row)
             .transpose()
+    }
+
+    /// Where `session`'s runs reached through the relay, grouped; `None`
+    /// for a session the store does not hold.
+    pub async fn passages(
+        &self,
+        session: SessionId,
+    ) -> Result<Option<Vec<PassageView>>, StoreError> {
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM operator_sessions WHERE id = ?1)")
+                .bind(session.to_string())
+                .fetch_one(&self.pool)
+                .await?;
+        if !exists {
+            return Ok(None);
+        }
+        sqlx::query(PassageView::SELECT)
+            .bind(session.to_string())
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(PassageView::from_row)
+            .collect::<Result<_, _>>()
+            .map(Some)
     }
 
     /// The body of `call` in `direction`: the request, or the final attempt's response.

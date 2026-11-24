@@ -480,7 +480,7 @@ spec (phase 7):
       closes phase 7.
     - `install-vps` stays the host install a laptop uses. Whether the VPS
       keeps it as a fallback is decided once the pod swap is verified.
-    - Built: `Launcher::Container` (`ren-daemon`'s `host/held/container.rs`)
+    - Built: `Launcher::Container` (`ren-daemon`'s `host/held/container.rs`, now `sandbox.rs`)
       starts `ren run-host` as its container's entrypoint, from a transient
       scope of its own (`ren-run-<run>.scope`), so its monitor outlives the
       daemon's unit. Each client's profile declares what it keeps under the
@@ -519,9 +519,91 @@ spec (phase 7):
       image's user (`node`); Claude Code, Pi, and opencode runs in
       containers have not been driven.
 
+12. **A run's envelope: what it sees, reaches, holds, and runs on.**
+    Built, but not yet used by production, whose runs stay on the host's
+    network with the SSH agent until grants push for them. Phase 11 limits
+    what a run sees; a relayed run also reaches only what is listed, holds
+    no credential of the operator's, and may run on a kernel of its own.
+    - **What it sees** (`ren-daemon`'s `host::held::sandbox`, pure, with a
+      purity test). `SandboxSettings` (`[runs.container]`) makes each run's
+      `Sandbox` from its `RunFiles` (its folder, workdir, git folder, this
+      `ren`, what its command reads, what its client keeps): the container
+      it starts in. It refuses a run that would see Ren's data folder or
+      configuration file whole, or a `[runs.container]` path inside Ren's
+      data (`SandboxError`); what Ren made for the run there (its folder,
+      its worktree, the doors) is seen. Shared paths and the data folder
+      are resolved as the host has them.
+    - **What it reaches** (`RunNetwork`). On the host's network, a run
+      holds the SSH agent. With `[runs.container.relayed]`, its container
+      has no network but its loopback (`Placement::Isolated`): its run host
+      opens doorways there to Unix sockets in `<data>/runs/.doors`, mounted
+      read-only, which reach a gateway listener that serves model
+      forwarding alone (`Ingress::with_runs`; never the read or control
+      APIs) and the relay. `ren-relay`, self-contained, is a forward proxy
+      that admits a holder by its `Ticket` (the password of its proxy URL)
+      and passes tunnels to the destinations its `RelayPolicy` lists,
+      unread; a listed name reaches only public addresses, a listed
+      address as it is.
+    - **Why each place is listed** (`host::held::listing`, pure). A run's
+      `Listing` is its destinations in order with their `Purpose`: Ren's
+      configuration (`[runs.container.relayed] egress`), its client (its
+      profile's sign-in and catalogue hosts, read once), its project (the
+      `egress` of its manifest on its default branch on GitHub, which
+      `WatchedProjects` learns from the watch, host names only), and its
+      grant (`github.com:443`). The relay holds it with the run's pass
+      (`RelayedRun`), so each passage the relay reports is recorded with
+      the purpose of the destination that let it through
+      (`RunFact::Passed`, `run_passages`, migration 0007) and read per
+      session (`/api/sessions/{id}/passages`), refusals first in the
+      session's inspector. The relay's passage queue is bounded; what it
+      had no room for is counted and said.
+    - **What it holds** (`host::held::grant`). With `[github.app]`, a run
+      working in a watched project's registered folder, or a worktree Ren
+      named after it (never by its checkout's `origin`, which the run can
+      change), is granted that project's repository: its git asks `ren
+      credential`, which asks the daemon over `<data>/runs/.doors/grants.sock`
+      with the run's proxy URL; the daemon answers the run the relay holds
+      that ticket for with a token the App mints for that repository
+      alone, contents and pull requests writable, reused for 45 minutes. A
+      relayed run's admission (its ticket, listing, and grant) is kept in
+      `<data>/runs/.admitted`, which no run mounts, so a daemon that takes
+      the run up again issues the same pass.
+    - **What it runs on** (`ren-container`'s `Runtime`, on
+      `Placement::Isolated` alone). `[runs.container.relayed] runtime =
+      "gvisor"` runs a relayed run under `runsc` (gVisor's own apt
+      repository; Ubuntu's `runsc` panicked on some starts), rootless with
+      no cgroups, only its loopback, and sockets shared with the host
+      through its mounts. A daemon in a container starts such runs through
+      `ren-gvisor`, a Podman API service of their own that `install-vps
+      --contain all` sets up; before each start through a socket, the
+      engine checks the service runs the container's runtime, and refuses
+      one it does not know. Kata is not built: it is not packaged here and
+      needs `/dev/kvm`.
+    - **Verified in the dev slot** (`--contain all --runtime gvisor`):
+      runs started in bursts took their turns under gVisor; through the
+      relay a run reached its configured registry and its project's, and
+      an unlisted host was refused, each recorded with its purpose; nothing
+      was reached directly; from inside a run the gateway's doorway served
+      model calls and answered `/api`, `/health`, and `/control` with 404,
+      a forged tailnet login included; a run whose checkout's `origin` was
+      changed was still granted its project's repository; `git credential
+      fill` got the grant for its repository and nothing for another; a
+      run outlived a daemon restart and took another turn; a sandbox that
+      would see Ren's data was refused, and the daemon said why.
+    - Not decided: the client's own sign-in. A run mounts its client's
+      sign-in folder read-write, so it holds a credential that outlives
+      it; keeping it outside the run means the gateway sets it on each
+      model call, against Ren's rule that clients sign in themselves.
+    - Not yet: a GitHub App for production (the operator creates it), so
+      production's runs stay on the host's network with the SSH agent,
+      and reach the daemon's own listener; `gh` with a grant, so a run
+      opens pull requests; real clients (Claude Code, Codex, Pi, opencode)
+      driven relayed and under gVisor; and production on gVisor.
+
 Phases 1 and 2 come first: without them, upgrading automatically only breaks
 things faster. Each phase is useful on its own. Phases 7 and 8 do not depend
 on each other; phase 9 needs both, and phase 10 needs only the canary.
+Phase 12 needs phase 11: it narrows the containers phase 11 runs.
 
 ## Open questions
 
@@ -532,12 +614,12 @@ on each other; phase 9 needs both, and phase 10 needs only the canary.
   them blocks promotion or only warns.
 - Whether previews need real clients at all, or the fake provider is enough
   for the UI changes they are mostly for.
-- Isolated runs beyond a container (phase 11 gives each run one). A
-  container shares the host's kernel and, in production, its network. A
-  microVM per run (Docker Sandboxes: KVM on Linux, a Docker account, and a
-  credential proxy whose key injection and missing client config must be
-  squared with Ren's rule that clients sign in themselves) is the
-  candidate if that is not enough.
+- Whether a run keeps its client's sign-in (phase 12): the gateway could
+  set the client's credential on each model call so a run never holds it,
+  at the cost of Ren's rule that clients sign in themselves.
+- Whether production's runs move to gVisor (phase 12): gVisor and
+  `ren-gvisor` are ready on the VPS, but each client is to be verified
+  under it first, and production's runs are relayed first.
 
 ## Deviations
 
