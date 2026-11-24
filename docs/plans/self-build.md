@@ -742,6 +742,11 @@ spec (phase 7):
     - Deviation: grants are not the sandbox's. A run's grant is the
       relay's (`Relaying` knows its ticket and repository), so the sandbox
       holds no `Grant`; and `Isolation` is `ren-container`'s `Runtime`.
+    - Deviation: `ren-destination`, split from `ren-relay`. A project's
+      manifest lists destinations, and `ren-manifest` is pure while the
+      relay runs a listener, so `Destination` (with `Target` and its host
+      types) is a pure crate of its own below both; the relay re-exports
+      it. Moved alone first, with no change in behaviour (the same tests).
     - Not yet: `Purpose` and a project's own reach in its manifest; a
       client's sign-in is still seen read-write (see Not decided).
     - Deviation: `Purpose` is not the relay's. The relay records the

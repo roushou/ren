@@ -4,13 +4,13 @@
 //! future, so the relay spawns no task: its caller runs `serve`.
 
 use crate::{
-    destination::{Host, Target},
     head::{Answer, Ask, Head, Reading},
     passage::{Course, Passage, TunnelEnd, Unreachable},
     policy::{Reachable, RelayPolicy, Verdict},
     ticket::Ticket,
 };
 use futures_util::{StreamExt as _, stream::FuturesUnordered};
+use ren_destination::{Host, Target};
 use std::{
     collections::{HashMap, hash_map::Entry},
     future::Future,

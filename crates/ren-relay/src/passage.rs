@@ -1,7 +1,8 @@
 //! What became of one request to the relay: a [`Passage`], reported once
 //! it ends.
 
-use crate::{destination::Destination, destination::Target, policy::Refusal};
+use crate::policy::Refusal;
+use ren_destination::{Destination, Target};
 
 /// One request a holder made of the relay, and how it ended.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1925,6 +1925,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ren-destination"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "ren-gateway"
 version = "0.1.0"
 dependencies = [
@@ -2087,6 +2094,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "proptest",
+ "ren-destination",
  "strum",
  "thiserror",
  "tokio",
