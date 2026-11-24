@@ -29,8 +29,9 @@ pub enum Lifetime {
 /// Where a container runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Placement {
-    /// On the host's network, as the operator's own user, under `Runtime`.
-    Host(Runtime),
+    /// On the host's network, as the operator's own user, on the host's
+    /// kernel.
+    Host,
     /// With no network but its own loopback, as the operator's own user,
     /// under `Runtime`: it reaches out only through what it is given to see
     /// (a socket in a mounted folder).
@@ -49,8 +50,39 @@ pub enum Runtime {
     HostKernel,
     /// gVisor (`runsc`): the container's system calls are served by a
     /// kernel of its own in user space, and only what that kernel needs
-    /// reaches the host's. Needs no KVM, so it runs rootless.
+    /// reaches the host's. Needs no KVM, so it runs rootless; with no
+    /// network but its loopback, as rootless it cannot take a network of
+    /// the host's.
     Gvisor,
+}
+
+impl Runtime {
+    /// Podman's own arguments, before or after its command, that run its
+    /// containers under it. Rootless, gVisor cannot make the cgroup Podman
+    /// asks for; it keeps only its loopback, or has no network at all; and
+    /// it connects to a socket on the host, or makes one the host sees,
+    /// only when told to (a run host serves the daemon on a socket in its
+    /// folder, and reaches out through its doors).
+    pub(crate) fn podman_args(self) -> &'static [&'static str] {
+        match self {
+            Self::HostKernel => &[],
+            Self::Gvisor => &[
+                "--runtime=runsc",
+                "--runtime-flag=ignore-cgroups",
+                "--runtime-flag=network=none",
+                "--runtime-flag=host-uds=all",
+            ],
+        }
+    }
+
+    /// The runtime an engine reports by its program's name: gVisor's
+    /// `runsc`, or any other on the host's kernel.
+    pub fn reported(name: &str) -> Self {
+        match name.trim() {
+            "runsc" => Self::Gvisor,
+            _ => Self::HostKernel,
+        }
+    }
 }
 
 /// The environment a container starts with, besides what it is given.
@@ -118,6 +150,15 @@ impl Container {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// What runs its processes; a pod's are its pod's.
+    pub fn runtime(&self) -> Option<Runtime> {
+        match &self.placement {
+            Placement::Host => Some(Runtime::HostKernel),
+            Placement::Isolated(runtime) => Some(*runtime),
+            Placement::Pod(_) => None,
+        }
     }
 
     pub fn environment(self, environment: Environment) -> Self {

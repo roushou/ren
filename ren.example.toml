@@ -115,10 +115,11 @@ hold = "auto"
 # public addresses). Each connection is logged, refusals as warnings.
 # network = "relayed"
 # reach = ["index.crates.io:443", "static.crates.io:443", "registry.npmjs.org:443"]
-# What runs a run's processes: "host_kernel" (Podman's own runtime, the
-# default) or "gvisor" (runsc installed on the host): a kernel of its own in
-# user space between the run and the host's. gVisor needs a daemon on the host,
-# not one reaching Podman through podman_socket.
+# What runs a relayed run's processes: "host_kernel" (Podman's own runtime, the
+# default) or "gvisor" (runsc, from gVisor's apt repository): a kernel of its
+# own in user space between the run and the host's. A daemon in a container
+# starts gVisor runs through the ren-gvisor Podman service the install sets up:
+# podman_socket = "/run/user/<uid>/ren-gvisor/podman.sock".
 # runtime = "gvisor"
 
 [attachments]

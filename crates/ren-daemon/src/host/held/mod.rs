@@ -593,7 +593,7 @@ impl HeldRuns {
                 spec.program = program.display().to_string();
                 let doors = match containers.network() {
                     RunReach::Host => None,
-                    RunReach::Relayed(policy) => {
+                    RunReach::Relayed(policy, _) => {
                         let relaying = self.relaying.as_ref().ok_or_else(|| {
                             io::Error::other("a relayed run was started with no relay")
                         })?;
@@ -801,6 +801,7 @@ impl HeldRuns {
                             "podman could not start the run host {}: {stderr}",
                             container.name(),
                         )),
+                        error @ EngineError::Runtime { .. } => io::Error::other(error.to_string()),
                     })
             }
             Launcher::Direct => {

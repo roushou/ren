@@ -8,9 +8,7 @@
 //! It shares the host's network and runs as the operator, as a replica's
 //! does. What it sees is derived here, purely; starting it is the caller's.
 
-use ren_container::{
-    Container, Engine, Environment, Lifetime, Mount, Placement, Privileges, Runtime,
-};
+use ren_container::{Container, Engine, Environment, Lifetime, Mount, Placement, Privileges};
 use ren_daemon::config::Config;
 use ren_harness::{Harness, host::HostEnv};
 use ren_protocol::label::Labeled as _;
@@ -171,7 +169,7 @@ impl DaemonContainer {
                 self.name.clone(),
                 self.image.clone(),
                 Lifetime::Foreground,
-                Placement::Host(Runtime::HostKernel),
+                Placement::Host,
             )
             // What its unit sets (keys, the search path its runs get) is
             // the daemon's, as it is for a daemon on the host.

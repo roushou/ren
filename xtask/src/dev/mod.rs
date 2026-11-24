@@ -226,6 +226,8 @@ pub enum DevError {
     Provider(#[from] ProviderError),
     #[error(transparent)]
     DaemonContainer(#[from] crate::daemon_container::DaemonContainerError),
+    #[error(transparent)]
+    Gvisor(#[from] crate::gvisor_service::GvisorServiceError),
     #[error("{0} is not set")]
     MissingEnv(&'static str),
     #[error(transparent)]

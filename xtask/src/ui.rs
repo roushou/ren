@@ -9,9 +9,7 @@ use crate::{
     invocation::{Invocation, InvocationError},
     progress::Progress,
 };
-use ren_container::{
-    Container, Engine, Environment, Lifetime, Mount, Placement, Privileges, Runtime,
-};
+use ren_container::{Container, Engine, Environment, Lifetime, Mount, Placement, Privileges};
 use ren_harness::host::HostEnv;
 use std::{
     fs,
@@ -184,7 +182,7 @@ impl UiContainer {
                 self.name.clone(),
                 self.image.clone(),
                 Lifetime::Foreground,
-                Placement::Host(Runtime::HostKernel),
+                Placement::Host,
             )
             // Its listener, the daemon's address, and the token file's path
             // are its unit's, as they are for a UI on the host.

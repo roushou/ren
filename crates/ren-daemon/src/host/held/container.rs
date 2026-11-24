@@ -35,8 +35,6 @@ pub struct RunContainers {
     ssh_agent: Option<PathBuf>,
     /// What its runs reach.
     network: RunReach,
-    /// What runs their processes.
-    runtime: Runtime,
 }
 
 /// What a run's container reaches.
@@ -45,8 +43,8 @@ pub enum RunReach {
     /// The host's network.
     Host,
     /// Only Ren's gateway and the relay, which lets it out where this
-    /// policy and its client list.
-    Relayed(RelayPolicy),
+    /// policy and its client list, under this runtime.
+    Relayed(RelayPolicy, Runtime),
 }
 
 /// What one run needs to see, found on the host.
@@ -86,7 +84,6 @@ impl RunContainers {
         shared: Vec<Mount>,
         ssh_agent: Option<PathBuf>,
         network: RunReach,
-        runtime: Runtime,
     ) -> Self {
         Self {
             image,
@@ -95,7 +92,6 @@ impl RunContainers {
             shared,
             ssh_agent,
             network,
-            runtime,
         }
     }
 
@@ -125,8 +121,8 @@ impl RunContainers {
             self.image.clone(),
             Lifetime::Removed,
             match self.network {
-                RunReach::Host => Placement::Host(self.runtime),
-                RunReach::Relayed(_) => Placement::Isolated(self.runtime),
+                RunReach::Host => Placement::Host,
+                RunReach::Relayed(_, runtime) => Placement::Isolated(runtime),
             },
         )
         .stop_timeout(RunContainer::STOP_TIMEOUT)
@@ -141,7 +137,7 @@ impl RunContainers {
         // A relayed run pushes with a grant, never the operator's agent.
         let agent = match self.network {
             RunReach::Host => self.ssh_agent.as_ref(),
-            RunReach::Relayed(_) => None,
+            RunReach::Relayed(..) => None,
         };
         if let Some(agent) = agent {
             container = container.mount(Mount::read_write(agent));
@@ -206,7 +202,6 @@ mod tests {
             ],
             ssh_agent.map(Into::into),
             RunReach::Host,
-            Runtime::HostKernel,
         )
     }
 
@@ -287,8 +282,7 @@ mod tests {
             "/home/op".into(),
             Vec::new(),
             Some("/run/user/1000/agent".into()),
-            RunReach::Relayed(ren_relay::RelayPolicy::default()),
-            Runtime::HostKernel,
+            RunReach::Relayed(ren_relay::RelayPolicy::default(), Runtime::HostKernel),
         );
         let args = Engine::Podman.run_args(relayed.container(run, &needs()).spec());
         assert!(
@@ -306,8 +300,7 @@ mod tests {
             "/home/op".into(),
             Vec::new(),
             None,
-            RunReach::Relayed(ren_relay::RelayPolicy::default()),
-            Runtime::HostKernel,
+            RunReach::Relayed(ren_relay::RelayPolicy::default(), Runtime::HostKernel),
         );
         let needs = RunNeeds {
             doors: Some("/home/op/.local/state/ren/runs/.reach".into()),
@@ -329,8 +322,7 @@ mod tests {
             "/home/op".into(),
             Vec::new(),
             None,
-            RunReach::Relayed(ren_relay::RelayPolicy::default()),
-            Runtime::Gvisor,
+            RunReach::Relayed(ren_relay::RelayPolicy::default(), Runtime::Gvisor),
         );
         let args = Engine::Podman.run_args(relayed.container(run, &needs()).spec());
         for flag in [

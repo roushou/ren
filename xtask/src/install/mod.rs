@@ -31,7 +31,7 @@ use crate::{
     ui::UiBuildError,
 };
 use clap::Args;
-use ren_daemon::config::{Config, ConfigError};
+use ren_daemon::config::{Config, ConfigError, RunRuntime};
 use ren_git::Commit;
 use ren_git::{Git, GitError, Published, Tree};
 use ren_harness::host::HostEnv;
@@ -87,6 +87,8 @@ pub enum InstallError {
     NotLinux,
     #[error(transparent)]
     Contain(#[from] DaemonContainerError),
+    #[error(transparent)]
+    Gvisor(#[from] crate::gvisor_service::GvisorServiceError),
     #[error(transparent)]
     Unit(#[from] crate::unit::NoExecStart),
     #[error("run as the regular user that owns the service, not root")]
@@ -790,7 +792,8 @@ impl InstallVps {
 
     /// Everything that changes a running installation.
     /// The daemon's container, its image built and the Podman socket its
-    /// runs' containers are started through turned on.
+    /// runs' containers are started through turned on: Podman's own, or,
+    /// for runs under gVisor, `ren-gvisor`'s.
     fn contain(
         layout: &Layout,
         config: &Config,
@@ -809,6 +812,12 @@ impl InstallVps {
         Invocation::new("systemctl")
             .args(["--user", "enable", "--now", "podman.socket"])
             .run()?;
+        // Runs under gVisor are started through a Podman service of their
+        // own, which [runs.container] podman_socket names.
+        match config.runs.container.runtime {
+            RunRuntime::HostKernel => {}
+            RunRuntime::Gvisor => crate::gvisor_service::GvisorService::new(env)?.ensure()?,
+        }
         Ok(container)
     }
 

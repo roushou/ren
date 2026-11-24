@@ -665,37 +665,49 @@ spec (phase 7):
       and what each connects to itself is declared from their sign-in
       flows, not observed.
     - Built: the runtime. `ren-container`'s `Runtime` (`HostKernel`,
-      `Gvisor`) rides on `Placement::Host` and `Placement::Isolated`, so a
-      pod's container cannot take one; `[runs.container] runtime = "gvisor"`
-      runs a run's container under `runsc` (Ubuntu's `runsc` package), with
-      `--ignore-cgroups` (rootless, it cannot make Podman's cgroup), its
-      network kept as the container's (`host` or `none`), and
-      `--host-uds=all`: the run host serves the daemon on a socket in its
-      folder, and reaches out through its doors. A daemon that reaches
-      Podman through its API socket refuses it
-      (`ConfigError::RunRuntimeThroughSocket`). `cargo xtask dev up
-      --runtime gvisor` runs the slot's contained runs under it.
-    - Verified in the dev slot (`--contain runs --runtime gvisor`): four
-      runs' containers reported gVisor's kernel; each fake agent's turn
-      reached the gateway through its doorway and ended idle; through the
-      relay a run reached the listed registry, `example.com` was refused and
-      recorded, and nothing was reached directly. One run, the first after
-      the slot restarted, died as it started and ended `spawn_failed`; the
-      cause was not found, as the start error is not logged.
+      `Gvisor`) rides on `Placement::Isolated` alone, so neither a
+      container on the host's network nor a pod's can take one; the
+      daemon's `RunReach::Relayed` carries it, and
+      `[runs.container] runtime = "gvisor"` without `network = "relayed"`
+      is refused (`ConfigError::RunRuntimeNotRelayed`). Under gVisor a
+      run's container starts with `runsc`, `--ignore-cgroups` (rootless, it
+      cannot make Podman's cgroup), `--network=none` (its loopback; rootless
+      it can take no network of the host's), and `--host-uds=all` (the run
+      host serves the daemon on a socket in its folder, and reaches out
+      through its doors). A daemon in a container starts runs through
+      Podman's API socket, which cannot be told a runtime, so gVisor runs
+      go through a Podman service of their own, `ren-gvisor` (xtask's
+      `GvisorService`: socket-activated user units, `podman` started with
+      `Engine::service_args`), which `install-vps --contain all` and the
+      dev slot set up when gVisor is asked for; `podman_socket` names it.
+      Before each start through a socket, `Engine::start` asks the service
+      which runtime it runs (`podman info`) and refuses a container whose
+      runtime differs (`EngineError::Runtime`). A run whose client cannot
+      start is now logged with why. `cargo xtask dev up --runtime gvisor`
+      runs the slot's contained runs under it.
+    - Verified in the dev slot: with the daemon on the host (`--contain
+      runs`), runs reported gVisor's kernel and took their turns; with the
+      daemon in a container (`--contain all`) through `ren-gvisor`, ten
+      runs started in two bursts of five all took their turns, each
+      container's runtime `runsc`; a run's relay reached the listed
+      registry, `example.com` was refused and recorded, nothing was reached
+      directly, and `podman exec` from Podman's own service still worked; a
+      run outlived a restart of the daemon's container and took a second
+      turn.
+    - Deviation: gVisor from its own apt repository (gVisor 20261116), not
+      Ubuntu's `runsc` (20240729, built with Go 1.25): Ubuntu's panicked in
+      its kernel (`assertTaskGoroutine`) on about one start in four, seen
+      in its debug log.
     - Deviation: no Kata. Ubuntu does not package it, and it needs
       `/dev/kvm`, which the operator's user cannot open; a variant nothing
       can run is left out.
-    - Deviation: gVisor needs a daemon on the host. Podman's remote client
-      takes no `--runtime` or `--runtime-flag`, and the API service ignores
-      a container's `oci_runtime` and runs it on its own; so production's
-      daemon in a container cannot choose it. A Podman API service started
-      with gVisor as its runtime (`podman --runtime=runsc --runtime-flag=…
-      system service`), its network set per container by annotation
-      (`dev.gvisor.flag.network`, with `--allow-flag-override`), was
-      verified by hand and is the way there.
-    - Not yet: the gVisor Podman service for a daemon in a container; real
-      clients (Claude Code, Codex, Pi, opencode) driven under gVisor; a
-      run's start error logged.
+    - Deviation: gVisor only for relayed runs. A container's network could
+      be given per container only by annotation, which needs
+      `--allow-flag-override`, and then Podman's own commands on it (`exec`,
+      from a service without that flag) are refused; relayed runs are the
+      ones narrowed for a stronger runtime anyway.
+    - Not yet: production's configuration does not ask for gVisor; real
+      clients (Claude Code, Codex, Pi, opencode) driven under it.
     - Deviation: `Purpose` is not the relay's. The relay records the
       destination that admitted a tunnel; why it is listed belongs to where
       it is listed (`[runs.reach]`, a manifest), so `ren-sandbox` keeps it.
@@ -728,9 +740,9 @@ Phase 12 needs phase 11: it narrows the containers phase 11 runs.
 - Whether a run keeps its client's sign-in (phase 12): the gateway could
   set the client's credential on each model call so a run never holds it,
   at the cost of Ren's rule that clients sign in themselves.
-- Whether production's runs move to gVisor (phase 12): it needs `runsc` on
-  the VPS and a Podman service of its own for a daemon in a container, and
-  each client verified under it first.
+- Whether production's runs move to gVisor (phase 12): gVisor and
+  `ren-gvisor` are ready on the VPS, but each client is to be verified
+  under it first, and production's runs are relayed first.
 
 ## Deviations
 

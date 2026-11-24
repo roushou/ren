@@ -6,6 +6,7 @@ mod daemon;
 mod daemon_container;
 mod dev;
 mod file;
+mod gvisor_service;
 mod install;
 mod invocation;
 mod pod;

@@ -93,10 +93,8 @@ pub enum ConfigError {
     RunImageMissing,
     #[error("[runs] hold = \"container\" needs HOME, the home a run's container takes")]
     RunHomeMissing,
-    #[error(
-        "[runs.container] runtime = \"gvisor\" needs a daemon on the host: Podman's API socket (podman_socket) cannot choose a run's runtime"
-    )]
-    RunRuntimeThroughSocket,
+    #[error("[runs.container] runtime = \"gvisor\" needs network = \"relayed\"")]
+    RunRuntimeNotRelayed,
     #[error("[github] endpoint: {0}")]
     GithubEndpoint(ren_github::EndpointError),
     #[error("the GitHub client could not be built")]
@@ -399,7 +397,7 @@ pub struct RunContainerOptions {
     /// gateway and its relay (docs/plans/self-build.md, phase 12).
     #[serde(skip_serializing_if = "RunNetwork::is_host")]
     pub network: RunNetwork,
-    /// What runs a run's processes: the host's kernel, or gVisor's.
+    /// What runs a relayed run's processes: the host's kernel, or gVisor's.
     #[serde(skip_serializing_if = "RunRuntime::is_host_kernel")]
     pub runtime: RunRuntime,
     /// Where a relayed run may connect through the relay, besides where its
@@ -459,7 +457,10 @@ pub enum RunRuntime {
     #[default]
     HostKernel,
     /// gVisor (`runsc`, installed on the host): a kernel of its own in
-    /// user space between the run and the host's.
+    /// user space between the run and the host's, for relayed runs only.
+    /// Through `podman_socket`, the socket must be a Podman service that
+    /// runs gVisor (`ren-gvisor`, which the install sets up); a run is
+    /// refused otherwise.
     Gvisor,
 }
 
@@ -564,23 +565,15 @@ impl RunContainerOptions {
             Some(socket) => ren_container::Reach::Socket(anchored(socket)),
             None => ren_container::Reach::Scope,
         };
-        // Podman's remote client takes no runtime, and its service runs
-        // every container on its own.
-        match (&reach, self.runtime) {
-            (ren_container::Reach::Socket(_), RunRuntime::Gvisor) => {
-                return Err(ConfigError::RunRuntimeThroughSocket);
+        let network = match (self.network, self.runtime) {
+            (RunNetwork::Host, RunRuntime::HostKernel) => crate::host::RunReach::Host,
+            (RunNetwork::Host, RunRuntime::Gvisor) => {
+                return Err(ConfigError::RunRuntimeNotRelayed);
             }
-            (
-                ren_container::Reach::Socket(_) | ren_container::Reach::Scope,
-                RunRuntime::HostKernel,
-            )
-            | (ren_container::Reach::Scope, RunRuntime::Gvisor) => {}
-        }
-        let network = match self.network {
-            RunNetwork::Host => crate::host::RunReach::Host,
-            RunNetwork::Relayed => {
-                crate::host::RunReach::Relayed(ren_relay::RelayPolicy::new(self.reach.clone()))
-            }
+            (RunNetwork::Relayed, runtime) => crate::host::RunReach::Relayed(
+                ren_relay::RelayPolicy::new(self.reach.clone()),
+                runtime.runtime(),
+            ),
         };
         Ok(crate::host::RunContainers::new(
             image,
@@ -589,7 +582,6 @@ impl RunContainerOptions {
             shared,
             env.absolute_path("SSH_AUTH_SOCK"),
             network,
-            self.runtime.runtime(),
         ))
     }
 }
@@ -1210,7 +1202,6 @@ mod tests {
                 ],
                 Some("/run/agent".into()),
                 crate::host::RunReach::Host,
-                ren_container::Runtime::HostKernel,
             )
         );
         let relative: Config = toml::from_str("[runs.container]\nread_only = [\"usr\"]\n").unwrap();
@@ -1218,12 +1209,35 @@ mod tests {
     }
 
     #[test]
-    fn runs_run_on_the_hosts_kernel_unless_gvisor_is_chosen() {
+    fn relayed_runs_run_on_the_hosts_kernel_unless_gvisor_is_chosen() {
         let config: Config = toml::from_str(
-            "[runs]\nhold = \"container\"\n[runs.container]\nimage = \"i\"\nruntime = \"gvisor\"\n",
+            "[runs]\nhold = \"container\"\n[runs.container]\nimage = \"i\"\nnetwork = \"relayed\"\nruntime = \"gvisor\"\n",
         )
         .unwrap();
         assert_eq!(config.runs.container.runtime, RunRuntime::Gvisor);
+        let env = HostEnv::from_pairs([("HOME", "/home/op")]);
+        let Ok(Some(crate::host::Launcher::Container(containers))) =
+            config.runs.hold.launcher(&env, &config.runs.container)
+        else {
+            panic!("runs are held in containers");
+        };
+        assert!(matches!(
+            containers.network(),
+            crate::host::RunReach::Relayed(_, ren_container::Runtime::Gvisor)
+        ));
+        // gVisor keeps only its loopback: a run on the host's network
+        // cannot have it.
+        let unrelayed: Config = toml::from_str(
+            "[runs]\nhold = \"container\"\n[runs.container]\nimage = \"i\"\nruntime = \"gvisor\"\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            unrelayed
+                .runs
+                .hold
+                .launcher(&env, &unrelayed.runs.container),
+            Err(ConfigError::RunRuntimeNotRelayed)
+        ));
         let written = toml::to_string(&config.runs.container).unwrap();
         assert!(written.contains("runtime = \"gvisor\""), "{written}");
         assert_eq!(
@@ -1236,17 +1250,6 @@ mod tests {
                 .contains("runtime")
         );
         assert!(toml::from_str::<Config>("[runs.container]\nruntime = \"kata\"\n").is_err());
-        // A daemon in a container starts runs through Podman's API socket,
-        // which cannot choose their runtime.
-        let socket: Config = toml::from_str(
-            "[runs]\nhold = \"container\"\n[runs.container]\nimage = \"i\"\nruntime = \"gvisor\"\npodman_socket = \"/run/user/1000/podman/podman.sock\"\n",
-        )
-        .unwrap();
-        let env = HostEnv::from_pairs([("HOME", "/home/op")]);
-        assert!(matches!(
-            socket.runs.hold.launcher(&env, &socket.runs.container),
-            Err(ConfigError::RunRuntimeThroughSocket)
-        ));
     }
 
     #[test]
@@ -1261,7 +1264,9 @@ mod tests {
         else {
             panic!("runs are held in containers");
         };
-        let crate::host::RunReach::Relayed(policy) = containers.network() else {
+        let crate::host::RunReach::Relayed(policy, ren_container::Runtime::HostKernel) =
+            containers.network()
+        else {
             panic!("its runs are relayed");
         };
         assert_eq!(

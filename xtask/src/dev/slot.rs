@@ -6,6 +6,7 @@
 
 use super::DevError;
 use crate::file::{FileError, FileMode};
+use crate::gvisor_service::GvisorService;
 use crate::progress::Progress;
 use crate::{
     daemon::{Busy, Ending, RunPolicy, Runs, StillBusy},
@@ -133,9 +134,6 @@ pub struct Slot {
     contain: Contain,
     /// What runs its contained runs' processes.
     runtime: RunRuntime,
-    /// The operator's Podman API socket, which a daemon in a container
-    /// starts its runs' containers through.
-    podman_socket: Option<PathBuf>,
     /// The host's environment, which a daemon in a container is given
     /// its home and SSH agent from.
     env: HostEnv,
@@ -188,9 +186,6 @@ impl Slot {
             scratch_dir: share.join("scratch"),
             contain: Contain::None,
             runtime: RunRuntime::HostKernel,
-            podman_socket: env
-                .absolute_path("XDG_RUNTIME_DIR")
-                .map(|runtime| runtime.join("podman/podman.sock")),
             env: env.clone(),
         })
     }
@@ -200,6 +195,16 @@ impl Slot {
     pub fn containing(mut self, contain: Contain) -> Self {
         self.contain = contain;
         self
+    }
+
+    /// The Podman API socket a daemon in a container starts runs through:
+    /// Podman's own, or the one whose service runs gVisor.
+    fn podman_socket(&self) -> Option<PathBuf> {
+        let runtime_dir = self.env.absolute_path("XDG_RUNTIME_DIR")?;
+        Some(match self.runtime {
+            RunRuntime::HostKernel => runtime_dir.join("podman/podman.sock"),
+            RunRuntime::Gvisor => GvisorService::socket(&runtime_dir),
+        })
     }
 
     /// The slot, its contained runs run by `runtime`.
@@ -290,7 +295,7 @@ impl Slot {
                         read_only: vec!["/usr".into(), self.bin_dir.clone()],
                         read_write: vec![self.data_dir.clone()],
                         podman_socket: match self.contain {
-                            Contain::All => self.podman_socket.clone(),
+                            Contain::All => self.podman_socket(),
                             Contain::None | Contain::Runs => None,
                         },
                         // Relayed, as runs are meant to be (phase 12): the
@@ -647,6 +652,10 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                 Invocation::new("systemctl")
                     .args(["--user", "enable", "--now", "podman.socket"])
                     .run()?;
+                match self.runtime {
+                    RunRuntime::HostKernel => {}
+                    RunRuntime::Gvisor => GvisorService::new(&self.env)?.ensure()?,
+                }
             }
         }
         self.write_config()?;

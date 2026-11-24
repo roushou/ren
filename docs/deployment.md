@@ -177,12 +177,20 @@ checkout cloned over SSH is fetched and pushed over HTTPS through the relay.
 The App's key file must be readable by the daemon; `install-vps --contain all`
 mounts it into the daemon's container read-only.
 
-`[runs.container] runtime = "gvisor"` runs a run's processes under gVisor
-(`runsc`, Ubuntu's `runsc` package): its system calls are served by a kernel of
-its own in user space, not the host's. It needs no KVM, runs rootless, and
-works with either network. It needs a daemon on the host: Podman's API socket
-cannot choose a container's runtime, so with `podman_socket` set the daemon
-refuses it. The default, `host_kernel`, is Podman's own runtime.
+`[runs.container] runtime = "gvisor"` runs a relayed run's processes under
+gVisor (`runsc`): its system calls are served by a kernel of its own in user
+space, not the host's. It needs no KVM and runs rootless, with no network but
+its loopback, so it needs `network = "relayed"`. Install gVisor from its own
+apt repository (gvisor.dev/docs/user_guide/install); Ubuntu's `runsc` package
+(20240729, built with a newer Go than it supports) panics in its kernel on some
+starts. Podman's API socket cannot choose a container's runtime, so a daemon in
+a container starts gVisor runs through a Podman service of their own,
+`ren-gvisor` (socket-activated, at `/run/user/<uid>/ren-gvisor/podman.sock`),
+which `install-vps --contain all` sets up when the configuration asks for
+gVisor; set `[runs.container] podman_socket` to it. Before each start through
+a socket, the daemon checks the service runs the run's runtime, and refuses
+the run if not. The default, `host_kernel`, is Podman's own runtime.
+
 Systemd limits repeated startup failures to five in a minute; fix the cause and
 run `systemctl --user reset-failed ren` before restarting if it hits that limit.
 Launchd throttles respawns to at most once every 10 seconds. Neither manager's

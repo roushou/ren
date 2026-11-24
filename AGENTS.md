@@ -241,14 +241,17 @@ dependencies under "Crates" below. Read the code for current module ownership.
   read-write at its host path), how it lives (`Lifetime`: kept, removed
   once it exits, or the caller's foreground process) and where
   (`Placement`: the host's network as the operator, no network but its
-  loopback, or a pod) and under what (`Runtime`: the host's kernel, or
-  gVisor's `runsc`, rootless with no cgroups, its network kept, and
-  sockets shared with the host through its mounts), its
+  loopback under a `Runtime`, the host's kernel or gVisor's `runsc`
+  (rootless, no cgroups, sockets shared with the host through its mounts),
+  or a pod), its
   `Environment` and `Privileges`, and what it runs; `Engine` (one variant,
   `Podman`) gives the arguments that start it, all pure. `Engine` is also
   the one place Ren runs the engine: it starts a container as a `Launch`
-  says (from a systemd scope of its own, or through the API socket; a
-  caller's setting is a `Reach`), and creates and removes pods, removes
+  says (from a systemd scope of its own, or through the API socket, whose
+  service must run the container's `Runtime`, checked before each start;
+  a caller's setting is a `Reach`), gives the arguments of an API service
+  that runs its containers under a `Runtime` (`service_args`, xtask's
+  `ren-gvisor` units), and creates and removes pods, removes
   containers, and builds images, failing with `EngineError`. The daemon's
   run hosts, and xtask's daemon container and pods, are built and started
   with it.
