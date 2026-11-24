@@ -98,14 +98,6 @@ impl Git {
             })
     }
 
-    /// The URL of `dir`'s repository's remote `remote`, as configured;
-    /// none when it has no such remote.
-    pub fn remote_url(&self, dir: &Path, remote: &str) -> Result<Option<String>, GitError> {
-        let key = format!("remote.{remote}.url");
-        let url = self.answer(dir, &["config", "--default", "", "--get", key.as_str()])?;
-        Ok((!url.is_empty()).then_some(url))
-    }
-
     /// The commit `revision` names in `dir`'s repository.
     pub fn commit_of(&self, dir: &Path, revision: &Revision) -> Result<Commit, GitError> {
         let named = format!("{revision}^{{commit}}");

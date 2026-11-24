@@ -600,8 +600,10 @@ spec (phase 7):
       (`Doors`), mounted read-only. The daemon starts the relay on
       loopback and, per run, mints a ticket (`Relaying`), issues its pass,
       and gives the client `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY`;
-      the run's spec keeps the pass, so a daemon that takes the run up
-      again issues it again. A run reaches `[runs.container] reach` and what
+      the daemon keeps the pass (`Admission`: its ticket, where it may go,
+      its grant) in `<data>/runs/.admitted`, which no run mounts, so a
+      daemon that takes the run up again issues it again; the run's spec,
+      which the run can write, holds only its doorways. A run reaches `[runs.container] reach` and what
       its client needs (`ren-harness`'s `ClientNeeds`: what it keeps and
       where it connects itself). Passages are logged, refusals as
       warnings. The dev slot's contained runs are relayed.
@@ -627,10 +629,11 @@ spec (phase 7):
       were recorded and read back grouped; the session's inspector listed
       the three refusals first and the registry with its count.
     - Built: grants. With `[github.app]` (an App's id, its key file, and
-      the REST API), the daemon reads a relayed run's checkout's `origin`
-      (`ren_git::Git::remote_url`, `RepositorySlug::of_remote`); a
-      repository listed under `[[github.repository]]` is granted
-      (`RelayedSpec.grant`, kept for a rejoin): the run may reach
+      the REST API), a relayed run working in a watched project's folder
+      (its registered folder, or a worktree Ren named after it:
+      `WatchedProjects`, which learns the folders from the store) is
+      granted that project's `[[github.repository]]` (kept with its
+      admission for a rejoin): the run may reach
       `github.com:443`, and its git is given `ren credential` as its
       helper for github.com (with the repository's path), the grants
       socket (`REN_GRANTS`, `<data>/runs/.reach/grants.sock`), and
@@ -644,15 +647,25 @@ spec (phase 7):
       run's container never mounts the SSH agent. The daemon's container
       mounts the App's key read-only.
     - Verified in the dev slot (`--contain all`, a fake App on the fake
-      provider): in a relayed run in `acme-api` (origin `acme/api`),
+      provider): in a relayed run in `acme-api` (watched as `acme/api`),
       `git credential fill` got the grant for `acme/api` and nothing for
       `acme/other`; `git ls-remote git@github.com:acme/api.git` went over
       HTTPS through the relay to GitHub with the grant (refused there, as
       the fake token is), recorded as a passage to `github.com:443`; the
       container had no `SSH_AUTH_SOCK`.
-    - Deviation: the repository is read from the checkout's `origin`, not
-      the session's project, and granted only when `[[github.repository]]`
-      lists it: the run host's start knows the folder, not the project.
+    - Fixed after review: a run's repository was first read from its
+      checkout's `origin`, which the run can change; it is the watched
+      project its folder is registered as, and none when two could be.
+    - Fixed after review: the gateway's doorway reached the daemon's
+      listener, read and control APIs included (`/control/v1` trusts a
+      Tailscale login header Serve sets, and a run could send it); it
+      now reaches a listener of its own that serves model forwarding
+      alone (`Ingress::with_runs`). A run on the host's network still
+      reaches the daemon's listener, with the same exposure, until runs
+      are relayed.
+    - Fixed after review: a manifest's `reach` lists names only; an
+      address, which the relay reaches as listed, private or not, is
+      the operator's to list.
     - Deviation: shown on the session's page, not a run's: the UI shows a
       session with its runs, so the inspector merges its runs' passages.
     - Deviation: `[runs.container] reach`, not `[runs.reach]`: only a
@@ -745,11 +758,11 @@ spec (phase 7):
     - Built: reach declared and its purpose recorded. A project's
       manifest lists `reach`, which `ren-manifest` reads itself
       (`ReachEntry`); the daemon turns each entry into the relay's
-      `Destination` in one place (`ProjectReaches`), and a manifest listing
+      `Destination` in one place (`WatchedProjects`), and a manifest listing
       one the relay cannot admit by gives its runs none; the GitHub watch's query
       also reads the default branch's `.ren/project.toml`
       (`Snapshot::manifest`), and the daemon learns each watched
-      repository's reach from it (`ProjectReaches`), never from a run's
+      repository's reach from it (`WatchedProjects`), never from a run's
       checkout, whose `.git` the run can write. A relayed run's `Listing`
       holds each destination with its `Purpose` (`configuration`,
       `client`, `project`, `grant`), in that order, kept in its spec for a

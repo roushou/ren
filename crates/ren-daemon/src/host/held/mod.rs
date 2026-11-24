@@ -27,19 +27,19 @@ pub mod frame;
 mod grant;
 mod link;
 mod listing;
-mod project_reach;
 #[cfg(test)]
 mod purity;
 mod sandbox;
 mod serve;
+mod watched;
 
 pub use doorway::{Doors, Doorway};
 pub use grant::{CredentialAsk, Grants};
 pub use listing::{Listing, RelayedRun};
-pub use project_reach::{ProjectReachError, ProjectReaches};
 use ren_container::{Engine, EngineError, Launch, Reach};
 pub use sandbox::{RunReach, SandboxError, Sandboxes};
 pub use serve::RunHost;
+pub use watched::{ProjectReachError, WatchedProjects};
 
 use ren_harness::profile::ClientNeeds;
 use sandbox::{RenPlaces, Sandbox, Sight};
@@ -105,34 +105,62 @@ pub struct Relaying {
     ids: Arc<dyn IdSource>,
     passes: Arc<Mutex<HashMap<RunId, PassHandle<RelayedRun>>>>,
     /// What each watched project's manifest lets its runs reach.
-    projects: ProjectReaches,
+    projects: WatchedProjects,
     /// The GitHub App's grants, when one is set up.
     grants: Option<Arc<Grants>>,
     /// Each granted run's ticket and the repository it may push to.
     granted: Arc<Mutex<HashMap<RunId, (Ticket, RepositorySlug)>>>,
     /// The `ren` git runs as its credential helper inside a run.
     helper: PathBuf,
+    /// Where each relayed run's [`Admission`] is kept: in the runs' root,
+    /// which no run sees, never in a run's own folder, which it writes.
+    admitted: PathBuf,
 }
 
-/// What a relayed run's spec carries: the proxy URL its client is given
-/// (its ticket the password), where it may go and why, and the doorways
-/// its host opens.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// What a relayed run's spec carries for its host: the doorways it opens.
+/// Where the run may go is the daemon's ([`Admission`]), never the spec's,
+/// which the run can write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelayedSpec {
-    proxy: String,
-    reach: Listing,
     pub doorways: Vec<Doorway>,
-    /// The repository it may push to, with a token git asks for.
+}
+
+/// A relayed run's pass as the daemon keeps it, so a daemon that takes the
+/// run up again issues the same: its ticket, where it may go and why, and
+/// the repository it may push to.
+#[derive(Clone, Serialize, Deserialize)]
+struct Admission {
+    #[serde(
+        serialize_with = "Admission::write_ticket",
+        deserialize_with = "Admission::read_ticket"
+    )]
+    ticket: Ticket,
+    reach: Listing,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     grant: Option<RepositorySlug>,
 }
 
-impl std::fmt::Debug for RelayedSpec {
+impl Admission {
+    /// The file `run`'s admission is kept in, under `admitted`.
+    fn file(admitted: &Path, run: RunId) -> PathBuf {
+        admitted.join(format!("{run}.json"))
+    }
+
+    fn write_ticket<S: serde::Serializer>(ticket: &Ticket, to: S) -> Result<S::Ok, S::Error> {
+        to.serialize_str(ticket.reveal())
+    }
+
+    fn read_ticket<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Ticket, D::Error> {
+        let secret = String::deserialize(from)?;
+        Ticket::new(secret).map_err(serde::de::Error::custom)
+    }
+}
+
+impl std::fmt::Debug for Admission {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RelayedSpec")
-            .field("proxy", &"<redacted>")
+        f.debug_struct("Admission")
+            .field("ticket", &self.ticket)
             .field("reach", &self.reach)
-            .field("doorways", &self.doorways)
             .field("grant", &self.grant)
             .finish()
     }
@@ -156,6 +184,8 @@ impl Relaying {
 
     /// Where a granted run reaches GitHub, through the relay.
     const GITHUB: &str = "github.com:443";
+    /// The folder of relayed runs' admissions, in the runs' root.
+    pub const ADMITTED: &str = ".admitted";
 
     pub fn new(
         relay: Arc<Relay<RelayedRun>>,
@@ -163,7 +193,8 @@ impl Relaying {
         gateway: SocketAddr,
         ids: Arc<dyn IdSource>,
         helper: PathBuf,
-        projects: ProjectReaches,
+        projects: WatchedProjects,
+        admitted: PathBuf,
     ) -> Self {
         Self {
             relay,
@@ -175,6 +206,7 @@ impl Relaying {
             grants: None,
             granted: Arc::new(Mutex::new(HashMap::new())),
             helper,
+            admitted,
         }
     }
 
@@ -262,8 +294,11 @@ impl Relaying {
         run: RunId,
         policy: &RelayPolicy,
         needs: ClientNeeds,
-        repository: Option<RepositorySlug>,
+        workdir: &Path,
     ) -> io::Result<(RelayedSpec, Vec<(String, String)>)> {
+        // Its project by its folder, as Ren registered it; never by what
+        // its checkout says, which the run can change.
+        let repository = self.projects.repository_of(workdir);
         let grant = repository.clone().filter(|repository| {
             self.grants
                 .as_ref()
@@ -292,7 +327,7 @@ impl Relaying {
                 Purpose::Project,
                 repository
                     .iter()
-                    .flat_map(|repository| self.projects.of(repository)),
+                    .flat_map(|repository| self.projects.reach_of(repository)),
             )
             .list(Purpose::Grant, github);
         let ticket = Ticket::new(format!(
@@ -301,9 +336,14 @@ impl Relaying {
             self.ids.next_uuid().simple()
         ))
         .map_err(io::Error::other)?;
+        let admission = Admission {
+            ticket,
+            reach,
+            grant,
+        };
+        self.keep(run, &admission)?;
+        self.pass(run, &admission)?;
         let spec = RelayedSpec {
-            proxy: ticket.proxy_url("run", self.relay_inside()),
-            reach: reach.clone(),
             doorways: vec![
                 Doorway {
                     inside: self.gateway,
@@ -314,14 +354,9 @@ impl Relaying {
                     socket: self.doors.socket(Doors::RELAY),
                 },
             ],
-            grant,
         };
-        self.hold(run, ticket.clone(), reach)?;
-        if let Some(repository) = &spec.grant {
-            self.grant(run, ticket, repository.clone());
-        }
-        let proxy = spec.proxy.clone();
-        let git = spec
+        let proxy = admission.ticket.proxy_url("run", self.relay_inside());
+        let git = admission
             .grant
             .as_ref()
             .map(|_| self.git_env())
@@ -381,9 +416,10 @@ impl Relaying {
             .insert(run, (ticket, repository));
     }
 
-    /// Admits `run` again, as its spec says, for a daemon that took it
-    /// up: the pass went with the daemon that issued it.
-    fn readmit(&self, run: RunId, spec: &RelayedSpec) -> io::Result<()> {
+    /// Admits `run` again, as the daemon kept it, for a daemon that took
+    /// it up: the pass went with the daemon that issued it. A run with no
+    /// kept admission is not relayed.
+    fn readmit(&self, run: RunId) -> io::Result<()> {
         if self
             .passes
             .lock()
@@ -392,15 +428,40 @@ impl Relaying {
         {
             return Ok(());
         }
-        let ticket = CredentialAsk {
-            proxy: Some(spec.proxy.clone()),
-            ..CredentialAsk::default()
+        match self.admission(run)? {
+            Some(admission) => self.pass(run, &admission),
+            None => Ok(()),
         }
-        .ticket()
-        .ok_or_else(|| io::Error::other("a relayed run's spec has no ticket"))?;
-        self.hold(run, ticket.clone(), spec.reach.clone())?;
-        if let Some(repository) = &spec.grant {
-            self.grant(run, ticket, repository.clone());
+    }
+
+    /// `run`'s kept admission, if it has one.
+    fn admission(&self, run: RunId) -> io::Result<Option<Admission>> {
+        match std::fs::read(Admission::file(&self.admitted, run)) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(io::Error::other),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Keeps `run`'s admission where no run sees it, readable by the
+    /// operator alone.
+    fn keep(&self, run: RunId, admission: &Admission) -> io::Result<()> {
+        HeldRuns::private_dir(&self.admitted)?;
+        let file = Admission::file(&self.admitted, run);
+        HeldRuns::private_file(&file)?;
+        std::fs::write(
+            &file,
+            serde_json::to_vec(admission).map_err(io::Error::other)?,
+        )
+    }
+
+    /// The relay holds `admission`'s pass for `run`, and its grant.
+    fn pass(&self, run: RunId, admission: &Admission) -> io::Result<()> {
+        self.hold(run, admission.ticket.clone(), admission.reach.clone())?;
+        if let Some(repository) = &admission.grant {
+            self.grant(run, admission.ticket.clone(), repository.clone());
         }
         Ok(())
     }
@@ -420,6 +481,12 @@ impl Relaying {
 
     /// `run` reaches nothing more.
     fn release(&self, run: RunId) {
+        let kept = Admission::file(&self.admitted, run);
+        if let Err(error) = std::fs::remove_file(&kept)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            tracing::warn!(%run, %error, "could not remove a relayed run's admission");
+        }
         self.passes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -584,9 +651,8 @@ impl HeldRuns {
         run: RunId,
         command: &std::process::Command,
         needs: ClientNeeds,
-        repository: Option<RepositorySlug>,
     ) -> io::Result<AgentProcess> {
-        let started = self.start_held(run, command, needs, repository);
+        let started = self.start_held(run, command, needs);
         if started.is_err()
             && let Some(relaying) = &self.relaying
         {
@@ -600,7 +666,6 @@ impl HeldRuns {
         run: RunId,
         command: &std::process::Command,
         needs: ClientNeeds,
-        repository: Option<RepositorySlug>,
     ) -> io::Result<AgentProcess> {
         let mut spec = Spec::of(command)?;
         let folder = self.folder(run);
@@ -620,7 +685,7 @@ impl HeldRuns {
                         let relaying = self.relaying.as_ref().ok_or_else(|| {
                             io::Error::other("a relayed run was started with no relay")
                         })?;
-                        let (relayed, env) = relaying.admit(run, policy, needs, repository)?;
+                        let (relayed, env) = relaying.admit(run, policy, needs, &spec.cwd)?;
                         spec.env.extend(env);
                         spec.relayed = Some(relayed);
                     }
@@ -729,12 +794,7 @@ impl HeldRuns {
             Ok(stream) => {
                 // Its pass went with the daemon that issued it.
                 if let Some(relaying) = &self.relaying {
-                    let spec: Spec =
-                        serde_json::from_slice(&std::fs::read(folder.join(Self::SPEC))?)
-                            .map_err(io::Error::other)?;
-                    if let Some(relayed) = &spec.relayed {
-                        relaying.readmit(run, relayed)?;
-                    }
+                    relaying.readmit(run)?;
                 }
                 link::Link::open(stream, from, journal)
             }
@@ -894,7 +954,7 @@ mod tests {
         reason = "the test spawns the stand-in and the door the daemon would"
     )]
     async fn a_granted_runs_git_gets_a_token_for_its_repository_only() {
-        use super::ProjectReaches;
+        use super::{Admission, WatchedProjects};
         use super::{Doors, Grants, Relaying};
         use aws_lc_rs::{encoding::AsDer as _, rsa::KeySize, signature};
         use base64::Engine as _;
@@ -947,9 +1007,13 @@ mod tests {
         let dir = tempfile::tempdir_in("/tmp").unwrap();
         let doors = Doors::new(dir.path());
         // acme/web's default branch lists the registry its runs need.
-        let projects = ProjectReaches::default();
+        let projects = WatchedProjects::new(None);
+        projects.learn_folders([
+            (dir.path().join("web"), "acme/web".parse().unwrap()),
+            (dir.path().join("other"), "acme/other".parse().unwrap()),
+        ]);
         projects
-            .learn(
+            .learn_manifest(
                 &"acme/web".parse().unwrap(),
                 &ren_github::Snapshot {
                     default_branch: None,
@@ -966,17 +1030,18 @@ mod tests {
             Arc::new(SequentialIds::default()),
             "/opt/ren/bin/ren".into(),
             projects,
+            dir.path().join(Relaying::ADMITTED),
         )
         .granting(Arc::new(grants));
         tokio::spawn(relaying.serve_grants(doors.listen(Doors::GRANTS).unwrap()));
 
         let policy = ren_relay::RelayPolicy::default();
-        let (granted, env) = relaying
+        let (_, env) = relaying
             .admit(
                 RunId::restore(uuid::Uuid::from_u128(1)),
                 &policy,
                 ClientNeeds::default(),
-                Some("acme/web".parse().unwrap()),
+                &dir.path().join("web"),
             )
             .unwrap();
         let variable = |name: &str| {
@@ -990,14 +1055,25 @@ mod tests {
         );
         let github = "github.com:443".parse().unwrap();
         let registry = "registry.npmjs.org:443".parse().unwrap();
+        // Kept where the run cannot write: in the runs' root, not its folder.
+        let granted = relaying
+            .admission(RunId::restore(uuid::Uuid::from_u128(1)))
+            .unwrap()
+            .unwrap();
+        assert!(
+            dir.path()
+                .join(Relaying::ADMITTED)
+                .join(format!("{}.json", RunId::restore(uuid::Uuid::from_u128(1))))
+                .is_file()
+        );
         assert_eq!(granted.reach.purpose(&github), Some(Purpose::Grant));
         assert_eq!(granted.reach.purpose(&registry), Some(Purpose::Project));
-        let (other, other_env) = relaying
+        let (_, other_env) = relaying
             .admit(
                 RunId::restore(uuid::Uuid::from_u128(2)),
                 &policy,
                 ClientNeeds::default(),
-                Some("acme/other".parse().unwrap()),
+                &dir.path().join("other"),
             )
             .unwrap();
         assert!(
@@ -1005,8 +1081,17 @@ mod tests {
                 .iter()
                 .any(|(key, _)| key.starts_with("GIT_CONFIG"))
         );
+        let other = relaying
+            .admission(RunId::restore(uuid::Uuid::from_u128(2)))
+            .unwrap()
+            .unwrap();
         assert_eq!(other.reach.purpose(&github), None);
         assert_eq!(other.reach.purpose(&registry), None);
+        let proxy = |admission: &Admission| {
+            admission
+                .ticket
+                .proxy_url("run", "127.0.0.1:3128".parse().unwrap())
+        };
 
         let ask = |proxy: String, path: &'static str| {
             let socket = doors.socket(Doors::GRANTS);
@@ -1025,13 +1110,39 @@ mod tests {
             }
         };
         assert_eq!(
-            ask(granted.proxy.clone(), "acme/web.git").await,
+            ask(proxy(&granted), "acme/web.git").await,
             "username=x-access-token\npassword=ghs_FIXTURE\n\n"
         );
-        assert_eq!(ask(granted.proxy.clone(), "acme/other.git").await, "\n");
-        assert_eq!(ask(other.proxy.clone(), "acme/other.git").await, "\n");
+        assert_eq!(ask(proxy(&granted), "acme/other.git").await, "\n");
+        assert_eq!(ask(proxy(&other), "acme/other.git").await, "\n");
+        // A daemon that took the run up issues its pass as it was kept.
+        let again = Relaying::new(
+            Arc::new(ren_relay::Relay::new()),
+            doors.clone(),
+            "127.0.0.1:8787".parse().unwrap(),
+            Arc::new(SequentialIds::default()),
+            "/opt/ren/bin/ren".into(),
+            WatchedProjects::new(None),
+            dir.path().join(Relaying::ADMITTED),
+        );
+        again
+            .readmit(RunId::restore(uuid::Uuid::from_u128(1)))
+            .unwrap();
+        assert!(
+            again
+                .passes
+                .lock()
+                .unwrap()
+                .contains_key(&RunId::restore(uuid::Uuid::from_u128(1)))
+        );
         relaying.release(RunId::restore(uuid::Uuid::from_u128(1)));
-        assert_eq!(ask(granted.proxy, "acme/web.git").await, "\n");
+        assert_eq!(ask(proxy(&granted), "acme/web.git").await, "\n");
+        assert!(
+            relaying
+                .admission(RunId::restore(uuid::Uuid::from_u128(1)))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

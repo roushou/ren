@@ -11,8 +11,8 @@ pub mod packages;
 
 use crate::config::RuntimeConfig;
 use crate::host::{
-    Doors, Grants, HeldRuns, Launcher, ObservationThread, ProcessHost, ProjectReaches, RandomIds,
-    RelayedRun, Relaying, RunReach, SystemClock,
+    Doors, Grants, HeldRuns, Launcher, ObservationThread, ProcessHost, RandomIds, RelayedRun,
+    Relaying, RunReach, SystemClock, WatchedProjects,
 };
 use crate::packages::HostPrograms;
 use crate::packages::{HostPackages, PackageStore, fetch::ReqwestFetch};
@@ -41,6 +41,14 @@ use tokio::{net::TcpListener, task::JoinHandle};
 
 /// What the relay reports of each relayed run's requests, as they end.
 type Passages = tokio::sync::mpsc::UnboundedReceiver<Passage<RelayedRun>>;
+
+/// What relaying runs gives the daemon to serve: the passages the relay
+/// reports, and the listener that serves relayed runs model forwarding
+/// alone, never the read or control APIs.
+struct Relayed {
+    passages: Passages,
+    forwarding: TcpListener,
+}
 
 /// Why the daemon could not start, run, or stop cleanly.
 #[derive(Debug, thiserror::Error)]
@@ -171,8 +179,15 @@ impl Daemon {
         let ids: Arc<dyn IdSource> = Arc::new(RandomIds);
         // What watched projects let their runs reach, learned from GitHub
         // by the watch and read as relayed runs start.
-        let projects = ProjectReaches::default();
-        let (held, passages) = Self::held(config, data_dir, address, &ids, &clock, &projects);
+        let projects = WatchedProjects::new(Some(data_dir.join(Self::WORKTREES)));
+        let (held, relayed) = Self::held(config, data_dir, address, &ids, &clock, &projects);
+        let (passages, forwarding) = match relayed {
+            Some(Relayed {
+                passages,
+                forwarding,
+            }) => (Some(passages), Some(forwarding)),
+            None => (None, None),
+        };
         // The runs run hosts kept going are left open, to be taken up.
         let holding: Vec<_> = match &held {
             Some(held) => held
@@ -254,9 +269,10 @@ impl Daemon {
             shutdown.clone(),
         );
         let packages = Self::packages(config, data_dir, &reader);
-        let pulls = Self::watch_github(config, clock, &shutdown, projects);
+        let pulls = Self::watch_github(config, clock, &shutdown, projects, &reader);
         let ingress = gateway.into_ingress(
             listener,
+            forwarding,
             ManagementSetup {
                 packages,
                 reader,
@@ -399,8 +415,8 @@ impl Daemon {
         address: SocketAddr,
         ids: &Arc<dyn IdSource>,
         clock: &Arc<dyn Clock>,
-        projects: &ProjectReaches,
-    ) -> (Option<HeldRuns>, Option<Passages>) {
+        projects: &WatchedProjects,
+    ) -> (Option<HeldRuns>, Option<Relayed>) {
         if config.runs().roots.is_empty() {
             return (None, None);
         }
@@ -436,7 +452,7 @@ impl Daemon {
             )))
         });
         match Self::relaying(&root, address, ids, program, grants, projects.clone()) {
-            Ok((relaying, passages)) => (Some(held.relaying(relaying)), Some(passages)),
+            Ok((relaying, relayed)) => (Some(held.relaying(relaying)), Some(relayed)),
             Err(error) => {
                 // Its runs are refused as they start, which says why.
                 tracing::error!(%error, "relayed runs cannot reach out: the relay did not start");
@@ -445,29 +461,41 @@ impl Daemon {
         }
     }
 
-    /// The relay relayed runs reach out through, on loopback, and the doors
-    /// in `runs` their containers mount: one to the gateway at `gateway`,
-    /// one to the relay, and the passages it reports as each ends.
+    /// The relay relayed runs reach out through, on loopback; the listener
+    /// that serves them model forwarding alone; and the doors in `runs`
+    /// their containers mount: one to that listener, which a run finds at
+    /// the gateway's own address `gateway`, and one to the relay. With them,
+    /// the passages the relay reports as each ends.
     fn relaying(
         runs: &std::path::Path,
         gateway: SocketAddr,
         ids: &Arc<dyn IdSource>,
         helper: PathBuf,
         grants: Option<Arc<Grants>>,
-        projects: ProjectReaches,
-    ) -> std::io::Result<(Relaying, Passages)> {
+        projects: WatchedProjects,
+    ) -> std::io::Result<(Relaying, Relayed)> {
         let relay = Arc::new(Relay::new());
+        let forwarding = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        forwarding.set_nonblocking(true)?;
+        let forwarding = TcpListener::from_std(forwarding)?;
         let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
         let listener = TcpListener::from_std(listener)?;
         let relay_address = listener.local_addr()?;
         let doors = Doors::new(runs);
-        let to_gateway = doors.open(Doors::GATEWAY, gateway)?;
+        let to_gateway = doors.open(Doors::GATEWAY, forwarding.local_addr()?)?;
         let to_relay = doors.open(Doors::RELAY, relay_address)?;
         let (sender, passages) = tokio::sync::mpsc::unbounded_channel();
         let serving = relay.clone();
-        let mut relaying =
-            Relaying::new(relay, doors.clone(), gateway, ids.clone(), helper, projects);
+        let mut relaying = Relaying::new(
+            relay,
+            doors.clone(),
+            gateway,
+            ids.clone(),
+            helper,
+            projects,
+            runs.join(Relaying::ADMITTED),
+        );
         let granting = match grants {
             Some(grants) => {
                 relaying = relaying.granting(grants);
@@ -491,7 +519,13 @@ impl Daemon {
                 tokio::spawn(granting);
             }
         }
-        Ok((relaying, passages))
+        Ok((
+            relaying,
+            Relayed {
+                passages,
+                forwarding,
+            },
+        ))
     }
 
     /// Record each passage the relay reports with its run, and log what a
@@ -538,11 +572,13 @@ impl Daemon {
         config: &RuntimeConfig,
         clock: Arc<dyn Clock>,
         shutdown: &Shutdown,
-        projects: ProjectReaches,
+        projects: WatchedProjects,
+        reader: &Reader,
     ) -> PullBoard {
         let Some(setup) = config.github() else {
             return PullBoard::default();
         };
+        Self::learn_folders(setup, projects.clone(), reader.clone(), shutdown.clone());
         let board = PullBoard::watching(setup.projects.iter().cloned());
         let poller = Poller::new(setup.client.clone(), setup.period, board.repositories());
         let recording = board.clone();
@@ -556,7 +592,7 @@ impl Daemon {
                 .run(
                     |repository, observation| {
                         if let Some((sighting, true)) = observation.sighting()
-                            && let Err(error) = projects.learn(repository, &sighting.snapshot)
+                            && let Err(error) = projects.learn_manifest(repository, &sighting.snapshot)
                         {
                             tracing::warn!(%repository, %error, "a project's manifest on its default branch does not read; its runs reach nothing of its own");
                         }
@@ -572,6 +608,47 @@ impl Daemon {
         });
         board
     }
+    /// Keeps `projects` told which folder each watched project is
+    /// registered in: read from the store now, then each period, as
+    /// projects are registered and archived.
+    fn learn_folders(
+        setup: &crate::config::GithubSetup,
+        projects: WatchedProjects,
+        reader: Reader,
+        shutdown: Shutdown,
+    ) {
+        let watched: std::collections::HashMap<_, _> = setup.projects.iter().cloned().collect();
+        let period = setup.period.duration();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "process wiring: the daemon owns the watched projects' task"
+        )]
+        tokio::spawn(async move {
+            let stop = shutdown.draining();
+            tokio::pin!(stop);
+            loop {
+                match reader.projects().await {
+                    Ok(registered) => {
+                        projects.learn_folders(registered.into_iter().filter_map(|project| {
+                            let repository = watched.get(&project.name)?.clone();
+                            project
+                                .archived_at
+                                .is_none()
+                                .then(|| (project.repository.as_path().to_path_buf(), repository))
+                        }))
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "could not read the registered projects");
+                    }
+                }
+                tokio::select! {
+                    () = tokio::time::sleep(period) => {}
+                    () = &mut stop => return,
+                }
+            }
+        });
+    }
+
     /// The host's packages for the control API, or none when downloads cannot
     /// be set up (the packages routes then say so).
     fn packages(

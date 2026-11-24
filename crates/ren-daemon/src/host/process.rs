@@ -496,12 +496,7 @@ impl AgentHost for ProcessHost {
                 std::env::join_paths(self.search_dirs(packages)).map_err(io::Error::other)?,
             );
         }
-        held.start(
-            run,
-            &command,
-            plan.needs(),
-            self.repository(workdir, packages),
-        )
+        held.start(run, &command, plan.needs())
     }
 
     fn held(&self) -> io::Result<Vec<HeldRun>> {
@@ -663,21 +658,6 @@ where
 }
 
 impl ProcessHost {
-    /// The GitHub repository `workdir`'s checkout pushes to, by its
-    /// `origin`: what a relayed run working there may be granted.
-    fn repository(
-        &self,
-        workdir: &Workdir,
-        packages: &RunPackages,
-    ) -> Option<ren_github::RepositorySlug> {
-        let git = Git::find(&self.search_dirs(packages))?;
-        let url = git
-            .remote_url(workdir.as_path(), "origin")
-            .inspect_err(|error| tracing::debug!(%error, "a run's checkout has no readable origin"))
-            .ok()??;
-        ren_github::RepositorySlug::of_remote(&url)
-    }
-
     /// Stops a worktree's preview, if one runs: Ren's own (`cargo xtask
     /// preview`), a Podman pod, and a project's (`ren project preview`), a
     /// transient unit, each named for the worktree. Removing one that does

@@ -165,6 +165,8 @@ static RUNS: AtomicU64 = AtomicU64::new(0);
 /// fixed clock and sequential identifiers. No daemon, signals, or host config.
 pub struct TestGateway {
     address: SocketAddr,
+    /// The listener sandboxed runs reach: model forwarding alone.
+    runs_address: SocketAddr,
     router: Router,
     shutdown: Shutdown,
     server: JoinHandle<Result<Stopped, IngressError>>,
@@ -328,6 +330,11 @@ impl TestGateway {
             clock.clone(),
             shutdown.clone(),
         ));
+        let runs_listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let runs_address = runs_listener.local_addr().unwrap();
+        let forwarding = gateway.clone().forwarding_router();
         let router = gateway.router(ManagementSetup {
             reader,
             backup,
@@ -341,10 +348,11 @@ impl TestGateway {
             release: ReleaseFolder::in_data(dir),
             pulls: pulls.clone(),
         });
-        let ingress = Ingress::new(listener, router.clone());
+        let ingress = Ingress::new(listener, router.clone()).with_runs(runs_listener, forwarding);
         let server = tokio::spawn(ingress.serve(shutdown.clone(), Self::DRAIN_DEADLINE));
         Self {
             address,
+            runs_address,
             router,
             shutdown,
             server,
@@ -367,6 +375,11 @@ impl TestGateway {
 
     pub fn address(&self) -> SocketAddr {
         self.address
+    }
+
+    /// Where sandboxed runs reach the gateway: model forwarding alone.
+    pub fn runs_address(&self) -> SocketAddr {
+        self.runs_address
     }
 
     /// The served router, for driving a request without a connection: a test

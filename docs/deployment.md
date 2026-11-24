@@ -161,7 +161,8 @@ the run there (its run folder, its worktree, and the doors) is seen.
 run: its container has only its loopback (`--network=none`). There its run host
 listens on the gateway's address and on `127.0.0.1:3128`, and passes each
 connection through a Unix socket in `<data>/runs/.reach`, which the container
-sees read-only, to the daemon's gateway and to its relay (`ren-relay`). The
+sees read-only, to a listener of the daemon's that serves model forwarding
+alone (never the read or control APIs) and to its relay (`ren-relay`). The
 client's base URL is unchanged; `HTTPS_PROXY` and `HTTP_PROXY` name the relay,
 with a ticket minted for the run as the password, and `NO_PROXY` keeps loopback
 direct. The relay lets a run connect only to where `[runs.container] reach`,
@@ -169,16 +170,17 @@ its client (Codex's and Claude Code's sign-in refresh, opencode's model
 catalogue), its project, and its grant list, a name only at public addresses, and passes the connection through
 unread. Every connection is logged with its run; a refused one is a warning
 that names the destination and why. A project lists what its runs need in
-its `.ren/project.toml` (`reach = ["registry.npmjs.org:443"]`): Ren reads it
+its `.ren/project.toml` (`reach = ["registry.npmjs.org:443"]`, host names only): Ren reads it
 from the repository's default branch on GitHub, for a repository watched under
 `[[github.repository]]`, never from a run's checkout, which the run could
 change; a manifest that does not read lists nothing, with a warning. Each
 recorded passage says which list let it through. A run held through a daemon restart keeps
-its pass: the new daemon issues it again from the run's spec. A relayed run
+its pass: the daemon keeps it in `<data>/runs/.admitted`, which no run sees, and
+issues it again from there. A relayed run
 never holds the SSH agent. It pushes with a grant instead: with `[github.app]`
 set (a GitHub App installed on the repositories, allowed to write contents and
-pull requests), a run whose checkout's `origin` is one of the
-`[[github.repository]]` repositories may reach `github.com:443`, and its git
+pull requests), a run working in the registered folder of a project under
+`[[github.repository]]`, or in a worktree of it, may reach `github.com:443`, and its git
 asks `ren credential` for a token, which asks the daemon over
 `<data>/runs/.reach/grants.sock`. The daemon mints, with the App's key, a token
 for that repository alone, lasting an hour, and hands it out for 45 minutes. A

@@ -660,9 +660,14 @@ dependencies under "Crates" below. Read the code for current module ownership.
   whole or every run would see inside Ren's data; a relayed run's
   `Listing` (`host::held::listing`, pure) is where it may go and why
   (Ren's configuration, its client, its project's manifest on its default
-  branch on GitHub, which `ProjectReaches` learns from the watch, never a
-  checkout, or its grant), held with its pass by the relay
-  (`RelayedRun`), so each passage is recorded with its `Purpose`; the
+  branch on GitHub, or its grant), held with its pass by the relay
+  (`RelayedRun`), so each passage is recorded with its `Purpose`, and
+  kept with its ticket and grant as its `Admission` in `<data>/runs/.admitted`,
+  never in the run's own folder; `WatchedProjects` (`host::held::watched`)
+  says which watched project a run works on, by its registered folder or
+  a worktree named after it, never by its checkout, and learns each one's
+  manifest from the watch; a relayed run's gateway doorway reaches a
+  listener that serves model forwarding alone (`Ingress::with_runs`); the
   host keeps
   the client's stdin open and its output in the run folder's spool, writes
   its exit, and serves one daemon at a time over a socket whose frames

@@ -31,6 +31,12 @@ impl Ticket {
         }
     }
 
+    /// The secret itself, for its holder's proxy URL and for whoever keeps
+    /// the pass between restarts; never for a log.
+    pub fn reveal(&self) -> &str {
+        &self.0
+    }
+
     /// The proxy URL a holder named `user` is given for the relay at
     /// `relay`: `http://<user>:<ticket>@<relay>`. The user name is only a
     /// label; the relay reads the ticket.

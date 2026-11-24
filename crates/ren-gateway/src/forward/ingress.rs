@@ -95,10 +95,12 @@ pub enum IngressError {
     Stalled,
 }
 
-/// A bound listener and the router it serves.
+/// A bound listener and the router it serves, and, for sandboxed runs, a
+/// listener of their own that serves only model forwarding.
 pub struct Ingress {
     listener: TcpListener,
     router: Router,
+    runs: Option<(TcpListener, Router)>,
 }
 
 impl Ingress {
@@ -107,7 +109,21 @@ impl Ingress {
     const ABORT_GRACE: Duration = Duration::from_secs(2);
 
     pub fn new(listener: TcpListener, router: Router) -> Self {
-        Self { listener, router }
+        Self {
+            listener,
+            router,
+            runs: None,
+        }
+    }
+
+    /// Also serve `router` on `listener`: what sandboxed runs reach, never
+    /// the read or control APIs.
+    #[must_use]
+    pub fn with_runs(self, listener: TcpListener, router: Router) -> Self {
+        Self {
+            runs: Some((listener, router)),
+            ..self
+        }
     }
 
     /// Serve until shutdown drains, then wait up to `deadline` for connections
@@ -117,7 +133,40 @@ impl Ingress {
         shutdown: Shutdown,
         deadline: Duration,
     ) -> Result<Stopped, IngressError> {
-        let server = axum::serve(self.listener, self.router)
+        let runs = async {
+            let Some((listener, router)) = self.runs else {
+                return Ok(());
+            };
+            let served = axum::serve(listener, router)
+                .with_graceful_shutdown(shutdown.draining())
+                .into_future();
+            tokio::pin!(served);
+            tokio::select! {
+                result = &mut served => return result,
+                () = shutdown.draining() => {}
+            }
+            // Once draining, its calls are aborted with the main listener's;
+            // past that, it is left behind.
+            match tokio::time::timeout(deadline + Self::ABORT_GRACE * 2, served).await {
+                Ok(result) => result,
+                Err(_) => Ok(()),
+            }
+        };
+        let (stopped, runs) = tokio::join!(
+            Self::serve_main(self.listener, self.router, &shutdown, deadline),
+            runs
+        );
+        runs.map_err(IngressError::Server)?;
+        stopped
+    }
+
+    async fn serve_main(
+        listener: TcpListener,
+        router: Router,
+        shutdown: &Shutdown,
+        deadline: Duration,
+    ) -> Result<Stopped, IngressError> {
+        let server = axum::serve(listener, router)
             .with_graceful_shutdown(shutdown.draining())
             .into_future();
         tokio::pin!(server);

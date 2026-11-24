@@ -444,19 +444,6 @@ program_at = "acme-lint"
                 git.init(&folder)
                     .and_then(|()| git.commit_all(&folder, "Start the fake project", &author))?;
             }
-            // Its fake repository on GitHub, so a relayed run working in it
-            // is granted it. Never fetched: the fake GitHub has no git.
-            if git.remote_url(&folder, "origin")?.is_none() {
-                let url = format!(
-                    "https://github.com/acme/{}.git",
-                    project.trim_start_matches("acme-")
-                );
-                Invocation::new("git")
-                    .arg("-C")
-                    .arg(&folder)
-                    .args(["remote", "add", "origin", url.as_str()])
-                    .succeeds(Echo::Hide)?;
-            }
             // Its manifest, so a worktree of it has checks and a preview.
             let manifest = folder.join(ren_manifest::Manifest::FILE);
             if !manifest.exists() {

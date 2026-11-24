@@ -282,8 +282,8 @@ impl<U: Upstream> Gateway<U> {
 
     /// The forwarding routes, built from the upstream table's bound routes.
     /// Every other method on a route path is refused; other paths fall
-    /// through to management routes.
-    pub(super) fn forwarding_router(self: Arc<Self>) -> Router {
+    /// through to management routes. Alone, it is what sandboxed runs reach.
+    pub fn forwarding_router(self: Arc<Self>) -> Router {
         let routes = self.config.upstreams.routes();
         routes.into_iter().fold(Router::new(), |router, bound| {
             let accepts = bound.forward.accepts;

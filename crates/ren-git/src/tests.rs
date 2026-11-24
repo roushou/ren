@@ -418,20 +418,3 @@ fn a_fetched_branch_is_checked_out_detached_and_counted() {
     assert_eq!(git.head_commit(&tree).unwrap(), tip);
     assert!(tree.join("LICENSE").is_file());
 }
-
-#[test]
-fn a_remotes_url_is_read_as_configured() {
-    let dir = tempfile::tempdir().unwrap();
-    let git = Git::inherited();
-    git.init(dir.path()).unwrap();
-    assert_eq!(git.remote_url(dir.path(), "origin").unwrap(), None);
-    std::fs::write(
-        dir.path().join(".git/config"),
-        "[remote \"origin\"]\n\turl = git@github.com:acme/web.git\n",
-    )
-    .unwrap();
-    assert_eq!(
-        git.remote_url(dir.path(), "origin").unwrap().as_deref(),
-        Some("git@github.com:acme/web.git")
-    );
-}

@@ -1,10 +1,13 @@
 //! One entry of a manifest's `reach`: where the project's relayed runs may
-//! connect, as `host:port` or `*.parent:port`.
+//! connect, as `host:port` or `*.parent:port`. A name, never an address: a
+//! listed name reaches only public addresses, while a listed address is
+//! reached as it is, and only the operator may list one.
 
 use std::{fmt, str::FromStr};
 
 /// A `reach` entry: a host name, or `*.` and the name every host under it
-/// shares, and a port. Lowercase, without a trailing dot.
+/// shares, and a port. Lowercase, without a trailing dot; its last label is
+/// not all digits, so no address reads as one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReachEntry {
     /// The host, with its `*.` when it names every host under a parent.
@@ -14,7 +17,7 @@ pub struct ReachEntry {
 
 /// Why a `reach` entry does not read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{0:?} is not `host:port` or `*.parent:port`")]
+#[error("{0:?} is not `host:port` or `*.parent:port` with a host name")]
 pub struct NotAReachEntry(pub String);
 
 impl ReachEntry {
@@ -49,7 +52,11 @@ impl FromStr for ReachEntry {
             .ok_or_else(refused)?;
         let host = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
         let name = host.strip_prefix("*.").unwrap_or(&host);
-        if name.len() > Self::MAX_HOST || !name.split('.').all(Self::is_label) {
+        let named = name
+            .rsplit('.')
+            .next()
+            .is_some_and(|last| !last.bytes().all(|byte| byte.is_ascii_digit()));
+        if name.len() > Self::MAX_HOST || !name.split('.').all(Self::is_label) || !named {
             return Err(refused());
         }
         Ok(Self { host, port })
@@ -84,6 +91,10 @@ mod tests {
             "-bad.io:443",
             ":443",
             "a b.io:443",
+            "127.0.0.1:8787",
+            "10.0.0.1:443",
+            "*.0.0.10:443",
+            "[::1]:443",
         ] {
             assert!(text.parse::<ReachEntry>().is_err(), "{text}");
         }
