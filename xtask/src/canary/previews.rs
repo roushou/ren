@@ -15,7 +15,6 @@ use crate::{
 };
 use ren_gateway::instance::{Action, Event, Instances, Reach, Slot, Source, Wanted};
 use ren_git::Commit;
-use ren_github::Readiness;
 use ren_harness::host::HostEnv;
 use ren_protocol::label::Stored;
 use std::path::PathBuf;
@@ -144,14 +143,14 @@ impl PreviewPass<'_> {
         Ok(asked.into_iter().chain(pulls).collect())
     }
 
-    /// A pull request that wants a preview: one that is not a draft.
+    /// What a pull request wants ([`Wanted::pull`]); one whose readiness
+    /// this build does not know wants nothing.
     fn pull(pull: ListedPull) -> Option<Wanted> {
         match pull.readiness {
-            Stored::Known(Readiness::Ready) => Some(Wanted {
-                source: Source::Pull(pull.number.to_string().parse().ok()?),
-                commit: pull.head,
-            }),
-            Stored::Known(Readiness::Draft) | Stored::Unknown(_) => None,
+            Stored::Known(readiness) => {
+                Wanted::pull(pull.number.to_string().parse().ok()?, pull.head, readiness)
+            }
+            Stored::Unknown(_) => None,
         }
     }
 

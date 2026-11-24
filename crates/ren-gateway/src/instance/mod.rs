@@ -9,13 +9,16 @@
 //! carries out the actions and reports back ([`Event::Started`],
 //! [`Event::Failed`]). A failed build is not tried again for the same
 //! commit; a build whose outcome is unknown (its pass stopped) is started
-//! again.
+//! again. Pull requests' previews follow them: [`PullFollower`] says when
+//! the GitHub watch saw what they want move.
 
 mod asks;
+mod follow;
 mod instances;
 mod slot;
 
 pub use asks::CommitAsks;
+pub use follow::{Followed, PullFollower};
 pub use instances::{
     Action, Event, Instance, InstanceState, Instances, Reach, Source, StaleReport, Wanted,
 };

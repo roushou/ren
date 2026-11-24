@@ -4,19 +4,52 @@
 //! requests in the states the project page draws: passing and approved,
 //! failing, behind with checks running, conflicting, blocked, and a draft.
 //! Any other repository is not found, as GitHub says for one a token
-//! cannot read.
+//! cannot read. `acme/ren`'s pull requests can instead be opened, moved,
+//! and closed by hand, in a file read for each answer ([`OpenedPulls`]),
+//! so the factory's previews can be seen following them.
 
 use axum::{Json, http::StatusCode};
+use serde::Deserialize;
 use serde_json::{Value, json};
+use std::path::PathBuf;
 
 /// The fake GitHub.
-pub(super) struct FakeGithub;
+pub(super) struct FakeGithub {
+    /// The file of `acme/ren`'s pull requests, when one is given.
+    pub pulls: Option<PathBuf>,
+}
+
+/// `acme/ren`'s open pull requests, as the operator writes them:
+///
+/// ```toml
+/// [[pull]]
+/// number = 8
+/// head = "<a commit id>"
+/// draft = false
+/// ```
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OpenedPulls {
+    #[serde(default)]
+    pull: Vec<OpenedPull>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OpenedPull {
+    number: u64,
+    head: String,
+    #[serde(default)]
+    draft: bool,
+}
 
 /// One invented pull request, in GitHub's terms.
 struct FakePull {
     number: u64,
     title: &'static str,
     branch: &'static str,
+    /// Its head; by default, one invented from its number.
+    head: Option<String>,
     /// `mergeStateStatus`.
     merge: &'static str,
     /// `reviewDecision`.
@@ -64,13 +97,13 @@ impl FakeGithub {
     }
 
     /// The answer to one query.
-    pub(super) async fn answer(Json(query): Json<Value>) -> (StatusCode, Json<Value>) {
+    pub(super) async fn answer(&self, Json(query): Json<Value>) -> (StatusCode, Json<Value>) {
         let owner = query["variables"]["owner"].as_str().unwrap_or_default();
         let name = query["variables"]["name"].as_str().unwrap_or_default();
         let pulls = match (owner, name) {
             ("acme", "web") => Self::web(),
             ("acme", "api") => Self::api(),
-            ("acme", "ren") => Self::ren(),
+            ("acme", "ren") => self.opened().unwrap_or_else(Self::ren),
             _ => {
                 return (
                     StatusCode::OK,
@@ -100,12 +133,44 @@ impl FakeGithub {
         )
     }
 
+    /// `acme/ren`'s pull requests from the file, when it is given and
+    /// reads; a file that does not read is said, and the invented ones
+    /// stand.
+    fn opened(&self) -> Option<Vec<FakePull>> {
+        let path = self.pulls.as_deref()?;
+        let text = std::fs::read_to_string(path).ok()?;
+        let opened: OpenedPulls = match toml::from_str(&text) {
+            Ok(opened) => opened,
+            Err(error) => {
+                println!("warning: {} does not read: {error}", path.display());
+                return None;
+            }
+        };
+        Some(
+            opened
+                .pull
+                .into_iter()
+                .map(|pull| FakePull {
+                    number: pull.number,
+                    title: "feat: a pull request opened by hand",
+                    branch: "by-hand",
+                    head: Some(pull.head),
+                    merge: "CLEAN",
+                    review: None,
+                    checks: None,
+                    draft: pull.draft,
+                })
+                .collect(),
+        )
+    }
+
     fn web() -> Vec<FakePull> {
         vec![
             FakePull {
                 number: 41,
                 title: "feat: the pricing page shows yearly plans",
                 branch: "pricing-yearly",
+                head: None,
                 merge: "CLEAN",
                 review: Some("APPROVED"),
                 checks: Some((
@@ -121,6 +186,7 @@ impl FakeGithub {
                 number: 40,
                 title: "fix: the signup form keeps its fields after an error",
                 branch: "signup-fields",
+                head: None,
                 merge: "BEHIND",
                 review: Some("REVIEW_REQUIRED"),
                 checks: Some((
@@ -136,6 +202,7 @@ impl FakeGithub {
                 number: 38,
                 title: "refactor: one layout for every marketing page",
                 branch: "marketing-layout",
+                head: None,
                 merge: "DIRTY",
                 review: Some("CHANGES_REQUESTED"),
                 checks: Some((
@@ -159,6 +226,7 @@ impl FakeGithub {
                 number: 7,
                 title: "feat: the Overview lists each pull request's preview",
                 branch: "pull-previews",
+                head: None,
                 merge: "CLEAN",
                 review: Some("APPROVED"),
                 checks: Some((
@@ -174,6 +242,7 @@ impl FakeGithub {
                 number: 6,
                 title: "fix: a canary pass keeps its previews' builds",
                 branch: "keep-builds",
+                head: None,
                 merge: "BEHIND",
                 review: Some("REVIEW_REQUIRED"),
                 checks: Some(("PENDING", vec![FakeCheck::running("CI")])),
@@ -188,6 +257,7 @@ impl FakeGithub {
                 number: 17,
                 title: "feat: rate limits per API key",
                 branch: "key-limits",
+                head: None,
                 merge: "BLOCKED",
                 review: Some("REVIEW_REQUIRED"),
                 checks: Some((
@@ -203,6 +273,7 @@ impl FakeGithub {
                 number: 16,
                 title: "wip: move sessions to the new store",
                 branch: "sessions-store",
+                head: None,
                 merge: "DRAFT",
                 review: None,
                 checks: None,
@@ -227,7 +298,7 @@ impl FakePull {
             "isDraft": self.draft,
             "author": { "login": "acme-dev" },
             "headRefName": self.branch,
-            "headRefOid": Self::oid(self.number),
+            "headRefOid": self.head.clone().unwrap_or_else(|| Self::oid(self.number)),
             "baseRefName": "main",
             "mergeStateStatus": self.merge,
             "reviewDecision": self.review,

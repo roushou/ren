@@ -315,6 +315,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   ended) to the instances and the `Action`s that follow (stop a slot, start
   a commit in one); a report that does not fit is refused (`StaleReport`)
   and changes nothing. A failed build is not tried again for its commit.
+  A pull request wants a preview of its head unless it is a draft
+  (`Wanted::pull`), and `PullFollower` says when what a repository's pull
+  requests want moved (`Followed`), which the daemon's GitHub watch asks
+  the factory to plan at once (`[factory] socket`).
   The factory keeps it in production's data folder (`Instances::FILE`,
   still `previews.json`, in the shape production's gateway reads). The
   gateway's `src/purity.rs` keeps the module free of I/O.
@@ -871,7 +875,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`dev::agent`: the shell, and `script`, `claude`, `pi`, and `opencode`, the pure
   conversations it plays as each client), with live traffic whose
   settings both the generator and the fake provider reread (`dev::traffic`,
-  with its loopback control API for the dev UI's toolbar), an optional private
+  with its loopback control API for the dev UI's toolbar), a fake GitHub
+  whose `acme/ren` pull requests can be written by hand (`fake-pulls.toml`
+  beside the config, reread at each poll), an optional private
   preview on the tailnet, and
   headless screenshots (`dev::shot`).
 - `deploy`: systemd units, and in `deploy/container` the compose file, Podman

@@ -3,7 +3,7 @@
 
 use super::slot::Slot;
 use ren_git::Commit;
-use ren_github::PullNumber;
+use ren_github::{PullNumber, Readiness};
 use ren_release::PreviewCapacity;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -122,6 +122,20 @@ pub enum Action {
 pub struct StaleReport {
     pub slot: Slot,
     pub commit: Commit,
+}
+
+impl Wanted {
+    /// What an open pull request wants: a preview of its head, unless it
+    /// is a draft.
+    pub fn pull(number: PullNumber, head: Commit, readiness: Readiness) -> Option<Self> {
+        match readiness {
+            Readiness::Ready => Some(Self {
+                source: Source::Pull(number),
+                commit: head,
+            }),
+            Readiness::Draft => None,
+        }
+    }
 }
 
 impl Instances {

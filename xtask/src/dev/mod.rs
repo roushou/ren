@@ -218,6 +218,10 @@ struct ProviderArgs {
     /// A traffic settings file whose pace the replies follow.
     #[arg(long)]
     settings: Option<PathBuf>,
+    /// A file of `acme/ren`'s open pull requests, read for each of the fake
+    /// GitHub's answers, in place of its invented ones.
+    #[arg(long)]
+    pulls: Option<PathBuf>,
 }
 
 /// Why a dev task failed.
@@ -266,7 +270,9 @@ pub enum DevError {
 impl Dev {
     pub fn run(self, env: &HostEnv) -> Result<(), DevError> {
         match self.action {
-            DevAction::Provider(args) => Ok(FakeProvider::serve(args.listen, args.settings)?),
+            DevAction::Provider(args) => {
+                Ok(FakeProvider::serve(args.listen, args.settings, args.pulls)?)
+            }
             DevAction::Agent(args) => match args.client {
                 Played::Claude if FakeClaudeAuth::asked(&args.arguments) => {
                     Ok(FakeClaudeAuth::run(&args.state_dir, &args.arguments)?)

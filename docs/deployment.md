@@ -598,6 +598,22 @@ asks that arrive during one are taken by the next. While the service
 listens, the timer's pass hands its previews pass to it. Follow it with
 `journalctl --user -u ren-factory`.
 
+Previews of pull requests follow them the same way: when production's
+GitHub watch (`[github]`) sees a watched repository's pull requests that
+want a preview (open, not drafts) open, close, become ready or drafts, or
+move their heads, the daemon asks the factory for a pass. A preview of a
+pull request starts, moves, or stops within one poll (`poll_seconds`); the
+timer's pass is left to catch up on what a stopped factory missed. In the
+dev slot, `~/.config/ren-dev/fake-pulls.toml` opens, moves, and closes
+`acme/ren`'s fake pull requests by hand, read at each poll:
+
+```toml
+[[pull]]
+number = 8
+head = "<a commit of this repository>"
+draft = false
+```
+
 ### Projects
 
 A repository declares how Ren builds, serves, checks, and quiesces it in

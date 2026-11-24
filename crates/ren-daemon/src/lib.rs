@@ -20,7 +20,9 @@ use crate::packages::{HostPackages, PackageStore, fetch::ReqwestFetch};
 use ren_gateway::{
     ControlToken, Gateway, ManagementSetup, ReleaseFolder, ReqwestUpstream, Shutdown, Stopped,
     control::Controls,
+    factory::{Factory, FactoryAnswer},
     github::PullBoard,
+    instance::{Followed, PullFollower},
     operator::{OperatorState, Pause, RestoreError},
 };
 use ren_gateway::{IngressError, UpstreamConfigError};
@@ -285,7 +287,11 @@ impl Daemon {
             shutdown.clone(),
         );
         let packages = Self::packages(config, data_dir, &reader);
-        let pulls = Self::watch_github(config, clock, &shutdown, projects, &reader);
+        let factory = config.factory().map(|socket| -> Arc<dyn Factory> {
+            Arc::new(crate::factory::FactorySocket::new(socket.to_path_buf()))
+        });
+        let pulls =
+            Self::watch_github(config, clock, &shutdown, projects, &reader, factory.clone());
         let ingress = gateway.into_ingress(
             listener,
             forwarding,
@@ -301,13 +307,7 @@ impl Daemon {
                 runs: runs.as_ref().map(|(supervisor, _)| supervisor.clone()),
                 release: ReleaseFolder::in_data(data_dir),
                 pulls: pulls.clone(),
-                factory: config.factory().map(
-                    |socket| -> std::sync::Arc<dyn ren_gateway::factory::Factory> {
-                        std::sync::Arc::new(crate::factory::FactorySocket::new(
-                            socket.to_path_buf(),
-                        ))
-                    },
-                ),
+                factory,
             },
         );
         // The gateway holds the only supervisor handles: the runs drain once
@@ -621,10 +621,13 @@ impl Daemon {
         shutdown: &Shutdown,
         projects: WatchedProjects,
         reader: &Reader,
+        factory: Option<Arc<dyn Factory>>,
     ) -> PullBoard {
         let Some(setup) = config.github() else {
             return PullBoard::default();
         };
+        let nudges = factory.map(Self::follow_pulls);
+        let mut follower = PullFollower::default();
         Self::learn_folders(setup, projects.clone(), reader.clone(), shutdown.clone());
         let board = PullBoard::watching(setup.projects.iter().cloned());
         let poller = Poller::new(setup.client.clone(), setup.period, board.repositories());
@@ -644,6 +647,14 @@ impl Daemon {
                             tracing::warn!(%repository, %error, "a project's manifest on its default branch does not read; its runs reach nothing of its own");
                         }
                         recording.record(repository, observation);
+                        // Recorded first: the pass reads what was seen.
+                        if let Some(nudges) = &nudges
+                            && follower.see(repository, observation) == Followed::Moved
+                        {
+                            // One waiting is enough: the pass it starts
+                            // reads every repository.
+                            let _ = nudges.try_send(());
+                        }
                     },
                     || {
                         std::time::SystemTime::UNIX_EPOCH
@@ -655,6 +666,32 @@ impl Daemon {
         });
         board
     }
+    /// Asks the factory for a pass each time a nudge arrives, one at a
+    /// time (docs/plans/instances.md, phase 4): previews follow their pull
+    /// requests as the watch sees them move, not at the factory's timer.
+    /// Ends when the watch, which holds the sender, ends.
+    fn follow_pulls(factory: Arc<dyn Factory>) -> tokio::sync::mpsc::Sender<()> {
+        let (nudges, mut nudged) = tokio::sync::mpsc::channel(1);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "process wiring: the daemon owns the pull requests' follower task"
+        )]
+        tokio::spawn(async move {
+            while nudged.recv().await.is_some() {
+                match factory.plan().await {
+                    Ok(FactoryAnswer::Planned) => {}
+                    Ok(FactoryAnswer::Failed(why)) => {
+                        tracing::warn!(%why, "the factory could not plan the pull requests' previews");
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "the factory was not asked to follow the pull requests");
+                    }
+                }
+            }
+        });
+        nudges
+    }
+
     /// Keeps `projects` told which folder each watched project is
     /// registered in: read from the store now, then each period, as
     /// projects are registered and archived.

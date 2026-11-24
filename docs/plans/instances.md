@@ -171,10 +171,19 @@ What already points the right way, and is kept:
    building, and the preview then answered `/health` as that commit, a
    preview; a withdrawal answered at once and its pod was gone when the
    pass ended; a withdrawal then a new ask retries a commit that failed.
-4. **Followers.** Planned. Pull request previews as instances that follow
-   their pull requests, driven by the GitHub watch; `ren preview` and
-   `preview-requests.json` go. Verified with the fake GitHub's pull
-   requests opening, moving, and closing.
+4. **Followers.** Built. A pull request wants a preview of its head unless
+   it is a draft (`Wanted::pull`, the one rule the factory's pass and the
+   daemon share). The daemon's GitHub watch tells a `PullFollower` (pure,
+   in `ren-gateway`'s `instance`) each repository it sees; when what its
+   pull requests want moved (one opened, closed, became ready or a draft,
+   or its head moved), the daemon asks the factory for a pass, one at a
+   time, a move seen meanwhile waiting for the next. A read that failed
+   moves nothing. Verified in the dev slot with no timer, its fake GitHub's
+   `acme/ren` pull requests written by hand (`fake-pulls.toml`): a pull
+   request opened at a built commit was planned in 12 seconds and ran in
+   16; its head moved to another built commit was running that commit in
+   25 (its `/health` said so); closed, its preview's pod was gone in 22.
+   The poll is 30 seconds.
 5. **The dev slot, folded in.** Planned. Checkout sources, scenarios, and
    the fake provider as instance parts; `cargo xtask dev` becomes a thin
    way to start one, then goes. Verified by the work this repository's
@@ -251,3 +260,14 @@ does. Each lands on its own and passes every check.
 - **Phase 3: no lifetime or project field yet.** On-demand instances are
   still the commits asked for, until withdrawn, of Ren: each part still has
   one value.
+- **Phase 4: `ren preview` and `preview-requests.json` stay.** They went
+  in the plan because `ren instance` replaced them; with phase 3's
+  factory, the asks are still how a commit is started on demand, and they
+  go when the instances' own API comes.
+- **Phase 4: every watched repository is followed.** The daemon does not
+  know which project the factory previews (`canary serve --project`), so
+  a move in any watched repository asks for a pass; one in another
+  project's is a pass that changes nothing. A pull request's place in the
+  list counts too: it is the order slots are given in.
+- **Phase 4: the timer stays, to catch up.** A move seen while the factory
+  is not listening is taken up by the timer's next pass.

@@ -18,6 +18,7 @@ fn pure_modules_stay_free_of_runtime_and_io_dependencies() {
             include_str!("instance/instances.rs"),
         ),
         ("instance/asks.rs", include_str!("instance/asks.rs")),
+        ("instance/follow.rs", include_str!("instance/follow.rs")),
         ("instance/slot.rs", include_str!("instance/slot.rs")),
     ];
     let forbidden = [

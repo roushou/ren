@@ -682,6 +682,8 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                 Self::PROVIDER.to_string(),
                 "--settings".into(),
                 self.traffic_settings().display().to_string(),
+                "--pulls".into(),
+                self.fake_pulls().display().to_string(),
             ],
             &[],
         )?;
@@ -840,6 +842,13 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
     /// The live traffic settings' file.
     pub fn traffic_settings(&self) -> PathBuf {
         self.config.with_file_name("traffic.toml")
+    }
+
+    /// The fake GitHub's `acme/ren` pull requests, when written by hand
+    /// (`[[pull]]`, each a `number`, a `head`, and whether it is a
+    /// `draft`); without it, the invented ones.
+    pub fn fake_pulls(&self) -> PathBuf {
+        self.config.with_file_name("fake-pulls.toml")
     }
 
     /// Stop the slot's units, then its runs' run hosts, which outlive its

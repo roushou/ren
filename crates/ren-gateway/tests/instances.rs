@@ -6,10 +6,15 @@
 )]
 
 use ren_gateway::instance::{
-    Action, Event, InstanceState, Instances, Reach, Slot, Source, StaleReport, Wanted,
+    Action, Event, Followed, InstanceState, Instances, PullFollower, Reach, Slot, Source,
+    StaleReport, Wanted,
 };
 use ren_git::Commit;
+use ren_github::{
+    Listing, Observation, PullRequest, Readiness, Reported, RepositorySlug, Sighting, Snapshot,
+};
 use ren_release::PreviewCapacity;
+use std::time::SystemTime;
 
 fn commit(digit: char) -> Commit {
     digit.to_string().repeat(40).parse().unwrap()
@@ -224,4 +229,88 @@ fn instances_keep_the_file_shape_previews_had() {
     );
     let read: Instances = serde_json::from_value(json).unwrap();
     assert_eq!(read, previews);
+}
+
+fn open(number: u64, head: char, readiness: Readiness) -> PullRequest {
+    PullRequest {
+        number: number.to_string().parse().unwrap(),
+        title: format!("feat: change {number}"),
+        body: String::new(),
+        url: format!("https://github.com/acme/ren/pull/{number}"),
+        author: None,
+        readiness,
+        head_branch: format!("change-{number}"),
+        head: head.to_string().repeat(40).parse().unwrap(),
+        base_branch: "main".into(),
+        merge: Reported::Unknown("UNKNOWN".into()),
+        review: Reported::Unknown("UNKNOWN".into()),
+        checks: Reported::Unknown("UNKNOWN".into()),
+        check_list: Vec::new(),
+    }
+}
+
+fn seen(pulls: Vec<PullRequest>) -> Observation {
+    Observation::Waiting.seen(Sighting {
+        snapshot: Snapshot {
+            default_branch: None,
+            pull_requests: pulls,
+            listing: Listing::Complete,
+            manifest: None,
+        },
+        at: SystemTime::UNIX_EPOCH,
+    })
+}
+
+#[test]
+fn a_draft_wants_no_preview_and_a_ready_pull_wants_its_head() {
+    let number = "7".parse().unwrap();
+    assert_eq!(
+        Wanted::pull(number, commit('a'), Readiness::Ready),
+        Some(pull(7, 'a'))
+    );
+    assert_eq!(Wanted::pull(number, commit('a'), Readiness::Draft), None);
+}
+
+#[test]
+fn the_follower_moves_when_a_pull_opens_moves_or_closes() {
+    let repository: RepositorySlug = "acme/ren".parse().unwrap();
+    let mut follower = PullFollower::default();
+    // Nothing seen yet moves nothing; the first answer is a move.
+    assert_eq!(
+        follower.see(&repository, &Observation::Waiting),
+        Followed::Still
+    );
+    let one = seen(vec![open(7, 'a', Readiness::Ready)]);
+    assert_eq!(follower.see(&repository, &one), Followed::Moved);
+    assert_eq!(follower.see(&repository, &one), Followed::Still);
+    // Opened, a head moved, closed.
+    let two = seen(vec![
+        open(8, 'b', Readiness::Ready),
+        open(7, 'a', Readiness::Ready),
+    ]);
+    assert_eq!(follower.see(&repository, &two), Followed::Moved);
+    let moved = seen(vec![
+        open(8, 'c', Readiness::Ready),
+        open(7, 'a', Readiness::Ready),
+    ]);
+    assert_eq!(follower.see(&repository, &moved), Followed::Moved);
+    let closed = seen(vec![open(8, 'c', Readiness::Ready)]);
+    assert_eq!(follower.see(&repository, &closed), Followed::Moved);
+    // A draft opened is nothing a preview follows; one marked ready is.
+    let draft = seen(vec![
+        open(8, 'c', Readiness::Ready),
+        open(9, 'd', Readiness::Draft),
+    ]);
+    assert_eq!(follower.see(&repository, &draft), Followed::Still);
+    let ready = seen(vec![
+        open(8, 'c', Readiness::Ready),
+        open(9, 'd', Readiness::Ready),
+    ]);
+    assert_eq!(follower.see(&repository, &ready), Followed::Moved);
+    // A failed read keeps its last answer apart: not a move, not a close.
+    let failed = ready.failed("refused".into(), SystemTime::UNIX_EPOCH);
+    assert_eq!(follower.see(&repository, &failed), Followed::Still);
+    // Each repository is followed on its own.
+    let other: RepositorySlug = "acme/web".parse().unwrap();
+    assert_eq!(follower.see(&other, &closed), Followed::Moved);
 }
