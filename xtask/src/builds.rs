@@ -84,6 +84,9 @@ impl Builds {
         checkout: &Path,
         commit: &Commit,
     ) -> Result<StoredBuild, BuildsError> {
+        // One build at a time: the canary's and the factory service's
+        // passes build apart, and the same commit is built once.
+        let _lock = self.lock()?;
         if let Some(build) = self.get(commit) {
             Progress(&format!(
                 "Using the build of {} already kept",
@@ -155,6 +158,24 @@ impl Builds {
         Ok(StoredBuild { dir })
     }
 
+    /// The store's lock, held while a build is made; released when dropped.
+    fn lock(&self) -> Result<fs::File, BuildsError> {
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&self.root)
+            .map_err(FileError::at(&self.root))?;
+        let path = self.root.join(".lock");
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(FileError::at(&path))?;
+        file.lock().map_err(FileError::at(&path))?;
+        Ok(file)
+    }
+
     /// The builds' dependency caches, never the operator's: beside the
     /// builds, apart from the factory's worktrees.
     fn caches(&self) -> PathBuf {
@@ -211,10 +232,14 @@ impl Builds {
         };
         let mut builds: Vec<(SystemTime, PathBuf)> = entries
             .filter_map(Result::ok)
+            // Builds alone: folders named for a commit, not the store's
+            // lock or a build being made.
             .filter(|entry| {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
-                !keep.iter().any(|commit| commit.to_string() == name)
+                name.parse::<Commit>().is_ok()
+                    && entry.file_type().is_ok_and(|kind| kind.is_dir())
+                    && !keep.iter().any(|commit| commit.to_string() == name)
             })
             .filter_map(|entry| {
                 let modified = entry.metadata().ok()?.modified().ok()?;

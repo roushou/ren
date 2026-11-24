@@ -6,6 +6,7 @@
 //! storage.
 
 pub mod config;
+pub mod factory;
 pub mod host;
 pub mod packages;
 
@@ -300,6 +301,13 @@ impl Daemon {
                 runs: runs.as_ref().map(|(supervisor, _)| supervisor.clone()),
                 release: ReleaseFolder::in_data(data_dir),
                 pulls: pulls.clone(),
+                factory: config.factory().map(
+                    |socket| -> std::sync::Arc<dyn ren_gateway::factory::Factory> {
+                        std::sync::Arc::new(crate::factory::FactorySocket::new(
+                            socket.to_path_buf(),
+                        ))
+                    },
+                ),
             },
         );
         // The gateway holds the only supervisor handles: the runs drain once

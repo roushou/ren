@@ -33,6 +33,16 @@ impl PreviewPass<'_> {
     /// Runs the pass; returns the commits its previews run, so their builds
     /// are kept.
     pub fn run(&self, env: &HostEnv) -> Result<Vec<Commit>, CanaryError> {
+        self.run_planned(env, || {})
+    }
+
+    /// Runs the pass, calling `planned` once it has written which previews
+    /// run, before it builds and starts any.
+    pub fn run_planned(
+        &self,
+        env: &HostEnv,
+        planned: impl FnOnce(),
+    ) -> Result<Vec<Commit>, CanaryError> {
         let capacity = self.factory.options()?.previews;
         let before = self.production.previews();
         let wanted = self.wanted(&before)?;
@@ -40,6 +50,7 @@ impl PreviewPass<'_> {
             .step(Event::Wanted { wanted, capacity })
             .map_err(|stale| CanaryError::Preview(stale.to_string()))?;
         self.production.write_previews(&instances)?;
+        planned();
         let tailscale = self.factory.tailscale(self.publish)?;
         let mut backup: Option<PathBuf> = None;
         for action in actions {

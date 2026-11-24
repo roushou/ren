@@ -54,6 +54,8 @@ pub enum DaemonContainerError {
     RunsNotContained,
     #[error("HOME is not set")]
     NoHome,
+    #[error("a folder the daemon's container mounts could not be made: {0}")]
+    Folder(#[source] std::io::Error),
 }
 
 impl DaemonContainer {
@@ -129,6 +131,20 @@ impl DaemonContainer {
         );
         let mut vars = vars;
         vars.push(("HOME".to_owned(), home.display().to_string()));
+        // The factory's socket's folder, so the daemon asks it to plan:
+        // made now, as the factory makes it, since a mount needs it there.
+        if let Some(socket) = config.factory.socket.as_deref() {
+            let folder = socket.parent().unwrap_or(socket);
+            {
+                use std::os::unix::fs::DirBuilderExt as _;
+                std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(folder)
+                    .map_err(DaemonContainerError::Folder)?;
+            }
+            mounts.push(Mount::read_write(folder));
+        }
         if let Some(socket) = containers.podman_socket.as_deref() {
             // Its folder, not the socket itself: a socket made again (its
             // unit restarted) is then still the one the daemon sees.

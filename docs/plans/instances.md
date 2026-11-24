@@ -150,11 +150,27 @@ What already points the right way, and is kept:
    agent, resolves no name, and reaches no address; and `HEAD` was built
    end to end into a store of its own, its binary naming its commit and its
    UI built, in about two minutes of compiling once fetched.
-3. **Started on demand.** Planned. The daemon carries out the actions
-   itself, through Podman: the control API, `ren instance`, and the UI;
-   addresses from the published range; the factory's pass no longer runs
-   previews. Verified by starting an instance of a commit from the CLI and
-   reaching it at the address it returned, while no timer runs.
+3. **Started on demand.** Built, through a factory service on the host.
+   `cargo xtask canary serve` listens on a Unix socket
+   (`$XDG_RUNTIME_DIR/ren-factory/factory.sock`; `canary enable` runs it as
+   `ren-factory.service`) and runs a previews pass for each ask, one at a
+   time, the asks that arrive during one taken by the next. Production's
+   daemon names it (`[factory] socket`, its folder mounted into the
+   daemon's container), and the gateway hands it to the control API as its
+   `Factory` (`ren-gateway`'s `factory` module, the one-line protocol; the
+   daemon's `FactorySocket`). `POST /control/v1/previews/ask` and
+   `/withdraw` record the change, ask the factory to plan it, and answer
+   once the pass has written its plan (the commit holding its slot,
+   building, or taken back), or after five seconds while another pass
+   runs. The timer's pass hands its previews pass to the service when one
+   listens. A replica's configuration drops `[factory]`: a preview never
+   asks production's factory, and an older build reads its configuration.
+   The builds' store is locked, so the service and the canary's own build
+   never write it at once. Verified in the dev slot, with no timer: an ask
+   for a built commit answered in under three seconds with its slot
+   building, and the preview then answered `/health` as that commit, a
+   preview; a withdrawal answered at once and its pod was gone when the
+   pass ended; a withdrawal then a new ask retries a commit that failed.
 4. **Followers.** Planned. Pull request previews as instances that follow
    their pull requests, driven by the GitHub watch; `ren preview` and
    `preview-requests.json` go. Verified with the fake GitHub's pull
@@ -223,3 +239,15 @@ does. Each lands on its own and passes every check.
 - **Phase 1: the factory's commands keep their names.** `cargo xtask
   canary previews` and `ren preview` stay as they are until phases 3 and
   4 replace them.
+- **Phase 3: the factory starts them, not the daemon.** The plan had the
+  daemon run the actions through Podman. That would give the daemon, which
+  serves the network, the host's container engine and the builds' caches;
+  instead it gets one socket, on which it can ask for a pass and nothing
+  more, and the factory on the host keeps the Podman, the builds, and the
+  backups it already ran. The file and the API therefore keep phase 1's
+  shape (the factory still writes `previews.json`), and `ren preview` and
+  the endpoints keep their names; `ren instance`, published addresses, and
+  the UI's start wait for the instances' own API.
+- **Phase 3: no lifetime or project field yet.** On-demand instances are
+  still the commits asked for, until withdrawn, of Ren: each part still has
+  one value.

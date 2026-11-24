@@ -16,9 +16,10 @@
 
 mod checks;
 mod previews;
+mod serve;
 mod work;
 
-use self::{checks::Checks, previews::PreviewPass, work::WorkLedger};
+use self::{checks::Checks, previews::PreviewPass, serve::FactoryService, work::WorkLedger};
 use crate::{
     builds::{Builds, BuildsError, StoredBuild},
     dev::DevError,
@@ -69,6 +70,10 @@ enum CanaryAction {
     /// open pull request that is not a draft, as many as release.toml's
     /// `previews` allows. Every pass does this too.
     Previews(PreviewsArgs),
+    /// Listen on a socket and run a previews pass for each ask, at once:
+    /// the factory the daemon asks (`[factory] socket`), so a preview asked
+    /// for starts now. The timer's passes then leave previews to it.
+    Serve(ServeArgs),
     /// Stop the canary and remove its routes.
     Down(PublishArgs),
     /// Run a pass on a systemd user timer.
@@ -94,6 +99,16 @@ struct TargetArgs {
     /// The instance the canary copies and promotes into.
     #[arg(long, value_enum, default_value_t = Production::Installed)]
     of: Production,
+}
+
+#[derive(Args)]
+struct ServeArgs {
+    #[command(flatten)]
+    previews: PreviewsArgs,
+    /// Where to listen; `$XDG_RUNTIME_DIR/ren-factory/factory.sock` by
+    /// default.
+    #[arg(long)]
+    socket: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -145,6 +160,8 @@ enum Source {
 pub enum CanaryError {
     #[error("{0} is not set")]
     MissingEnv(&'static str),
+    #[error("the factory could not listen: {0}")]
+    Serve(#[source] std::io::Error),
     #[error("tracked files differ from the commit; the canary checks only a clean commit")]
     Dirty,
     #[error("{0} is not a commit the release reads")]
@@ -208,6 +225,8 @@ impl Factory {
     const REN: &str = "ren";
     const MAIN: &str = "main";
     const TIMER: &str = "ren-canary";
+    /// The factory service's unit (`canary serve`), beside the timer.
+    const SERVICE: &str = "ren-factory";
     /// The canary's tailnet HTTPS ports, with `--publish`, beside the
     /// installed service's and the dev slot's (9443 and 9444).
     const GATEWAY_PORT: u16 = 9445;
@@ -326,23 +345,35 @@ impl Factory {
         }
         self.requested(env, &production)?;
         WorkLedger::new(&production).close(self, &id)?;
-        // A previews pass that fails leaves the canary's verdict standing.
-        let previewed = PreviewPass {
-            factory: self,
-            production: &production,
-            publish: args.publish,
-            project: Self::REN,
-        }
-        .run(env)
-        .unwrap_or_else(|error| {
-            println!("warning: the previews pass failed: {error}");
+        // The factory service, when it listens, runs the previews: two
+        // passes at once would race over them. Its previews are kept.
+        let served =
+            FactoryService::socket(env).is_some_and(|socket| FactoryService::nudge(&socket));
+        let running = || -> Vec<Commit> {
             production
                 .previews()
                 .instances()
                 .iter()
                 .map(|instance| instance.commit.clone())
                 .collect()
-        });
+        };
+        let previewed = if served {
+            Progress("The factory service runs the previews").show();
+            running()
+        } else {
+            // A previews pass that fails leaves the canary's verdict standing.
+            PreviewPass {
+                factory: self,
+                production: &production,
+                publish: args.publish,
+                project: Self::REN,
+            }
+            .run(env)
+            .unwrap_or_else(|error| {
+                println!("warning: the previews pass failed: {error}");
+                running()
+            })
+        };
         let keep: Vec<Commit> = [Some(commit), Self::running(&production)]
             .into_iter()
             .flatten()
@@ -559,12 +590,27 @@ impl Factory {
             &units.join(format!("{}.timer", Self::TIMER)),
             timer.as_bytes(),
         )?;
+        // The factory service: previews asked for start as they are asked,
+        // with the timer's environment and publishing.
+        let factory = format!(
+            "[Unit]\nDescription=Ren factory: previews started as they are asked for\n\n[Service]\nType=simple\nWorkingDirectory={}\n{environment}ExecStart={} xtask canary serve{publish}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+            self.repo.display(),
+            self.cargo.display(),
+        );
+        FileMode::Readable.write(
+            &units.join(format!("{}.service", Self::SERVICE)),
+            factory.as_bytes(),
+        )?;
         Invocation::new("systemctl")
             .args(["--user", "daemon-reload"])
             .run()?;
         Invocation::new("systemctl")
             .args(["--user", "enable", "--now"])
             .arg(format!("{}.timer", Self::TIMER))
+            .run()?;
+        Invocation::new("systemctl")
+            .args(["--user", "enable", "--now"])
+            .arg(format!("{}.service", Self::SERVICE))
             .run()?;
         Progress(&format!(
             "A pass runs every {} minutes; follow it with `journalctl --user -u {}`",
@@ -581,8 +627,16 @@ impl Factory {
             .args(["--user", "disable", "--now"])
             .arg(format!("{}.timer", Self::TIMER))
             .succeeds(crate::invocation::Echo::Show)?;
-        for unit in ["service", "timer"] {
-            let path = units.join(format!("{}.{unit}", Self::TIMER));
+        Invocation::new("systemctl")
+            .args(["--user", "disable", "--now"])
+            .arg(format!("{}.service", Self::SERVICE))
+            .succeeds(crate::invocation::Echo::Show)?;
+        for unit in [
+            format!("{}.service", Self::TIMER),
+            format!("{}.timer", Self::TIMER),
+            format!("{}.service", Self::SERVICE),
+        ] {
+            let path = units.join(unit);
             match fs::remove_file(&path) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -625,6 +679,20 @@ impl Canary {
                 }
                 .run(env)
                 .map(drop)
+            }
+            CanaryAction::Serve(args) => {
+                let production = ProductionPlace::new(env, args.previews.target.of)?;
+                let socket = args
+                    .socket
+                    .or_else(|| FactoryService::socket(env))
+                    .ok_or(CanaryError::MissingEnv("XDG_RUNTIME_DIR"))?;
+                FactoryService {
+                    factory: &factory,
+                    production: &production,
+                    publish: args.previews.publish,
+                    project: &args.previews.project,
+                }
+                .serve(env, &socket)
             }
             CanaryAction::Down(publish) => {
                 let canary = Replica::canary(env)?;

@@ -580,6 +580,24 @@ requests are kept as they are. What runs is written to production's data
 folder (`previews.json`); the commits asked for are read from
 `preview-requests.json` beside it.
 
+A preview asked for starts at once, not at the next timed pass, when the
+factory listens: `canary enable` also writes `ren-factory.service`, which
+runs `cargo xtask canary serve` on
+`$XDG_RUNTIME_DIR/ren-factory/factory.sock`, and production's daemon names
+that socket:
+
+```toml
+[factory]
+socket = "/run/user/1000/ren-factory/factory.sock"
+```
+
+An ask or a withdrawal then asks the factory for a previews pass, and is
+answered once the pass has given the commit its slot or taken it back (or
+after five seconds, while another pass runs). Passes run one at a time;
+asks that arrive during one are taken by the next. While the service
+listens, the timer's pass hands its previews pass to it. Follow it with
+`journalctl --user -u ren-factory`.
+
 ### Projects
 
 A repository declares how Ren builds, serves, checks, and quiesces it in

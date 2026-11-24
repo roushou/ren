@@ -18,7 +18,7 @@ use crate::{
     unit::{KillMode, Listener, TransientUnit},
 };
 use ren_container::{Access, Mount};
-use ren_daemon::config::{Config, ConfigError, GithubOptions, RunsOptions};
+use ren_daemon::config::{Config, ConfigError, FactoryOptions, GithubOptions, RunsOptions};
 use ren_gateway::instance::{CommitAsks, Instances, Slot as PreviewSlot};
 use ren_gateway::{
     ControlToken, Environment, InstanceOptions,
@@ -520,6 +520,9 @@ impl Replica {
             runs: RunsOptions::default(),
             // Production watches GitHub; a replica has no token to.
             github: GithubOptions::default(),
+            // Only production asks the factory for previews; a replica's
+            // asks would start production's passes.
+            factory: FactoryOptions::default(),
             ..production
         }
     }
@@ -733,7 +736,7 @@ impl Replica {
 #[cfg(test)]
 mod tests {
     use super::Replica;
-    use ren_daemon::config::Config;
+    use ren_daemon::config::{Config, FactoryOptions};
     use ren_gateway::Environment;
     use std::path::Path;
 
@@ -757,6 +760,9 @@ operator_key_env = "ACME_ANTHROPIC_KEY"
 [[github.repository]]
 project = "ren"
 github = "acme/ren"
+
+[factory]
+socket = "/run/user/1000/ren-factory/factory.sock"
 "#,
         )
         .unwrap()
@@ -773,6 +779,10 @@ github = "acme/ren"
         assert!(config.runs.roots.is_empty());
         assert_eq!(config.upstreams[0].operator_key_env, "ACME_ANTHROPIC_KEY");
         assert!(config.github.repository.is_empty());
+        // Nor asks the factory, and a build that predates `[factory]` reads
+        // its configuration.
+        assert_eq!(config.factory, FactoryOptions::default());
+        assert!(!toml::to_string(&config).unwrap().contains("[factory]"));
         config.check().unwrap();
 
         let preview = Replica::preview("ren-3", 20_200, Path::new("/data/worktrees/.data/ren-3"));

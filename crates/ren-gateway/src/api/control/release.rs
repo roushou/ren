@@ -7,15 +7,19 @@
 //!
 //! `POST /control/v1/previews/ask` and `/previews/withdraw`: the operator
 //! asks for a preview of a commit, or withdraws the ask
-//! (`crate::instance::CommitAsks`); the factory's next pass starts or
-//! stops it. Both answer the commits asked for, the newest first; a
-//! withdrawal of a commit not asked for is `404` `not_found`.
+//! (`crate::instance::CommitAsks`). With a [`Factory`] on the host, either
+//! is planned at once: the answer comes once the factory has given the
+//! commit its slot or taken it back (or after a few seconds, while it is
+//! busy); without one, the factory's next timed pass starts or stops it. Both answer the
+//! commits asked for, the newest first; a withdrawal of a commit not asked
+//! for is `404` `not_found`.
 
 use super::{
     ControlApi, ControlRefusal,
     request::{PreviewAskRequest, PromoteRequest},
 };
 use crate::api::release::ReleaseFolder;
+use crate::factory::{Factory, FactoryAnswer};
 use crate::instance::CommitAsks;
 use axum::{
     Json, Router,
@@ -31,9 +35,14 @@ use std::sync::Arc;
 pub(super) struct ReleaseApi {
     pub control: Arc<ControlApi>,
     pub folder: ReleaseFolder,
+    pub factory: Option<Arc<dyn Factory>>,
 }
 
 impl ReleaseApi {
+    /// How long an ask waits for the factory to plan: a pass already
+    /// building plans the ask only once it is done.
+    const PLAN_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
     pub fn router(self) -> Router {
         Router::new()
             .route("/control/v1/release/promote", post(Self::promote))
@@ -90,6 +99,20 @@ impl ReleaseApi {
         .await
     }
 
+    /// Asks the factory to plan now; what it answers is for the log alone:
+    /// the ask is recorded either way, and a later pass takes it up.
+    async fn plan(&self, factory: &dyn Factory) {
+        match tokio::time::timeout(Self::PLAN_WAIT, factory.plan()).await {
+            Ok(Ok(FactoryAnswer::Planned)) => {}
+            Ok(Ok(FactoryAnswer::Failed(why))) => {
+                tracing::warn!(%why, "the factory could not plan the previews");
+            }
+            Ok(Err(error)) => tracing::warn!(%error, "the factory was not asked"),
+            // Busy with a pass: the ask waits for the next.
+            Err(_) => {}
+        }
+    }
+
     async fn withdraw_preview(
         State(api): State<Arc<Self>>,
         headers: HeaderMap,
@@ -102,7 +125,8 @@ impl ReleaseApi {
     }
 
     /// Changes the preview requests with `change`, which says whether the
-    /// commit was one it could change; answers the requests after.
+    /// commit was one it could change; asks the factory to plan the change
+    /// now, then answers the requests.
     async fn change_asks(
         &self,
         headers: &HeaderMap,
@@ -121,6 +145,9 @@ impl ReleaseApi {
             .await
         {
             Ok((true, requests)) => {
+                if let Some(factory) = &self.factory {
+                    self.plan(factory.as_ref()).await;
+                }
                 (StatusCode::ACCEPTED, ControlApi::answer(requests)).into_response()
             }
             Ok((false, _)) => ControlRefusal::NotFound.into_response(),

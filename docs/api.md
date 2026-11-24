@@ -417,8 +417,11 @@ canary's and its build passed. Ren's Release page in the UI
 commit, and `POST /control/v1/previews/withdraw` with `{commit}` withdraws
 the ask. The gateway records the asks (`preview-requests.json` in its data
 folder) and answers `202` `{api_version, commits}`, every commit asked for,
-the newest ask first; the factory's next canary pass starts or stops its
-preview ([deployment](deployment.md#previews-of-pull-requests-and-commits)).
+the newest ask first. With `[factory] socket` set, the gateway first asks
+the factory to plan the change and answers once it has (the commit holds
+its slot, building) or after five seconds; otherwise the factory's next
+canary pass starts or stops the preview
+([deployment](deployment.md#previews-of-pull-requests-and-commits)).
 A withdrawal of a commit not asked for is `404` `not_found`. `ren preview ask
 <commit>` and `ren preview withdraw <commit>` send them.
 

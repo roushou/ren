@@ -19,8 +19,8 @@ use crate::{
 };
 use ren_container::Engine;
 use ren_daemon::config::{
-    Config, GithubApp, GithubOptions, RelayedOptions, RunContainerOptions, RunHold, RunRuntime,
-    RunsOptions, UpstreamConfig, WatchedRepository,
+    Config, FactoryOptions, GithubApp, GithubOptions, RelayedOptions, RunContainerOptions, RunHold,
+    RunRuntime, RunsOptions, UpstreamConfig, WatchedRepository,
 };
 use ren_daemon::host::HeldRuns;
 use ren_gateway::{
@@ -339,6 +339,15 @@ impl Slot {
                         })
                     })
                     .collect::<Result<_, DevError>>()?,
+            },
+            // A factory of its own, if one listens (`cargo xtask canary
+            // serve --of dev --socket` here): asked to plan a preview at
+            // once.
+            factory: FactoryOptions {
+                socket: self
+                    .env
+                    .absolute_path("XDG_RUNTIME_DIR")
+                    .map(|runtime| runtime.join("ren-dev-factory/factory.sock")),
             },
             ..Config::default()
         })
