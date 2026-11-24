@@ -1,11 +1,13 @@
-//! `cargo xtask dev`: a development slot on this host, with fake providers
-//! and fake data, separate from the installed service.
+//! `cargo xtask dev`: development instances on this host, with fake
+//! providers and fake data, separate from the installed service
+//! (docs/plans/instances.md, phase 5).
 
 mod agent;
+pub(crate) mod index;
+pub(crate) mod instance;
 mod provider;
 mod seed;
 pub(crate) mod shot;
-pub(crate) mod slot;
 mod traffic;
 mod work;
 
@@ -22,19 +24,23 @@ use agent::{
     AgentError, FakeAgent, FakeClaudeAuth, FakeCodexAuth, FakeOpenCodeAuth, FakePiAuth, Played,
 };
 use clap::{Args, Subcommand};
+use index::DevIndex;
+use instance::{DevInstance, Preview, RunWait};
 use provider::{FakeProvider, ProviderError};
 use ren_harness::host::HostEnv;
 use ren_network::tailscale::Cli;
 use seed::{Scenario, SeedError, Seeder};
 use shot::{Camera, Page};
-use slot::{Preview, RunWait, Slot};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use traffic::{Pace, SettingsError, Traffic, TrafficError};
 
-/// A development slot with fake providers and fake data.
+/// Development instances with fake providers and fake data.
 #[derive(Args)]
 pub struct Dev {
+    /// The dev instance acted on.
+    #[arg(long, global = true, default_value = "0")]
+    instance: DevIndex,
     #[command(subcommand)]
     action: DevAction,
 }
@@ -179,8 +185,8 @@ enum TrafficAction {
         #[arg(default_value_t = 20, value_parser = clap::value_parser!(u16).range(1..=500))]
         count: u16,
     },
-    /// Run the generator in the foreground (what the ren-dev-traffic unit
-    /// runs).
+    /// Run the generator in the foreground (what an instance's traffic
+    /// unit runs).
     #[command(hide = true)]
     Run {
         /// Also serve the control API (for the dev UI's toolbar) on this
@@ -291,7 +297,7 @@ impl Dev {
                 ),
             },
             DevAction::Up(args) => {
-                let slot = Slot::new(env)?
+                let slot = DevInstance::new(env, self.instance)?
                     .containing(args.contain)
                     .running_on(args.runtime);
                 let wait = RunWait {
@@ -315,11 +321,12 @@ impl Dev {
                 slot.status()
             }
             DevAction::Down(args) => {
-                Slot::new(env)?.down()?;
-                Slot::unpublish(args.cli(env)?)
+                let slot = DevInstance::new(env, self.instance)?;
+                slot.down()?;
+                slot.unpublish(args.cli(env)?)
             }
             DevAction::Reset => {
-                let slot = Slot::new(env)?;
+                let slot = DevInstance::new(env, self.instance)?;
                 slot.wipe()?;
                 // The wipe stopped the daemon: no run is left to wait for.
                 slot.up(RunWait {
@@ -328,15 +335,18 @@ impl Dev {
                 })?;
                 slot.status()
             }
-            DevAction::Status => Slot::new(env)?.status(),
+            DevAction::Status => DevInstance::new(env, self.instance)?.status(),
             DevAction::Seed(args) => {
-                let slot = Slot::new(env)?;
-                Seeder::new(Slot::DAEMON, Slot::ci_token().expose().to_owned())
-                    .play(args.scenario, &slot.data_dir)?;
+                let slot = DevInstance::new(env, self.instance)?;
+                Seeder::new(
+                    slot.index.daemon(),
+                    DevInstance::ci_token().expose().to_owned(),
+                )
+                .play(args.scenario, &slot.data_dir)?;
                 Ok(())
             }
             DevAction::Shot(args) => {
-                let slot = Slot::new(env)?;
+                let slot = DevInstance::new(env, self.instance)?;
                 let out = args
                     .out
                     .unwrap_or_else(|| slot.repo.join("target/dev-shots"));
@@ -345,15 +355,15 @@ impl Dev {
                 } else {
                     args.pages
                 };
-                Camera::new(env, Slot::UI, Slot::DAEMON, out)?
+                Camera::new(env, slot.index.ui(), slot.index.daemon(), out)?
                     .shoot(&pages, (args.width, args.height))?;
                 Ok(())
             }
             DevAction::Traffic(args) => {
-                let slot = Slot::new(env)?;
+                let slot = DevInstance::new(env, self.instance)?;
                 let traffic = Traffic::new(
-                    Slot::DAEMON,
-                    Slot::ci_token().expose().to_owned(),
+                    slot.index.daemon(),
+                    DevInstance::ci_token().expose().to_owned(),
                     slot.traffic_settings(),
                     slot.data_dir.clone(),
                 );

@@ -8,7 +8,7 @@
 //! another (`cargo xtask preview`).
 
 use crate::{
-    dev::{DevError, slot::Slot},
+    dev::{DevError, index::DevIndex, instance::DevInstance},
     file::{FileError, FileMode},
     invocation::{Echo, Invocation, InvocationError},
     pod::{Container, Pod},
@@ -204,13 +204,14 @@ impl ProductionPlace {
                 })
             }
             Production::Dev => {
-                let slot = Slot::new(env)?;
+                // The canary rehearses against the first dev instance.
+                let slot = DevInstance::new(env, DevIndex::FIRST)?;
                 Ok(Self {
                     kind,
                     config: slot.config,
                     data_dir: slot.data_dir,
                     binary: slot.bin_dir.join("ren"),
-                    listen: Slot::DAEMON,
+                    listen: DevIndex::FIRST.daemon(),
                 })
             }
         }
