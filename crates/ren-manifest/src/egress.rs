@@ -1,26 +1,26 @@
-//! One entry of a manifest's `reach`: where the project's relayed runs may
+//! One entry of a manifest's `egress`: where the project's relayed runs may
 //! connect, as `host:port` or `*.parent:port`. A name, never an address: a
 //! listed name reaches only public addresses, while a listed address is
 //! reached as it is, and only the operator may list one.
 
 use std::{fmt, str::FromStr};
 
-/// A `reach` entry: a host name, or `*.` and the name every host under it
+/// An `egress` entry: a host name, or `*.` and the name every host under it
 /// shares, and a port. Lowercase, without a trailing dot; its last label is
 /// not all digits, so no address reads as one.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReachEntry {
+pub struct EgressEntry {
     /// The host, with its `*.` when it names every host under a parent.
     host: String,
     port: u16,
 }
 
-/// Why a `reach` entry does not read.
+/// Why an `egress` entry does not read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0:?} is not `host:port` or `*.parent:port` with a host name")]
-pub struct NotAReachEntry(pub String);
+pub struct NotAnEgressEntry(pub String);
 
-impl ReachEntry {
+impl EgressEntry {
     const MAX_HOST: usize = 253;
     const MAX_LABEL: usize = 63;
 
@@ -39,11 +39,11 @@ impl ReachEntry {
     }
 }
 
-impl FromStr for ReachEntry {
-    type Err = NotAReachEntry;
+impl FromStr for EgressEntry {
+    type Err = NotAnEgressEntry;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let refused = || NotAReachEntry(text.to_owned());
+        let refused = || NotAnEgressEntry(text.to_owned());
         let (host, port) = text.rsplit_once(':').ok_or_else(refused)?;
         let port = port
             .parse::<u16>()
@@ -63,7 +63,7 @@ impl FromStr for ReachEntry {
     }
 }
 
-impl fmt::Display for ReachEntry {
+impl fmt::Display for EgressEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.host, self.port)
     }
@@ -71,7 +71,7 @@ impl fmt::Display for ReachEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::ReachEntry;
+    use super::EgressEntry;
 
     #[test]
     fn an_entry_is_a_host_or_a_parents_hosts_and_a_port() {
@@ -80,7 +80,7 @@ mod tests {
             ("*.Example.com.:443", "*.example.com:443"),
             ("crates_io.example:8443", "crates_io.example:8443"),
         ] {
-            assert_eq!(text.parse::<ReachEntry>().unwrap().to_string(), read);
+            assert_eq!(text.parse::<EgressEntry>().unwrap().to_string(), read);
         }
         for text in [
             "crates.io",
@@ -96,7 +96,7 @@ mod tests {
             "*.0.0.10:443",
             "[::1]:443",
         ] {
-            assert!(text.parse::<ReachEntry>().is_err(), "{text}");
+            assert!(text.parse::<EgressEntry>().is_err(), "{text}");
         }
     }
 }

@@ -23,8 +23,8 @@ pub mod held;
 mod process;
 
 pub use held::{
-    CredentialAsk, Doors, Grants, HeldRuns, Launcher, RelayedRun, Relaying, RunHost, RunReach,
-    SandboxError, Sandboxes, WatchedProjects,
+    CredentialAsk, Doors, Grants, HeldRuns, HoldError, Launcher, RelayedRun, Relaying, RunHost,
+    RunNetwork, SandboxError, SandboxSettings, WatchedProjects,
 };
 pub use process::ProcessHost;
 

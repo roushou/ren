@@ -5,7 +5,7 @@
 //! manifest, and its `.git` are the run's to write.
 
 use ren_github::{RepositorySlug, Snapshot};
-use ren_manifest::{Manifest, ManifestError, ReachEntry};
+use ren_manifest::{EgressEntry, Manifest, ManifestError};
 use ren_relay::{Destination, NotADestination};
 use ren_supervisor::Worktree;
 use std::{
@@ -14,14 +14,14 @@ use std::{
     sync::{Arc, Mutex, PoisonError},
 };
 
-/// Why a project's manifest gives its runs no reach.
+/// Why a project's manifest gives its runs no egress.
 #[derive(Debug, thiserror::Error)]
-pub enum ProjectReachError {
+pub enum ProjectEgressError {
     #[error(transparent)]
     Manifest(#[from] ManifestError),
     /// An entry the manifest reads that the relay cannot admit by.
-    #[error("reach in .ren/project.toml lists {0}, which the relay cannot admit")]
-    Destination(ReachEntry, #[source] NotADestination),
+    #[error("egress in .ren/project.toml lists {0}, which the relay cannot admit")]
+    Destination(EgressEntry, #[source] NotADestination),
 }
 
 /// The watched projects: each one's registered folder and GitHub
@@ -36,7 +36,7 @@ pub struct WatchedProjects {
 #[derive(Debug, Default)]
 struct Known {
     folders: Vec<(PathBuf, RepositorySlug)>,
-    reach: HashMap<RepositorySlug, Vec<Destination>>,
+    egress: HashMap<RepositorySlug, Vec<Destination>>,
 }
 
 impl WatchedProjects {
@@ -85,12 +85,12 @@ impl WatchedProjects {
         &self,
         repository: &RepositorySlug,
         snapshot: &Snapshot,
-    ) -> Result<(), ProjectReachError> {
-        let read = Self::reach(snapshot.manifest.as_deref());
+    ) -> Result<(), ProjectEgressError> {
+        let read = Self::egress(snapshot.manifest.as_deref());
         self.known
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .reach
+            .egress
             .insert(
                 repository.clone(),
                 read.as_ref().cloned().unwrap_or_default(),
@@ -100,28 +100,28 @@ impl WatchedProjects {
 
     /// The destinations `manifest` lists, as the relay admits by them: the
     /// one place a manifest's entries become the relay's.
-    fn reach(manifest: Option<&str>) -> Result<Vec<Destination>, ProjectReachError> {
+    fn egress(manifest: Option<&str>) -> Result<Vec<Destination>, ProjectEgressError> {
         let Some(manifest) = manifest else {
             return Ok(Vec::new());
         };
         Manifest::read(manifest)?
-            .reach()
+            .egress()
             .iter()
             .map(|entry| {
                 entry
                     .to_string()
                     .parse::<Destination>()
-                    .map_err(|error| ProjectReachError::Destination(entry.clone(), error))
+                    .map_err(|error| ProjectEgressError::Destination(entry.clone(), error))
             })
             .collect()
     }
 
     /// Where `repository`'s runs may reach, as last learned.
-    pub fn reach_of(&self, repository: &RepositorySlug) -> Vec<Destination> {
+    pub fn egress_of(&self, repository: &RepositorySlug) -> Vec<Destination> {
         self.known
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .reach
+            .egress
             .get(repository)
             .cloned()
             .unwrap_or_default()
@@ -147,16 +147,16 @@ mod tests {
     fn a_project_reaches_what_its_default_branch_lists_and_nothing_once_it_stops() {
         let projects = WatchedProjects::new(None);
         let web = "acme/web".parse().unwrap();
-        assert!(projects.reach_of(&web).is_empty());
+        assert!(projects.egress_of(&web).is_empty());
         projects
             .learn_manifest(
                 &web,
-                &snapshot(Some("reach = [\"registry.npmjs.org:443\"]\n")),
+                &snapshot(Some("egress = [\"registry.npmjs.org:443\"]\n")),
             )
             .unwrap();
         assert_eq!(
             projects
-                .reach_of(&web)
+                .egress_of(&web)
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>(),
@@ -165,19 +165,19 @@ mod tests {
         // A manifest that does not read lists nothing, and says why.
         assert!(
             projects
-                .learn_manifest(&web, &snapshot(Some("reach = [\"npmjs.org\"]\n")))
+                .learn_manifest(&web, &snapshot(Some("egress = [\"npmjs.org\"]\n")))
                 .is_err()
         );
-        assert!(projects.reach_of(&web).is_empty());
+        assert!(projects.egress_of(&web).is_empty());
         projects
             .learn_manifest(
                 &web,
-                &snapshot(Some("reach = [\"registry.npmjs.org:443\"]\n")),
+                &snapshot(Some("egress = [\"registry.npmjs.org:443\"]\n")),
             )
             .unwrap();
         projects.learn_manifest(&web, &snapshot(None)).unwrap();
-        assert!(projects.reach_of(&web).is_empty());
-        assert!(projects.reach_of(&"acme/api".parse().unwrap()).is_empty());
+        assert!(projects.egress_of(&web).is_empty());
+        assert!(projects.egress_of(&"acme/api".parse().unwrap()).is_empty());
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //!
 //! ```toml
 //! packages = ["node"]
-//! reach = ["registry.npmjs.org:443", "*.example.com:443"]
+//! egress = ["registry.npmjs.org:443", "*.example.com:443"]
 //!
 //! [[build]]
 //! run = ["npm", "ci"]
@@ -30,7 +30,7 @@
 //! run = ["./deploy.sh", "production"]
 //! ```
 //!
-//! `reach` lists where the project's relayed runs may connect through
+//! `egress` lists where the project's relayed runs may connect through
 //! Ren's relay, besides what Ren's configuration and each client list:
 //! `host:port`, or `*.parent:port` for any name under one. Ren reads it
 //! from the default branch on GitHub, never from a run's checkout, which
@@ -52,10 +52,10 @@
 //! ([`Manifest::read`]); an unknown placeholder is refused there, and
 //! a port past the place's range when a step is expanded.
 
-mod reach;
+mod egress;
 mod template;
 
-pub use reach::{NotAReachEntry, ReachEntry};
+pub use egress::{EgressEntry, NotAnEgressEntry};
 pub use template::{Template, TemplateError};
 
 use ren_depot::package::PackageId;
@@ -69,7 +69,7 @@ use std::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
     packages: BTreeSet<PackageId>,
-    reach: Vec<ReachEntry>,
+    egress: Vec<EgressEntry>,
     build: Vec<Step>,
     serve: Option<Serve>,
     checks: Vec<NamedCheck>,
@@ -135,8 +135,8 @@ pub enum ManifestError {
     EnvName(String),
     #[error(transparent)]
     Template(#[from] TemplateError),
-    #[error("reach in .ren/project.toml lists {0}")]
-    Reach(#[from] NotAReachEntry),
+    #[error("egress in .ren/project.toml lists {0}")]
+    Reach(#[from] NotAnEgressEntry),
 }
 
 /// The `tools` key, renamed to `packages`: a manifest that still has it
@@ -170,7 +170,7 @@ struct ManifestFile {
     quiesce: Option<StepFile>,
     deploy: Option<StepFile>,
     #[serde(default)]
-    reach: Vec<String>,
+    egress: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -255,10 +255,10 @@ impl Manifest {
             .deploy
             .map(|step| Step::read(step.run, step.env))
             .transpose()?;
-        let reach = file
-            .reach
+        let egress = file
+            .egress
             .into_iter()
-            .map(|text| text.parse::<ReachEntry>())
+            .map(|text| text.parse::<EgressEntry>())
             .collect::<Result<_, _>>()?;
         Ok(Self {
             packages: file.packages,
@@ -267,14 +267,14 @@ impl Manifest {
             checks,
             quiesce,
             deploy,
-            reach,
+            egress,
         })
     }
 
     /// Where its relayed runs may connect through the relay, besides what
     /// Ren's configuration and their clients list.
-    pub fn reach(&self) -> &[ReachEntry] {
-        &self.reach
+    pub fn egress(&self) -> &[EgressEntry] {
+        &self.egress
     }
 
     /// The depot's packages its steps need.
@@ -484,7 +484,7 @@ run = ["./deploy.sh", "{worktree}"]
             ("[[build]]\nrun = [\"x\", \"{home}\"]", "placeholder"),
             ("packages = [\"Node 22\"]", "package"),
             ("tools = [\"node\"]", "renamed to `packages`"),
-            ("reach = [\"crates.io\"]", "not `host:port`"),
+            ("egress = [\"crates.io\"]", "not `host:port`"),
             (
                 "[[build]]\nrun = [\"x\"]\nenv = { \"1BAD\" = \"v\" }",
                 "invalid name",
@@ -500,19 +500,19 @@ run = ["./deploy.sh", "{worktree}"]
     }
 
     #[test]
-    fn a_manifest_lists_where_its_runs_reach_and_none_without_reach() {
+    fn a_manifest_lists_where_its_runs_connect_and_none_without_egress() {
         let manifest =
-            Manifest::read("reach = [\"registry.npmjs.org:443\", \"*.Example.com:443\"]\n")
+            Manifest::read("egress = [\"registry.npmjs.org:443\", \"*.Example.com:443\"]\n")
                 .unwrap();
         assert_eq!(
             manifest
-                .reach()
+                .egress()
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>(),
             ["registry.npmjs.org:443", "*.example.com:443"]
         );
-        assert!(Manifest::read(MANIFEST).unwrap().reach().is_empty());
+        assert!(Manifest::read(MANIFEST).unwrap().egress().is_empty());
     }
 
     #[test]

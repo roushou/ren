@@ -814,9 +814,15 @@ impl InstallVps {
             .run()?;
         // Runs under gVisor are started through a Podman service of their
         // own, which [runs.container] podman_socket names.
-        match config.runs.container.runtime {
-            RunRuntime::HostKernel => {}
-            RunRuntime::Gvisor => crate::gvisor_service::GvisorService::new(env)?.ensure()?,
+        match config
+            .runs
+            .container
+            .relayed
+            .as_ref()
+            .map(|relayed| relayed.runtime)
+        {
+            None | Some(RunRuntime::HostKernel) => {}
+            Some(RunRuntime::Gvisor) => crate::gvisor_service::GvisorService::new(env)?.ensure()?,
         }
         Ok(container)
     }

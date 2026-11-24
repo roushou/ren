@@ -86,7 +86,7 @@ impl FakeGithub {
         // runs; the others have no manifest.
         let manifest = match name {
             "api" => {
-                json!({ "text": "reach = [\"static.crates.io:443\"]\n", "isTruncated": false })
+                json!({ "text": "egress = [\"static.crates.io:443\"]\n", "isTruncated": false })
             }
             _ => Value::Null,
         };

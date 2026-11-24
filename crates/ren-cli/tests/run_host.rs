@@ -50,10 +50,12 @@ async fn a_run_host_holds_its_client_while_no_daemon_watches() {
     // `runs/<run>/host.sock`.
     let dir = tempfile::tempdir_in("/tmp").unwrap();
     let held = HeldRuns::new(
-        dir.path().join("runs"),
+        dir.path(),
         Launcher::Direct,
         env!("CARGO_BIN_EXE_ren").into(),
-    );
+        None,
+    )
+    .unwrap();
     let run = RunId::restore(uuid::Uuid::from_u128(7));
     let mut command = std::process::Command::new("sh");
     command

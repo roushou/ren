@@ -66,7 +66,7 @@ impl Doorway {
 
 impl Doors {
     /// The folder under the runs' folder that relayed runs mount.
-    pub const FOLDER: &str = ".reach";
+    pub const FOLDER: &str = ".doors";
     /// The gateway's socket.
     pub const GATEWAY: &str = "gateway.sock";
     /// The relay's socket.
@@ -172,6 +172,6 @@ mod tests {
         let mut echoed = [0_u8; 17];
         run.read_exact(&mut echoed).await.unwrap();
         assert_eq!(&echoed, b"POST /v1/messages");
-        assert!(doors.folder().ends_with(".reach"));
+        assert!(doors.folder().ends_with(".doors"));
     }
 }

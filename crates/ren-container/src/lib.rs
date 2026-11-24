@@ -9,7 +9,7 @@ mod launch;
 mod mount;
 
 pub use engine::Engine;
-pub use launch::{EngineError, Launch, Reach};
+pub use launch::{EngineAccess, EngineError, Launch};
 pub use mount::{Access, Mount};
 use std::path::PathBuf;
 

@@ -2,10 +2,10 @@
 //! a container sees, reaches, holds, and runs on, declared as one
 //! [`Sandbox`], and the `ren-container` [`Container`] it starts in.
 //!
-//! What every run's envelope starts from is [`Sandboxes`], the operator's
+//! What every run's envelope starts from is [`SandboxSettings`], the operator's
 //! setting (`[runs.container]`); what one run needs to see is its
-//! [`Sight`], found on the host by [`super::HeldRuns`]. A sandbox is made
-//! only by [`Sandboxes::sandbox`], which refuses what a run must never
+//! [`RunFiles`], found on the host by [`super::HeldRuns`]. A sandbox is made
+//! only by [`SandboxSettings::sandbox`], which refuses what a run must never
 //! see: Ren's data or configuration. A run reaches the host's network,
 //! holding the operator's SSH agent, or is relayed: no network but its
 //! loopback, where its doors reach the gateway and the relay, under a
@@ -13,7 +13,7 @@
 //! at its host path, so the run folder, the workdir, and the client's
 //! files keep the names the daemon gave them. Pure: no I/O.
 
-use ren_container::{Container, Lifetime, Mount, Placement, Reach, Runtime};
+use ren_container::{Container, EngineAccess, Lifetime, Mount, Placement, Runtime};
 use ren_recorder::id::RunId;
 use ren_relay::RelayPolicy;
 use std::path::{Path, PathBuf};
@@ -22,23 +22,23 @@ use std::path::{Path, PathBuf};
 /// how Podman is reached, what every run sees besides what it needs, and
 /// what runs reach.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Sandboxes {
+pub struct SandboxSettings {
     image: String,
-    engine: Reach,
+    engine: EngineAccess,
     /// The operator's home, the container's `HOME`.
     home: PathBuf,
     /// What every run sees: the host's programs and toolchains, shared
     /// caches.
     shared: Vec<Mount>,
     /// What its runs reach, and with it what they hold.
-    reach: RunReach,
+    network: RunNetwork,
     /// Ren's configuration file, when it was read from one: never seen.
     config: Option<PathBuf>,
 }
 
 /// What a run reaches, and so what it holds and runs on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RunReach {
+pub enum RunNetwork {
     /// The host's network, on the host's kernel. It pushes with the
     /// operator's SSH agent, when the daemon has one: until grants push
     /// for production's runs, the one run that holds a credential that
@@ -55,7 +55,7 @@ pub enum RunReach {
 
 /// What one run needs to see, found on the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Sight {
+pub(super) struct RunFiles {
     /// The run's folder: its spec, socket, spool, exit, and journal.
     pub(super) folder: PathBuf,
     /// Where the run works.
@@ -75,7 +75,7 @@ pub(super) struct Sight {
 /// Where Ren keeps what no run may see whole: its data, with the run
 /// folders and doors inside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct RenPlaces {
+pub(super) struct RenFolders {
     /// Ren's data folder.
     pub(super) data: PathBuf,
     /// The doors' sockets, which a relayed run sees read-only.
@@ -87,7 +87,7 @@ pub(super) struct RenPlaces {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
 pub(super) struct Sandbox {
-    engine: Reach,
+    engine: EngineAccess,
     container: Container,
 }
 
@@ -106,13 +106,13 @@ pub enum SandboxError {
     SharedInData(PathBuf),
 }
 
-impl Sandboxes {
+impl SandboxSettings {
     pub fn new(
         image: String,
-        engine: Reach,
+        engine: EngineAccess,
         home: PathBuf,
         shared: Vec<Mount>,
-        reach: RunReach,
+        network: RunNetwork,
         config: Option<PathBuf>,
     ) -> Self {
         Self {
@@ -120,20 +120,20 @@ impl Sandboxes {
             engine,
             home,
             shared,
-            reach,
+            network,
             config,
         }
     }
 
     /// What its runs reach.
-    pub fn reach(&self) -> &RunReach {
-        &self.reach
+    pub fn network(&self) -> &RunNetwork {
+        &self.network
     }
 
-    /// The container `run`'s host is named: the systemd unit's name, so
-    /// one name finds a run's host however it was started.
+    /// The name `run`'s host goes by, as a container and as a systemd
+    /// unit, so one name finds it however it was started.
     pub fn name(run: RunId) -> String {
-        super::HeldRuns::unit(run)
+        format!("ren-run-{run}")
     }
 
     /// The home a run's container takes as its own.
@@ -142,15 +142,17 @@ impl Sandboxes {
     }
 
     /// `run`'s sandbox: the shared mounts, then what it needs to see, then
-    /// what its reach gives it; the run host serving `sight.folder`, its
-    /// entrypoint the `ren` it is, never the image's own, which a mount of
-    /// the host's programs may hide. Refused when it would see Ren's data
-    /// or configuration whole, or every run would see inside Ren's data.
+    /// what its network gives it (the doors for a relayed run, the SSH
+    /// agent for one on the host's network); the run host serving
+    /// `files.folder`, its entrypoint the `ren` it is, never the image's
+    /// own, which a mount of the host's programs may hide. Refused when it
+    /// would see Ren's data or configuration whole, or every run would see
+    /// inside Ren's data.
     pub(super) fn sandbox(
         &self,
         run: RunId,
-        sight: &Sight,
-        ren: &RenPlaces,
+        files: &RunFiles,
+        ren: &RenFolders,
     ) -> Result<Sandbox, SandboxError> {
         if let Some(inside) = self
             .shared
@@ -159,34 +161,29 @@ impl Sandboxes {
         {
             return Err(SandboxError::SharedInData(inside.path.clone()));
         }
-        let (placement, held) = match &self.reach {
-            RunReach::Host { ssh_agent } => (
+        let (placement, given, ssh_agent) = match &self.network {
+            RunNetwork::Host { ssh_agent } => (
                 Placement::Host,
-                Held {
-                    doors: None,
-                    ssh_agent: ssh_agent.as_ref(),
-                },
+                ssh_agent.iter().map(Mount::read_write).collect::<Vec<_>>(),
+                ssh_agent.as_ref(),
             ),
-            RunReach::Relayed { runtime, .. } => (
+            RunNetwork::Relayed { runtime, .. } => (
                 Placement::Isolated(*runtime),
-                Held {
-                    doors: Some(&ren.doors),
-                    ssh_agent: None,
-                },
+                vec![Mount::read_only(&ren.doors)],
+                None,
             ),
         };
         let mounts: Vec<Mount> = self
             .shared
             .iter()
             .cloned()
-            .chain([Mount::read_only(&sight.host)])
-            .chain(sight.reads.iter().map(Mount::read_only))
-            .chain(sight.keeps.iter().map(Mount::read_write))
-            .chain([Mount::read_write(&sight.workdir)])
-            .chain(sight.git.iter().map(Mount::read_write))
-            .chain([Mount::read_write(&sight.folder)])
-            .chain(held.doors.map(Mount::read_only))
-            .chain(held.ssh_agent.map(Mount::read_write))
+            .chain([Mount::read_only(&files.host)])
+            .chain(files.reads.iter().map(Mount::read_only))
+            .chain(files.keeps.iter().map(Mount::read_write))
+            .chain([Mount::read_write(&files.workdir)])
+            .chain(files.git.iter().map(Mount::read_write))
+            .chain([Mount::read_write(&files.folder)])
+            .chain(given)
             .collect();
         for mount in &mounts {
             if ren.data.starts_with(&mount.path) {
@@ -207,22 +204,16 @@ impl Sandboxes {
         .stop_timeout(Sandbox::STOP_TIMEOUT)
         .mounts(mounts)
         .env("HOME", self.home.display().to_string());
-        if let Some(agent) = held.ssh_agent {
+        if let Some(agent) = ssh_agent {
             container = container.env("SSH_AUTH_SOCK", agent.display().to_string());
         }
         Ok(Sandbox {
             engine: self.engine.clone(),
             container: container
-                .entrypoint(&sight.host)
-                .args(["run-host".to_owned(), sight.folder.display().to_string()]),
+                .entrypoint(&files.host)
+                .args(["run-host".to_owned(), files.folder.display().to_string()]),
         })
     }
-}
-
-/// What a run's reach gives it to see beyond what it needs.
-struct Held<'a> {
-    doors: Option<&'a PathBuf>,
-    ssh_agent: Option<&'a PathBuf>,
 }
 
 impl Sandbox {
@@ -235,7 +226,7 @@ impl Sandbox {
     }
 
     /// How the engine is reached to start it.
-    pub(super) fn engine(&self) -> &Reach {
+    pub(super) fn engine(&self) -> &EngineAccess {
         &self.engine
     }
 
@@ -246,12 +237,12 @@ impl Sandbox {
 
 #[cfg(test)]
 mod tests {
-    use super::{RenPlaces, RunReach, SandboxError, Sandboxes, Sight};
-    use ren_container::{Engine, Mount, Reach, Runtime};
+    use super::{RenFolders, RunFiles, RunNetwork, SandboxError, SandboxSettings};
+    use ren_container::{Engine, EngineAccess, Mount, Runtime};
     use ren_recorder::id::RunId;
 
-    fn sight() -> Sight {
-        Sight {
+    fn sight() -> RunFiles {
+        RunFiles {
             folder: "/home/op/.local/state/ren/runs/r".into(),
             workdir: "/home/op/dev/app/.worktrees/fix".into(),
             git: Some("/home/op/dev/app/.git".into()),
@@ -261,47 +252,47 @@ mod tests {
         }
     }
 
-    fn ren() -> RenPlaces {
-        RenPlaces {
+    fn ren() -> RenFolders {
+        RenFolders {
             data: "/home/op/.local/state/ren".into(),
-            doors: "/home/op/.local/state/ren/runs/.reach".into(),
+            doors: "/home/op/.local/state/ren/runs/.doors".into(),
         }
     }
 
-    fn sandboxes(shared: Vec<Mount>, reach: RunReach) -> Sandboxes {
-        Sandboxes::new(
+    fn sandboxes(shared: Vec<Mount>, network: RunNetwork) -> SandboxSettings {
+        SandboxSettings::new(
             "localhost/ren-instance:abc".into(),
-            Reach::Scope,
+            EngineAccess::Scope,
             "/home/op".into(),
             shared,
-            reach,
+            network,
             Some("/home/op/.config/ren/ren.toml".into()),
         )
     }
 
-    fn host(ssh_agent: Option<&str>) -> Sandboxes {
+    fn host(ssh_agent: Option<&str>) -> SandboxSettings {
         sandboxes(
             vec![
                 Mount::read_only("/usr"),
                 Mount::read_write("/home/op/.cargo"),
             ],
-            RunReach::Host {
+            RunNetwork::Host {
                 ssh_agent: ssh_agent.map(Into::into),
             },
         )
     }
 
-    fn relayed(runtime: Runtime) -> Sandboxes {
+    fn relayed(runtime: Runtime) -> SandboxSettings {
         sandboxes(
             Vec::new(),
-            RunReach::Relayed {
+            RunNetwork::Relayed {
                 policy: ren_relay::RelayPolicy::default(),
                 runtime,
             },
         )
     }
 
-    fn args(sandboxes: &Sandboxes) -> Vec<String> {
+    fn args(sandboxes: &SandboxSettings) -> Vec<String> {
         let run = RunId::restore(uuid::Uuid::nil());
         Engine::Podman.run_args(sandboxes.sandbox(run, &sight(), &ren()).unwrap().spec())
     }
@@ -378,7 +369,7 @@ mod tests {
             "{args:?}"
         );
         assert!(args.iter().any(|arg| arg
-            == "--volume=/home/op/.local/state/ren/runs/.reach:/home/op/.local/state/ren/runs/.reach:ro"));
+            == "--volume=/home/op/.local/state/ren/runs/.doors:/home/op/.local/state/ren/runs/.doors:ro"));
     }
 
     #[test]
@@ -415,11 +406,11 @@ mod tests {
                 SandboxError::SharedInData("/home/op/.local/state/ren/blobs.sqlite3".into()),
             ),
         ] {
-            let sandboxes = sandboxes(vec![shared], RunReach::Host { ssh_agent: None });
+            let sandboxes = sandboxes(vec![shared], RunNetwork::Host { ssh_agent: None });
             assert_eq!(sandboxes.sandbox(run, &sight(), &ren()), Err(refused));
         }
         // What Ren made for the run inside its data is the run's to see.
-        let in_worktree = Sight {
+        let in_worktree = RunFiles {
             workdir: "/home/op/.local/state/ren/worktrees/app/fix".into(),
             ..sight()
         };
@@ -429,7 +420,7 @@ mod tests {
                 .is_ok()
         );
         // A client's file that holds the data whole is refused as well.
-        let reads_home = Sight {
+        let reads_home = RunFiles {
             reads: vec!["/home/op/.local".into()],
             ..sight()
         };

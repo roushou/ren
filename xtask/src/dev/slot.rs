@@ -19,7 +19,7 @@ use crate::{
 };
 use ren_container::Engine;
 use ren_daemon::config::{
-    Config, GithubApp, GithubOptions, RunContainerOptions, RunHold, RunNetwork, RunRuntime,
+    Config, GithubApp, GithubOptions, RelayedOptions, RunContainerOptions, RunHold, RunRuntime,
     RunsOptions, UpstreamConfig, WatchedRepository,
 };
 use ren_daemon::host::HeldRuns;
@@ -301,13 +301,14 @@ impl Slot {
                         // Relayed, as runs are meant to be (phase 12): the
                         // fake agents need only the gateway, and one public
                         // registry checks a run's way out.
-                        network: RunNetwork::Relayed,
-                        runtime: self.runtime,
-                        reach: vec![
-                            "index.crates.io:443"
-                                .parse()
-                                .map_err(|_| DevError::Config)?,
-                        ],
+                        relayed: Some(RelayedOptions {
+                            runtime: self.runtime,
+                            egress: vec![
+                                "index.crates.io:443"
+                                    .parse()
+                                    .map_err(|_| DevError::Config)?,
+                            ],
+                        }),
                     },
                 },
             },

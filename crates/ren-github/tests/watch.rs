@@ -39,7 +39,7 @@ fn an_answer_reads_into_a_snapshot() {
     assert_eq!(snapshot.listing, Listing::Complete);
     assert_eq!(
         snapshot.manifest.as_deref(),
-        Some("reach = [\"registry.npmjs.org:443\"]\n")
+        Some("egress = [\"registry.npmjs.org:443\"]\n")
     );
 
     let [landing, layout] = snapshot.pull_requests.as_slice() else {
@@ -84,12 +84,12 @@ fn a_manifest_cut_short_or_missing_is_none() {
     for changed in [
         answer.replacen("\"isTruncated\": false", "\"isTruncated\": true", 1),
         answer.replacen(
-            "\"manifest\": { \"text\": \"reach = [\\\"registry.npmjs.org:443\\\"]\\n\", \"isTruncated\": false },",
+            "\"manifest\": { \"text\": \"egress = [\\\"registry.npmjs.org:443\\\"]\\n\", \"isTruncated\": false },",
             "\"manifest\": null,",
             1,
         ),
         answer.replacen(
-            "\"manifest\": { \"text\": \"reach = [\\\"registry.npmjs.org:443\\\"]\\n\", \"isTruncated\": false },",
+            "\"manifest\": { \"text\": \"egress = [\\\"registry.npmjs.org:443\\\"]\\n\", \"isTruncated\": false },",
             "",
             1,
         ),

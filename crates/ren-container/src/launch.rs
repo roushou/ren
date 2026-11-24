@@ -9,7 +9,7 @@ use std::process::{Command, ExitStatus, Stdio};
 /// How the engine is reached to start containers: the setting a caller
 /// keeps, from which each container's [`Launch`] is made.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Reach {
+pub enum EngineAccess {
     /// The engine's program here, each container started from a transient
     /// systemd user scope of its own.
     Scope,

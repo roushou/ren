@@ -12,7 +12,7 @@ pub mod packages;
 use crate::config::RuntimeConfig;
 use crate::host::{
     Doors, Grants, HeldRuns, Launcher, ObservationThread, ProcessHost, RandomIds, RelayedRun,
-    Relaying, RunReach, SystemClock, WatchedProjects,
+    Relaying, RunNetwork, SystemClock, WatchedProjects,
 };
 use crate::packages::HostPrograms;
 use crate::packages::{HostPackages, PackageStore, fetch::ReqwestFetch};
@@ -53,6 +53,10 @@ struct Relayed {
 /// Why the daemon could not start, run, or stop cleanly.
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
+    #[error("relayed runs cannot reach out: the relay did not start")]
+    Relay(#[source] std::io::Error),
+    #[error("runs cannot be held as configured")]
+    Hold(#[from] crate::host::HoldError),
     #[error("daemon is already started; wait for termination before starting again")]
     AlreadyStarted,
     #[error("daemon has not started")]
@@ -180,7 +184,7 @@ impl Daemon {
         // What watched projects let their runs reach, learned from GitHub
         // by the watch and read as relayed runs start.
         let projects = WatchedProjects::new(Some(data_dir.join(Self::WORKTREES)));
-        let (held, relayed) = Self::held(config, data_dir, address, &ids, &clock, &projects);
+        let (held, relayed) = Self::held(config, data_dir, address, &ids, &clock, &projects)?;
         let (passages, forwarding) = match relayed {
             Some(Relayed {
                 passages,
@@ -416,12 +420,12 @@ impl Daemon {
         ids: &Arc<dyn IdSource>,
         clock: &Arc<dyn Clock>,
         projects: &WatchedProjects,
-    ) -> (Option<HeldRuns>, Option<Relayed>) {
+    ) -> Result<(Option<HeldRuns>, Option<Relayed>)> {
         if config.runs().roots.is_empty() {
-            return (None, None);
+            return Ok((None, None));
         }
         let Some(launcher) = config.run_hold().cloned() else {
-            return (None, None);
+            return Ok((None, None));
         };
         let Some(program) = std::env::current_exe()
             .inspect_err(
@@ -429,16 +433,17 @@ impl Daemon {
             )
             .ok()
         else {
-            return (None, None);
+            return Ok((None, None));
         };
-        let root = data_dir.join(HeldRuns::FOLDER);
         let relayed = matches!(
             &launcher,
-            Launcher::Container(sandboxes) if matches!(sandboxes.reach(), RunReach::Relayed { .. })
+            Launcher::Container(sandboxes) if matches!(sandboxes.network(), RunNetwork::Relayed { .. })
         );
-        let held = HeldRuns::new(root.clone(), launcher, program.clone());
         if !relayed {
-            return (Some(held), None);
+            return Ok((
+                Some(HeldRuns::new(data_dir, launcher, program, None)?),
+                None,
+            ));
         }
         let grants = config.github().and_then(|github| {
             let installations = github.installations.clone()?;
@@ -451,14 +456,22 @@ impl Daemon {
                 clock.clone(),
             )))
         });
-        match Self::relaying(&root, address, ids, program, grants, projects.clone()) {
-            Ok((relaying, relayed)) => (Some(held.relaying(relaying)), Some(relayed)),
-            Err(error) => {
-                // Its runs are refused as they start, which says why.
-                tracing::error!(%error, "relayed runs cannot reach out: the relay did not start");
-                (Some(held), None)
-            }
-        }
+        // The configuration asks for relayed runs: without a relay the
+        // daemon does not start, rather than refuse each run.
+        let root = data_dir.join(HeldRuns::FOLDER);
+        let (relaying, relayed) = Self::relaying(
+            &root,
+            address,
+            ids,
+            program.clone(),
+            grants,
+            projects.clone(),
+        )
+        .map_err(DaemonError::Relay)?;
+        Ok((
+            Some(HeldRuns::new(data_dir, launcher, program, Some(relaying))?),
+            Some(relayed),
+        ))
     }
 
     /// The relay relayed runs reach out through, on loopback; the listener

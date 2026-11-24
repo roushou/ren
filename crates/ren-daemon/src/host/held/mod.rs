@@ -15,7 +15,7 @@
 //! - `journal`: what the daemon gave the client (the supervisor's).
 //!
 //! A relayed run (phase 12) reaches out only through the doorways in
-//! `<data>/runs/.reach` ([`Doors`]): Ren's gateway, and the relay, which
+//! `<data>/runs/.doors` ([`Doors`]): Ren's gateway, and the relay, which
 //! admits it by the ticket its spec carries ([`Relaying`]). A run working
 //! in a checkout of a repository the GitHub App is granted pushes to it
 //! with a token git asks the grants door for ([`Grants`]).
@@ -36,13 +36,13 @@ mod watched;
 pub use doorway::{Doors, Doorway};
 pub use grant::{CredentialAsk, Grants};
 pub use listing::{Listing, RelayedRun};
-use ren_container::{Engine, EngineError, Launch, Reach};
-pub use sandbox::{RunReach, SandboxError, Sandboxes};
+use ren_container::{Engine, EngineAccess, EngineError, Launch};
+pub use sandbox::{RunNetwork, SandboxError, SandboxSettings};
 pub use serve::RunHost;
-pub use watched::{ProjectReachError, WatchedProjects};
+pub use watched::{ProjectEgressError, WatchedProjects};
 
 use ren_harness::profile::ClientNeeds;
-use sandbox::{RenPlaces, Sandbox, Sight};
+use sandbox::{RenFolders, RunFiles, Sandbox};
 
 use ren_github::RepositorySlug;
 use ren_recorder::id::{IdSource, RunId};
@@ -71,7 +71,7 @@ pub enum Launcher {
     /// In a rootless Podman container of its own, `ren-run-<run>`, its
     /// run's [`sandbox::Sandbox`]: it sees only what the run works on and
     /// what its client keeps, and reaches what its reach says.
-    Container(Sandboxes),
+    Container(SandboxSettings),
 }
 
 /// How one run's host is started: as its [`Launcher`] says, a container's
@@ -86,12 +86,38 @@ enum Start {
 /// host is started.
 #[derive(Debug, Clone)]
 pub struct HeldRuns {
+    /// Ren's data folder, as the host resolves it: what no run sees whole.
+    data: PathBuf,
+    /// `<data>/runs`.
     root: PathBuf,
-    launcher: Launcher,
+    hold: Hold,
     /// The `ren` a host runs as.
     program: PathBuf,
-    /// How relayed runs reach out, when runs are relayed.
-    relaying: Option<Relaying>,
+}
+
+/// How run hosts are started, with what a relayed run reaches out through.
+#[derive(Debug, Clone)]
+enum Hold {
+    Systemd,
+    Direct,
+    /// In a container on the host's network.
+    Contained(SandboxSettings),
+    /// In a container with no network but its loopback, reaching out
+    /// through `relaying` where `policy` lists.
+    Relayed {
+        sandboxes: SandboxSettings,
+        policy: RelayPolicy,
+        relaying: Relaying,
+    },
+}
+
+/// Why runs cannot be held as asked.
+#[derive(Debug, thiserror::Error)]
+pub enum HoldError {
+    #[error("runs are relayed, but the daemon has no relay for them")]
+    NoRelay,
+    #[error("a relay was given for runs that are not relayed")]
+    UnusedRelay,
 }
 
 /// How relayed runs reach out: the relay that admits their tunnels, the
@@ -327,7 +353,7 @@ impl Relaying {
                 Purpose::Project,
                 repository
                     .iter()
-                    .flat_map(|repository| self.projects.reach_of(repository)),
+                    .flat_map(|repository| self.projects.egress_of(repository)),
             )
             .list(Purpose::Grant, github);
         let ticket = Ticket::new(format!(
@@ -595,26 +621,53 @@ impl HeldRuns {
     /// in a container.
     const PODMAN_SETTINGS: &str = ".podman";
 
-    /// Runs held under `root` (`<data>/runs`), their hosts started by
-    /// `launcher` running `program`.
-    pub fn new(root: PathBuf, launcher: Launcher, program: PathBuf) -> Self {
-        Self {
-            root,
-            launcher,
+    /// Runs held in Ren's data folder `data` (under `<data>/runs`), their
+    /// hosts started by `launcher` running `program`; relayed ones, and only
+    /// they, reach out through `relaying`.
+    pub fn new(
+        data: &Path,
+        launcher: Launcher,
+        program: PathBuf,
+        relaying: Option<Relaying>,
+    ) -> Result<Self, HoldError> {
+        let hold = match (launcher, relaying) {
+            (Launcher::Systemd, None) => Hold::Systemd,
+            (Launcher::Direct, None) => Hold::Direct,
+            (Launcher::Container(sandboxes), relaying) => match (sandboxes.network(), relaying) {
+                (RunNetwork::Host { .. }, None) => Hold::Contained(sandboxes),
+                (RunNetwork::Relayed { policy, .. }, Some(relaying)) => Hold::Relayed {
+                    policy: policy.clone(),
+                    sandboxes,
+                    relaying,
+                },
+                (RunNetwork::Relayed { .. }, None) => return Err(HoldError::NoRelay),
+                (RunNetwork::Host { .. }, Some(_)) => return Err(HoldError::UnusedRelay),
+            },
+            (Launcher::Systemd | Launcher::Direct, Some(_)) => {
+                return Err(HoldError::UnusedRelay);
+            }
+        };
+        // Resolved as the host has it, as the sandbox's mounts are.
+        let data = std::fs::canonicalize(data).unwrap_or_else(|_| data.to_path_buf());
+        Ok(Self {
+            root: data.join(Self::FOLDER),
+            data,
+            hold,
             program,
-            relaying: None,
-        }
+        })
     }
 
-    /// These runs, relayed ones reaching out through `relaying`.
-    pub fn relaying(mut self, relaying: Relaying) -> Self {
-        self.relaying = Some(relaying);
-        self
+    /// What relayed runs reach out through, when runs are relayed.
+    fn relaying(&self) -> Option<&Relaying> {
+        match &self.hold {
+            Hold::Relayed { relaying, .. } => Some(relaying),
+            Hold::Systemd | Hold::Direct | Hold::Contained(_) => None,
+        }
     }
 
     /// The systemd unit a run's host runs in, under [`Launcher::Systemd`].
     pub fn unit(run: RunId) -> String {
-        format!("ren-run-{run}")
+        SandboxSettings::name(run)
     }
 
     /// The runs whose folders are under `root`, by their names: what
@@ -654,7 +707,7 @@ impl HeldRuns {
     ) -> io::Result<AgentProcess> {
         let started = self.start_held(run, command, needs);
         if started.is_err()
-            && let Some(relaying) = &self.relaying
+            && let Some(relaying) = self.relaying()
         {
             relaying.release(run);
         }
@@ -671,35 +724,21 @@ impl HeldRuns {
         let folder = self.folder(run);
         Self::private_dir(&self.root)?;
         Self::private_dir(&folder)?;
-        let start = match &self.launcher {
-            Launcher::Systemd => Start::Systemd,
-            Launcher::Direct => Start::Direct,
-            Launcher::Container(sandboxes) => {
-                // The container sees the program's file, not the folders on
-                // the path: it is started by the path it was found at.
-                let program = spec.program()?;
-                spec.program = program.display().to_string();
-                match sandboxes.reach() {
-                    RunReach::Host { .. } => {}
-                    RunReach::Relayed { policy, .. } => {
-                        let relaying = self.relaying.as_ref().ok_or_else(|| {
-                            io::Error::other("a relayed run was started with no relay")
-                        })?;
-                        let (relayed, env) = relaying.admit(run, policy, needs, &spec.cwd)?;
-                        spec.env.extend(env);
-                        spec.relayed = Some(relayed);
-                    }
-                }
-                let sight = self.sight(sandboxes, &spec, &folder, needs);
-                let ren = RenPlaces {
-                    data: self.root.parent().unwrap_or(&self.root).to_path_buf(),
-                    doors: Doors::new(&self.root).folder().to_path_buf(),
-                };
-                Start::Sandbox(Box::new(
-                    sandboxes
-                        .sandbox(run, &sight, &ren)
-                        .map_err(io::Error::other)?,
-                ))
+        let start = match &self.hold {
+            Hold::Systemd => Start::Systemd,
+            Hold::Direct => Start::Direct,
+            Hold::Contained(sandboxes) => {
+                self.contained(sandboxes, run, &mut spec, &folder, needs)?
+            }
+            Hold::Relayed {
+                sandboxes,
+                policy,
+                relaying,
+            } => {
+                let (relayed, env) = relaying.admit(run, policy, needs, &spec.cwd)?;
+                spec.env.extend(env);
+                spec.relayed = Some(relayed);
+                self.contained(sandboxes, run, &mut spec, &folder, needs)?
             }
         };
         let json = serde_json::to_vec(&spec).map_err(io::Error::other)?;
@@ -710,16 +749,41 @@ impl HeldRuns {
         link::Link::open(stream, 0, self.journal(&folder)?)
     }
 
+    /// How `run`'s host starts in its container: `spec` started by its
+    /// program's path, as the container sees that file, not the folders on
+    /// the search path; its sandbox made of what it needs to see.
+    fn contained(
+        &self,
+        sandboxes: &SandboxSettings,
+        run: RunId,
+        spec: &mut Spec,
+        folder: &Path,
+        needs: ClientNeeds,
+    ) -> io::Result<Start> {
+        let program = spec.program()?;
+        spec.program = program.display().to_string();
+        let files = self.files(sandboxes, spec, folder, needs);
+        let ren = RenFolders {
+            data: self.data.clone(),
+            doors: Doors::new(&self.root).folder().to_path_buf(),
+        };
+        Ok(Start::Sandbox(Box::new(
+            sandboxes
+                .sandbox(run, &files, &ren)
+                .map_err(io::Error::other)?,
+        )))
+    }
+
     /// What `spec`'s run needs to see in its sandbox: its folder, its
     /// workdir and the repository's git folder, this `ren`, the files its
     /// command reads, and what its client keeps that exists.
-    fn sight(
+    fn files(
         &self,
-        sandboxes: &Sandboxes,
+        sandboxes: &SandboxSettings,
         spec: &Spec,
         folder: &Path,
         needs: ClientNeeds,
-    ) -> Sight {
+    ) -> RunFiles {
         let reads = std::iter::once(PathBuf::from(&spec.program))
             .chain(
                 spec.args
@@ -729,7 +793,7 @@ impl HeldRuns {
                     .map(Path::to_path_buf),
             )
             .collect();
-        Sight {
+        RunFiles {
             folder: folder.to_path_buf(),
             workdir: spec.cwd.clone(),
             git: Spec::git_folder(&spec.cwd),
@@ -793,7 +857,7 @@ impl HeldRuns {
         match std::os::unix::net::UnixStream::connect(folder.join(Self::SOCKET)) {
             Ok(stream) => {
                 // Its pass went with the daemon that issued it.
-                if let Some(relaying) = &self.relaying {
+                if let Some(relaying) = self.relaying() {
                     relaying.readmit(run)?;
                 }
                 link::Link::open(stream, from, journal)
@@ -809,7 +873,7 @@ impl HeldRuns {
 
     /// `run` has ended and its end is recorded: its folder goes.
     pub fn release(&self, run: RunId) {
-        if let Some(relaying) = &self.relaying {
+        if let Some(relaying) = self.relaying() {
             relaying.release(run);
         }
         let folder = self.folder(run);
@@ -860,10 +924,10 @@ impl HeldRuns {
             }
             Start::Sandbox(sandbox) => {
                 let launch = match sandbox.engine() {
-                    Reach::Scope => Launch::Scope {
+                    EngineAccess::Scope => Launch::Scope {
                         unit: sandbox.name().to_owned(),
                     },
-                    Reach::Socket(socket) => {
+                    EngineAccess::Socket(socket) => {
                         // In a container, the home's folders and the runtime
                         // folder are made for its mounts and are not the
                         // operator's, which the Podman client refuses: it keeps
@@ -1019,7 +1083,7 @@ mod tests {
                     default_branch: None,
                     pull_requests: Vec::new(),
                     listing: ren_github::Listing::Complete,
-                    manifest: Some("reach = [\"registry.npmjs.org:443\"]\n".to_owned()),
+                    manifest: Some("egress = [\"registry.npmjs.org:443\"]\n".to_owned()),
                 },
             )
             .unwrap();
