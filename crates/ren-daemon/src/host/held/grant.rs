@@ -13,17 +13,39 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-/// What git asks a credential helper for, in git's credential format
-/// (`key=value` lines), with the run's proxy URL the helper adds.
-#[derive(Clone, Default, PartialEq, Eq)]
+/// What git asks a credential helper for, read once from git's credential
+/// format (`key=value` lines) with the run's proxy URL the helper adds: the
+/// run's ticket, and what git wants a credential for.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CredentialAsk {
-    /// The run's proxy URL, whose password is its ticket.
-    pub proxy: Option<String>,
-    pub protocol: Option<String>,
-    pub host: Option<String>,
-    /// The repository's path on the host, when git sends it
-    /// (`credential.useHttpPath`).
-    pub path: Option<String>,
+    /// From the run's proxy URL, whose password it is.
+    ticket: Option<ren_relay::Ticket>,
+    protocol: Option<Protocol>,
+    host: Option<GitHost>,
+    path: AskedPath,
+}
+
+/// The protocol git asks a credential for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Protocol {
+    Https,
+    Other(String),
+}
+
+/// The host git asks a credential for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GitHost {
+    GitHub,
+    Other(String),
+}
+
+/// The repository's path git sends with its ask (`credential.useHttpPath`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum AskedPath {
+    #[default]
+    Unsaid,
+    Repository(RepositorySlug),
+    Other(String),
 }
 
 /// The GitHub App's tokens for the repositories runs may be granted.
@@ -55,53 +77,62 @@ impl CredentialAsk {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
             };
-            let value = Some(value.to_owned());
             match key {
-                "proxy" => ask.proxy = value,
-                "protocol" => ask.protocol = value,
-                "host" => ask.host = value,
-                "path" => ask.path = value,
+                "proxy" => ask.ticket = Self::ticket_of(value),
+                "protocol" => {
+                    ask.protocol = Some(match value {
+                        "https" => Protocol::Https,
+                        other => Protocol::Other(other.to_owned()),
+                    });
+                }
+                "host" => {
+                    ask.host = Some(match value {
+                        "github.com" => GitHost::GitHub,
+                        other => GitHost::Other(other.to_owned()),
+                    });
+                }
+                "path" => {
+                    ask.path =
+                        match RepositorySlug::of_remote(&format!("https://github.com/{value}")) {
+                            Some(repository) => AskedPath::Repository(repository),
+                            None => AskedPath::Other(value.to_owned()),
+                        };
+                }
                 _ => {}
             }
         }
         ask
     }
 
-    /// The run's ticket, from its proxy URL.
-    pub fn ticket(&self) -> Option<ren_relay::Ticket> {
-        let proxy = self.proxy.as_deref()?;
+    /// The ticket in a proxy URL, `http://<user>:<ticket>@<relay>`.
+    fn ticket_of(proxy: &str) -> Option<ren_relay::Ticket> {
         let (credentials, _) = proxy.rsplit_once('@')?;
         let (_, secret) = credentials.rsplit_once(':')?;
         ren_relay::Ticket::new(secret).ok()
     }
 
+    /// The run's ticket, from its proxy URL.
+    pub fn ticket(&self) -> Option<&ren_relay::Ticket> {
+        self.ticket.as_ref()
+    }
+
     /// Whether it asks for `repository` on github.com over HTTPS: its path,
     /// when git sends one, must name it.
     pub fn is_for(&self, repository: &RepositorySlug) -> bool {
-        let github =
-            self.protocol.as_deref() == Some("https") && self.host.as_deref() == Some("github.com");
-        let path = self.path.as_deref().is_none_or(|path| {
-            RepositorySlug::of_remote(&format!("https://github.com/{path}")).as_ref()
-                == Some(repository)
-        });
-        github && path
+        let https = matches!(self.protocol, Some(Protocol::Https));
+        let github = matches!(self.host, Some(GitHost::GitHub));
+        let path = match &self.path {
+            AskedPath::Unsaid => true,
+            AskedPath::Repository(asked) => asked == repository,
+            AskedPath::Other(_) => false,
+        };
+        https && github && path
     }
 
     /// Git's answer granting `token`: the user GitHub expects with an
     /// installation token.
     pub fn answer(token: &Token) -> String {
         format!("username=x-access-token\npassword={}\n\n", token.reveal())
-    }
-}
-
-impl std::fmt::Debug for CredentialAsk {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CredentialAsk")
-            .field("proxy", &self.proxy.as_ref().map(|_| "<redacted>"))
-            .field("protocol", &self.protocol)
-            .field("host", &self.host)
-            .field("path", &self.path)
-            .finish()
     }
 }
 
@@ -189,10 +220,11 @@ mod tests {
         let read = ask(
             "proxy=http://run:abcdef0123456789abcdef0123456789@127.0.0.1:3128\nprotocol=https\nhost=github.com\npath=acme/web.git\nwwwauth[]=Basic\n\nprotocol=ignored\n",
         );
-        assert_eq!(read.protocol.as_deref(), Some("https"));
-        assert_eq!(read.host.as_deref(), Some("github.com"));
-        assert_eq!(read.path.as_deref(), Some("acme/web.git"));
         assert!(read.ticket().is_some());
+        assert!(read.is_for(&"acme/web".parse().unwrap()));
+        // Read up to the blank line: what follows is not the ask.
+        assert!(!format!("{read:?}").contains("ignored"));
+        // The ticket is never shown.
         assert!(!format!("{read:?}").contains("abcdef"));
         assert!(ask("protocol=https\n").ticket().is_none());
     }

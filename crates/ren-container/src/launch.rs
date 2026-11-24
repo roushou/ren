@@ -58,7 +58,7 @@ pub enum EngineError {
     Runtime {
         socket: PathBuf,
         wanted: Runtime,
-        served: Runtime,
+        served: crate::ReportedRuntime,
     },
 }
 
@@ -108,7 +108,7 @@ impl Engine {
     pub fn start(self, container: &Container, launch: &Launch) -> Result<(), EngineError> {
         if let (Launch::Socket { socket, .. }, Some(wanted)) = (launch, container.runtime()) {
             let served = self.served_runtime(launch)?;
-            if served != wanted {
+            if served != crate::ReportedRuntime::Known(wanted) {
                 return Err(EngineError::Runtime {
                     socket: socket.clone(),
                     wanted,
@@ -125,7 +125,7 @@ impl Engine {
     }
 
     /// The runtime the engine at `launch` runs its containers under.
-    fn served_runtime(self, launch: &Launch) -> Result<Runtime, EngineError> {
+    fn served_runtime(self, launch: &Launch) -> Result<crate::ReportedRuntime, EngineError> {
         let mut args = Vec::new();
         if let Launch::Socket { socket, .. } = launch {
             args.push(Self::url(socket));

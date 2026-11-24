@@ -41,6 +41,14 @@ pub enum Placement {
     Pod(String),
 }
 
+/// The runtime an engine says it runs containers under, as it names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReportedRuntime {
+    Known(Runtime),
+    /// A runtime Ren does not know: never taken for one it does.
+    Unknown(String),
+}
+
 /// What runs a container's processes, and so the boundary between them and
 /// the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,11 +84,13 @@ impl Runtime {
     }
 
     /// The runtime an engine reports by its program's name: gVisor's
-    /// `runsc`, or any other on the host's kernel.
-    pub fn reported(name: &str) -> Self {
+    /// `runsc`, or one on the host's kernel (`crun`, `runc`, `youki`); any
+    /// other is not known to be either.
+    pub fn reported(name: &str) -> ReportedRuntime {
         match name.trim() {
-            "runsc" => Self::Gvisor,
-            _ => Self::HostKernel,
+            "runsc" => ReportedRuntime::Known(Self::Gvisor),
+            "crun" | "runc" | "youki" => ReportedRuntime::Known(Self::HostKernel),
+            other => ReportedRuntime::Unknown(other.to_owned()),
         }
     }
 }

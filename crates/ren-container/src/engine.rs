@@ -131,7 +131,10 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Container, Engine, Environment, Lifetime, Mount, Placement, Privileges, Runtime};
+    use crate::{
+        Container, Engine, Environment, Lifetime, Mount, Placement, Privileges, ReportedRuntime,
+        Runtime,
+    };
 
     #[test]
     fn a_removed_container_on_the_host_runs_as_the_operator() {
@@ -269,8 +272,19 @@ mod tests {
 
     #[test]
     fn the_runtime_is_read_from_what_the_engine_reports() {
-        assert_eq!(Runtime::reported("runsc\n"), Runtime::Gvisor);
-        assert_eq!(Runtime::reported("crun\n"), Runtime::HostKernel);
+        assert_eq!(
+            Runtime::reported("runsc\n"),
+            ReportedRuntime::Known(Runtime::Gvisor)
+        );
+        assert_eq!(
+            Runtime::reported("crun\n"),
+            ReportedRuntime::Known(Runtime::HostKernel)
+        );
+        // Not known to be either: a microVM, say, is not the host's kernel.
+        assert_eq!(
+            Runtime::reported("krun\n"),
+            ReportedRuntime::Unknown("krun".to_owned())
+        );
     }
 
     #[test]

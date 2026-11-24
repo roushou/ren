@@ -21,7 +21,7 @@ use std::{
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::{TcpListener, TcpStream},
-    sync::mpsc::UnboundedSender,
+    sync::mpsc::{Sender, error::TrySendError},
     time::timeout,
 };
 
@@ -39,6 +39,8 @@ type Passes<H> = Mutex<HashMap<Ticket, Pass<H>>>;
 #[derive(Debug)]
 pub struct Relay<H> {
     passes: Arc<Passes<H>>,
+    /// Passages not reported because their queue was full.
+    unreported: std::sync::atomic::AtomicU64,
 }
 
 /// A pass the relay holds until this handle is dropped.
@@ -67,6 +69,7 @@ impl<H> Default for Relay<H> {
     fn default() -> Self {
         Self {
             passes: Arc::new(Mutex::new(HashMap::new())),
+            unreported: std::sync::atomic::AtomicU64::new(0),
         }
     }
 }
@@ -114,6 +117,11 @@ impl<H: Clone> Relay<H> {
     }
 
     /// The holder and policy of the pass `ticket` is, if the relay holds it.
+    /// Who holds the pass `ticket` is, if the relay holds it.
+    pub fn holder(&self, ticket: &Ticket) -> Option<H> {
+        self.pass(ticket).map(|(holder, _)| holder)
+    }
+
     fn pass(&self, ticket: &Ticket) -> Option<(H, RelayPolicy)> {
         self.passes
             .lock()
@@ -122,14 +130,21 @@ impl<H: Clone> Relay<H> {
             .map(|pass| (pass.holder.clone(), pass.policy.clone()))
     }
 
+    /// How many passages were not reported, their queue full: a holder
+    /// asking faster than its passages are taken loses its reports, never
+    /// the relay's memory.
+    pub fn unreported(&self) -> u64 {
+        self.unreported.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Takes requests on `listener` until `shutdown` resolves, sending each
-    /// one's [`Passage`] to `passages` as it ends. A request without a
+    /// one's [`Passage`] to `passages` as it ends, when it has room. A request without a
     /// ticket the relay holds is answered and reported to no one: it has no
     /// holder. Tunnels still open at shutdown are closed unreported.
     pub async fn serve(
         &self,
         listener: TcpListener,
-        passages: UnboundedSender<Passage<H>>,
+        passages: Sender<Passage<H>>,
         shutdown: impl Future<Output = ()>,
     ) {
         let mut requests = FuturesUnordered::new();
@@ -150,7 +165,7 @@ impl<H: Clone> Relay<H> {
     }
 
     /// One client's request, from its head to its tunnel's end.
-    async fn take(&self, mut stream: TcpStream, passages: &UnboundedSender<Passage<H>>) {
+    async fn take(&self, mut stream: TcpStream, passages: &Sender<Passage<H>>) {
         let mut read = Vec::with_capacity(1024);
         let head = match timeout(Self::HEAD_WAIT, Self::read_head(&mut stream, &mut read)).await {
             Ok(Ok(head)) => head,
@@ -178,8 +193,15 @@ impl<H: Clone> Relay<H> {
                 }
             }
         };
-        // Its receiver gone, the passage has no one to go to.
-        let _ = passages.send(Passage::new(holder, course));
+        match passages.try_send(Passage::new(holder, course)) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                self.unreported
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            // Its receiver gone, the passage has no one to go to.
+            Err(TrySendError::Closed(_)) => {}
+        }
     }
 
     /// Reads until `read` holds a whole head.

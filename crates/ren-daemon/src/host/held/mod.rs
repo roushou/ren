@@ -103,12 +103,17 @@ enum Hold {
     /// In a container on the host's network.
     Contained(SandboxSettings),
     /// In a container with no network but its loopback, reaching out
-    /// through `relaying` where `policy` lists.
-    Relayed {
-        sandboxes: SandboxSettings,
-        policy: RelayPolicy,
-        relaying: Relaying,
-    },
+    /// through its relay.
+    Relayed(Box<RelayedHold>),
+}
+
+/// Relayed runs' containers, and the relay they reach out through where
+/// `policy` lists.
+#[derive(Debug, Clone)]
+struct RelayedHold {
+    sandboxes: SandboxSettings,
+    policy: RelayPolicy,
+    relaying: Relaying,
 }
 
 /// Why runs cannot be held as asked.
@@ -134,10 +139,12 @@ pub struct Relaying {
     projects: WatchedProjects,
     /// The GitHub App's grants, when one is set up.
     grants: Option<Arc<Grants>>,
-    /// Each granted run's ticket and the repository it may push to.
-    granted: Arc<Mutex<HashMap<RunId, (Ticket, RepositorySlug)>>>,
     /// The `ren` git runs as its credential helper inside a run.
     helper: PathBuf,
+    /// Where each client connects itself, read once from its profile.
+    clients: Arc<[(&'static [&'static str], Vec<Destination>)]>,
+    /// Where a granted run reaches GitHub, read once.
+    github: Destination,
     /// Where each relayed run's [`Admission`] is kept: in the runs' root,
     /// which no run sees, never in a run's own folder, which it writes.
     admitted: PathBuf,
@@ -213,6 +220,8 @@ impl Relaying {
     /// The folder of relayed runs' admissions, in the runs' root.
     pub const ADMITTED: &str = ".admitted";
 
+    /// Fails when a client's profile, or GitHub's address, lists what is
+    /// not a destination: Ren's own constants, checked once here.
     pub fn new(
         relay: Arc<Relay<RelayedRun>>,
         doors: Doors,
@@ -221,8 +230,21 @@ impl Relaying {
         helper: PathBuf,
         projects: WatchedProjects,
         admitted: PathBuf,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, ren_relay::NotADestination> {
+        let clients = <ren_harness::Harness as ren_protocol::label::Labeled>::ALL
+            .iter()
+            .map(|harness| {
+                let reaches = harness.profile().needs.reaches;
+                reaches
+                    .iter()
+                    .map(|text| text.parse::<Destination>())
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|parsed| (reaches, parsed))
+            })
+            .collect::<Result<Arc<[_]>, _>>()?;
+        Ok(Self {
+            clients,
+            github: Self::GITHUB.parse()?,
             relay,
             doors,
             gateway,
@@ -230,10 +252,18 @@ impl Relaying {
             passes: Arc::new(Mutex::new(HashMap::new())),
             projects,
             grants: None,
-            granted: Arc::new(Mutex::new(HashMap::new())),
             helper,
             admitted,
-        }
+        })
+    }
+
+    /// Where a client whose profile lists `reaches` connects itself.
+    fn client(&self, reaches: &[&str]) -> Vec<Destination> {
+        self.clients
+            .iter()
+            .find(|(listed, _)| *listed == reaches)
+            .map(|(_, parsed)| parsed.clone())
+            .unwrap_or_default()
     }
 
     /// Runs working in a repository `grants` covers are granted it.
@@ -278,14 +308,12 @@ impl Relaying {
             }
         }
         let ask = CredentialAsk::read(&String::from_utf8_lossy(&read));
-        let granted = ask.ticket().and_then(|ticket| {
-            self.granted
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .values()
-                .find(|(held, _)| *held == ticket)
-                .map(|(_, repository)| repository.clone())
-        });
+        // The run the ticket's pass is held for, and its grant: what the
+        // relay holds, not what the ask says.
+        let granted = ask
+            .ticket()
+            .and_then(|ticket| self.relay.holder(ticket))
+            .and_then(|held| held.grant().cloned());
         let answer = match (&self.grants, granted) {
             (Some(grants), Some(repository)) if ask.is_for(&repository) => {
                 match grants.token(&repository).await {
@@ -330,19 +358,8 @@ impl Relaying {
                 .as_ref()
                 .is_some_and(|grants| grants.covers(repository))
         });
-        let client = needs
-            .reaches
-            .iter()
-            .map(|text| text.parse::<Destination>().map_err(io::Error::other))
-            .collect::<io::Result<Vec<_>>>()?;
-        let github = grant
-            .as_ref()
-            .map(|_| {
-                Self::GITHUB
-                    .parse::<Destination>()
-                    .map_err(io::Error::other)
-            })
-            .transpose()?;
+        let client = self.client(needs.reaches);
+        let github = grant.as_ref().map(|_| self.github.clone());
         let reach = Listing::default()
             .list(
                 Purpose::Configuration,
@@ -435,13 +452,6 @@ impl Relaying {
         env
     }
 
-    fn grant(&self, run: RunId, ticket: Ticket, repository: RepositorySlug) {
-        self.granted
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(run, (ticket, repository));
-    }
-
     /// Admits `run` again, as the daemon kept it, for a daemon that took
     /// it up: the pass went with the daemon that issued it. A run with no
     /// kept admission is not relayed.
@@ -483,20 +493,13 @@ impl Relaying {
         )
     }
 
-    /// The relay holds `admission`'s pass for `run`, and its grant.
+    /// The relay holds `admission`'s pass for `run`, with its grant.
     fn pass(&self, run: RunId, admission: &Admission) -> io::Result<()> {
-        self.hold(run, admission.ticket.clone(), admission.reach.clone())?;
-        if let Some(repository) = &admission.grant {
-            self.grant(run, admission.ticket.clone(), repository.clone());
-        }
-        Ok(())
-    }
-
-    fn hold(&self, run: RunId, ticket: Ticket, reach: Listing) -> io::Result<()> {
-        let policy = reach.policy();
+        let policy = admission.reach.policy();
+        let held = RelayedRun::new(run, admission.reach.clone(), admission.grant.clone());
         let pass = self
             .relay
-            .issue(ticket, RelayedRun::new(run, reach), policy)
+            .issue(admission.ticket.clone(), held, policy)
             .map_err(io::Error::other)?;
         self.passes
             .lock()
@@ -514,10 +517,6 @@ impl Relaying {
             tracing::warn!(%run, %error, "could not remove a relayed run's admission");
         }
         self.passes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&run);
-        self.granted
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(&run);
@@ -635,11 +634,13 @@ impl HeldRuns {
             (Launcher::Direct, None) => Hold::Direct,
             (Launcher::Container(sandboxes), relaying) => match (sandboxes.network(), relaying) {
                 (RunNetwork::Host { .. }, None) => Hold::Contained(sandboxes),
-                (RunNetwork::Relayed { policy, .. }, Some(relaying)) => Hold::Relayed {
-                    policy: policy.clone(),
-                    sandboxes,
-                    relaying,
-                },
+                (RunNetwork::Relayed { policy, .. }, Some(relaying)) => {
+                    Hold::Relayed(Box::new(RelayedHold {
+                        policy: policy.clone(),
+                        sandboxes,
+                        relaying,
+                    }))
+                }
                 (RunNetwork::Relayed { .. }, None) => return Err(HoldError::NoRelay),
                 (RunNetwork::Host { .. }, Some(_)) => return Err(HoldError::UnusedRelay),
             },
@@ -660,7 +661,7 @@ impl HeldRuns {
     /// What relayed runs reach out through, when runs are relayed.
     fn relaying(&self) -> Option<&Relaying> {
         match &self.hold {
-            Hold::Relayed { relaying, .. } => Some(relaying),
+            Hold::Relayed(relayed) => Some(&relayed.relaying),
             Hold::Systemd | Hold::Direct | Hold::Contained(_) => None,
         }
     }
@@ -730,15 +731,11 @@ impl HeldRuns {
             Hold::Contained(sandboxes) => {
                 self.contained(sandboxes, run, &mut spec, &folder, needs)?
             }
-            Hold::Relayed {
-                sandboxes,
-                policy,
-                relaying,
-            } => {
-                let (relayed, env) = relaying.admit(run, policy, needs, &spec.cwd)?;
+            Hold::Relayed(held) => {
+                let (relayed, env) = held.relaying.admit(run, &held.policy, needs, &spec.cwd)?;
                 spec.env.extend(env);
                 spec.relayed = Some(relayed);
-                self.contained(sandboxes, run, &mut spec, &folder, needs)?
+                self.contained(&held.sandboxes, run, &mut spec, &folder, needs)?
             }
         };
         let json = serde_json::to_vec(&spec).map_err(io::Error::other)?;
@@ -1096,6 +1093,7 @@ mod tests {
             projects,
             dir.path().join(Relaying::ADMITTED),
         )
+        .unwrap()
         .granting(Arc::new(grants));
         tokio::spawn(relaying.serve_grants(doors.listen(Doors::GRANTS).unwrap()));
 
@@ -1188,7 +1186,8 @@ mod tests {
             "/opt/ren/bin/ren".into(),
             WatchedProjects::new(None),
             dir.path().join(Relaying::ADMITTED),
-        );
+        )
+        .unwrap();
         again
             .readmit(RunId::restore(uuid::Uuid::from_u128(1)))
             .unwrap();

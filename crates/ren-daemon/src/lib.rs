@@ -40,7 +40,18 @@ use std::{convert::Infallible, io, net::SocketAddr, path::PathBuf, sync::Arc, ti
 use tokio::{net::TcpListener, task::JoinHandle};
 
 /// What the relay reports of each relayed run's requests, as they end.
-type Passages = tokio::sync::mpsc::UnboundedReceiver<Passage<RelayedRun>>;
+/// The passages the relay reports, and the relay, which counts those its
+/// queue had no room for.
+struct Passages {
+    received: tokio::sync::mpsc::Receiver<Passage<RelayedRun>>,
+    relay: Arc<Relay<RelayedRun>>,
+}
+
+impl Passages {
+    /// Passages the relay holds for recording at most: past this, a run
+    /// asking faster than they are recorded loses their reports.
+    const QUEUE: usize = 1024;
+}
 
 /// What relaying runs gives the daemon to serve: the passages the relay
 /// reports, and the listener that serves relayed runs model forwarding
@@ -498,7 +509,11 @@ impl Daemon {
         let doors = Doors::new(runs);
         let to_gateway = doors.open(Doors::GATEWAY, forwarding.local_addr()?)?;
         let to_relay = doors.open(Doors::RELAY, relay_address)?;
-        let (sender, passages) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, received) = tokio::sync::mpsc::channel(Passages::QUEUE);
+        let passages = Passages {
+            received,
+            relay: relay.clone(),
+        };
         let serving = relay.clone();
         let mut relaying = Relaying::new(
             relay,
@@ -508,7 +523,8 @@ impl Daemon {
             helper,
             projects,
             runs.join(Relaying::ADMITTED),
-        );
+        )
+        .map_err(std::io::Error::other)?;
         let granting = match grants {
             Some(grants) => {
                 relaying = relaying.granting(grants);
@@ -541,14 +557,24 @@ impl Daemon {
         ))
     }
 
-    /// Record each passage the relay reports with its run, and log what a
-    /// run could not reach. Never ends: the daemon drops it once runs stop.
+    /// Record each passage the relay reports with its run, and say when the
+    /// relay had no room for some. Never ends: the daemon drops it once runs
+    /// stop.
     async fn record_passages(passages: Option<Passages>, recorder: Recorder) -> Infallible {
         if let Some(mut passages) = passages {
-            while let Some(passage) = passages.recv().await {
+            let mut unreported = 0;
+            while let Some(passage) = passages.received.recv().await {
                 Self::log_passage(&passage);
                 let held = passage.holder();
                 recorder.passage(held.run(), held.record(passage.course()));
+                let now = passages.relay.unreported();
+                if now > unreported {
+                    tracing::warn!(
+                        lost = now - unreported,
+                        "passages were not recorded: the relay's queue was full"
+                    );
+                    unreported = now;
+                }
             }
         }
         // The relay stopped reporting, or there is none.
@@ -556,20 +582,20 @@ impl Daemon {
         std::future::pending().await
     }
 
-    /// A relayed run's passage, in the daemon's log when it went nowhere:
-    /// as a warning, so the operator sees what a run could not reach.
+    /// A relayed run's passage, in the daemon's debug log when it went
+    /// nowhere: it is recorded, and a run's refusals would flood the log.
     fn log_passage(passage: &Passage<RelayedRun>) {
         let run = passage.holder().run();
         match passage.course() {
             Course::NotATunnel { method } => {
-                tracing::warn!(%run, %method, "a run asked the relay for something other than a tunnel");
+                tracing::debug!(%run, %method, "a run asked the relay for something other than a tunnel");
             }
             Course::Tunnel { target, end } => match end {
-                TunnelEnd::Refused(refusal) => tracing::warn!(
+                TunnelEnd::Refused(refusal) => tracing::debug!(
                     %run, %target, refusal = refusal.label(),
                     "a run's connection was refused"
                 ),
-                TunnelEnd::Unreachable { why, .. } => tracing::warn!(
+                TunnelEnd::Unreachable { why, .. } => tracing::debug!(
                     %run, %target, why = why.label(),
                     "a run's connection could not reach its target"
                 ),

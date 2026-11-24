@@ -5,6 +5,7 @@
 //! reports which list let it through. Pure: what each list holds is handed
 //! to it.
 
+use ren_github::RepositorySlug;
 use ren_recorder::{
     id::RunId,
     passage::{PassageRecord, Purpose},
@@ -29,12 +30,14 @@ pub struct Listed {
     purpose: Purpose,
 }
 
-/// Who holds a relayed run's pass: the run, and its listing, so a passage
-/// reported after the run ended still says why it went through.
+/// Who holds a relayed run's pass: the run, its listing, so a passage
+/// reported after the run ended still says why it went through, and the
+/// repository it may push to, which its git's ask is answered for.
 #[derive(Debug, Clone)]
 pub struct RelayedRun {
     run: RunId,
     listing: Arc<Listing>,
+    grant: Option<RepositorySlug>,
 }
 
 impl Listing {
@@ -68,15 +71,21 @@ impl Listing {
 }
 
 impl RelayedRun {
-    pub fn new(run: RunId, listing: Listing) -> Self {
+    pub fn new(run: RunId, listing: Listing, grant: Option<RepositorySlug>) -> Self {
         Self {
             run,
             listing: Arc::new(listing),
+            grant,
         }
     }
 
     pub fn run(&self) -> RunId {
         self.run
+    }
+
+    /// The repository the run may push to, when it is granted one.
+    pub fn grant(&self) -> Option<&RepositorySlug> {
+        self.grant.as_ref()
     }
 
     /// The record of `course`, one of this run's passages.
@@ -130,7 +139,7 @@ mod tests {
 
     #[test]
     fn a_passage_says_which_list_let_it_through_the_first_one_on_two() {
-        let run = RelayedRun::new(RunId::restore(uuid::Uuid::nil()), listing());
+        let run = RelayedRun::new(RunId::restore(uuid::Uuid::nil()), listing(), None);
         let through = |target: &str, through: &str| Course::Tunnel {
             target: target.parse().unwrap(),
             end: TunnelEnd::Broken {

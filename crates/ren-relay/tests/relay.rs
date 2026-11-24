@@ -44,7 +44,7 @@ async fn closed_port() -> u16 {
 struct Running {
     relay: std::sync::Arc<Relay<&'static str>>,
     address: SocketAddr,
-    passages: mpsc::UnboundedReceiver<Passage<&'static str>>,
+    passages: mpsc::Receiver<Passage<&'static str>>,
     _stop: oneshot::Sender<()>,
 }
 
@@ -52,7 +52,7 @@ async fn relay() -> Running {
     let relay = std::sync::Arc::new(Relay::new());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let (sender, passages) = mpsc::unbounded_channel();
+    let (sender, passages) = mpsc::channel(64);
     let (stop, stopped) = oneshot::channel::<()>();
     let serving = relay.clone();
     tokio::spawn(async move {
@@ -105,7 +105,7 @@ async fn ask(
     (stream, String::from_utf8(answer).unwrap())
 }
 
-async fn next(passages: &mut mpsc::UnboundedReceiver<Passage<&'static str>>) -> Course {
+async fn next(passages: &mut mpsc::Receiver<Passage<&'static str>>) -> Course {
     let passage = tokio::time::timeout(Duration::from_secs(10), passages.recv())
         .await
         .expect("a passage is reported")
