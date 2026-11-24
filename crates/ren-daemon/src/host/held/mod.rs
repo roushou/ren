@@ -36,7 +36,7 @@ mod serve;
 pub use doorway::{Doors, Doorway};
 pub use grant::{CredentialAsk, Grants};
 pub use listing::{Listing, RelayedRun};
-pub use project_reach::ProjectReaches;
+pub use project_reach::{ProjectReachError, ProjectReaches};
 use ren_container::{Engine, EngineError, Launch, Reach};
 pub use sandbox::{RunReach, SandboxError, Sandboxes};
 pub use serve::RunHost;

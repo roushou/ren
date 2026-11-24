@@ -2,7 +2,7 @@
 //! asks for, and the addresses a tunnel may then go to
 //! ([`PublicAddress`]).
 
-use ren_destination::{Destination, Host, Target};
+use crate::destination::{Destination, Host, Target};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// The destinations one holder's tunnels may reach; nothing else.
@@ -160,7 +160,7 @@ impl TryFrom<IpAddr> for PublicAddress {
 #[cfg(test)]
 mod tests {
     use super::{PublicAddress, Reachable, Refusal, RelayPolicy, Verdict};
-    use ren_destination::{Destination, Target};
+    use crate::destination::{Destination, Target};
     use std::net::IpAddr;
 
     fn policy() -> RelayPolicy {

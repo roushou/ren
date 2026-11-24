@@ -2,9 +2,8 @@
 //! ([`Head::read`]), and the [`Answer`] the relay sends back. Pure: it
 //! reads bytes and writes bytes, and never touches a socket.
 
-use crate::{policy::Refusal, ticket::Ticket};
+use crate::{destination::Target, policy::Refusal, ticket::Ticket};
 use base64::Engine as _;
-use ren_destination::Target;
 
 /// What a client asked the relay for.
 #[derive(Debug, Clone, PartialEq, Eq)]

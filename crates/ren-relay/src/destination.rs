@@ -203,13 +203,13 @@ impl Destination {
     }
 
     /// Whether this destination lets a run reach `target`.
-    pub fn admits(&self, target: &Target) -> bool {
+    pub(crate) fn admits(&self, target: &Target) -> bool {
         self.port == target.port && self.host.matches(&target.host)
     }
 
     /// Whether `target` reaches this destination by the address it lists,
     /// so its address is the one listed, not one a name resolved to.
-    pub fn lists_address(&self) -> bool {
+    pub(crate) fn lists_address(&self) -> bool {
         matches!(self.host, HostPattern::Exact(Host::Address(_)))
     }
 }

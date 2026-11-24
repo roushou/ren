@@ -8,12 +8,10 @@ repository.workspace = true
 rust-version.workspace = true
 description = "A forward proxy that lets a sandboxed run's connections out to the destinations its policy lists, passing them through unread, and reports each passage."
 
-# Self-contained but for ren-destination, a pure leaf: where a passage may
-# go is its own crate, so a pure manifest can list it.
+# Self-contained: it depends on none of Ren's crates.
 [dependencies]
 base64.workspace = true
 futures-util.workspace = true
-ren-destination.workspace = true
 strum.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "sync", "time"] }

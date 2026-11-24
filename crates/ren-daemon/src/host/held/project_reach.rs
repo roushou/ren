@@ -3,12 +3,22 @@
 //! from a run's checkout, which the run could change.
 
 use ren_github::{RepositorySlug, Snapshot};
-use ren_manifest::{Manifest, ManifestError};
-use ren_relay::Destination;
+use ren_manifest::{Manifest, ManifestError, ReachEntry};
+use ren_relay::{Destination, NotADestination};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, PoisonError},
 };
+
+/// Why a project's manifest gives its runs no reach.
+#[derive(Debug, thiserror::Error)]
+pub enum ProjectReachError {
+    #[error(transparent)]
+    Manifest(#[from] ManifestError),
+    /// An entry the manifest reads that the relay cannot admit by.
+    #[error("reach in .ren/project.toml lists {0}, which the relay cannot admit")]
+    Destination(ReachEntry, #[source] NotADestination),
+}
 
 /// The reach each watched repository's default branch declares.
 #[derive(Debug, Clone, Default)]
@@ -17,25 +27,40 @@ pub struct ProjectReaches(Arc<Mutex<HashMap<RepositorySlug, Vec<Destination>>>>)
 impl ProjectReaches {
     /// Learns what `snapshot` of `repository` declares: its manifest's
     /// reach, or none when it has no manifest. A manifest that does not
-    /// read declares none, and its error is returned.
+    /// read, or lists what the relay cannot admit by, declares none, and
+    /// says why.
     pub fn learn(
         &self,
         repository: &RepositorySlug,
         snapshot: &Snapshot,
-    ) -> Result<(), ManifestError> {
-        let read = snapshot.manifest.as_deref().map(Manifest::read).transpose();
-        let reach = match &read {
-            Ok(manifest) => manifest
-                .as_ref()
-                .map(|manifest| manifest.reach().to_vec())
-                .unwrap_or_default(),
-            Err(_) => Vec::new(),
-        };
+    ) -> Result<(), ProjectReachError> {
+        let read = Self::reach(snapshot.manifest.as_deref());
         self.0
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(repository.clone(), reach);
+            .insert(
+                repository.clone(),
+                read.as_ref().cloned().unwrap_or_default(),
+            );
         read.map(drop)
+    }
+
+    /// The destinations `manifest` lists, as the relay admits by them: the
+    /// one place a manifest's entries become the relay's.
+    fn reach(manifest: Option<&str>) -> Result<Vec<Destination>, ProjectReachError> {
+        let Some(manifest) = manifest else {
+            return Ok(Vec::new());
+        };
+        Manifest::read(manifest)?
+            .reach()
+            .iter()
+            .map(|entry| {
+                entry
+                    .to_string()
+                    .parse::<Destination>()
+                    .map_err(|error| ProjectReachError::Destination(entry.clone(), error))
+            })
+            .collect()
     }
 
     /// Where `repository`'s runs may reach, as last learned.

@@ -15,17 +15,18 @@
 //! are pure; [`Relay::serve`] is the shell, and spawns no task. The crate
 //! depends on none of Ren's.
 
+mod destination;
 mod head;
 mod passage;
 mod policy;
 mod relay;
 mod ticket;
 
+pub use destination::{
+    Destination, Host, HostName, HostPattern, NotADestination, NotAHostName, NotATarget, Target,
+};
 pub use head::{Answer, Ask, Head, HeadError, Reading};
 pub use passage::{Course, Passage, TunnelEnd, Unreachable};
 pub use policy::{NotPublic, PublicAddress, Reachable, Refusal, RelayPolicy, Verdict};
 pub use relay::{IssueError, PassHandle, Relay};
-pub use ren_destination::{
-    Destination, Host, HostName, HostPattern, NotADestination, NotAHostName, NotATarget, Target,
-};
 pub use ticket::{InvalidTicket, Ticket};

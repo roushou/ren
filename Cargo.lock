@@ -1926,13 +1926,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ren-destination"
-version = "0.1.0"
-dependencies = [
- "thiserror",
-]
-
-[[package]]
 name = "ren-gateway"
 version = "0.1.0"
 dependencies = [
@@ -2029,7 +2022,6 @@ name = "ren-manifest"
 version = "0.1.0"
 dependencies = [
  "ren-depot",
- "ren-destination",
  "serde",
  "thiserror",
  "toml",
@@ -2096,7 +2088,6 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "proptest",
- "ren-destination",
  "strum",
  "thiserror",
  "tokio",

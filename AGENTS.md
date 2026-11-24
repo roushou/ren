@@ -220,8 +220,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   CLI dependency.
 - `crates/ren-manifest`: a project's manifest for Ren (`Manifest`,
   read from `.ren/project.toml`): the depot packages its steps need
-  (`packages`), where its relayed runs may reach (`reach`, `ren-destination`'s
-  `Destination`s), its build, serve, check, and quiesce steps,
+  (`packages`), where its relayed runs may reach (`reach`, each a
+  `ReachEntry`, `host:port` or `*.parent:port`, read by the manifest
+  itself; the daemon turns them into the relay's `Destination`s), its build, serve, check, and quiesce steps,
   each an argv with the environment it adds, never a shell line, whose
   values name the `Place` a step runs for through a parsed `Template`
   (`{port}`, `{port+N}`, `{data}`, `{worktree}`, read from its old name
@@ -266,17 +267,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   a `Publication` planned from those reports, then applied with Serve, and
   a Serve port turned off. xtask and `ren project preview` publish through
   it.
-- `crates/ren-destination`: where a sandboxed run's connection goes and
-  where it may go, with `Destination` as its primary type: a `Target`
-  (`Host`, a `HostName` or an address, and a port) and a `Destination`
-  (`HostPattern`: a name, `*.parent`, or an address, and a port) that
-  admits targets, each parsed once from its text. Pure, on none of Ren's
-  crates: the relay decides by it, and Ren's configuration and a
-  project's manifest list it.
 - `crates/ren-relay`: a forward proxy that lets a sandboxed run's
   connections out only to where its policy lists, with `Relay` as its
   primary type (docs/plans/self-build.md, phase 12). It depends on none of
-  Ren's crates but `ren-destination`, whose types it re-exports. A holder is issued a pass (`Relay::issue`, revoked when
+  Ren's crates. A holder is issued a pass (`Relay::issue`, revoked when
   its `PassHandle` drops): a `Ticket`, the password of its proxy URL, and
   a `RelayPolicy` of `Destination`s (`host:port`, `*.parent:port`). Pure:
   a request's `Head` read from bytes however they arrive, the `Verdict`,

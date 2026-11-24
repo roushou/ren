@@ -742,13 +742,11 @@ spec (phase 7):
     - Deviation: grants are not the sandbox's. A run's grant is the
       relay's (`Relaying` knows its ticket and repository), so the sandbox
       holds no `Grant`; and `Isolation` is `ren-container`'s `Runtime`.
-    - Deviation: `ren-destination`, split from `ren-relay`. A project's
-      manifest lists destinations, and `ren-manifest` is pure while the
-      relay runs a listener, so `Destination` (with `Target` and its host
-      types) is a pure crate of its own below both; the relay re-exports
-      it. Moved alone first, with no change in behaviour (the same tests).
     - Built: reach declared and its purpose recorded. A project's
-      manifest lists `reach` (`ren-manifest`); the GitHub watch's query
+      manifest lists `reach`, which `ren-manifest` reads itself
+      (`ReachEntry`); the daemon turns each entry into the relay's
+      `Destination` in one place (`ProjectReaches`), and a manifest listing
+      one the relay cannot admit by gives its runs none; the GitHub watch's query
       also reads the default branch's `.ren/project.toml`
       (`Snapshot::manifest`), and the daemon learns each watched
       repository's reach from it (`ProjectReaches`), never from a run's

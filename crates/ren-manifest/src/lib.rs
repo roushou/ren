@@ -52,12 +52,13 @@
 //! ([`Manifest::read`]); an unknown placeholder is refused there, and
 //! a port past the place's range when a step is expanded.
 
+mod reach;
 mod template;
 
+pub use reach::{NotAReachEntry, ReachEntry};
 pub use template::{Template, TemplateError};
 
 use ren_depot::package::PackageId;
-use ren_destination::Destination;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -68,7 +69,7 @@ use std::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
     packages: BTreeSet<PackageId>,
-    reach: Vec<Destination>,
+    reach: Vec<ReachEntry>,
     build: Vec<Step>,
     serve: Option<Serve>,
     checks: Vec<NamedCheck>,
@@ -134,8 +135,8 @@ pub enum ManifestError {
     EnvName(String),
     #[error(transparent)]
     Template(#[from] TemplateError),
-    #[error("reach in .ren/project.toml lists {0:?}, which is not `host:port` or `*.parent:port`")]
-    Reach(String),
+    #[error("reach in .ren/project.toml lists {0}")]
+    Reach(#[from] NotAReachEntry),
 }
 
 /// The `tools` key, renamed to `packages`: a manifest that still has it
@@ -257,10 +258,7 @@ impl Manifest {
         let reach = file
             .reach
             .into_iter()
-            .map(|text| {
-                text.parse::<Destination>()
-                    .map_err(|_| ManifestError::Reach(text))
-            })
+            .map(|text| text.parse::<ReachEntry>())
             .collect::<Result<_, _>>()?;
         Ok(Self {
             packages: file.packages,
@@ -275,7 +273,7 @@ impl Manifest {
 
     /// Where its relayed runs may connect through the relay, besides what
     /// Ren's configuration and their clients list.
-    pub fn reach(&self) -> &[Destination] {
+    pub fn reach(&self) -> &[ReachEntry] {
         &self.reach
     }
 
