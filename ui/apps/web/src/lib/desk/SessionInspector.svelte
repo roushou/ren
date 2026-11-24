@@ -8,8 +8,8 @@
     again each time a turn ends (`version`).
   */
   import { ManagementApi, type RecordingId, type RecordingReport } from '#lib/api.ts';
-  import type { RunId, SessionId } from '#lib/runs.ts';
-  import { Reach, type Passage } from '#lib/passages.ts';
+  import type { SessionId } from '#lib/runs.ts';
+  import { Reached, type Passage } from '#lib/passages.ts';
   import { SessionInspector } from '#lib/inspector.ts';
 
   import { Work, WorkApi, type WorkItem } from '#lib/work.ts';
@@ -19,7 +19,6 @@
   let {
     session,
     recording,
-    runs,
     steps,
     project,
     version,
@@ -27,8 +26,6 @@
     session: SessionId;
     /** The recording its calls were recorded under; null before the first. */
     recording: RecordingId | null;
-    /** Its runs, newest first. */
-    runs: readonly RunId[];
     steps: readonly Step[];
     /** The project it belongs to, by name; null in Scratch. */
     project: string | null;
@@ -71,28 +68,22 @@
   });
   const workItem = $derived(item && item.session === session ? item.item : null);
 
-  /** Runs whose passages are read: the newest. */
-  const PASSAGE_RUNS = 20;
-  const runKey = $derived(runs.slice(0, PASSAGE_RUNS).join(' '));
-  let reached = $state.raw<{ key: string; passages: Passage[][] } | null>(null);
+  let reached = $state.raw<{ session: SessionId; passages: Passage[] } | null>(null);
   $effect(() => {
     void version;
-    const key = runKey;
+    const target = session;
     const abort = new AbortController();
-    Promise.all(
-      key
-        .split(' ')
-        .filter(Boolean)
-        .map((run) => api.passages(run, abort.signal).catch((): Passage[] => [])),
-    ).then(
-      (passages) => (reached = { key, passages }),
+    api.passages(target, abort.signal).then(
+      (passages) => (reached = { session: target, passages }),
       () => {
         // Without them, no passages show.
       },
     );
     return () => abort.abort();
   });
-  const reach = $derived(reached && reached.key === runKey ? Reach.rows(reached.passages) : []);
+  const reach = $derived(
+    reached && reached.session === session ? Reached.rows(reached.passages) : [],
+  );
 
   const context = $derived(read ? SessionInspector.context(read) : null);
   const totals = $derived(read ? SessionInspector.totals(read) : null);

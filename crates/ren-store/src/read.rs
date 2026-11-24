@@ -12,7 +12,7 @@ use crate::view::{
     WorkItemView,
 };
 use crate::{Reader, StoreError};
-use ren_recorder::id::{CallId, RecordingId, RunId, TurnId, WorkItemId};
+use ren_recorder::id::{CallId, RecordingId, RunId, SessionId, TurnId, WorkItemId};
 use ren_recorder::project::ProjectName;
 
 /// A read of recorded history.
@@ -63,7 +63,7 @@ pub enum ReadRequest {
     },
     /// Where a relayed run reached through the relay, grouped by what it
     /// asked for and how that ended.
-    Passages(RunId),
+    Passages(SessionId),
     /// Work items, most recently changed first; with a project, its only.
     WorkItems {
         limit: PageLimit,
@@ -163,8 +163,8 @@ impl Reader {
                     .await?
                     .ok_or(StoreError::NotFound)?,
             ),
-            ReadRequest::Passages(run) => ReadResponse::Passages {
-                passages: self.passages(*run).await?.ok_or(StoreError::NotFound)?,
+            ReadRequest::Passages(session) => ReadResponse::Passages {
+                passages: self.passages(*session).await?.ok_or(StoreError::NotFound)?,
             },
             ReadRequest::WorkItems {
                 limit,

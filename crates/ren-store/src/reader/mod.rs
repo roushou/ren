@@ -542,14 +542,22 @@ impl Reader {
             .transpose()
     }
 
-    /// Where `run` reached through the relay, grouped; `None` for a run the
-    /// store does not hold.
-    pub async fn passages(&self, run: RunId) -> Result<Option<Vec<PassageView>>, StoreError> {
-        if self.run(run).await?.is_none() {
+    /// Where `session`'s runs reached through the relay, grouped; `None`
+    /// for a session the store does not hold.
+    pub async fn passages(
+        &self,
+        session: SessionId,
+    ) -> Result<Option<Vec<PassageView>>, StoreError> {
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM operator_sessions WHERE id = ?1)")
+                .bind(session.to_string())
+                .fetch_one(&self.pool)
+                .await?;
+        if !exists {
             return Ok(None);
         }
         sqlx::query(PassageView::SELECT)
-            .bind(run.to_string())
+            .bind(session.to_string())
             .fetch_all(&self.pool)
             .await?
             .iter()

@@ -1,6 +1,6 @@
-// Where a relayed run reached through the relay (`/api/runs/{id}/passages`),
-// and the session inspector's list of it: each place its runs asked for,
-// with how those requests ended. Pure: decoding and grouping only, tested in
+// Where a session's relayed runs reached through the relay
+// (`/api/sessions/{id}/passages`), and the session inspector's list of it:
+// each place its runs asked for, with how those requests ended. Pure: decoding and grouping only, tested in
 // tests/passages.test.ts.
 import {
   array,
@@ -77,39 +77,30 @@ export interface ReachRow {
   last_at: number;
 }
 
-export class Reach {
-  /** A session's runs' passages as one list: each place and end once,
-   * what was refused first, then the most recent. */
-  static rows(runs: readonly (readonly Passage[])[]): ReachRow[] {
-    const merged = new Map<string, ReachRow>();
-    for (const passage of runs.flat()) {
-      const key = `${passage.end} ${passage.asked}`;
-      const known = merged.get(key);
-      if (known) {
-        known.count += passage.count;
-        known.last_at = Math.max(known.last_at, passage.last_at);
-        continue;
-      }
-      merged.set(key, {
+export class Reached {
+  /** A session's passages as its list: what was refused first, then the
+   * most recent. The server groups them, by place and end, across runs. */
+  static rows(passages: readonly Passage[]): ReachRow[] {
+    return passages
+      .map((passage) => ({
         asked: passage.asked,
         end: passage.end,
-        mark: Reach.mark(passage.end),
-        said: Reach.said(passage),
+        mark: Reached.mark(passage.end),
+        said: Reached.said(passage),
         count: passage.count,
         last_at: passage.last_at,
-      });
-    }
-    return [...merged.values()].sort(
-      (a, b) =>
-        Number(Reach.refused(b.end)) - Number(Reach.refused(a.end)) ||
-        b.last_at - a.last_at ||
-        a.asked.localeCompare(b.asked),
-    );
+      }))
+      .sort(
+        (a, b) =>
+          Number(Reached.refused(b.end)) - Number(Reached.refused(a.end)) ||
+          b.last_at - a.last_at ||
+          a.asked.localeCompare(b.asked),
+      );
   }
 
   /** Whether the relay refused it: a place the operator can list. */
   static refused(end: Stored<PassageEnd>): boolean {
-    const known = Reach.known(end);
+    const known = Reached.known(end);
     if (known === null) return false;
     switch (known) {
       case 'unlisted':
@@ -128,7 +119,7 @@ export class Reach {
   }
 
   static mark(end: Stored<PassageEnd>): Mark {
-    const known = Reach.known(end);
+    const known = Reached.known(end);
     if (known === null) return 'unknown';
     switch (known) {
       case 'closed':
@@ -148,8 +139,9 @@ export class Reach {
   }
 
   static said(passage: Passage): string {
-    const known = Reach.known(passage.end);
-    const listed = passage.listed_by === null ? '' : `, listed by ${Reach.list(passage.listed_by)}`;
+    const known = Reached.known(passage.end);
+    const listed =
+      passage.listed_by === null ? '' : `, listed by ${Reached.list(passage.listed_by)}`;
     const through = passage.through === null ? '' : ` through ${passage.through}${listed}`;
     if (known === null) return passage.end;
     switch (known) {

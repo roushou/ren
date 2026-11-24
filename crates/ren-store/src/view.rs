@@ -759,8 +759,9 @@ pub struct PassageView {
 }
 
 impl PassageView {
-    /// A run's passages, grouped by what was asked and how it ended.
-    pub(super) const SELECT: &'static str = "SELECT asked, end, (SELECT last.through FROM run_passages AS last WHERE last.run = run_passages.run AND last.asked = run_passages.asked AND last.end = run_passages.end ORDER BY last.seq DESC LIMIT 1) AS through, (SELECT last.listed_by FROM run_passages AS last WHERE last.run = run_passages.run AND last.asked = run_passages.asked AND last.end = run_passages.end ORDER BY last.seq DESC LIMIT 1) AS listed_by, COUNT(*) AS count, COALESCE(SUM(sent), 0) AS sent, COALESCE(SUM(received), 0) AS received, MIN(at) AS first_at, MAX(at) AS last_at FROM run_passages WHERE run = ? GROUP BY asked, end ORDER BY last_at DESC, asked, end";
+    /// A session's passages, across its runs, grouped by what was asked
+    /// and how it ended; each group's destination and purpose its latest.
+    pub(super) const SELECT: &'static str = "SELECT p.asked AS asked, p.end AS end, (SELECT l.through FROM run_passages AS l JOIN runs AS lr ON lr.id = l.run WHERE lr.operator_session = ?1 AND l.asked = p.asked AND l.end = p.end ORDER BY l.at DESC, l.seq DESC LIMIT 1) AS through, (SELECT l.listed_by FROM run_passages AS l JOIN runs AS lr ON lr.id = l.run WHERE lr.operator_session = ?1 AND l.asked = p.asked AND l.end = p.end ORDER BY l.at DESC, l.seq DESC LIMIT 1) AS listed_by, COUNT(*) AS count, COALESCE(SUM(p.sent), 0) AS sent, COALESCE(SUM(p.received), 0) AS received, MIN(p.at) AS first_at, MAX(p.at) AS last_at FROM run_passages AS p JOIN runs AS r ON r.id = p.run WHERE r.operator_session = ?1 GROUP BY p.asked, p.end ORDER BY last_at DESC, asked, end";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);

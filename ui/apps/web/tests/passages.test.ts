@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { UnknownLabel } from '../src/lib/decode.ts';
-import { Reach, passages, type Passage } from '../src/lib/passages.ts';
+import { Reached, passages, type Passage } from '../src/lib/passages.ts';
 
 function passage(asked: string, end: string, count: number, last_at: number): Passage {
   return {
@@ -17,16 +17,11 @@ function passage(asked: string, end: string, count: number, last_at: number): Pa
   };
 }
 
-test('a session lists each place once per end, refusals first, then the newest', () => {
-  const rows = Reach.rows([
-    [
-      passage('registry.acme.dev:443', 'closed', 2, 300),
-      passage('example.com:443', 'unlisted', 1, 100),
-    ],
-    [
-      passage('registry.acme.dev:443', 'closed', 3, 500),
-      passage('cdn.acme.dev:443', 'timed_out', 1, 400),
-    ],
+test('a session lists what was refused first, then the newest', () => {
+  const rows = Reached.rows([
+    passage('registry.acme.dev:443', 'closed', 5, 500),
+    passage('example.com:443', 'unlisted', 1, 100),
+    passage('cdn.acme.dev:443', 'timed_out', 1, 400),
   ]);
   assert.deepEqual(
     rows.map((row) => [row.asked, row.mark, row.count]),
@@ -41,10 +36,10 @@ test('a session lists each place once per end, refusals first, then the newest',
 });
 
 test('an end this UI does not know is kept and shown as unknown', () => {
-  const [row] = Reach.rows([[passage('acme.dev:22', 'held_back', 1, 1)]]);
+  const [row] = Reached.rows([passage('acme.dev:22', 'held_back', 1, 1)]);
   assert.equal(row?.mark, 'unknown');
   assert.equal(row?.said, 'held_back');
-  assert.equal(Reach.refused('held_back' as Passage['end']), false);
+  assert.equal(Reached.refused('held_back' as Passage['end']), false);
 });
 
 test('the read API body decodes, keeping an unknown end', () => {
@@ -81,6 +76,6 @@ test('the read API body decodes, keeping an unknown end', () => {
 });
 
 test('a list this UI does not know is named as stored', () => {
-  assert.equal(Reach.list('workspace' as UnknownLabel), 'workspace');
-  assert.equal(Reach.list('configuration'), "Ren's configuration");
+  assert.equal(Reached.list('workspace' as UnknownLabel), 'workspace');
+  assert.equal(Reached.list('configuration'), "Ren's configuration");
 });

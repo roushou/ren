@@ -204,7 +204,9 @@ impl ReadSweep {
         if let Some(run) = first(runs, "runs", "id") {
             read(format!("/api/runs/{run}"));
             read(format!("/api/runs/{run}/conversation"));
-            read(format!("/api/runs/{run}/passages"));
+        }
+        if let Some(session) = first(runs, "runs", "operator_session") {
+            read(format!("/api/sessions/{session}/passages"));
         }
         swept
     }
@@ -253,7 +255,7 @@ mod tests {
             ReadRequest::Runs { .. } => "/api/runs?",
             ReadRequest::Run(_) => "/api/runs/{run}",
             ReadRequest::Conversation { .. } => "/api/runs/{run}/conversation",
-            ReadRequest::Passages(_) => "/api/runs/{run}/passages",
+            ReadRequest::Passages(_) => "/api/sessions/{session}/passages",
             ReadRequest::WorkItems { .. } => "/api/work?",
             ReadRequest::WorkItem(_) => "/api/work/{item}",
         }

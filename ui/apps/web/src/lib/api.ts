@@ -1933,8 +1933,8 @@ export class ManagementApi {
   }
   /** Where a relayed run reached through the relay, grouped by what it
    * asked for and how that ended; none for a run that was not relayed. */
-  async passages(run: string, signal?: AbortSignal): Promise<Passage[]> {
-    return (await this.#read(`/api/runs/${run}/passages`, passages, signal)).passages;
+  async passages(session: string, signal?: AbortSignal): Promise<Passage[]> {
+    return (await this.#read(`/api/sessions/${session}/passages`, passages, signal)).passages;
   }
   /** What one turn did, read from its calls' bodies. */
   turn(id: TurnId, signal?: AbortSignal): Promise<TurnActivity> {

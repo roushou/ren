@@ -1061,16 +1061,14 @@ async fn a_held_run_is_detached_left_open_and_rejoined() {
 
 /// A run recorded with four passages: two closed and one broken to a listed
 /// registry, and one refused.
-fn passages_of(harness: &Harness, run: ren_recorder::id::RunId) {
+fn passages_of(harness: &Harness, run: ren_recorder::id::RunId, session: ren_recorder::RunSession) {
     use ren_recorder::passage::{PassageRecord, Purpose};
     use ren_relay::{Course, Refusal, TunnelEnd};
     let tap = harness
         .recorder
         .run(
             run,
-            ren_recorder::RunSession::New(ren_recorder::id::SessionId::restore(
-                uuid::Uuid::from_u128(77),
-            )),
+            session,
             ren_harness::Harness::Codex,
             "/work/acme".into(),
             ren_harness::settings::RunSettings::default(),
@@ -1114,14 +1112,29 @@ fn passages_of(harness: &Harness, run: ren_recorder::id::RunId) {
 }
 
 #[tokio::test]
-async fn a_runs_passages_read_back_grouped_by_what_was_asked_and_how_it_ended() {
-    use ren_recorder::passage::{PassageEnd, Purpose};
-    let harness = Harness::new(CaptureOptions::default(), 8).await;
-    let run = ren_recorder::id::RunId::restore(uuid::Uuid::from_u128(7));
-    passages_of(&harness, run);
+async fn a_sessions_passages_read_back_across_its_runs_grouped_by_what_was_asked_and_how_it_ended()
+{
+    use ren_recorder::{
+        RunSession,
+        id::{RunId, SessionId},
+        passage::{PassageEnd, Purpose},
+    };
+    // Room for both runs' records at once.
+    let harness = Harness::new(CaptureOptions::default(), 32).await;
+    let session = SessionId::restore(uuid::Uuid::from_u128(77));
+    passages_of(
+        &harness,
+        RunId::restore(uuid::Uuid::from_u128(7)),
+        RunSession::New(session),
+    );
+    passages_of(
+        &harness,
+        RunId::restore(uuid::Uuid::from_u128(9)),
+        RunSession::Existing(session),
+    );
     let (_dir, _, reader) = harness.drain().await;
     let read: Vec<_> = reader
-        .passages(run)
+        .passages(session)
         .await
         .unwrap()
         .unwrap()
@@ -1150,7 +1163,7 @@ async fn a_runs_passages_read_back_grouped_by_what_was_asked_and_how_it_ended() 
                 Stored::Known(PassageEnd::Unlisted),
                 None,
                 None,
-                1,
+                2,
                 0,
                 0
             ),
@@ -1159,7 +1172,7 @@ async fn a_runs_passages_read_back_grouped_by_what_was_asked_and_how_it_ended() 
                 Stored::Known(PassageEnd::Broken),
                 through.clone(),
                 project.clone(),
-                1,
+                2,
                 0,
                 0
             ),
@@ -1168,13 +1181,13 @@ async fn a_runs_passages_read_back_grouped_by_what_was_asked_and_how_it_ended() 
                 Stored::Known(PassageEnd::Closed),
                 through,
                 project,
-                2,
-                150,
-                3_000
+                4,
+                300,
+                6_000
             ),
         ]
     );
-    let unknown = ren_recorder::id::RunId::restore(uuid::Uuid::from_u128(8));
+    let unknown = SessionId::restore(uuid::Uuid::from_u128(78));
     assert_eq!(reader.passages(unknown).await.unwrap(), None);
 }
 
@@ -1183,14 +1196,23 @@ async fn a_deleted_run_takes_its_passages() {
     use ren_recorder::batch::{Actor, HistoryChange, HistorySubject};
     let harness = Harness::new(CaptureOptions::default(), 8).await;
     let run = ren_recorder::id::RunId::restore(uuid::Uuid::from_u128(7));
-    passages_of(&harness, run);
+    let session = ren_recorder::id::SessionId::restore(uuid::Uuid::from_u128(77));
+    passages_of(&harness, run, ren_recorder::RunSession::New(session));
     harness.recorder.history_slot().unwrap().record(
         Actor::Ren,
         HistorySubject::Run(run),
         HistoryChange::Delete,
     );
     let (dir, _, reader) = harness.drain().await;
-    assert_eq!(reader.passages(run).await.unwrap(), None);
+    // Its session went with its one run, or is left with no passages.
+    assert!(
+        reader
+            .passages(session)
+            .await
+            .unwrap()
+            .unwrap_or_default()
+            .is_empty()
+    );
     reader.close().await;
     assert_eq!(
         count(dir.path(), "SELECT COUNT(*) FROM run_passages").await,

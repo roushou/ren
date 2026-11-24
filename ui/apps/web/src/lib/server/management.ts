@@ -1,6 +1,6 @@
 const id = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 const readablePath = new RegExp(
-  `^/(?:health|api/(?:metrics|storage|projects|projects/[a-z0-9-]{1,64}|projects/[a-z0-9-]{1,64}/release|projects/[a-z0-9-]{1,64}/pulls|projects/[a-z0-9-]{1,64}/previews|projects/[a-z0-9-]{1,64}/release/shots/[a-z0-9-]{1,40}|calls|recordings|usage|live|search|exposures|calls/${id}(?:/body/(?:request|response))?|recordings/${id}/(?:calls|turns|report)|turns/${id}|runs|runs/${id}|runs/${id}/(?:conversation|passages)|work|work/${id}))$`,
+  `^/(?:health|api/(?:metrics|storage|projects|projects/[a-z0-9-]{1,64}|projects/[a-z0-9-]{1,64}/release|projects/[a-z0-9-]{1,64}/pulls|projects/[a-z0-9-]{1,64}/previews|projects/[a-z0-9-]{1,64}/release/shots/[a-z0-9-]{1,40}|calls|recordings|usage|live|search|exposures|calls/${id}(?:/body/(?:request|response))?|recordings/${id}/(?:calls|turns|report)|turns/${id}|runs|runs/${id}|runs/${id}/conversation|sessions/${id}/passages|work|work/${id}))$`,
 );
 const livePath = '/api/live';
 const eventId = /^\d{1,20}$/;

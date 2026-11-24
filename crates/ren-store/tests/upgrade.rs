@@ -400,7 +400,7 @@ impl Reads {
         assert!(!runs.is_empty(), "runs");
         for run in &runs {
             serve(ReadRequest::Run(run.id)).await;
-            serve(ReadRequest::Passages(run.id)).await;
+            serve(ReadRequest::Passages(run.operator_session)).await;
             serve(ReadRequest::Conversation {
                 run: run.id,
                 bodies: ren_store::query::ItemBodies::Kept,

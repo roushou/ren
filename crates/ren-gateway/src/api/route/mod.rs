@@ -38,7 +38,7 @@ impl ApiRead {
         "/api/runs",
         "/api/runs/{id}",
         "/api/runs/{id}/conversation",
-        "/api/runs/{id}/passages",
+        "/api/sessions/{id}/passages",
         "/api/work",
         "/api/work/{id}",
     ];
@@ -124,9 +124,10 @@ impl ApiRead {
                 format!("/api/runs/{run}/conversation"),
                 QueryParams::default().bodies(*bodies),
             ),
-            ReadRequest::Passages(run) => {
-                (format!("/api/runs/{run}/passages"), QueryParams::default())
-            }
+            ReadRequest::Passages(session) => (
+                format!("/api/sessions/{session}/passages"),
+                QueryParams::default(),
+            ),
             ReadRequest::WorkItems {
                 limit,
                 shelf,
@@ -213,7 +214,7 @@ impl ApiRead {
                 run: Self::id(run)?,
                 bodies: Self::query::<RawConversationQuery>(uri)?.parse()?,
             },
-            ["runs", run, "passages"] => ReadRequest::Passages(Self::id(run)?),
+            ["sessions", session, "passages"] => ReadRequest::Passages(Self::id(session)?),
             ["work"] => {
                 let (limit, shelf, project) = Self::query::<RawShelfQuery>(uri)?.parse()?;
                 ReadRequest::WorkItems {
