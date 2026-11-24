@@ -120,6 +120,10 @@ struct UpArgs {
     /// too.
     #[arg(long, value_enum, default_value = "none")]
     contain: Contain,
+    /// What runs a contained run's processes: `host_kernel`, or `gvisor`
+    /// (`runsc` installed on the host).
+    #[arg(long, default_value = "host_kernel")]
+    runtime: ren_daemon::config::RunRuntime,
     #[command(flatten)]
     tailnet: TailnetArgs,
 }
@@ -278,7 +282,9 @@ impl Dev {
                 }
             },
             DevAction::Up(args) => {
-                let slot = Slot::new(env)?.containing(args.contain);
+                let slot = Slot::new(env)?
+                    .containing(args.contain)
+                    .running_on(args.runtime);
                 let wait = RunWait {
                     policy: if args.drain_runs {
                         RunPolicy::Drain

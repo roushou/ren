@@ -93,6 +93,10 @@ pub enum ConfigError {
     RunImageMissing,
     #[error("[runs] hold = \"container\" needs HOME, the home a run's container takes")]
     RunHomeMissing,
+    #[error(
+        "[runs.container] runtime = \"gvisor\" needs a daemon on the host: Podman's API socket (podman_socket) cannot choose a run's runtime"
+    )]
+    RunRuntimeThroughSocket,
     #[error("[github] endpoint: {0}")]
     GithubEndpoint(ren_github::EndpointError),
     #[error("the GitHub client could not be built")]
@@ -395,6 +399,9 @@ pub struct RunContainerOptions {
     /// gateway and its relay (docs/plans/self-build.md, phase 12).
     #[serde(skip_serializing_if = "RunNetwork::is_host")]
     pub network: RunNetwork,
+    /// What runs a run's processes: the host's kernel, or gVisor's.
+    #[serde(skip_serializing_if = "RunRuntime::is_host_kernel")]
+    pub runtime: RunRuntime,
     /// Where a relayed run may connect through the relay, besides where its
     /// client does itself: `host:port`, or `*.parent:port` for any name
     /// under one. A name reaches only public addresses.
@@ -430,6 +437,42 @@ pub enum RunNetwork {
 impl RunNetwork {
     fn is_host(&self) -> bool {
         *self == Self::Host
+    }
+}
+
+/// What runs a run's processes (`[runs.container] runtime`).
+#[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub enum RunRuntime {
+    /// Podman's own: on the host's kernel.
+    #[default]
+    HostKernel,
+    /// gVisor (`runsc`, installed on the host): a kernel of its own in
+    /// user space between the run and the host's.
+    Gvisor,
+}
+
+impl RunRuntime {
+    fn is_host_kernel(&self) -> bool {
+        *self == Self::HostKernel
+    }
+
+    fn runtime(self) -> ren_container::Runtime {
+        match self {
+            Self::HostKernel => ren_container::Runtime::HostKernel,
+            Self::Gvisor => ren_container::Runtime::Gvisor,
+        }
     }
 }
 
@@ -521,6 +564,18 @@ impl RunContainerOptions {
             Some(socket) => ren_container::Reach::Socket(anchored(socket)),
             None => ren_container::Reach::Scope,
         };
+        // Podman's remote client takes no runtime, and its service runs
+        // every container on its own.
+        match (&reach, self.runtime) {
+            (ren_container::Reach::Socket(_), RunRuntime::Gvisor) => {
+                return Err(ConfigError::RunRuntimeThroughSocket);
+            }
+            (
+                ren_container::Reach::Socket(_) | ren_container::Reach::Scope,
+                RunRuntime::HostKernel,
+            )
+            | (ren_container::Reach::Scope, RunRuntime::Gvisor) => {}
+        }
         let network = match self.network {
             RunNetwork::Host => crate::host::RunReach::Host,
             RunNetwork::Relayed => {
@@ -534,6 +589,7 @@ impl RunContainerOptions {
             shared,
             env.absolute_path("SSH_AUTH_SOCK"),
             network,
+            self.runtime.runtime(),
         ))
     }
 }
@@ -1154,10 +1210,43 @@ mod tests {
                 ],
                 Some("/run/agent".into()),
                 crate::host::RunReach::Host,
+                ren_container::Runtime::HostKernel,
             )
         );
         let relative: Config = toml::from_str("[runs.container]\nread_only = [\"usr\"]\n").unwrap();
         assert!(relative.runs.validate().is_err());
+    }
+
+    #[test]
+    fn runs_run_on_the_hosts_kernel_unless_gvisor_is_chosen() {
+        let config: Config = toml::from_str(
+            "[runs]\nhold = \"container\"\n[runs.container]\nimage = \"i\"\nruntime = \"gvisor\"\n",
+        )
+        .unwrap();
+        assert_eq!(config.runs.container.runtime, RunRuntime::Gvisor);
+        let written = toml::to_string(&config.runs.container).unwrap();
+        assert!(written.contains("runtime = \"gvisor\""), "{written}");
+        assert_eq!(
+            RunContainerOptions::default().runtime,
+            RunRuntime::HostKernel
+        );
+        assert!(
+            !toml::to_string(&RunContainerOptions::default())
+                .unwrap()
+                .contains("runtime")
+        );
+        assert!(toml::from_str::<Config>("[runs.container]\nruntime = \"kata\"\n").is_err());
+        // A daemon in a container starts runs through Podman's API socket,
+        // which cannot choose their runtime.
+        let socket: Config = toml::from_str(
+            "[runs]\nhold = \"container\"\n[runs.container]\nimage = \"i\"\nruntime = \"gvisor\"\npodman_socket = \"/run/user/1000/podman/podman.sock\"\n",
+        )
+        .unwrap();
+        let env = HostEnv::from_pairs([("HOME", "/home/op")]);
+        assert!(matches!(
+            socket.runs.hold.launcher(&env, &socket.runs.container),
+            Err(ConfigError::RunRuntimeThroughSocket)
+        ));
     }
 
     #[test]

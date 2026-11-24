@@ -579,6 +579,7 @@ spec (phase 7):
       kernel of its own in user space and needs no KVM; Kata gives each run
       a microVM and needs KVM (the VPS has `/dev/kvm`). Containers stay the
       default until each client is verified under the stronger runtime.
+      (Built as `Runtime`, gVisor only: see below.)
     - Built: `ren-relay`. A holder's pass is a `Ticket`, the password of
       its proxy URL (`HTTPS_PROXY=http://run:<ticket>@relay`), which curl,
       git, cargo, and npm send as `Proxy-Authorization`; the relay knows
@@ -663,12 +664,44 @@ spec (phase 7):
       Claude Code, Codex, Pi, and opencode have not been driven relayed,
       and what each connects to itself is declared from their sign-in
       flows, not observed.
+    - Built: the runtime. `ren-container`'s `Runtime` (`HostKernel`,
+      `Gvisor`) rides on `Placement::Host` and `Placement::Isolated`, so a
+      pod's container cannot take one; `[runs.container] runtime = "gvisor"`
+      runs a run's container under `runsc` (Ubuntu's `runsc` package), with
+      `--ignore-cgroups` (rootless, it cannot make Podman's cgroup), its
+      network kept as the container's (`host` or `none`), and
+      `--host-uds=all`: the run host serves the daemon on a socket in its
+      folder, and reaches out through its doors. A daemon that reaches
+      Podman through its API socket refuses it
+      (`ConfigError::RunRuntimeThroughSocket`). `cargo xtask dev up
+      --runtime gvisor` runs the slot's contained runs under it.
+    - Verified in the dev slot (`--contain runs --runtime gvisor`): four
+      runs' containers reported gVisor's kernel; each fake agent's turn
+      reached the gateway through its doorway and ended idle; through the
+      relay a run reached the listed registry, `example.com` was refused and
+      recorded, and nothing was reached directly. One run, the first after
+      the slot restarted, died as it started and ended `spawn_failed`; the
+      cause was not found, as the start error is not logged.
+    - Deviation: no Kata. Ubuntu does not package it, and it needs
+      `/dev/kvm`, which the operator's user cannot open; a variant nothing
+      can run is left out.
+    - Deviation: gVisor needs a daemon on the host. Podman's remote client
+      takes no `--runtime` or `--runtime-flag`, and the API service ignores
+      a container's `oci_runtime` and runs it on its own; so production's
+      daemon in a container cannot choose it. A Podman API service started
+      with gVisor as its runtime (`podman --runtime=runsc --runtime-flag=…
+      system service`), its network set per container by annotation
+      (`dev.gvisor.flag.network`, with `--allow-flag-override`), was
+      verified by hand and is the way there.
+    - Not yet: the gVisor Podman service for a daemon in a container; real
+      clients (Claude Code, Codex, Pi, opencode) driven under gVisor; a
+      run's start error logged.
     - Deviation: `Purpose` is not the relay's. The relay records the
       destination that admitted a tunnel; why it is listed belongs to where
       it is listed (`[runs.reach]`, a manifest), so `ren-sandbox` keeps it.
     - Order: the relay and the private network first (the largest gain,
       and the gateway already carries the model calls), then passages on
-      the run's page (done), then grants (done), then the runtime. Each lands on its own
+      the run's page (done), then grants (done), then the runtime (done). Each lands on its own
       and is verified in the dev slot before production.
     - Not decided: the client's own sign-in. A run mounts its client's
       sign-in folder read-write, so it holds a credential that outlives it.
@@ -695,9 +728,9 @@ Phase 12 needs phase 11: it narrows the containers phase 11 runs.
 - Whether a run keeps its client's sign-in (phase 12): the gateway could
   set the client's credential on each model call so a run never holds it,
   at the cost of Ren's rule that clients sign in themselves.
-- Which runtime runs Ren's runs once containers are narrowed (phase 12):
-  gVisor needs nothing more on the VPS, but some tools behave differently
-  under it; Kata gives a kernel per run but is harder to run rootless.
+- Whether production's runs move to gVisor (phase 12): it needs `runsc` on
+  the VPS and a Podman service of its own for a daemon in a container, and
+  each client verified under it first.
 
 ## Deviations
 

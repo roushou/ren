@@ -15,7 +15,7 @@
 //! the API socket for a daemon in a container). Finding what a run needs on the host is
 //! [`super::HeldRuns`]'s.
 
-use ren_container::{Container, Lifetime, Mount, Placement, Reach};
+use ren_container::{Container, Lifetime, Mount, Placement, Reach, Runtime};
 use ren_recorder::id::RunId;
 use ren_relay::RelayPolicy;
 use std::path::{Path, PathBuf};
@@ -35,6 +35,8 @@ pub struct RunContainers {
     ssh_agent: Option<PathBuf>,
     /// What its runs reach.
     network: RunReach,
+    /// What runs their processes.
+    runtime: Runtime,
 }
 
 /// What a run's container reaches.
@@ -84,6 +86,7 @@ impl RunContainers {
         shared: Vec<Mount>,
         ssh_agent: Option<PathBuf>,
         network: RunReach,
+        runtime: Runtime,
     ) -> Self {
         Self {
             image,
@@ -92,6 +95,7 @@ impl RunContainers {
             shared,
             ssh_agent,
             network,
+            runtime,
         }
     }
 
@@ -121,8 +125,8 @@ impl RunContainers {
             self.image.clone(),
             Lifetime::Removed,
             match self.network {
-                RunReach::Host => Placement::Host,
-                RunReach::Relayed(_) => Placement::Isolated,
+                RunReach::Host => Placement::Host(self.runtime),
+                RunReach::Relayed(_) => Placement::Isolated(self.runtime),
             },
         )
         .stop_timeout(RunContainer::STOP_TIMEOUT)
@@ -176,7 +180,7 @@ impl RunContainer {
 #[cfg(test)]
 mod tests {
     use super::{RunContainers, RunNeeds, RunReach};
-    use ren_container::{Engine, Mount, Reach};
+    use ren_container::{Engine, Mount, Reach, Runtime};
     use ren_recorder::id::RunId;
 
     fn needs() -> RunNeeds {
@@ -202,6 +206,7 @@ mod tests {
             ],
             ssh_agent.map(Into::into),
             RunReach::Host,
+            Runtime::HostKernel,
         )
     }
 
@@ -283,6 +288,7 @@ mod tests {
             Vec::new(),
             Some("/run/user/1000/agent".into()),
             RunReach::Relayed(ren_relay::RelayPolicy::default()),
+            Runtime::HostKernel,
         );
         let args = Engine::Podman.run_args(relayed.container(run, &needs()).spec());
         assert!(
@@ -301,6 +307,7 @@ mod tests {
             Vec::new(),
             None,
             RunReach::Relayed(ren_relay::RelayPolicy::default()),
+            Runtime::HostKernel,
         );
         let needs = RunNeeds {
             doors: Some("/home/op/.local/state/ren/runs/.reach".into()),
@@ -311,5 +318,28 @@ mod tests {
         assert!(!args.iter().any(|arg| arg == "--network=host"), "{args:?}");
         assert!(args.iter().any(|arg| arg
             == "--volume=/home/op/.local/state/ren/runs/.reach:/home/op/.local/state/ren/runs/.reach:ro"));
+    }
+
+    #[test]
+    fn a_run_under_gvisor_keeps_its_doors() {
+        let run = RunId::restore(uuid::Uuid::nil());
+        let relayed = RunContainers::new(
+            "localhost/ren-instance:abc".into(),
+            Reach::Scope,
+            "/home/op".into(),
+            Vec::new(),
+            None,
+            RunReach::Relayed(ren_relay::RelayPolicy::default()),
+            Runtime::Gvisor,
+        );
+        let args = Engine::Podman.run_args(relayed.container(run, &needs()).spec());
+        for flag in [
+            "--network=none",
+            "--runtime=runsc",
+            "--runtime-flag=network=none",
+            "--runtime-flag=host-uds=all",
+        ] {
+            assert!(args.iter().any(|arg| arg == flag), "{flag}: {args:?}");
+        }
     }
 }

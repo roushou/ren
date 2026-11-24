@@ -18,8 +18,8 @@ use crate::{
 };
 use ren_container::Engine;
 use ren_daemon::config::{
-    Config, GithubApp, GithubOptions, RunContainerOptions, RunHold, RunNetwork, RunsOptions,
-    UpstreamConfig, WatchedRepository,
+    Config, GithubApp, GithubOptions, RunContainerOptions, RunHold, RunNetwork, RunRuntime,
+    RunsOptions, UpstreamConfig, WatchedRepository,
 };
 use ren_daemon::host::HeldRuns;
 use ren_gateway::{
@@ -131,6 +131,8 @@ pub struct Slot {
     scratch_dir: PathBuf,
     /// What of it runs in containers.
     contain: Contain,
+    /// What runs its contained runs' processes.
+    runtime: RunRuntime,
     /// The operator's Podman API socket, which a daemon in a container
     /// starts its runs' containers through.
     podman_socket: Option<PathBuf>,
@@ -185,6 +187,7 @@ impl Slot {
             places_dir: share.join("config"),
             scratch_dir: share.join("scratch"),
             contain: Contain::None,
+            runtime: RunRuntime::HostKernel,
             podman_socket: env
                 .absolute_path("XDG_RUNTIME_DIR")
                 .map(|runtime| runtime.join("podman/podman.sock")),
@@ -196,6 +199,13 @@ impl Slot {
     #[must_use]
     pub fn containing(mut self, contain: Contain) -> Self {
         self.contain = contain;
+        self
+    }
+
+    /// The slot, its contained runs run by `runtime`.
+    #[must_use]
+    pub fn running_on(mut self, runtime: RunRuntime) -> Self {
+        self.runtime = runtime;
         self
     }
 
@@ -287,6 +297,7 @@ impl Slot {
                         // fake agents need only the gateway, and one public
                         // registry checks a run's way out.
                         network: RunNetwork::Relayed,
+                        runtime: self.runtime,
                         reach: vec![
                             "index.crates.io:443"
                                 .parse()

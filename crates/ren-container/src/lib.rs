@@ -1,5 +1,5 @@
 //! A container as Ren runs one: what it sees of the host ([`Mount`]), how
-//! it lives ([`Lifetime`], [`Placement`]), what it runs, and the
+//! it lives ([`Lifetime`], [`Placement`], [`Runtime`]), what it runs, and the
 //! [`Engine`]'s arguments that start it, all pure; and running the engine
 //! (`launch`): starting a container as a [`Launch`] says, and the pods,
 //! containers, and images it keeps.
@@ -29,14 +29,28 @@ pub enum Lifetime {
 /// Where a container runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Placement {
-    /// On the host's network, as the operator's own user.
-    Host,
-    /// With no network but its own loopback, as the operator's own user:
-    /// it reaches out only through what it is given to see (a socket in a
-    /// mounted folder).
-    Isolated,
-    /// In the named pod, which sets its network and user.
+    /// On the host's network, as the operator's own user, under `Runtime`.
+    Host(Runtime),
+    /// With no network but its own loopback, as the operator's own user,
+    /// under `Runtime`: it reaches out only through what it is given to see
+    /// (a socket in a mounted folder).
+    Isolated(Runtime),
+    /// In the named pod, which sets its network and user, under the
+    /// engine's own runtime, as its pod's other containers.
     Pod(String),
+}
+
+/// What runs a container's processes, and so the boundary between them and
+/// the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Runtime {
+    /// The engine's own: the container's processes run on the host's
+    /// kernel, apart only by namespaces.
+    HostKernel,
+    /// gVisor (`runsc`): the container's system calls are served by a
+    /// kernel of its own in user space, and only what that kernel needs
+    /// reaches the host's. Needs no KVM, so it runs rootless.
+    Gvisor,
 }
 
 /// The environment a container starts with, besides what it is given.

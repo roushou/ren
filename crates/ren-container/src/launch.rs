@@ -239,7 +239,12 @@ mod tests {
     use crate::{Container, Engine, Launch, Lifetime, Placement};
 
     fn container() -> Container {
-        Container::new("ren-run-1", "image", Lifetime::Removed, Placement::Host)
+        Container::new(
+            "ren-run-1",
+            "image",
+            Lifetime::Removed,
+            Placement::Host(crate::Runtime::HostKernel),
+        )
     }
 
     #[test]

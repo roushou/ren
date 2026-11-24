@@ -240,7 +240,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Container` is what one sees of the host (`Mount`, read-only or
   read-write at its host path), how it lives (`Lifetime`: kept, removed
   once it exits, or the caller's foreground process) and where
-  (`Placement`: the host's network as the operator, or a pod), its
+  (`Placement`: the host's network as the operator, no network but its
+  loopback, or a pod) and under what (`Runtime`: the host's kernel, or
+  gVisor's `runsc`, rootless with no cgroups, its network kept, and
+  sockets shared with the host through its mounts), its
   `Environment` and `Privileges`, and what it runs; `Engine` (one variant,
   `Podman`) gives the arguments that start it, all pure. `Engine` is also
   the one place Ren runs the engine: it starts a container as a `Launch`
