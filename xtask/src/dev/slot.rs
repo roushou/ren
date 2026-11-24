@@ -323,9 +323,9 @@ impl Slot {
                 // The fake GitHub's App, which grants relayed runs a token
                 // for their fake repository.
                 app: Some(GithubApp {
-                    id: 1,
+                    id: ren_github::AppId::new(1),
                     key_file: self.app_key(),
-                    api: fake("github/api"),
+                    api: fake("github/api").parse().map_err(|_| DevError::Config)?,
                 }),
                 repository: Self::PROJECTS
                     .iter()

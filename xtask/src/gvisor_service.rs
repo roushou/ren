@@ -32,7 +32,7 @@ pub enum GvisorServiceError {
     #[error("podman is not on the search path")]
     NoPodman,
     #[error(
-        "runsc is not on the search path: install gVisor (Ubuntu's runsc package) for [runs.container] runtime = \"gvisor\""
+        "runsc is not on the search path: install gVisor from its own apt repository (gvisor.dev; Ubuntu's runsc package panics) for [runs.container.relayed] runtime = \"gvisor\""
     )]
     NoRunsc,
     #[error(transparent)]

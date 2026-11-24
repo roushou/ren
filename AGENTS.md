@@ -9,7 +9,7 @@ call. One executable and one storage format serve both a laptop and a VPS
 reached through Tailscale.
 
 [`docs/architecture.md`](docs/architecture.md) describes how Ren is built and
-lists its known limitations. Section 4 below maps the ten crates and the `xtask` package.
+lists its known limitations. Section 4 below maps the crates and the `xtask` package.
 
 - All code follows the principles (section 2) and the workspace lints.
 - Never describe unbuilt functionality as working. Read the source before assuming
@@ -181,7 +181,7 @@ saturation, and persistence recovery.
 
 ## 4. Worktree map
 
-This map describes the code as it is: the ten crates, listed with their
+This map describes the code as it is: the crates, listed with their
 dependencies under "Crates" below. Read the code for current module ownership.
 
 - `docs/architecture.md`: how Ren is built, and its known limitations. The other
@@ -220,8 +220,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   CLI dependency.
 - `crates/ren-manifest`: a project's manifest for Ren (`Manifest`,
   read from `.ren/project.toml`): the depot packages its steps need
-  (`packages`), where its relayed runs may reach (`reach`, each a
-  `ReachEntry`, `host:port` or `*.parent:port`, read by the manifest
+  (`packages`), where its relayed runs may connect (`egress`, each an
+  `EgressEntry`, a host name and port or `*.parent:port`, read by the manifest
   itself; the daemon turns them into the relay's `Destination`s), its build, serve, check, and quiesce steps,
   each an argv with the environment it adds, never a shell line, whose
   values name the `Place` a step runs for through a parsed `Template`
@@ -653,9 +653,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   command), in a systemd user unit of its own (`ren-run-<run>`, outside
   `ren.service`) and attaches to it without spawning a task, or in a
   rootless Podman container that is the run's `Sandbox` (`host::held::
-  sandbox`, pure, with a purity test): made by `Sandboxes`
-  (`[runs.container]`) from the run's `Sight`, reaching the host's network
-  with the SSH agent or relayed under a `Runtime` (`RunReach`), and
+  sandbox`, pure, with a purity test): made by `SandboxSettings`
+  (`[runs.container]`) from the run's `RunFiles`, reaching the host's network
+  with the SSH agent or relayed under a `Runtime` (`RunNetwork`, held only
+  with its relay: `HeldRuns`' `Hold`), and
   refused (`SandboxError`) when it would see Ren's data or configuration
   whole or every run would see inside Ren's data; a relayed run's
   `Listing` (`host::held::listing`, pure) is where it may go and why

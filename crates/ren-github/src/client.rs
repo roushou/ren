@@ -107,6 +107,20 @@ impl Endpoint {
     }
 }
 
+impl std::str::FromStr for Endpoint {
+    type Err = EndpointError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::parse(text)
+    }
+}
+
+impl std::fmt::Display for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 impl Client {
     /// The most of an answer read: 50 pull requests with 50 checks each
     /// and their descriptions fit well within it.

@@ -16,7 +16,8 @@ use std::{
 };
 
 /// A GitHub App's id, as its settings page shows it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct AppId(u64);
 
 /// One installation of an App, on an account.

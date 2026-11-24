@@ -101,8 +101,6 @@ pub enum ConfigError {
     GithubProjectTwice(String),
     #[error("GitHub token variable {0} is not set, or not a token")]
     MissingGithubToken(String),
-    #[error("[github.app] api: {0}")]
-    GithubAppApi(ren_github::EndpointError),
     #[error("[github.app] key_file {0} could not be read")]
     GithubAppKeyFile(PathBuf, #[source] std::io::Error),
     #[error("[github.app] key_file {0}: {1}")]
@@ -195,21 +193,27 @@ pub struct GithubOptions {
 /// repositories, with permission to write their contents and pull
 /// requests. A relayed run working in a checkout of one of them is
 /// granted a token for that repository alone.
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GithubApp {
     /// The App's id, from its settings page.
-    pub id: u64,
+    pub id: ren_github::AppId,
     /// Its private key, as GitHub gave it (PEM).
     pub key_file: PathBuf,
     /// GitHub's REST API.
     #[serde(default = "GithubApp::api")]
-    pub api: String,
+    #[serde_as(as = "serde_with::DisplayFromStr")]
+    pub api: Endpoint,
 }
 
 impl GithubApp {
-    fn api() -> String {
-        ren_github::Installations::GITHUB.into()
+    #[expect(
+        clippy::expect_used,
+        reason = "GitHub's own address, a constant that the test below reads"
+    )]
+    fn api() -> Endpoint {
+        Endpoint::parse(ren_github::Installations::GITHUB).expect("GitHub's API address reads")
     }
 
     /// The App's installations client, with its key read from its file.
@@ -218,12 +222,9 @@ impl GithubApp {
             .map_err(|error| ConfigError::GithubAppKeyFile(self.key_file.clone(), error))?;
         let key = ren_github::AppKey::from_pem(&pem)
             .map_err(|error| ConfigError::GithubAppKey(self.key_file.clone(), error))?;
-        let api = Endpoint::parse(&self.api).map_err(ConfigError::GithubAppApi)?;
-        ren_github::Installations::new(
-            api,
-            ren_github::App::new(ren_github::AppId::new(self.id), key),
-        )
-        .map_err(ConfigError::GithubClient)
+        let api = self.api.clone();
+        ren_github::Installations::new(api, ren_github::App::new(self.id, key))
+            .map_err(ConfigError::GithubClient)
     }
 }
 
@@ -256,9 +257,6 @@ impl GithubOptions {
 
     pub fn validate(&self) -> Result<(), ConfigError> {
         Endpoint::parse(&self.endpoint).map_err(ConfigError::GithubEndpoint)?;
-        if let Some(app) = &self.app {
-            Endpoint::parse(&app.api).map_err(ConfigError::GithubAppApi)?;
-        }
         let mut projects = std::collections::BTreeSet::new();
         for watched in &self.repository {
             if !projects.insert(&watched.project) {
@@ -1289,6 +1287,22 @@ mod tests {
         );
         // A runtime belongs to relayed runs: there is no key for it elsewhere.
         assert!(toml::from_str::<Config>("[runs.container]\nruntime = \"gvisor\"\n").is_err());
+    }
+
+    #[test]
+    fn an_apps_api_is_githubs_unless_set() {
+        assert_eq!(GithubApp::api().as_str(), "https://api.github.com/");
+        let app: GithubApp =
+            toml::from_str("id = 7\nkey_file = \"/k.pem\"\napi = \"http://127.0.0.1:9/api\"\n")
+                .unwrap();
+        assert_eq!(app.id, ren_github::AppId::new(7));
+        assert_eq!(app.api.as_str(), "http://127.0.0.1:9/api");
+        assert!(
+            toml::from_str::<GithubApp>(
+                "id = 7\nkey_file = \"/k\"\napi = \"http://example.com\"\n"
+            )
+            .is_err()
+        );
     }
 
     #[test]
