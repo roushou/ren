@@ -289,11 +289,11 @@ impl Slot {
                 container: match self.contain {
                     Contain::None => RunContainerOptions::default(),
                     // The host's programs; the fake agent, which is this
-                    // slot's xtask and keeps its state in the slot's data.
+                    // slot's xtask, and its state beside it, never the data.
                     Contain::Runs | Contain::All => RunContainerOptions {
                         image: Some(Pod::image()),
                         read_only: vec!["/usr".into(), self.bin_dir.clone()],
-                        read_write: vec![self.data_dir.clone()],
+                        read_write: vec![self.agent_state()],
                         podman_socket: match self.contain {
                             Contain::All => self.podman_socket(),
                             Contain::None | Contain::Runs => None,
@@ -392,11 +392,19 @@ program_at = "acme-lint"
         self.bin_dir.join("agent")
     }
 
+    /// Where the fake agent keeps its state, which its runs see: beside its
+    /// program, never in the dev daemon's data.
+    fn agent_state(&self) -> PathBuf {
+        self.bin_dir.with_file_name("agent-state")
+    }
+
     /// Put the fake agent first on the dev daemon's PATH as `codex`,
     /// `claude`, and `pi`, and create the fake projects under the run root.
     fn write_agent(&self) -> Result<(), DevError> {
         let dir = self.agent_dir();
         fs::create_dir_all(&dir).map_err(FileError::at(&dir))?;
+        let state = self.agent_state();
+        fs::create_dir_all(&state).map_err(FileError::at(&state))?;
         for (program, client, name) in [
             ("codex", "codex", "Codex"),
             ("claude", "claude", "Claude Code"),
@@ -404,9 +412,9 @@ program_at = "acme-lint"
             ("opencode", "opencode", "OpenCode"),
         ] {
             let script = format!(
-                "#!/bin/sh\n# The dev slot's fake {name} (`cargo xtask dev agent`); never the real one.\nexec {} dev agent --client {client} --data-dir {} \"$@\"\n",
+                "#!/bin/sh\n# The dev slot's fake {name} (`cargo xtask dev agent`); never the real one.\nexec {} dev agent --client {client} --state-dir {} \"$@\"\n",
                 Self::quote(&self.bin_dir.join("xtask")),
-                Self::quote(&self.data_dir),
+                Self::quote(&state),
             );
             FileMode::Executable.write(&dir.join(program), script.as_bytes())?;
         }

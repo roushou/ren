@@ -152,6 +152,10 @@ the home, Ren's configuration and data, or other runs. `[runs.container]` names
 the image (the instance image) and adds what every run sees: the host's
 programs (`/usr`) and toolchains read-only, shared caches read-write. A program
 the run starts that is in none of these is not found in its container.
+A run is refused, and the daemon logs why, when anything it would see is
+Ren's data folder or holds it, or Ren's configuration file or holds it, or
+when `[runs.container]` names a path inside Ren's data; only what Ren made for
+the run there (its run folder, its worktree, and the doors) is seen.
 
 `[runs.container] network = "relayed"` takes the host's network away from a
 run: its container has only its loopback (`--network=none`). There its run host

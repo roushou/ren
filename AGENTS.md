@@ -647,7 +647,13 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the run hosts that hold runs through a restart (`[runs] hold`, `RunHold`):
   `HeldRuns` starts each, `ren run-host <folder>` (`RunHost`, the hidden
   command), in a systemd user unit of its own (`ren-run-<run>`, outside
-  `ren.service`) and attaches to it without spawning a task; the host keeps
+  `ren.service`) and attaches to it without spawning a task, or in a
+  rootless Podman container that is the run's `Sandbox` (`host::held::
+  sandbox`, pure, with a purity test): made by `Sandboxes`
+  (`[runs.container]`) from the run's `Sight`, reaching the host's network
+  with the SSH agent or relayed under a `Runtime` (`RunReach`), and
+  refused (`SandboxError`) when it would see Ren's data or configuration
+  whole or every run would see inside Ren's data; the host keeps
   the client's stdin open and its output in the run folder's spool, writes
   its exit, and serves one daemon at a time over a socket whose frames
   (`frame`, pure, kept when unknown: a host may be an older build) are a

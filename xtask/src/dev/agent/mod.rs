@@ -89,11 +89,11 @@ impl FakeAgent {
     pub fn new(
         played: Played,
         env: &HostEnv,
-        data_dir: &Path,
+        state_dir: &Path,
         arguments: &[String],
     ) -> Result<Self, AgentError> {
-        let own = Run(Seeder::next_run(data_dir)?);
-        let sessions = data_dir.join("opencode-sessions.tsv");
+        let own = Run(Seeder::next_run(state_dir)?);
+        let sessions = state_dir.join("opencode-sessions.tsv");
         match played {
             Played::Codex => {
                 let base = arguments

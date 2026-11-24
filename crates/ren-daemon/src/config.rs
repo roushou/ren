@@ -123,6 +123,10 @@ enum Keys<'a> {
 #[serde(default, deny_unknown_fields)]
 /// Editable TOML representation. Use `resolve` before constructing a daemon.
 pub struct Config {
+    /// The file it was read from, which no run may see; none when it was
+    /// built in memory. Not part of the file.
+    #[serde(skip)]
+    pub source: Option<PathBuf>,
     pub version: u32,
     pub listen: SocketAddr,
     pub data_dir: Option<PathBuf>,
@@ -514,11 +518,14 @@ impl RunHold {
         self,
         env: &HostEnv,
         container: &RunContainerOptions,
+        config: Option<&Path>,
     ) -> Result<Option<crate::host::Launcher>, ConfigError> {
         Ok(match self {
             Self::Off => None,
             Self::Systemd => Some(crate::host::Launcher::Systemd),
-            Self::Container => Some(crate::host::Launcher::Container(container.containers(env)?)),
+            Self::Container => Some(crate::host::Launcher::Container(
+                container.sandboxes(env, config)?,
+            )),
             Self::Auto => {
                 let systemd = cfg!(target_os = "linux")
                     // Set by systemd for the services it runs.
@@ -539,9 +546,14 @@ impl RunContainerOptions {
         *self == Self::default()
     }
 
-    /// How run hosts start in containers on a host whose environment is
-    /// `env`: its home, and its SSH agent's socket when it has one.
-    fn containers(&self, env: &HostEnv) -> Result<crate::host::RunContainers, ConfigError> {
+    /// What every run's sandbox starts from on a host whose environment is
+    /// `env`: its home, its SSH agent's socket when it has one, and Ren's
+    /// configuration file at `config`, which no run sees.
+    fn sandboxes(
+        &self,
+        env: &HostEnv,
+        config: Option<&Path>,
+    ) -> Result<crate::host::Sandboxes, ConfigError> {
         use ren_container::Mount;
         let image = self.image.clone().ok_or(ConfigError::RunImageMissing)?;
         let home = env
@@ -566,22 +578,24 @@ impl RunContainerOptions {
             None => ren_container::Reach::Scope,
         };
         let network = match (self.network, self.runtime) {
-            (RunNetwork::Host, RunRuntime::HostKernel) => crate::host::RunReach::Host,
+            (RunNetwork::Host, RunRuntime::HostKernel) => crate::host::RunReach::Host {
+                ssh_agent: env.absolute_path("SSH_AUTH_SOCK"),
+            },
             (RunNetwork::Host, RunRuntime::Gvisor) => {
                 return Err(ConfigError::RunRuntimeNotRelayed);
             }
-            (RunNetwork::Relayed, runtime) => crate::host::RunReach::Relayed(
-                ren_relay::RelayPolicy::new(self.reach.clone()),
-                runtime.runtime(),
-            ),
+            (RunNetwork::Relayed, runtime) => crate::host::RunReach::Relayed {
+                policy: ren_relay::RelayPolicy::new(self.reach.clone()),
+                runtime: runtime.runtime(),
+            },
         };
-        Ok(crate::host::RunContainers::new(
+        Ok(crate::host::Sandboxes::new(
             image,
             reach,
             home.clone(),
             shared,
-            env.absolute_path("SSH_AUTH_SOCK"),
             network,
+            config.map(Path::to_path_buf),
         ))
     }
 }
@@ -707,6 +721,7 @@ impl UpstreamConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            source: None,
             version: 1,
             listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8787),
             data_dir: None,
@@ -839,7 +854,11 @@ impl Config {
                 Keys::Unchecked => Vec::new(),
             },
             run_hold: match keys {
-                Keys::Env(env) => self.runs.hold.launcher(env, &self.runs.container)?,
+                Keys::Env(env) => {
+                    self.runs
+                        .hold
+                        .launcher(env, &self.runs.container, self.source.as_deref())?
+                }
                 Keys::Unchecked => None,
             },
             depot,
@@ -869,6 +888,7 @@ impl Config {
             }
             None => Self::default(),
         };
+        config.source = path.map(Path::to_path_buf);
         if let (Some(path), Some(dir)) = (path, config.data_dir.as_mut())
             && dir.is_relative()
         {
@@ -1174,7 +1194,10 @@ mod tests {
         let env = HostEnv::from_pairs([("HOME", "/home/op"), ("SSH_AUTH_SOCK", "/run/agent")]);
         let without: Config = toml::from_str("[runs]\nhold = \"container\"\n").unwrap();
         assert!(matches!(
-            without.runs.hold.launcher(&env, &without.runs.container),
+            without
+                .runs
+                .hold
+                .launcher(&env, &without.runs.container, None),
             Err(ConfigError::RunImageMissing)
         ));
         let config: Config = toml::from_str(
@@ -1183,15 +1206,18 @@ mod tests {
         .unwrap();
         assert!(config.runs.validate().is_ok());
         let Ok(Some(crate::host::Launcher::Container(containers))) =
-            config.runs.hold.launcher(&env, &config.runs.container)
+            config
+                .runs
+                .hold
+                .launcher(&env, &config.runs.container, None)
         else {
             panic!("runs are held in containers");
         };
-        use crate::host::RunContainers;
+        use crate::host::Sandboxes;
         use ren_container::{Mount, Reach};
         assert_eq!(
             containers,
-            RunContainers::new(
+            Sandboxes::new(
                 "localhost/ren-instance:abc".into(),
                 Reach::Scope,
                 "/home/op".into(),
@@ -1200,12 +1226,52 @@ mod tests {
                     Mount::read_only("/home/op/.rustup"),
                     Mount::read_write("/home/op/.cargo"),
                 ],
-                Some("/run/agent".into()),
-                crate::host::RunReach::Host,
+                crate::host::RunReach::Host {
+                    ssh_agent: Some("/run/agent".into()),
+                },
+                None,
             )
         );
         let relative: Config = toml::from_str("[runs.container]\nread_only = [\"usr\"]\n").unwrap();
         assert!(relative.runs.validate().is_err());
+    }
+
+    #[test]
+    fn a_configuration_read_from_a_file_keeps_its_path_for_runs_to_never_see() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ren.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "[runs]\nhold = \"container\"\n[runs.container]\nimage = \"i\"\nread_only = [\"{}\"]\n",
+                dir.path().display()
+            ),
+        )
+        .unwrap();
+        let config = Config::load(Some(&path)).unwrap();
+        assert_eq!(config.source.as_deref(), Some(path.as_path()));
+        // Not written back: it is where the file is, not what it says.
+        assert!(!toml::to_string(&config).unwrap().contains("source"));
+        let env = HostEnv::from_pairs([("HOME", "/home/op")]);
+        let Ok(Some(crate::host::Launcher::Container(sandboxes))) =
+            config
+                .runs
+                .hold
+                .launcher(&env, &config.runs.container, config.source.as_deref())
+        else {
+            panic!("runs are held in containers");
+        };
+        assert_eq!(
+            sandboxes,
+            crate::host::Sandboxes::new(
+                "i".into(),
+                ren_container::Reach::Scope,
+                "/home/op".into(),
+                vec![ren_container::Mount::read_only(dir.path())],
+                crate::host::RunReach::Host { ssh_agent: None },
+                Some(path),
+            )
+        );
     }
 
     #[test]
@@ -1217,13 +1283,19 @@ mod tests {
         assert_eq!(config.runs.container.runtime, RunRuntime::Gvisor);
         let env = HostEnv::from_pairs([("HOME", "/home/op")]);
         let Ok(Some(crate::host::Launcher::Container(containers))) =
-            config.runs.hold.launcher(&env, &config.runs.container)
+            config
+                .runs
+                .hold
+                .launcher(&env, &config.runs.container, None)
         else {
             panic!("runs are held in containers");
         };
         assert!(matches!(
-            containers.network(),
-            crate::host::RunReach::Relayed(_, ren_container::Runtime::Gvisor)
+            containers.reach(),
+            crate::host::RunReach::Relayed {
+                runtime: ren_container::Runtime::Gvisor,
+                ..
+            }
         ));
         // gVisor keeps only its loopback: a run on the host's network
         // cannot have it.
@@ -1235,7 +1307,7 @@ mod tests {
             unrelayed
                 .runs
                 .hold
-                .launcher(&env, &unrelayed.runs.container),
+                .launcher(&env, &unrelayed.runs.container, None),
             Err(ConfigError::RunRuntimeNotRelayed)
         ));
         let written = toml::to_string(&config.runs.container).unwrap();
@@ -1260,12 +1332,17 @@ mod tests {
         )
         .unwrap();
         let Ok(Some(crate::host::Launcher::Container(containers))) =
-            config.runs.hold.launcher(&env, &config.runs.container)
+            config
+                .runs
+                .hold
+                .launcher(&env, &config.runs.container, None)
         else {
             panic!("runs are held in containers");
         };
-        let crate::host::RunReach::Relayed(policy, ren_container::Runtime::HostKernel) =
-            containers.network()
+        let crate::host::RunReach::Relayed {
+            policy,
+            runtime: ren_container::Runtime::HostKernel,
+        } = containers.reach()
         else {
             panic!("its runs are relayed");
         };

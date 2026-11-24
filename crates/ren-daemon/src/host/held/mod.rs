@@ -22,21 +22,23 @@
 //!
 //! The daemon's side is [`HeldRuns`]; the host's is [`RunHost`].
 
-mod container;
 mod doorway;
 pub mod frame;
 mod grant;
 mod link;
+#[cfg(test)]
+mod purity;
+mod sandbox;
 mod serve;
 
-pub use container::{RunContainers, RunReach};
 pub use doorway::{Doors, Doorway};
 pub use grant::{CredentialAsk, Grants};
 use ren_container::{Engine, EngineError, Launch, Reach};
+pub use sandbox::{RunReach, SandboxError, Sandboxes};
 pub use serve::RunHost;
 
-use container::RunNeeds;
 use ren_harness::profile::ClientNeeds;
+use sandbox::{RenPlaces, Sandbox, Sight};
 
 use ren_github::RepositorySlug;
 use ren_recorder::id::{IdSource, RunId};
@@ -61,10 +63,18 @@ pub enum Launcher {
     /// the daemon's process, not its service's stop: for tests, and hosts
     /// without a user manager.
     Direct,
-    /// In a rootless Podman container of its own, `ren-run-<run>`, that
-    /// sees only what the run works on and what its client keeps, started
-    /// from a systemd scope of its own.
-    Container(RunContainers),
+    /// In a rootless Podman container of its own, `ren-run-<run>`, its
+    /// run's [`sandbox::Sandbox`]: it sees only what the run works on and
+    /// what its client keeps, and reaches what its reach says.
+    Container(Sandboxes),
+}
+
+/// How one run's host is started: as its [`Launcher`] says, a container's
+/// with the run's sandbox made.
+enum Start {
+    Systemd,
+    Direct,
+    Sandbox(Box<Sandbox>),
 }
 
 /// The runs this daemon holds through run hosts: their folders, and how a
@@ -585,47 +595,55 @@ impl HeldRuns {
         let folder = self.folder(run);
         Self::private_dir(&self.root)?;
         Self::private_dir(&folder)?;
-        let run_needs = match &self.launcher {
-            Launcher::Container(containers) => {
+        let start = match &self.launcher {
+            Launcher::Systemd => Start::Systemd,
+            Launcher::Direct => Start::Direct,
+            Launcher::Container(sandboxes) => {
                 // The container sees the program's file, not the folders on
                 // the path: it is started by the path it was found at.
                 let program = spec.program()?;
                 spec.program = program.display().to_string();
-                let doors = match containers.network() {
-                    RunReach::Host => None,
-                    RunReach::Relayed(policy, _) => {
+                match sandboxes.reach() {
+                    RunReach::Host { .. } => {}
+                    RunReach::Relayed { policy, .. } => {
                         let relaying = self.relaying.as_ref().ok_or_else(|| {
                             io::Error::other("a relayed run was started with no relay")
                         })?;
                         let (relayed, env) = relaying.admit(run, policy, needs, repository)?;
                         spec.env.extend(env);
                         spec.relayed = Some(relayed);
-                        Some(relaying.doors.folder().to_path_buf())
                     }
+                }
+                let sight = self.sight(sandboxes, &spec, &folder, needs);
+                let ren = RenPlaces {
+                    data: self.root.parent().unwrap_or(&self.root).to_path_buf(),
+                    doors: Doors::new(&self.root).folder().to_path_buf(),
                 };
-                Some(self.needs(containers, &spec, &folder, needs, doors))
+                Start::Sandbox(Box::new(
+                    sandboxes
+                        .sandbox(run, &sight, &ren)
+                        .map_err(io::Error::other)?,
+                ))
             }
-            Launcher::Systemd | Launcher::Direct => None,
         };
         let json = serde_json::to_vec(&spec).map_err(io::Error::other)?;
         Self::private_file(&folder.join(Self::SPEC))?;
         std::fs::write(folder.join(Self::SPEC), json)?;
-        self.launch(run, &folder, run_needs.as_ref())?;
+        self.launch(run, &folder, start)?;
         let stream = Self::reach(&folder.join(Self::SOCKET))?;
         link::Link::open(stream, 0, self.journal(&folder)?)
     }
 
-    /// What `spec`'s run needs to see in its container: its folder, its
+    /// What `spec`'s run needs to see in its sandbox: its folder, its
     /// workdir and the repository's git folder, this `ren`, the files its
     /// command reads, and what its client keeps that exists.
-    fn needs(
+    fn sight(
         &self,
-        containers: &RunContainers,
+        sandboxes: &Sandboxes,
         spec: &Spec,
         folder: &Path,
         needs: ClientNeeds,
-        doors: Option<PathBuf>,
-    ) -> RunNeeds {
+    ) -> Sight {
         let reads = std::iter::once(PathBuf::from(&spec.program))
             .chain(
                 spec.args
@@ -635,7 +653,7 @@ impl HeldRuns {
                     .map(Path::to_path_buf),
             )
             .collect();
-        RunNeeds {
+        Sight {
             folder: folder.to_path_buf(),
             workdir: spec.cwd.clone(),
             git: Spec::git_folder(&spec.cwd),
@@ -644,10 +662,9 @@ impl HeldRuns {
             keeps: needs
                 .keeps
                 .iter()
-                .map(|entry| entry.under(containers.home()))
+                .map(|entry| entry.under(sandboxes.home()))
                 .filter(|path| path.exists())
                 .collect(),
-            doors,
         }
     }
 
@@ -746,9 +763,9 @@ impl HeldRuns {
         clippy::disallowed_methods,
         reason = "the one sanctioned place that starts run hosts"
     )]
-    fn launch(&self, run: RunId, folder: &Path, needs: Option<&RunNeeds>) -> io::Result<()> {
-        match &self.launcher {
-            Launcher::Systemd => {
+    fn launch(&self, run: RunId, folder: &Path, start: Start) -> io::Result<()> {
+        match start {
+            Start::Systemd => {
                 let output = std::process::Command::new("systemd-run")
                     .args(["--user", "--quiet", "--collect"])
                     .arg(format!("--unit={}", Self::unit(run)))
@@ -770,14 +787,10 @@ impl HeldRuns {
                     )))
                 }
             }
-            Launcher::Container(containers) => {
-                let needs = needs.ok_or_else(|| {
-                    io::Error::other("a run host in a container was started without its needs")
-                })?;
-                let container = containers.container(run, needs);
-                let launch = match container.reach() {
+            Start::Sandbox(sandbox) => {
+                let launch = match sandbox.engine() {
                     Reach::Scope => Launch::Scope {
-                        unit: container.name().to_owned(),
+                        unit: sandbox.name().to_owned(),
                     },
                     Reach::Socket(socket) => {
                         // In a container, the home's folders and the runtime
@@ -794,17 +807,17 @@ impl HeldRuns {
                     }
                 };
                 Engine::Podman
-                    .start(container.spec(), &launch)
+                    .start(sandbox.spec(), &launch)
                     .map_err(|error| match error {
                         EngineError::Spawn { source, .. } => source,
                         EngineError::Failed { stderr, .. } => io::Error::other(format!(
                             "podman could not start the run host {}: {stderr}",
-                            container.name(),
+                            sandbox.name(),
                         )),
                         error @ EngineError::Runtime { .. } => io::Error::other(error.to_string()),
                     })
             }
-            Launcher::Direct => {
+            Start::Direct => {
                 use std::os::unix::process::CommandExt as _;
                 std::process::Command::new(&self.program)
                     .arg("run-host")

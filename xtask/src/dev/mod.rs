@@ -77,9 +77,10 @@ struct AgentArgs {
     /// The client the agent plays.
     #[arg(long, value_enum, default_value = "codex")]
     client: Played,
-    /// Where the agent numbers its threads (the slot's data directory).
+    /// Where the agent keeps its state between runs: whether it is signed
+    /// out, and opencode's sessions. Never Ren's data, which no run sees.
     #[arg(long)]
-    data_dir: PathBuf,
+    state_dir: PathBuf,
     /// The arguments the daemon gave the client.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     arguments: Vec<String>,
@@ -268,20 +269,20 @@ impl Dev {
             DevAction::Provider(args) => Ok(FakeProvider::serve(args.listen, args.settings)?),
             DevAction::Agent(args) => match args.client {
                 Played::Claude if FakeClaudeAuth::asked(&args.arguments) => {
-                    Ok(FakeClaudeAuth::run(&args.data_dir, &args.arguments)?)
+                    Ok(FakeClaudeAuth::run(&args.state_dir, &args.arguments)?)
                 }
                 Played::Codex if FakeCodexAuth::asked(&args.arguments) => {
-                    Ok(FakeCodexAuth::run(&args.data_dir, &args.arguments)?)
+                    Ok(FakeCodexAuth::run(&args.state_dir, &args.arguments)?)
                 }
                 Played::Pi if FakePiAuth::asked(&args.arguments) => {
-                    Ok(FakePiAuth::run(&args.data_dir, &args.arguments)?)
+                    Ok(FakePiAuth::run(&args.state_dir, &args.arguments)?)
                 }
                 Played::OpenCode if FakeOpenCodeAuth::asked(&args.arguments) => {
-                    Ok(FakeOpenCodeAuth::run(&args.data_dir, &args.arguments)?)
+                    Ok(FakeOpenCodeAuth::run(&args.state_dir, &args.arguments)?)
                 }
-                Played::Codex | Played::Claude | Played::Pi | Played::OpenCode => {
-                    Ok(FakeAgent::new(args.client, env, &args.data_dir, &args.arguments)?.run()?)
-                }
+                Played::Codex | Played::Claude | Played::Pi | Played::OpenCode => Ok(
+                    FakeAgent::new(args.client, env, &args.state_dir, &args.arguments)?.run()?,
+                ),
             },
             DevAction::Up(args) => {
                 let slot = Slot::new(env)?

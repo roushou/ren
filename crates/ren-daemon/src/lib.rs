@@ -418,7 +418,7 @@ impl Daemon {
         let root = data_dir.join(HeldRuns::FOLDER);
         let relayed = matches!(
             &launcher,
-            Launcher::Container(containers) if matches!(containers.network(), RunReach::Relayed(..))
+            Launcher::Container(sandboxes) if matches!(sandboxes.reach(), RunReach::Relayed { .. })
         );
         let held = HeldRuns::new(root.clone(), launcher, program.clone());
         if !relayed {

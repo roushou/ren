@@ -480,7 +480,7 @@ spec (phase 7):
       closes phase 7.
     - `install-vps` stays the host install a laptop uses. Whether the VPS
       keeps it as a fallback is decided once the pod swap is verified.
-    - Built: `Launcher::Container` (`ren-daemon`'s `host/held/container.rs`)
+    - Built: `Launcher::Container` (`ren-daemon`'s `host/held/container.rs`, now `sandbox.rs`)
       starts `ren run-host` as its container's entrypoint, from a transient
       scope of its own (`ren-run-<run>.scope`), so its monitor outlives the
       daemon's unit. Each client's profile declares what it keeps under the
@@ -542,6 +542,7 @@ spec (phase 7):
       gateway's: the gateway reads model protocols and records calls; the
       relay passes opaque tunnels and records only who went where.
     - **`ren-sandbox` (new), `Sandbox`: one run's envelope, declared.**
+      (Built as a module of `ren-daemon`: see below.)
       What it sees (`Sight`: the mounts phase 11 derives), reaches
       (`Reach`: the gateway's address and the relay's policy), holds
       (`Grant`s), and runs on (`Isolation`). It replaces `RunContainers`
@@ -708,9 +709,44 @@ spec (phase 7):
       ones narrowed for a stronger runtime anyway.
     - Not yet: production's configuration does not ask for gVisor; real
       clients (Claude Code, Codex, Pi, opencode) driven under it.
+    - Built: the sandbox. `Sandbox`, one run's envelope, replaces
+      `RunContainers` and `RunNeeds`: `Sandboxes` (`[runs.container]`: the
+      image, how Podman is reached, the home, what every run sees, what
+      runs reach, and Ren's configuration file, `Config::source`) makes a
+      run's `Sandbox` from its `Sight` (its folder, workdir, git folder,
+      this `ren`, what its command reads, what its client keeps) and Ren's
+      places (its data, the doors). `RunReach` is what a run reaches and
+      so holds and runs on: `Host { ssh_agent }`, or `Relayed { policy,
+      runtime }`, which holds no credential of the operator's. The
+      constructor (`Sandboxes::sandbox`) refuses a run that would see Ren's
+      data folder or configuration file whole, or a `[runs.container]` path
+      inside Ren's data (`SandboxError`); what Ren made for the run inside
+      its data (its folder, worktree, the doors) is seen. Pure, with a
+      purity test. `HeldRuns` makes the sandbox before it writes the run's
+      spec and starts it (`Start`). The dev slot's fake agent keeps its
+      state beside its program (`--state-dir`), no longer in the slot's
+      data, which its runs mounted whole.
+    - Verified in the dev slot (`--contain all --runtime gvisor`): five
+      runs started at once in their sandboxes took their turns, each
+      container seeing of Ren's data only its run folder and the doors;
+      a run in a worktree under Ren's data took its turn; with
+      `~/.local/state` added to `[runs.container] read_only`, a run was
+      refused and the daemon logged that it holds Ren's data.
+      Production's configuration passes the refusals.
+    - Deviation: a module, not a crate. `Sandbox` is `ren-daemon`'s
+      `host::held::sandbox`: the daemon is its one user, and a pure module
+      with a purity test is the rule for that.
+    - Deviation: the host's network stays, declared. `RunReach::Host`
+      keeps the SSH agent until grants push for production's runs (the
+      GitHub App), and is then removed.
+    - Deviation: grants are not the sandbox's. A run's grant is the
+      relay's (`Relaying` knows its ticket and repository), so the sandbox
+      holds no `Grant`; and `Isolation` is `ren-container`'s `Runtime`.
+    - Not yet: `Purpose` and a project's own reach in its manifest; a
+      client's sign-in is still seen read-write (see Not decided).
     - Deviation: `Purpose` is not the relay's. The relay records the
       destination that admitted a tunnel; why it is listed belongs to where
-      it is listed (`[runs.reach]`, a manifest), so `ren-sandbox` keeps it.
+      it is listed (`[runs.reach]`, a manifest), so the sandbox keeps it.
     - Order: the relay and the private network first (the largest gain,
       and the gateway already carries the model calls), then passages on
       the run's page (done), then grants (done), then the runtime (done). Each lands on its own
