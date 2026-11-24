@@ -19,7 +19,7 @@ pub enum SeedError {
     Runtime(#[source] std::io::Error),
     #[error("cannot build the HTTP client: {0}")]
     Client(#[source] reqwest::Error),
-    #[error("the dev gateway at {0} did not answer; is the slot up (`cargo xtask dev up`)?")]
+    #[error("the dev gateway at {0} did not answer; is the instance up (`cargo xtask dev up`)?")]
     Unreachable(SocketAddr),
     #[error("cannot keep the seed run count in {path}: {source}")]
     Runs {
@@ -39,10 +39,18 @@ impl Seeder {
         Self { gateway, token }
     }
 
-    /// The next run number, counted in the slot's data directory, which a
-    /// reset removes.
+    /// The file counting runs, in the instance's data directory.
+    const RUNS: &str = "seed-runs";
+
+    /// Whether any scenario was ever played into `data_dir`.
+    pub fn seeded(data_dir: &Path) -> bool {
+        data_dir.join(Self::RUNS).exists()
+    }
+
+    /// The next run number, counted in the instance's data directory,
+    /// which a reset removes.
     pub fn next_run(data_dir: &Path) -> Result<u32, SeedError> {
-        let path = data_dir.join("seed-runs");
+        let path = data_dir.join(Self::RUNS);
         let error = |source| SeedError::Runs {
             path: path.display().to_string(),
             source,

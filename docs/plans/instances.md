@@ -184,10 +184,28 @@ What already points the right way, and is kept:
    16; its head moved to another built commit was running that commit in
    25 (its `/health` said so); closed, its preview's pod was gone in 22.
    The poll is 30 seconds.
-5. **The dev slot, folded in.** Planned. Checkout sources, scenarios, and
-   the fake provider as instance parts; `cargo xtask dev` becomes a thin
-   way to start one, then goes. Verified by the work this repository's
-   agents do in the dev slot today, done in an instance instead.
+5. **The dev slot, folded in.** Built, as dev instances started by xtask
+   on the host. The slot's fixed places became a `DevIndex`'s (`dev::index`:
+   loopback ports in steps of ten, tailnet ports in steps of a hundred,
+   folders, unit and container names), index 0 keeping every one of the
+   slot's, so that step changed nothing (same configuration, same units).
+   Each checkout then claims an index (`dev::claims`, pure, kept in
+   `~/.local/state/ren-dev-claims.json` under a lock): `dev up` claims the
+   lowest free one, every other `dev` command acts on the checkout's own,
+   a gone checkout's claim is let go, and `dev down --release` gives one
+   up. An instance's data is a scenario (`dev up --scenario`, played once
+   into data never seeded), its upstream the fake provider, its source the
+   checkout. Verified with a second worktree beside this checkout's
+   instance 0, as an agent would use it, with no `--instance`: `dev up
+   --ui` claimed instance 1 (daemon on 18797, UI on 13010, units
+   `ren-dev-1-*`, its daemon contained under gVisor); `dev seed`, `dev
+   traffic burst`, and `dev shot` reached it, its pages showing its own
+   data; a fake Codex run started in its run root asked to run the tests,
+   was approved, and finished its turn; `dev down --release` stopped every
+   unit and container of it and gave up the claim, while instance 0
+   answered throughout. Instance 0's configuration and units were compared
+   before and after the first step: unchanged. A fresh instance had no
+   scratch folder for its contained daemon to mount; it is made now.
 6. **The canary, as an instance.** Planned. The follower of `main` on a
    replica; its checks and promotion stay as they are, on top. Verified by
    a promotion through it.
@@ -271,3 +289,14 @@ does. Each lands on its own and passes every check.
   list counts too: it is the order slots are given in.
 - **Phase 4: the timer stays, to catch up.** A move seen while the factory
   is not listening is taken up by the timer's next pass.
+- **Phase 5: built and started by xtask, on the host.** The operator
+  chose it: a checkout is the operator's own work, and its edit-and-see
+  loop needs the incremental build cache a container build would not
+  keep. Commits and pull requests stay the factory's, built in containers.
+- **Phase 5: units, not pods; `cargo xtask dev` stays.** An instance's
+  processes stay transient units, so an instance can still run its daemon
+  and runs on the host (`--contain none`); the command stays because it
+  is what starts one, now per checkout, not a separate system beside
+  instances. `ren instance` waits for the instances' own API.
+- **Phase 5: the canary rehearses against instance 0** (`--of dev`), and
+  the dev factory socket is instance 0's: one rehearsal is enough.

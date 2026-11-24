@@ -333,30 +333,41 @@ and the install reports the failure. It then publishes the UI on that port
 under the same rules as the daemon's port. With no `--ui-https-port` given or saved,
 the UI is left untouched.
 
-### Dev slot
+### Dev instances
 
-`cargo xtask dev` runs this checkout's build beside the installed service, with
+`cargo xtask dev` runs a checkout's build beside the installed service, with
 fake providers and fake data, for development and for previewing a change before
-it is installed:
+it is installed. Each checkout has an instance of its own: `dev up` claims the
+lowest free one of eight for the checkout it runs in, and every other `dev`
+command there acts on that one (`--instance <n>` picks another):
 
 ```sh
-cargo xtask dev up --ui      # build, then start the slot and its UI, and publish them
+cargo xtask dev up --ui      # build, then start this checkout's instance and its UI, and publish them
+cargo xtask dev up --ui --scenario all   # and, the first time, seed its data with a scenario
 cargo xtask dev seed         # play a scenario once (sessions, users, long, errors, websocket, all)
 cargo xtask dev traffic      # show the live traffic settings
 cargo xtask dev traffic set --rate 60 --pace slow --replies tools=50,error=5
 cargo xtask dev traffic pause    # or resume; burst 20 sends 20 calls now
 cargo xtask dev shot         # screenshots of the UI's pages, in target/dev-shots
 cargo xtask dev status
-cargo xtask dev reset        # remove the slot's data and start again
-cargo xtask dev down         # stop the slot and remove the preview's routes
+cargo xtask dev list         # every instance: its index, dev UI, and checkout
+cargo xtask dev reset        # remove the instance's data and start again
+cargo xtask dev down         # stop the instance and remove its routes; --release gives up its claim
 ```
 
-|          | Dev slot                                                                | Installed service                         |
-| -------- | ----------------------------------------------------------------------- | ----------------------------------------- |
-| Units    | `ren-dev-provider`, `ren-dev-daemon`, `ren-dev-traffic`, `ren-dev-ui`   | `ren`, `ren-ui`                           |
-| Loopback | fake provider `18999`, daemon `18787`, UI `13000`, traffic API `13001`  | daemon `8787`, UI `3000`                  |
-| Tailnet  | `9443` (gateway), `9444` (UI), with `dev up --ui`                       | your `--https-port` and `--ui-https-port` |
-| Files    | `~/.config/ren-dev`, `~/.local/state/ren-dev`, `~/.local/share/ren-dev` | `~/.config/ren`, `~/.local/state/ren`     |
+Instance `n` (from 0) takes its places from its index; instance 0 is
+`ren-dev`, and instance `n` after it `ren-dev-<n>`:
+
+|          | Dev instance `n`                                                                               | Installed service                         |
+| -------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Units    | `<name>-provider`, `<name>-daemon`, `<name>-traffic`, `<name>-ui`                              | `ren`, `ren-ui`                           |
+| Loopback | fake provider `18999 + 10n`, daemon `18787 + 10n`, UI `13000 + 10n`, traffic API `13001 + 10n` | daemon `8787`, UI `3000`                  |
+| Tailnet  | `9443 + 100n` (gateway), `9444 + 100n` (UI), with `dev up --ui`                                | your `--https-port` and `--ui-https-port` |
+| Files    | `~/.config/<name>`, `~/.local/state/<name>`, `~/.local/share/<name>`                           | `~/.config/ren`, `~/.local/state/ren`     |
+
+The claims are kept in `~/.local/state/ren-dev-claims.json`; a checkout
+that no longer exists gives up its claim when another is made. The rest of
+this section names instance 0's places.
 
 The units are transient systemd user units, stopped by name. The dev
 configuration is regenerated on every `up`. It sets `[instance] environment =

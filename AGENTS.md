@@ -867,8 +867,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   output, its UI unit rendering, its saved flags, and the upgrade's wait,
   pause, and build-check decisions are unit-tested; the commands it runs
   are exercised only by running it.
-  `cargo xtask dev` runs the dev slot (`dev`, `docs/deployment.md#dev-slot`):
-  this checkout's build beside the installed service, with its own config,
+  `cargo xtask dev` runs dev instances (`dev`,
+  `docs/deployment.md#dev-instances`, `docs/plans/instances.md` phase 5):
+  each checkout claims one (`dev::claims`, pure, kept under a lock) whose
+  `DevIndex` places it (`dev::index`: ports, folders, unit and container
+  names; index 0 keeps the old slot's), and `dev::instance` runs it: the
+  checkout's build beside the installed service, with its own config,
   data, and ports, against a fake provider (`dev::provider`, whose replies are
   the pure, tested `script`), seeded with fake traffic (`dev::seed`, scenarios
   as pure data), as `ren-dev-*` transient units, runs driven against a fake `codex`, `claude`, `pi`, and `opencode`
@@ -1015,12 +1019,13 @@ bun install --frozen-lockfile
 bun run format:check && bun run check && bun run test && bun run build
 ```
 
-Verify changed UI interactions with synthetic traffic in the dev slot before
-they reach the installed service: `cargo xtask dev up --ui`, `cargo xtask dev seed`,
-then `cargo xtask dev shot` for screenshots and the private preview
-(`https://<node>:9444`) for a browser. Keep focused unit tests and don't add a
+Verify changed UI interactions with synthetic traffic in your checkout's dev
+instance before they reach the installed service: `cargo xtask dev up --ui`,
+`cargo xtask dev seed`, then `cargo xtask dev shot` for screenshots and the
+private preview (`dev up --ui` prints it: `https://<node>:9444` for instance 0,
+`9444 + 100n` for instance `n`) for a browser. Keep focused unit tests and don't add a
 browser integration suite yet. UI changes don't require rebuilding Rust.
-Never stop processes by a name pattern: the slot's units are stopped by name
+Never stop processes by a name pattern: an instance's units are stopped by name
 (`cargo xtask dev down`), and the installed `ren` and `ren-ui` services must keep
 running.
 

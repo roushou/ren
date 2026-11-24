@@ -137,6 +137,10 @@ struct UpArgs {
     /// (`runsc` installed on the host).
     #[arg(long, default_value = "host_kernel")]
     runtime: ren_daemon::config::RunRuntime,
+    /// The data it starts with: once up, an instance never seeded plays
+    /// this scenario; one seeded already keeps what it has.
+    #[arg(long, value_enum)]
+    scenario: Option<Scenario>,
     #[command(flatten)]
     tailnet: TailnetArgs,
 }
@@ -339,6 +343,17 @@ impl Dev {
                     slot.up_with_ui(env, preview, wait)?;
                 } else {
                     slot.up(wait)?;
+                }
+                if let Some(scenario) = args.scenario {
+                    if Seeder::seeded(&slot.data_dir) {
+                        Progress("Seeded already: the instance keeps its data").show();
+                    } else {
+                        Seeder::new(
+                            slot.index.daemon(),
+                            DevInstance::ci_token().expose().to_owned(),
+                        )
+                        .play(scenario, &slot.data_dir)?;
+                    }
                 }
                 slot.status()
             }
