@@ -747,11 +747,37 @@ spec (phase 7):
       relay runs a listener, so `Destination` (with `Target` and its host
       types) is a pure crate of its own below both; the relay re-exports
       it. Moved alone first, with no change in behaviour (the same tests).
-    - Not yet: `Purpose` and a project's own reach in its manifest; a
-      client's sign-in is still seen read-write (see Not decided).
+    - Built: reach declared and its purpose recorded. A project's
+      manifest lists `reach` (`ren-manifest`); the GitHub watch's query
+      also reads the default branch's `.ren/project.toml`
+      (`Snapshot::manifest`), and the daemon learns each watched
+      repository's reach from it (`ProjectReaches`), never from a run's
+      checkout, whose `.git` the run can write. A relayed run's `Listing`
+      holds each destination with its `Purpose` (`configuration`,
+      `client`, `project`, `grant`), in that order, kept in its spec for a
+      rejoin; the relay holds it with the run's pass (`RelayedRun`), so a
+      passage is recorded with the purpose of the destination that let it
+      through (`run_passages.listed_by`, migration 0007, not yet shipped,
+      changed in place), shown in the inspector ("Reached through …,
+      listed by its project").
+    - Verified in the dev slot (`--contain all --runtime gvisor`, the fake
+      GitHub giving `acme/api` a manifest that lists `static.crates.io`):
+      a run in `acme-api` was listed the configured registry, its client's
+      sign-in hosts, `static.crates.io` for its project, and `github.com`
+      for its grant; through the relay `static.crates.io` was recorded as
+      listed by the project, `index.crates.io` by the configuration, and
+      `example.com` refused; after the daemon restarted, the run's next
+      passage to `static.crates.io` was still listed by the project.
+    - Deviation: a project's reach is read from GitHub, not its checkout,
+      and only for a repository under `[[github.repository]]`.
+    - Deviation: refusals carry no purpose: no list holds what was
+      refused, and the inspector says only that it was not listed.
+    - Not yet: a client's sign-in is still seen read-write (see Not
+      decided).
     - Deviation: `Purpose` is not the relay's. The relay records the
       destination that admitted a tunnel; why it is listed belongs to where
-      it is listed (`[runs.reach]`, a manifest), so the sandbox keeps it.
+      it is listed, so the daemon's `Listing` keeps it, and the recorder
+      stores it.
     - Order: the relay and the private network first (the largest gain,
       and the gateway already carries the model calls), then passages on
       the run's page (done), then grants (done), then the runtime (done). Each lands on its own

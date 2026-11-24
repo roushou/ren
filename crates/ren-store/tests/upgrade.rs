@@ -500,6 +500,7 @@ impl Scenario {
     /// A relayed run's ways out: a listed registry reached twice, and an
     /// unlisted host refused.
     fn passages(&self, run: RunId) {
+        use ren_recorder::passage::{PassageRecord, Purpose};
         let registry = || ren_relay::Course::Tunnel {
             target: "index.crates.io:443".parse().unwrap(),
             end: ren_relay::TunnelEnd::Closed {
@@ -508,14 +509,17 @@ impl Scenario {
                 received: 5_000,
             },
         };
-        self.recorder.passage(run, &registry());
-        self.recorder.passage(run, &registry());
+        let listed = |course: &ren_relay::Course| {
+            PassageRecord::of(course, |_| Some(Purpose::Configuration))
+        };
+        self.recorder.passage(run, listed(&registry()));
+        self.recorder.passage(run, listed(&registry()));
         self.recorder.passage(
             run,
-            &ren_relay::Course::Tunnel {
+            listed(&ren_relay::Course::Tunnel {
                 target: "example.com:443".parse().unwrap(),
                 end: ren_relay::TunnelEnd::Refused(ren_relay::Refusal::Unlisted),
-            },
+            }),
         );
     }
 

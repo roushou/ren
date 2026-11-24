@@ -12,6 +12,7 @@ description = "A project's manifest for the Ren LLM gateway: how it is built, se
 # for a place. Only pure dependencies; running a step is the shell's.
 [dependencies]
 ren-depot.workspace = true
+ren-destination.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 toml.workspace = true

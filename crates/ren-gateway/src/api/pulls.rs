@@ -154,10 +154,13 @@ impl SightingBody {
 
 impl From<Sighting> for SightingBody {
     fn from(sighting: Sighting) -> Self {
+        // The manifest is the daemon's, for its runs' reach; the pulls
+        // page shows none of it.
         let Snapshot {
             default_branch,
             pull_requests,
             listing,
+            manifest: _,
         } = sighting.snapshot;
         Self {
             at: Self::millis(sighting.at),

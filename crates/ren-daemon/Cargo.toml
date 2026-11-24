@@ -21,6 +21,7 @@ ren-gateway.workspace = true
 ren-git.workspace = true
 ren-github.workspace = true
 ren-harness.workspace = true
+ren-manifest.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
 ren-relay.workspace = true

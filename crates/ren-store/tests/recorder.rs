@@ -1062,6 +1062,7 @@ async fn a_held_run_is_detached_left_open_and_rejoined() {
 /// A run recorded with four passages: two closed and one broken to a listed
 /// registry, and one refused.
 fn passages_of(harness: &Harness, run: ren_recorder::id::RunId) {
+    use ren_recorder::passage::{PassageRecord, Purpose};
     use ren_relay::{Course, Refusal, TunnelEnd};
     let tap = harness
         .recorder
@@ -1094,21 +1095,27 @@ fn passages_of(harness: &Harness, run: ren_recorder::id::RunId) {
         },
         TunnelEnd::Broken { through: through() },
     ] {
-        harness.recorder.passage(run, &registry(end));
+        harness.recorder.passage(
+            run,
+            PassageRecord::of(&registry(end), |_| Some(Purpose::Project)),
+        );
     }
     harness.recorder.passage(
         run,
-        &Course::Tunnel {
-            target: "example.com:443".parse().unwrap(),
-            end: TunnelEnd::Refused(Refusal::Unlisted),
-        },
+        PassageRecord::of(
+            &Course::Tunnel {
+                target: "example.com:443".parse().unwrap(),
+                end: TunnelEnd::Refused(Refusal::Unlisted),
+            },
+            |_| None,
+        ),
     );
     tap.end(ren_recorder::capture::RunEnd::Exited, None);
 }
 
 #[tokio::test]
 async fn a_runs_passages_read_back_grouped_by_what_was_asked_and_how_it_ended() {
-    use ren_recorder::passage::PassageEnd;
+    use ren_recorder::passage::{PassageEnd, Purpose};
     let harness = Harness::new(CaptureOptions::default(), 8).await;
     let run = ren_recorder::id::RunId::restore(uuid::Uuid::from_u128(7));
     passages_of(&harness, run);
@@ -1124,6 +1131,7 @@ async fn a_runs_passages_read_back_grouped_by_what_was_asked_and_how_it_ended() 
                 passage.asked,
                 passage.end,
                 passage.through,
+                passage.listed_by,
                 passage.count,
                 passage.sent,
                 passage.received,
@@ -1132,6 +1140,7 @@ async fn a_runs_passages_read_back_grouped_by_what_was_asked_and_how_it_ended() 
         .collect();
     let registry = "registry.acme.dev:443".to_owned();
     let through = Some("*.acme.dev:443".to_owned());
+    let project = Some(Stored::Known(Purpose::Project));
     // All at one moment: by what was asked, then how it ended.
     assert_eq!(
         read,
@@ -1139,6 +1148,7 @@ async fn a_runs_passages_read_back_grouped_by_what_was_asked_and_how_it_ended() 
             (
                 "example.com:443".to_owned(),
                 Stored::Known(PassageEnd::Unlisted),
+                None,
                 None,
                 1,
                 0,
@@ -1148,6 +1158,7 @@ async fn a_runs_passages_read_back_grouped_by_what_was_asked_and_how_it_ended() 
                 registry.clone(),
                 Stored::Known(PassageEnd::Broken),
                 through.clone(),
+                project.clone(),
                 1,
                 0,
                 0
@@ -1156,6 +1167,7 @@ async fn a_runs_passages_read_back_grouped_by_what_was_asked_and_how_it_ended() 
                 registry,
                 Stored::Known(PassageEnd::Closed),
                 through,
+                project,
                 2,
                 150,
                 3_000

@@ -229,13 +229,14 @@ impl MetadataTx<'_> {
             RunFact::Passed { passage } => {
                 let bytes = passage.bytes();
                 sqlx::query(
-                    "INSERT INTO run_passages(run, seq, at, asked, end, through, sent, received) VALUES (?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM run_passages WHERE run = ?1), ?2, ?3, ?4, ?5, ?6, ?7)",
+                    "INSERT INTO run_passages(run, seq, at, asked, end, through, listed_by, sent, received) VALUES (?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM run_passages WHERE run = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 )
                 .bind(&id)
                 .bind(at)
                 .bind(passage.asked())
                 .bind(passage.end().label())
                 .bind(passage.through())
+                .bind(passage.listed_by().map(Labeled::label))
                 .bind(bytes.map(|bytes| i64::try_from(bytes.sent).unwrap_or(i64::MAX)))
                 .bind(bytes.map(|bytes| i64::try_from(bytes.received).unwrap_or(i64::MAX)))
                 .execute(&mut *self.tx)

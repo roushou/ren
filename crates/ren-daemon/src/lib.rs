@@ -11,8 +11,8 @@ pub mod packages;
 
 use crate::config::RuntimeConfig;
 use crate::host::{
-    Doors, Grants, HeldRuns, Launcher, ObservationThread, ProcessHost, RandomIds, Relaying,
-    RunReach, SystemClock,
+    Doors, Grants, HeldRuns, Launcher, ObservationThread, ProcessHost, ProjectReaches, RandomIds,
+    RelayedRun, Relaying, RunReach, SystemClock,
 };
 use crate::packages::HostPrograms;
 use crate::packages::{HostPackages, PackageStore, fetch::ReqwestFetch};
@@ -30,11 +30,7 @@ use ren_harness::{
 };
 use ren_recorder::CaptureOptionsError;
 use ren_recorder::secrets::SecretScanner;
-use ren_recorder::{
-    Recorder, RecorderSetup,
-    id::{IdSource, RunId},
-    time::Clock,
-};
+use ren_recorder::{Recorder, RecorderSetup, id::IdSource, time::Clock};
 use ren_relay::{Course, Passage, Relay, TunnelEnd};
 use ren_release::Build;
 use ren_store::StoreError;
@@ -44,7 +40,7 @@ use std::{convert::Infallible, io, net::SocketAddr, path::PathBuf, sync::Arc, ti
 use tokio::{net::TcpListener, task::JoinHandle};
 
 /// What the relay reports of each relayed run's requests, as they end.
-type Passages = tokio::sync::mpsc::UnboundedReceiver<Passage<RunId>>;
+type Passages = tokio::sync::mpsc::UnboundedReceiver<Passage<RelayedRun>>;
 
 /// Why the daemon could not start, run, or stop cleanly.
 #[derive(Debug, thiserror::Error)]
@@ -173,7 +169,10 @@ impl Daemon {
         // handed to components as capabilities.
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::start());
         let ids: Arc<dyn IdSource> = Arc::new(RandomIds);
-        let (held, passages) = Self::held(config, data_dir, address, &ids, &clock);
+        // What watched projects let their runs reach, learned from GitHub
+        // by the watch and read as relayed runs start.
+        let projects = ProjectReaches::default();
+        let (held, passages) = Self::held(config, data_dir, address, &ids, &clock, &projects);
         // The runs run hosts kept going are left open, to be taken up.
         let holding: Vec<_> = match &held {
             Some(held) => held
@@ -255,7 +254,7 @@ impl Daemon {
             shutdown.clone(),
         );
         let packages = Self::packages(config, data_dir, &reader);
-        let pulls = Self::watch_github(config, clock, &shutdown);
+        let pulls = Self::watch_github(config, clock, &shutdown, projects);
         let ingress = gateway.into_ingress(
             listener,
             ManagementSetup {
@@ -400,6 +399,7 @@ impl Daemon {
         address: SocketAddr,
         ids: &Arc<dyn IdSource>,
         clock: &Arc<dyn Clock>,
+        projects: &ProjectReaches,
     ) -> (Option<HeldRuns>, Option<Passages>) {
         if config.runs().roots.is_empty() {
             return (None, None);
@@ -435,7 +435,7 @@ impl Daemon {
                 clock.clone(),
             )))
         });
-        match Self::relaying(&root, address, ids, program, grants) {
+        match Self::relaying(&root, address, ids, program, grants, projects.clone()) {
             Ok((relaying, passages)) => (Some(held.relaying(relaying)), Some(passages)),
             Err(error) => {
                 // Its runs are refused as they start, which says why.
@@ -454,6 +454,7 @@ impl Daemon {
         ids: &Arc<dyn IdSource>,
         helper: PathBuf,
         grants: Option<Arc<Grants>>,
+        projects: ProjectReaches,
     ) -> std::io::Result<(Relaying, Passages)> {
         let relay = Arc::new(Relay::new());
         let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
@@ -465,7 +466,8 @@ impl Daemon {
         let to_relay = doors.open(Doors::RELAY, relay_address)?;
         let (sender, passages) = tokio::sync::mpsc::unbounded_channel();
         let serving = relay.clone();
-        let mut relaying = Relaying::new(relay, doors.clone(), gateway, ids.clone(), helper);
+        let mut relaying =
+            Relaying::new(relay, doors.clone(), gateway, ids.clone(), helper, projects);
         let granting = match grants {
             Some(grants) => {
                 relaying = relaying.granting(grants);
@@ -498,7 +500,8 @@ impl Daemon {
         if let Some(mut passages) = passages {
             while let Some(passage) = passages.recv().await {
                 Self::log_passage(&passage);
-                recorder.passage(*passage.holder(), passage.course());
+                let held = passage.holder();
+                recorder.passage(held.run(), held.record(passage.course()));
             }
         }
         // The relay stopped reporting, or there is none.
@@ -508,8 +511,8 @@ impl Daemon {
 
     /// A relayed run's passage, in the daemon's log when it went nowhere:
     /// as a warning, so the operator sees what a run could not reach.
-    fn log_passage(passage: &Passage<RunId>) {
-        let run = passage.holder();
+    fn log_passage(passage: &Passage<RelayedRun>) {
+        let run = passage.holder().run();
         match passage.course() {
             Course::NotATunnel { method } => {
                 tracing::warn!(%run, %method, "a run asked the relay for something other than a tunnel");
@@ -535,6 +538,7 @@ impl Daemon {
         config: &RuntimeConfig,
         clock: Arc<dyn Clock>,
         shutdown: &Shutdown,
+        projects: ProjectReaches,
     ) -> PullBoard {
         let Some(setup) = config.github() else {
             return PullBoard::default();
@@ -550,7 +554,14 @@ impl Daemon {
         tokio::spawn(async move {
             poller
                 .run(
-                    |repository, observation| recording.record(repository, observation),
+                    |repository, observation| {
+                        if let Some((sighting, true)) = observation.sighting()
+                            && let Err(error) = projects.learn(repository, &sighting.snapshot)
+                        {
+                            tracing::warn!(%repository, %error, "a project's manifest on its default branch does not read; its runs reach nothing of its own");
+                        }
+                        recording.record(repository, observation);
+                    },
                     || {
                         std::time::SystemTime::UNIX_EPOCH
                             + Duration::from_millis(clock.now().wall.as_millis())

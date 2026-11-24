@@ -5,6 +5,7 @@
 //!
 //! ```toml
 //! packages = ["node"]
+//! reach = ["registry.npmjs.org:443", "*.example.com:443"]
 //!
 //! [[build]]
 //! run = ["npm", "ci"]
@@ -29,6 +30,12 @@
 //! run = ["./deploy.sh", "production"]
 //! ```
 //!
+//! `reach` lists where the project's relayed runs may connect through
+//! Ren's relay, besides what Ren's configuration and each client list:
+//! `host:port`, or `*.parent:port` for any name under one. Ren reads it
+//! from the default branch on GitHub, never from a run's checkout, which
+//! the run could change.
+//!
 //! Deploying runs in a build the canary checked, when the operator's
 //! promotion policy says (`ren project canary`, `ren project promote`).
 //!
@@ -50,6 +57,7 @@ mod template;
 pub use template::{Template, TemplateError};
 
 use ren_depot::package::PackageId;
+use ren_destination::Destination;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -60,6 +68,7 @@ use std::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
     packages: BTreeSet<PackageId>,
+    reach: Vec<Destination>,
     build: Vec<Step>,
     serve: Option<Serve>,
     checks: Vec<NamedCheck>,
@@ -125,6 +134,8 @@ pub enum ManifestError {
     EnvName(String),
     #[error(transparent)]
     Template(#[from] TemplateError),
+    #[error("reach in .ren/project.toml lists {0:?}, which is not `host:port` or `*.parent:port`")]
+    Reach(String),
 }
 
 /// The `tools` key, renamed to `packages`: a manifest that still has it
@@ -157,6 +168,8 @@ struct ManifestFile {
     check: Vec<CheckFile>,
     quiesce: Option<StepFile>,
     deploy: Option<StepFile>,
+    #[serde(default)]
+    reach: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -241,6 +254,14 @@ impl Manifest {
             .deploy
             .map(|step| Step::read(step.run, step.env))
             .transpose()?;
+        let reach = file
+            .reach
+            .into_iter()
+            .map(|text| {
+                text.parse::<Destination>()
+                    .map_err(|_| ManifestError::Reach(text))
+            })
+            .collect::<Result<_, _>>()?;
         Ok(Self {
             packages: file.packages,
             build,
@@ -248,7 +269,14 @@ impl Manifest {
             checks,
             quiesce,
             deploy,
+            reach,
         })
+    }
+
+    /// Where its relayed runs may connect through the relay, besides what
+    /// Ren's configuration and their clients list.
+    pub fn reach(&self) -> &[Destination] {
+        &self.reach
     }
 
     /// The depot's packages its steps need.
@@ -458,6 +486,7 @@ run = ["./deploy.sh", "{worktree}"]
             ("[[build]]\nrun = [\"x\", \"{home}\"]", "placeholder"),
             ("packages = [\"Node 22\"]", "package"),
             ("tools = [\"node\"]", "renamed to `packages`"),
+            ("reach = [\"crates.io\"]", "not `host:port`"),
             (
                 "[[build]]\nrun = [\"x\"]\nenv = { \"1BAD\" = \"v\" }",
                 "invalid name",
@@ -470,6 +499,22 @@ run = ["./deploy.sh", "{worktree}"]
             Manifest::read("[[build]]\nrun = []"),
             Err(ManifestError::EmptyCommand)
         ));
+    }
+
+    #[test]
+    fn a_manifest_lists_where_its_runs_reach_and_none_without_reach() {
+        let manifest =
+            Manifest::read("reach = [\"registry.npmjs.org:443\", \"*.Example.com:443\"]\n")
+                .unwrap();
+        assert_eq!(
+            manifest
+                .reach()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["registry.npmjs.org:443", "*.example.com:443"]
+        );
+        assert!(Manifest::read(MANIFEST).unwrap().reach().is_empty());
     }
 
     #[test]

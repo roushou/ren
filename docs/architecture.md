@@ -225,7 +225,7 @@ root, and dependencies run one way; Cargo rejects cycles.
 
 ```text
 ren-cli      ─► ren-daemon, ren-gateway, ren-depot, ren-release, ren-manifest, ren-git
-ren-daemon   ─► ren-gateway, ren-store, ren-supervisor, ren-depot, ren-release, ren-git, ren-relay
+ren-daemon   ─► ren-gateway, ren-store, ren-supervisor, ren-depot, ren-release, ren-git, ren-relay, ren-manifest
 ren-gateway  ─► ren-harness, ren-recorder, ren-store, ren-supervisor, ren-release
 ren-supervisor ─► ren-recorder, ren-harness, ren-protocol
 ren-store    ─► ren-recorder
@@ -239,7 +239,7 @@ ren-network  ─► (none of ours)
 ren-relay    ─► ren-destination
 ren-destination ─► (none of ours)
 ren-container ─► (none of ours)
-ren-manifest ─► ren-depot
+ren-manifest ─► ren-depot, ren-destination
 xtask        ─► ren-daemon, ren-gateway, ren-recorder, ren-release, ren-manifest, ren-harness, ren-protocol, ren-git   (repository tasks, unpublished)
 ```
 

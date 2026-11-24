@@ -17,3 +17,4 @@ work::WorkStateKind: queued sent landed shipped dismissed
 work::PageTheme: light dark
 project::Factory: ren contract
 passage::PassageEnd: closed broken unlisted private_address unresolved connect_refused timed_out not_a_tunnel
+passage::Purpose: configuration client project grant

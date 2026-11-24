@@ -74,6 +74,7 @@ fn every_label_is_pinned() {
         work::PageTheme,
         project::Factory,
         passage::PassageEnd,
+        passage::Purpose,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

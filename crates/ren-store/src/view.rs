@@ -37,7 +37,7 @@ use ren_recorder::{
         AttachmentId, AttemptId, CallId, ChannelId, ProjectId, RecordingId, RunId, SessionId,
         TurnId, WorkItemId,
     },
-    passage::PassageEnd,
+    passage::{PassageEnd, Purpose},
     project::{Factory, ProjectName, RepositoryPath},
     time::UnixMillis,
     work::{WorkOrder, WorkPreview, WorkState, WorkStateKind},
@@ -747,6 +747,9 @@ pub struct PassageView {
     /// The listed destination that let it through, last time; `None` when
     /// it was refused.
     pub through: Option<String>,
+    /// Why that destination is listed, last time; `None` when refused or
+    /// not known.
+    pub listed_by: Option<Stored<Purpose>>,
     pub count: u64,
     /// Bytes each way over the ones that closed.
     pub sent: u64,
@@ -757,7 +760,7 @@ pub struct PassageView {
 
 impl PassageView {
     /// A run's passages, grouped by what was asked and how it ended.
-    pub(super) const SELECT: &'static str = "SELECT asked, end, MAX(through) AS through, COUNT(*) AS count, COALESCE(SUM(sent), 0) AS sent, COALESCE(SUM(received), 0) AS received, MIN(at) AS first_at, MAX(at) AS last_at FROM run_passages WHERE run = ? GROUP BY asked, end ORDER BY last_at DESC, asked, end";
+    pub(super) const SELECT: &'static str = "SELECT asked, end, (SELECT last.through FROM run_passages AS last WHERE last.run = run_passages.run AND last.asked = run_passages.asked AND last.end = run_passages.end ORDER BY last.seq DESC LIMIT 1) AS through, (SELECT last.listed_by FROM run_passages AS last WHERE last.run = run_passages.run AND last.asked = run_passages.asked AND last.end = run_passages.end ORDER BY last.seq DESC LIMIT 1) AS listed_by, COUNT(*) AS count, COALESCE(SUM(sent), 0) AS sent, COALESCE(SUM(received), 0) AS received, MIN(at) AS first_at, MAX(at) AS last_at FROM run_passages WHERE run = ? GROUP BY asked, end ORDER BY last_at DESC, asked, end";
 
     pub(super) fn from_row(row: &SqliteRow) -> Result<Self, StoreError> {
         let row = Columns(row);
@@ -765,6 +768,7 @@ impl PassageView {
             asked: row.text("asked")?.ok_or(StoreError::Corrupt("passage"))?,
             end: row.label("end")?,
             through: row.text("through")?,
+            listed_by: row.optional_label("listed_by")?,
             count: row.count("count")?,
             sent: row.count("sent")?,
             received: row.count("received")?,

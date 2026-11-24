@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type { UnknownLabel } from '../src/lib/decode.ts';
 import { Reach, passages, type Passage } from '../src/lib/passages.ts';
 
 function passage(asked: string, end: string, count: number, last_at: number): Passage {
@@ -7,6 +8,7 @@ function passage(asked: string, end: string, count: number, last_at: number): Pa
     asked,
     end: end as Passage['end'],
     through: end === 'closed' ? '*.acme.dev:443' : null,
+    listed_by: end === 'closed' ? 'project' : null,
     count,
     sent: 0,
     received: 0,
@@ -35,7 +37,7 @@ test('a session lists each place once per end, refusals first, then the newest',
     ],
   );
   assert.equal(rows[0]?.said, 'Refused: not listed');
-  assert.equal(rows[1]?.said, 'Reached through *.acme.dev:443');
+  assert.equal(rows[1]?.said, 'Reached through *.acme.dev:443, listed by its project');
 });
 
 test('an end this UI does not know is kept and shown as unknown', () => {
@@ -52,6 +54,7 @@ test('the read API body decodes, keeping an unknown end', () => {
         asked: 'registry.acme.dev:443',
         end: 'closed',
         through: '*.acme.dev:443',
+        listed_by: 'configuration',
         count: 2,
         sent: 150,
         received: 3000,
@@ -62,6 +65,7 @@ test('the read API body decodes, keeping an unknown end', () => {
         asked: 'GET',
         end: 'later_end',
         through: null,
+        listed_by: null,
         count: 1,
         sent: 0,
         received: 0,
@@ -72,5 +76,11 @@ test('the read API body decodes, keeping an unknown end', () => {
   };
   const read = passages(body, '').passages;
   assert.equal(read[0]?.through, '*.acme.dev:443');
+  assert.equal(read[0]?.listed_by, 'configuration');
   assert.equal(read[1]?.end, 'later_end');
+});
+
+test('a list this UI does not know is named as stored', () => {
+  assert.equal(Reach.list('workspace' as UnknownLabel), 'workspace');
+  assert.equal(Reach.list('configuration'), "Ren's configuration");
 });

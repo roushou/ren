@@ -19,7 +19,12 @@ end: string,
  * The listed destination that let it through, last time; `None` when
  * it was refused.
  */
-through: string | null, count: number, 
+through: string | null, 
+/**
+ * A `purpose` label, why that destination is listed: `configuration`,
+ * `client`, `project`, or `grant`; `None` when refused or not known.
+ */
+listed_by: string | null, count: number, 
 /**
  * Bytes each way over the ones that closed.
  */

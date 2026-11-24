@@ -2,7 +2,7 @@
 //! [`PassageRecord`] per request it made of the relay, read once from the
 //! relay's report.
 
-use ren_relay::{Course, Refusal, TunnelEnd, Unreachable};
+use ren_relay::{Course, Destination, Refusal, TunnelEnd, Unreachable};
 use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -31,6 +31,31 @@ pub enum PassageEnd {
     NotATunnel,
 }
 
+/// Why a destination a run went through is listed: which list holds it.
+#[derive(Display, EnumString, IntoStaticStr, VariantArray)]
+#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
+pub enum Purpose {
+    /// Ren's configuration: what every relayed run may reach.
+    Configuration,
+    /// The run's client: where it connects itself (its sign-in's refresh,
+    /// its model catalogue).
+    Client,
+    /// The run's project: its manifest on its default branch.
+    Project,
+    /// The run's grant: GitHub, to push to its repository.
+    Grant,
+}
+
+/// The destination that let a request through, and why it is listed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Through {
+    through: String,
+    /// Unknown when the run's listing no longer says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    listed_by: Option<Purpose>,
+}
+
 /// The bytes a closed tunnel passed each way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct PassedBytes {
@@ -44,15 +69,16 @@ pub struct PassedBytes {
 pub struct PassageRecord {
     asked: String,
     end: PassageEnd,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    through: Option<String>,
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    through: Option<Through>,
     #[serde(skip_serializing_if = "Option::is_none")]
     bytes: Option<PassedBytes>,
 }
 
 impl PassageRecord {
-    /// The record of `course`.
-    pub fn of(course: &Course) -> Self {
+    /// The record of `course`, the destination it went through listed for
+    /// what `listed_by` says.
+    pub fn of(course: &Course, listed_by: impl Fn(&Destination) -> Option<Purpose>) -> Self {
         match course {
             Course::NotATunnel { method } => Self {
                 asked: method.to_string(),
@@ -96,7 +122,10 @@ impl PassageRecord {
                 Self {
                     asked: target.to_string(),
                     end,
-                    through: through.map(ToString::to_string),
+                    through: through.map(|through| Through {
+                        through: through.to_string(),
+                        listed_by: listed_by(through),
+                    }),
                     bytes,
                 }
             }
@@ -115,7 +144,14 @@ impl PassageRecord {
 
     /// The listed destination that let it through; none when refused.
     pub fn through(&self) -> Option<&str> {
-        self.through.as_deref()
+        self.through
+            .as_ref()
+            .map(|through| through.through.as_str())
+    }
+
+    /// Why the destination that let it through is listed.
+    pub fn listed_by(&self) -> Option<Purpose> {
+        self.through.as_ref().and_then(|through| through.listed_by)
     }
 
     /// The bytes each way, for a tunnel that closed; unknown otherwise.
@@ -126,7 +162,7 @@ impl PassageRecord {
 
 #[cfg(test)]
 mod tests {
-    use super::{PassageEnd, PassageRecord, PassedBytes};
+    use super::{PassageEnd, PassageRecord, PassedBytes, Purpose};
     use ren_relay::{Course, Refusal, TunnelEnd};
 
     #[test]
@@ -139,8 +175,12 @@ mod tests {
                 received: 4096,
             },
         };
-        let record = PassageRecord::of(&course);
+        let record = PassageRecord::of(&course, |destination| {
+            assert_eq!(destination.to_string(), "*.crates.io:443");
+            Some(Purpose::Project)
+        });
         assert_eq!(record.asked(), "index.crates.io:443");
+        assert_eq!(record.listed_by(), Some(Purpose::Project));
         assert_eq!(record.end(), PassageEnd::Closed);
         assert_eq!(record.through(), Some("*.crates.io:443"));
         assert_eq!(
@@ -156,6 +196,7 @@ mod tests {
                 "asked": "index.crates.io:443",
                 "end": "closed",
                 "through": "*.crates.io:443",
+                "listed_by": "project",
                 "bytes": { "sent": 512, "received": 4096 },
             })
         );
@@ -167,9 +208,10 @@ mod tests {
             target: "example.com:443".parse().unwrap(),
             end: TunnelEnd::Refused(Refusal::Unlisted),
         };
-        let record = PassageRecord::of(&course);
+        let record = PassageRecord::of(&course, |_| Some(Purpose::Configuration));
         assert_eq!(record.end(), PassageEnd::Unlisted);
         assert_eq!(record.through(), None);
+        assert_eq!(record.listed_by(), None);
         assert_eq!(record.bytes(), None);
     }
 
@@ -178,7 +220,7 @@ mod tests {
         let course = Course::NotATunnel {
             method: "GET".into(),
         };
-        let record = PassageRecord::of(&course);
+        let record = PassageRecord::of(&course, |_| None);
         assert_eq!(record.asked(), "GET");
         assert_eq!(record.end(), PassageEnd::NotATunnel);
     }

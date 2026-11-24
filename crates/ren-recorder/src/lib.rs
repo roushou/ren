@@ -218,16 +218,14 @@ impl Recorder {
 
     /// Record what became of one request `run` made of the relay. Never
     /// blocks: without room it is counted as unrecorded.
-    pub fn passage(&self, run: crate::id::RunId, course: &ren_relay::Course) {
+    pub fn passage(&self, run: crate::id::RunId, passage: passage::PassageRecord) {
         match self.shared.reserve_close() {
             Some((slot, permit)) => {
                 slot.send(item::Item::Run {
                     record: batch::RunRecord {
                         at: self.shared.clock.now(),
                         run,
-                        fact: batch::RunFact::Passed {
-                            passage: passage::PassageRecord::of(course),
-                        },
+                        fact: batch::RunFact::Passed { passage },
                     },
                     _slot: permit,
                 });

@@ -1883,6 +1883,7 @@ dependencies = [
  "ren-git",
  "ren-github",
  "ren-harness",
+ "ren-manifest",
  "ren-network",
  "ren-protocol",
  "ren-recorder",
@@ -2028,6 +2029,7 @@ name = "ren-manifest"
 version = "0.1.0"
 dependencies = [
  "ren-depot",
+ "ren-destination",
  "serde",
  "thiserror",
  "toml",

@@ -26,6 +26,8 @@ mod doorway;
 pub mod frame;
 mod grant;
 mod link;
+mod listing;
+mod project_reach;
 #[cfg(test)]
 mod purity;
 mod sandbox;
@@ -33,6 +35,8 @@ mod serve;
 
 pub use doorway::{Doors, Doorway};
 pub use grant::{CredentialAsk, Grants};
+pub use listing::{Listing, RelayedRun};
+pub use project_reach::ProjectReaches;
 use ren_container::{Engine, EngineError, Launch, Reach};
 pub use sandbox::{RunReach, SandboxError, Sandboxes};
 pub use serve::RunHost;
@@ -42,6 +46,7 @@ use sandbox::{RenPlaces, Sandbox, Sight};
 
 use ren_github::RepositorySlug;
 use ren_recorder::id::{IdSource, RunId};
+use ren_recorder::passage::Purpose;
 use ren_relay::{Destination, PassHandle, Relay, RelayPolicy, Ticket};
 use ren_supervisor::{AgentProcess, HeldRun, ProcessExit, Tenure};
 use serde::{Deserialize, Serialize};
@@ -94,11 +99,13 @@ pub struct HeldRuns {
 /// their own loopback), and the passes the relay holds for them.
 #[derive(Clone)]
 pub struct Relaying {
-    relay: Arc<Relay<RunId>>,
+    relay: Arc<Relay<RelayedRun>>,
     doors: Doors,
     gateway: SocketAddr,
     ids: Arc<dyn IdSource>,
-    passes: Arc<Mutex<HashMap<RunId, PassHandle<RunId>>>>,
+    passes: Arc<Mutex<HashMap<RunId, PassHandle<RelayedRun>>>>,
+    /// What each watched project's manifest lets its runs reach.
+    projects: ProjectReaches,
     /// The GitHub App's grants, when one is set up.
     grants: Option<Arc<Grants>>,
     /// Each granted run's ticket and the repository it may push to.
@@ -108,12 +115,12 @@ pub struct Relaying {
 }
 
 /// What a relayed run's spec carries: the proxy URL its client is given
-/// (its ticket the password), where it may go, and the doorways its host
-/// opens.
+/// (its ticket the password), where it may go and why, and the doorways
+/// its host opens.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelayedSpec {
     proxy: String,
-    reach: Vec<String>,
+    reach: Listing,
     pub doorways: Vec<Doorway>,
     /// The repository it may push to, with a token git asks for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -151,11 +158,12 @@ impl Relaying {
     const GITHUB: &str = "github.com:443";
 
     pub fn new(
-        relay: Arc<Relay<RunId>>,
+        relay: Arc<Relay<RelayedRun>>,
         doors: Doors,
         gateway: SocketAddr,
         ids: Arc<dyn IdSource>,
         helper: PathBuf,
+        projects: ProjectReaches,
     ) -> Self {
         Self {
             relay,
@@ -163,6 +171,7 @@ impl Relaying {
             gateway,
             ids,
             passes: Arc::new(Mutex::new(HashMap::new())),
+            projects,
             grants: None,
             granted: Arc::new(Mutex::new(HashMap::new())),
             helper,
@@ -244,9 +253,10 @@ impl Relaying {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
     }
 
-    /// Admits `run` to where `policy` and its client's `needs` list: a
-    /// ticket minted for it and a pass the relay holds until it is
-    /// released. What its spec carries, and the variables its client gets.
+    /// Admits `run` to where `policy`, its client's `needs`, its project's
+    /// manifest, and its grant list: a ticket minted for it and a pass the
+    /// relay holds until it is released. What its spec carries, and the
+    /// variables its client gets.
     fn admit(
         &self,
         run: RunId,
@@ -254,7 +264,7 @@ impl Relaying {
         needs: ClientNeeds,
         repository: Option<RepositorySlug>,
     ) -> io::Result<(RelayedSpec, Vec<(String, String)>)> {
-        let grant = repository.filter(|repository| {
+        let grant = repository.clone().filter(|repository| {
             self.grants
                 .as_ref()
                 .is_some_and(|grants| grants.covers(repository))
@@ -264,22 +274,27 @@ impl Relaying {
             .iter()
             .map(|text| text.parse::<Destination>().map_err(io::Error::other))
             .collect::<io::Result<Vec<_>>>()?;
-        let reach: Vec<Destination> = policy
-            .destinations()
-            .iter()
-            .cloned()
-            .chain(client)
-            .chain(
-                grant
-                    .as_ref()
-                    .map(|_| {
-                        Self::GITHUB
-                            .parse::<Destination>()
-                            .map_err(io::Error::other)
-                    })
-                    .transpose()?,
+        let github = grant
+            .as_ref()
+            .map(|_| {
+                Self::GITHUB
+                    .parse::<Destination>()
+                    .map_err(io::Error::other)
+            })
+            .transpose()?;
+        let reach = Listing::default()
+            .list(
+                Purpose::Configuration,
+                policy.destinations().iter().cloned(),
             )
-            .collect();
+            .list(Purpose::Client, client)
+            .list(
+                Purpose::Project,
+                repository
+                    .iter()
+                    .flat_map(|repository| self.projects.of(repository)),
+            )
+            .list(Purpose::Grant, github);
         let ticket = Ticket::new(format!(
             "{}{}",
             self.ids.next_uuid().simple(),
@@ -288,7 +303,7 @@ impl Relaying {
         .map_err(io::Error::other)?;
         let spec = RelayedSpec {
             proxy: ticket.proxy_url("run", self.relay_inside()),
-            reach: reach.iter().map(ToString::to_string).collect(),
+            reach: reach.clone(),
             doorways: vec![
                 Doorway {
                     inside: self.gateway,
@@ -301,7 +316,7 @@ impl Relaying {
             ],
             grant,
         };
-        self.hold(run, ticket.clone(), RelayPolicy::new(reach))?;
+        self.hold(run, ticket.clone(), reach)?;
         if let Some(repository) = &spec.grant {
             self.grant(run, ticket, repository.clone());
         }
@@ -383,22 +398,18 @@ impl Relaying {
         }
         .ticket()
         .ok_or_else(|| io::Error::other("a relayed run's spec has no ticket"))?;
-        let reach = spec
-            .reach
-            .iter()
-            .map(|text| text.parse::<Destination>().map_err(io::Error::other))
-            .collect::<io::Result<Vec<_>>>()?;
-        self.hold(run, ticket.clone(), RelayPolicy::new(reach))?;
+        self.hold(run, ticket.clone(), spec.reach.clone())?;
         if let Some(repository) = &spec.grant {
             self.grant(run, ticket, repository.clone());
         }
         Ok(())
     }
 
-    fn hold(&self, run: RunId, ticket: Ticket, policy: RelayPolicy) -> io::Result<()> {
+    fn hold(&self, run: RunId, ticket: Ticket, reach: Listing) -> io::Result<()> {
+        let policy = reach.policy();
         let pass = self
             .relay
-            .issue(ticket, run, policy)
+            .issue(ticket, RelayedRun::new(run, reach), policy)
             .map_err(io::Error::other)?;
         self.passes
             .lock()
@@ -883,11 +894,13 @@ mod tests {
         reason = "the test spawns the stand-in and the door the daemon would"
     )]
     async fn a_granted_runs_git_gets_a_token_for_its_repository_only() {
+        use super::ProjectReaches;
         use super::{Doors, Grants, Relaying};
         use aws_lc_rs::{encoding::AsDer as _, rsa::KeySize, signature};
         use base64::Engine as _;
         use ren_harness::profile::ClientNeeds;
         use ren_recorder::id::{RunId, SequentialIds};
+        use ren_recorder::passage::Purpose;
         use ren_recorder::time::{ManualClock, UnixMillis};
         use std::sync::Arc;
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -933,12 +946,26 @@ mod tests {
 
         let dir = tempfile::tempdir_in("/tmp").unwrap();
         let doors = Doors::new(dir.path());
+        // acme/web's default branch lists the registry its runs need.
+        let projects = ProjectReaches::default();
+        projects
+            .learn(
+                &"acme/web".parse().unwrap(),
+                &ren_github::Snapshot {
+                    default_branch: None,
+                    pull_requests: Vec::new(),
+                    listing: ren_github::Listing::Complete,
+                    manifest: Some("reach = [\"registry.npmjs.org:443\"]\n".to_owned()),
+                },
+            )
+            .unwrap();
         let relaying = Relaying::new(
             Arc::new(ren_relay::Relay::new()),
             doors.clone(),
             "127.0.0.1:8787".parse().unwrap(),
             Arc::new(SequentialIds::default()),
             "/opt/ren/bin/ren".into(),
+            projects,
         )
         .granting(Arc::new(grants));
         tokio::spawn(relaying.serve_grants(doors.listen(Doors::GRANTS).unwrap()));
@@ -961,7 +988,10 @@ mod tests {
             variable("GIT_CONFIG_VALUE_0").as_deref(),
             Some("/opt/ren/bin/ren credential")
         );
-        assert!(granted.reach.iter().any(|to| to == "github.com:443"));
+        let github = "github.com:443".parse().unwrap();
+        let registry = "registry.npmjs.org:443".parse().unwrap();
+        assert_eq!(granted.reach.purpose(&github), Some(Purpose::Grant));
+        assert_eq!(granted.reach.purpose(&registry), Some(Purpose::Project));
         let (other, other_env) = relaying
             .admit(
                 RunId::restore(uuid::Uuid::from_u128(2)),
@@ -975,7 +1005,8 @@ mod tests {
                 .iter()
                 .any(|(key, _)| key.starts_with("GIT_CONFIG"))
         );
-        assert!(!other.reach.iter().any(|to| to == "github.com:443"));
+        assert_eq!(other.reach.purpose(&github), None);
+        assert_eq!(other.reach.purpose(&registry), None);
 
         let ask = |proxy: String, path: &'static str| {
             let socket = doors.socket(Doors::GRANTS);

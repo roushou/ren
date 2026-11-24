@@ -164,11 +164,16 @@ connection through a Unix socket in `<data>/runs/.reach`, which the container
 sees read-only, to the daemon's gateway and to its relay (`ren-relay`). The
 client's base URL is unchanged; `HTTPS_PROXY` and `HTTP_PROXY` name the relay,
 with a ticket minted for the run as the password, and `NO_PROXY` keeps loopback
-direct. The relay lets a run connect only to where `[runs.container] reach` and
-its client list (Codex's and Claude Code's sign-in refresh, opencode's model
-catalogue), a name only at public addresses, and passes the connection through
+direct. The relay lets a run connect only to where `[runs.container] reach`,
+its client (Codex's and Claude Code's sign-in refresh, opencode's model
+catalogue), its project, and its grant list, a name only at public addresses, and passes the connection through
 unread. Every connection is logged with its run; a refused one is a warning
-that names the destination and why. A run held through a daemon restart keeps
+that names the destination and why. A project lists what its runs need in
+its `.ren/project.toml` (`reach = ["registry.npmjs.org:443"]`): Ren reads it
+from the repository's default branch on GitHub, for a repository watched under
+`[[github.repository]]`, never from a run's checkout, which the run could
+change; a manifest that does not read lists nothing, with a warning. Each
+recorded passage says which list let it through. A run held through a daemon restart keeps
 its pass: the new daemon issues it again from the run's spec. A relayed run
 never holds the SSH agent. It pushes with a grant instead: with `[github.app]`
 set (a GitHub App installed on the repositories, allowed to write contents and

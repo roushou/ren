@@ -26,6 +26,10 @@ pub struct Snapshot {
     /// Whether every open pull request is listed, or only the first
     /// [`Watch::PULL_REQUESTS`].
     pub listing: Listing,
+    /// The default branch's Ren manifest ([`Watch::MANIFEST`]), as text:
+    /// none when the branch has no such file, or GitHub holds it as
+    /// binary or cuts it short.
+    pub manifest: Option<String>,
 }
 
 /// Whether a list is whole.
@@ -58,10 +62,15 @@ impl Watch {
     pub const PULL_REQUESTS: u32 = 50;
     /// Checks one answer lists for each pull request's head.
     pub const CHECKS: u32 = 50;
+    /// The file the answer reads from the default branch's head: a
+    /// project's manifest for Ren.
+    pub const MANIFEST: &str = ".ren/project.toml";
 
-    const QUERY: &str = "query($owner: String!, $name: String!, $pulls: Int!, $checks: Int!) {
+    const QUERY: &str =
+        "query($owner: String!, $name: String!, $pulls: Int!, $checks: Int!, $manifest: String!) {
   repository(owner: $owner, name: $name) {
     defaultBranchRef { name target { oid } }
+    manifest: object(expression: $manifest) { ... on Blob { text isTruncated } }
     pullRequests(states: OPEN, first: $pulls, orderBy: {field: UPDATED_AT, direction: DESC}) {
       pageInfo { hasNextPage }
       nodes {
@@ -102,6 +111,7 @@ impl Watch {
                 "name": self.repository.name(),
                 "pulls": Self::PULL_REQUESTS,
                 "checks": Self::CHECKS,
+                "manifest": format!("HEAD:{}", Self::MANIFEST),
             },
         })
         .to_string()
@@ -135,10 +145,15 @@ impl Watch {
             }
             pull_requests.push(pull);
         }
+        let manifest = repository
+            .manifest
+            .filter(|blob| !blob.is_truncated)
+            .and_then(|blob| blob.text);
         Ok(Snapshot {
             default_branch,
             pull_requests,
             listing,
+            manifest,
         })
     }
 
@@ -234,6 +249,18 @@ mod wire {
     pub(super) struct Repository {
         pub default_branch_ref: Option<BranchRef>,
         pub pull_requests: Page<PullRequest>,
+        #[serde(default)]
+        pub manifest: Option<Blob>,
+    }
+
+    /// A file's object; a tree's or a binary file's has no text.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub(super) struct Blob {
+        #[serde(default)]
+        pub text: Option<String>,
+        #[serde(default)]
+        pub is_truncated: bool,
     }
 
     #[derive(Deserialize)]

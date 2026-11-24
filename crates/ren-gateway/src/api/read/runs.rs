@@ -12,7 +12,7 @@ use ren_recorder::capture::RunEnd;
 use ren_recorder::id::RecordingId;
 use ren_recorder::id::RunId;
 use ren_recorder::id::SessionId;
-use ren_recorder::passage::PassageEnd;
+use ren_recorder::passage::{PassageEnd, Purpose};
 use ren_recorder::time::UnixMillis;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -101,6 +101,10 @@ pub struct PassageView {
     /// The listed destination that let it through, last time; `None` when
     /// it was refused.
     pub through: Option<String>,
+    /// A `purpose` label, why that destination is listed: `configuration`,
+    /// `client`, `project`, or `grant`; `None` when refused or not known.
+    #[ts(as = "Option<String>")]
+    pub listed_by: Option<Stored<Purpose>>,
     pub count: u64,
     /// Bytes each way over the ones that closed.
     pub sent: u64,
@@ -117,6 +121,7 @@ impl From<ren_store::view::PassageView> for PassageView {
             asked,
             end,
             through,
+            listed_by,
             count,
             sent,
             received,
@@ -127,6 +132,7 @@ impl From<ren_store::view::PassageView> for PassageView {
             asked,
             end,
             through,
+            listed_by,
             count,
             sent,
             received,

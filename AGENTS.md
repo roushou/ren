@@ -220,7 +220,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   CLI dependency.
 - `crates/ren-manifest`: a project's manifest for Ren (`Manifest`,
   read from `.ren/project.toml`): the depot packages its steps need
-  (`packages`), its build, serve, check, and quiesce steps,
+  (`packages`), where its relayed runs may reach (`reach`, `ren-destination`'s
+  `Destination`s), its build, serve, check, and quiesce steps,
   each an argv with the environment it adds, never a shell line, whose
   values name the `Place` a step runs for through a parsed `Template`
   (`{port}`, `{port+N}`, `{data}`, `{worktree}`, read from its old name
@@ -292,7 +293,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   branch's head `Oid` and each open `PullRequest`: its `PullNumber`,
   author's `Login`, head, `Readiness`, `MergeState`, `ReviewDecision`, and
   each `Check` with its `CheckState`, summed up as `ChecksState`), and
-  whether the listing was cut (`Listing`); `Client` sends it to an
+  whether the listing was cut (`Listing`), and the default branch's
+  `.ren/project.toml` as text (`Watch::MANIFEST`); `Client` sends it to an
   `Endpoint` (HTTPS, or HTTP to loopback) with a `Token` that is never
   shown; a `Poller` reads repositories once a `PollPeriod`, keeping each
   one's `Observation` (waiting, `Seen`, or `Failed` with the last
@@ -427,7 +429,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   owns what is recorded: Ren's identities and `IdSource` (`id`), `Clock`
   (`time`), terminals and other recorded facts (`capture`), what a relayed run
   reached through the relay (`passage`: `PassageRecord`, read once from
-  `ren-relay`'s `Course`, and its `PassageEnd`), routing facts and
+  `ren-relay`'s `Course`, its `PassageEnd`, and the `Purpose` of the list
+  that let it through), routing facts and
   `OperatorRevision` (`routing`), who called (`caller`: `UserId` and
   `Caller`, with `ren-network`'s `Login`), work items (`work`, pure: `WorkOrder`, what
   was marked, checked by `WorkOrder::checked`, and the `WorkState` machine,
@@ -660,7 +663,13 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`[runs.container]`) from the run's `Sight`, reaching the host's network
   with the SSH agent or relayed under a `Runtime` (`RunReach`), and
   refused (`SandboxError`) when it would see Ren's data or configuration
-  whole or every run would see inside Ren's data; the host keeps
+  whole or every run would see inside Ren's data; a relayed run's
+  `Listing` (`host::held::listing`, pure) is where it may go and why
+  (Ren's configuration, its client, its project's manifest on its default
+  branch on GitHub, which `ProjectReaches` learns from the watch, never a
+  checkout, or its grant), held with its pass by the relay
+  (`RelayedRun`), so each passage is recorded with its `Purpose`; the
+  host keeps
   the client's stdin open and its output in the run folder's spool, writes
   its exit, and serves one daemon at a time over a socket whose frames
   (`frame`, pure, kept when unknown: a host may be an older build) are a

@@ -30,6 +30,10 @@ export const PASSAGE_ENDS = [
 ] as const;
 export type PassageEnd = (typeof PASSAGE_ENDS)[number];
 
+/** Why a destination is listed (`ren-recorder passage::Purpose`). */
+export const PURPOSES = ['configuration', 'client', 'project', 'grant'] as const;
+export type Purpose = (typeof PURPOSES)[number];
+
 /** One place a run asked for, and how those requests ended. */
 export interface Passage {
   /** A tunnel's `host:port`, or the method of a request that was not one. */
@@ -37,6 +41,8 @@ export interface Passage {
   end: Stored<PassageEnd>;
   /** The listed destination that let it through; null when refused. */
   through: string | null;
+  /** Why that destination is listed; null when refused or not known. */
+  listed_by: Stored<Purpose> | null;
   count: number;
   sent: number;
   received: number;
@@ -50,6 +56,7 @@ export const passages = object<{ passages: Passage[] }, WirePassages>({
       asked: string,
       end: label(PASSAGE_ENDS),
       through: nullable(string),
+      listed_by: nullable(label(PURPOSES)),
       count,
       sent: count,
       received: count,
@@ -142,7 +149,8 @@ export class Reach {
 
   static said(passage: Passage): string {
     const known = Reach.known(passage.end);
-    const through = passage.through === null ? '' : ` through ${passage.through}`;
+    const listed = passage.listed_by === null ? '' : `, listed by ${Reach.list(passage.listed_by)}`;
+    const through = passage.through === null ? '' : ` through ${passage.through}${listed}`;
     if (known === null) return passage.end;
     switch (known) {
       case 'closed':
@@ -161,6 +169,24 @@ export class Reach {
         return `Connection refused${through}`;
       case 'timed_out':
         return `Timed out${through}`;
+      default:
+        return assertNever(known);
+    }
+  }
+
+  /** The list a destination is on, as a run's page names it. */
+  static list(purpose: Stored<Purpose>): string {
+    const known = (PURPOSES as readonly string[]).includes(purpose) ? (purpose as Purpose) : null;
+    if (known === null) return purpose;
+    switch (known) {
+      case 'configuration':
+        return "Ren's configuration";
+      case 'client':
+        return 'its client';
+      case 'project':
+        return 'its project';
+      case 'grant':
+        return 'its grant';
       default:
         return assertNever(known);
     }

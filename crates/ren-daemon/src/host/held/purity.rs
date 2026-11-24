@@ -1,10 +1,13 @@
-//! A run's sandbox is declared, not found: what it sees is handed to it,
-//! so it stays free of the runtime and of I/O. The crate itself runs
+//! A run's sandbox and listing are declared, not found: what they hold is
+//! handed to them, so they stay free of the runtime and of I/O. The crate itself runs
 //! processes and serves sockets, so this is checked on the source.
 
 #[test]
 fn the_sandbox_stays_free_of_runtime_and_io() {
-    let sources = [("sandbox.rs", include_str!("sandbox.rs"))];
+    let sources = [
+        ("sandbox.rs", include_str!("sandbox.rs")),
+        ("listing.rs", include_str!("listing.rs")),
+    ];
     let forbidden = [
         "tokio",
         "tracing",

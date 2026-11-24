@@ -82,10 +82,19 @@ impl FakeGithub {
             }
         };
         let nodes: Vec<Value> = pulls.iter().map(|pull| pull.node(name)).collect();
+        // acme/api's default branch lists a registry of its own for its
+        // runs; the others have no manifest.
+        let manifest = match name {
+            "api" => {
+                json!({ "text": "reach = [\"static.crates.io:443\"]\n", "isTruncated": false })
+            }
+            _ => Value::Null,
+        };
         (
             StatusCode::OK,
             Json(json!({ "data": { "repository": {
                 "defaultBranchRef": { "name": "main", "target": { "oid": FakePull::oid(0xa0) } },
+                "manifest": manifest,
                 "pullRequests": { "pageInfo": { "hasNextPage": false }, "nodes": nodes },
             } } })),
         )
