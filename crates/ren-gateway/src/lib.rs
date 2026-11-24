@@ -48,12 +48,12 @@ pub mod build;
 pub mod control;
 mod forward;
 pub mod github;
+pub mod instance;
 pub mod lifecycle;
 mod limits;
 pub mod operator;
 pub mod packages;
 pub mod policy;
-pub mod preview;
 #[cfg(test)]
 mod purity;
 pub mod reply;

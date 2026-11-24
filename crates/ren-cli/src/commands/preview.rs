@@ -12,7 +12,7 @@ use ren_gateway::api::{
     control::request::{ControlRequest, PreviewAskRequest},
     previews::{PreviewOfBody, PreviewStateBody, PreviewsBody},
 };
-use ren_gateway::preview::Reach;
+use ren_gateway::instance::Reach;
 use ren_git::Commit;
 use ren_recorder::project::ProjectName;
 use std::{fmt::Write as _, process::ExitCode};
@@ -135,7 +135,7 @@ impl PreviewCmd {
 mod tests {
     use super::PreviewCmd;
     use ren_gateway::api::previews::{PreviewBody, PreviewOfBody, PreviewStateBody, PreviewsBody};
-    use ren_gateway::preview::Reach;
+    use ren_gateway::instance::Reach;
 
     #[test]
     fn previews_read_as_lines() {

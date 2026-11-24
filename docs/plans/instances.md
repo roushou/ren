@@ -115,13 +115,21 @@ What already points the right way, and is kept:
 
 ## Phases
 
-1. **`Instances` in place of `Previews`.** Planned. The spec (source, data,
-   upstream, lifetime, project) and the state machine, pure, with the
-   unknown-outcome state; previews and asked-for commits become instances
-   in it, persisted where previews are. The factory's pass still carries
-   out the actions, so nothing the operator sees changes. Verified by the
-   state machine's tests and the pass's unchanged behaviour in the dev
-   slot.
+1. **`Instances` in place of `Previews`.** Built. `ren-gateway`'s
+   `preview` module is `instance`: `Instances`, each `Instance` of a
+   `Source` (a pull request followed, or a commit asked for, `CommitAsks`)
+   in its `Slot`, `Building`, `Running`, or `Failed` (`InstanceState`), and
+   one pure step, `Instances::step`, from an `Event` (what a pass wants, or
+   the factory's report that a start ended) to the instances and the
+   `Action`s that follow; a report that does not fit is refused
+   (`StaleReport`) and changes nothing. The factory's pass drives it
+   through `step`. Verified: the state machine's tests (now through
+   `step`, a late or doubled report refused) and the file's pinned shape;
+   the compatibility gate found no change to labels, fixtures, or the API;
+   the daemon's contract test, which pins `/api/projects/ren/previews`
+   from a file the old code wrote, passed unchanged; and the dev slot,
+   built from this change, served a `previews.json` in the shape
+   production's older build wrote as it did.
 2. **Builds in containers.** Planned. A build job per project and commit,
    in a container as above, its result kept; Ren's build declared in its
    manifest. The factory's pass uses it, so builds stop running on the
@@ -167,4 +175,23 @@ does. Each lands on its own and passes every check.
 
 ## Deviations
 
-None yet.
+- **Phase 1: the file and the API keep their shape.** The factory (the
+  canary's build of `main`) writes `previews.json` and production's
+  gateway (an older, promoted build) reads it, so its keys stay the ones
+  previews had (`previews`, `key`), and `/api/projects/{name}/previews`
+  and its wire types are unchanged. They change with phase 3, when the
+  daemon writes the file it reads.
+- **Phase 1: no unknown-outcome label.** A persisted new state would break
+  the older reader. `Building`, as a later pass reads it, already is that
+  state: the pass that was building it stopped before saying how it ended,
+  and it is started again, never taken for running. The type says so.
+- **Phase 1: the spec's other parts wait for a second value.** Data (a
+  replica), upstream (placeholders), lifetime (followed, or until
+  withdrawn), and project (Ren) each have one value today, implied by the
+  `Source`; a field that can hold only one value decides nothing. Each
+  becomes a field in the phase that gives it a second: data and upstream
+  with phase 5's scenarios, lifetime and project with phase 3's on-demand
+  instances.
+- **Phase 1: the factory's commands keep their names.** `cargo xtask
+  canary previews` and `ren preview` stay as they are until phases 3 and
+  4 replace them.

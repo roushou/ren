@@ -338,9 +338,9 @@ impl Factory {
             println!("warning: the previews pass failed: {error}");
             production
                 .previews()
-                .previews()
+                .instances()
                 .iter()
-                .map(|preview| preview.commit.clone())
+                .map(|instance| instance.commit.clone())
                 .collect()
         });
         let keep: Vec<Commit> = [Some(commit), Self::running(&production)]

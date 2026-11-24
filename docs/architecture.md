@@ -266,7 +266,7 @@ xtask        ─► ren-daemon, ren-gateway, ren-recorder, ren-release, ren-mani
   `serde_json`, `serde_with`, `strum`, `thiserror`, `uuid`, `http` types, and the
   decompressors), and a source test (`sources_stay_free_of_runtime_and_io`)
   rejects runtime and I/O paths. Inside `ren-gateway`, `src/purity.rs` keeps
-  `lifecycle` (`attempt`, `call`, `channel`, `retry`), `operator`, `user`, and `preview` free of runtime,
+  `lifecycle` (`attempt`, `call`, `channel`, `retry`), `operator`, `user`, and `instance` free of runtime,
   I/O, storage, and shell-module dependencies; `ren-recorder`'s `src/purity.rs`
   does the same for `recording`, `digest`, `options`, and `progress`,
   `ren-supervisor`'s `src/purity.rs` for `run`, `workdir`, `project`,

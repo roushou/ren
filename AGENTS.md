@@ -303,17 +303,20 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ren_daemon::host::Grants`, which a relayed run's git asks through
   `ren credential`; the gateway's `PullBoard` keeps its
   observations by project and serves them.
-- `ren-gateway`'s `preview` module: which previews of Ren run, sans-IO, in
-  `Previews` (docs/plans/self-build.md, phase 9): each
-  `Preview` in its `Slot` (its loopback and tailnet ports), of a
-  `PreviewKey` (an open pull request, or a commit the operator asked for),
-  at a commit, `Building`, `Running`, or `Failed` (`PreviewState`).
-  `Previews::want` takes the `Wanted` previews in priority order and the
-  `ren_release::PreviewCapacity`, and answers the previews that hold slots
-  and the `Action`s to get there (stop a slot, start a commit in one);
-  `started` and `failed` take the factory's reports, refusing a
-  `StaleReport`. A failed build is not tried again for its commit. The
-  factory keeps it in production's data folder (`Previews::FILE`). The
+- `ren-gateway`'s `instance` module: which instances of Ren the factory runs
+  (docs/plans/instances.md; today, the previews of docs/plans/self-build.md,
+  phase 9), sans-IO, in `Instances`: each `Instance` in its `Slot` (its
+  loopback and tailnet ports), of a `Source` (an open pull request, or a
+  commit the operator asked for, `CommitAsks`), at a commit, `Building`
+  (whose outcome a later pass takes as unknown), `Running`, or `Failed`
+  (`InstanceState`). One step moves them on, `Instances::step`: an `Event`
+  (the `Wanted` instances in priority order with the
+  `ren_release::PreviewCapacity`, or the factory's report that a start
+  ended) to the instances and the `Action`s that follow (stop a slot, start
+  a commit in one); a report that does not fit is refused (`StaleReport`)
+  and changes nothing. A failed build is not tried again for its commit.
+  The factory keeps it in production's data folder (`Instances::FILE`,
+  still `previews.json`, in the shape production's gateway reads). The
   gateway's `src/purity.rs` keeps the module free of I/O.
 - `crates/ren-depot`: the packages Ren's agents run with, with `Depot` as its
   primary type: the package catalog (`package`: `Package`, `PackageId`,
@@ -602,7 +605,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`reply`: `RenCode`, `ren_`-prefixed on the wire and pinned in
   `tests/fixtures/labels.txt`).
   `src/purity.rs` keeps `lifecycle` (`attempt`, `call`, `channel`,
-  `retry`), `operator`, `user`, and `preview` free of runtime, I/O, storage, and shell-module
+  `retry`), `operator`, `user`, and `instance` free of runtime, I/O, storage, and shell-module
   dependencies. Management receives `Reader`, `Backup`, retention settings, and
   control credentials through `ManagementSetup`; SQL stays in `ren-store`, and
   forwarding records only through the recorder.

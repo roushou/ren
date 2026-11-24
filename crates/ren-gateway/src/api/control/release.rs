@@ -7,7 +7,7 @@
 //!
 //! `POST /control/v1/previews/ask` and `/previews/withdraw`: the operator
 //! asks for a preview of a commit, or withdraws the ask
-//! (`crate::preview::PreviewRequests`); the factory's next pass starts or
+//! (`crate::instance::CommitAsks`); the factory's next pass starts or
 //! stops it. Both answer the commits asked for, the newest first; a
 //! withdrawal of a commit not asked for is `404` `not_found`.
 
@@ -16,7 +16,7 @@ use super::{
     request::{PreviewAskRequest, PromoteRequest},
 };
 use crate::api::release::ReleaseFolder;
-use crate::preview::PreviewRequests;
+use crate::instance::CommitAsks;
 use axum::{
     Json, Router,
     extract::{State, rejection::JsonRejection},
@@ -107,7 +107,7 @@ impl ReleaseApi {
         &self,
         headers: &HeaderMap,
         body: Result<Json<PreviewAskRequest>, JsonRejection>,
-        change: impl FnOnce(&mut PreviewRequests, Commit) -> bool,
+        change: impl FnOnce(&mut CommitAsks, Commit) -> bool,
     ) -> Response {
         if let Err(refusal) = self.control.authorize(headers) {
             return refusal.into_response();
