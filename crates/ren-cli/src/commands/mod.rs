@@ -11,6 +11,7 @@ pub mod release;
 pub mod run;
 pub mod run_host;
 pub mod runs;
+pub mod seed;
 pub mod serve;
 pub mod service;
 pub mod tail;

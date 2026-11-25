@@ -16,7 +16,7 @@ mod opencode;
 mod pi;
 mod script;
 
-use super::seed::{Call, Caller, Client, Run, Scenario, Seeder};
+use super::seed::{Call, Caller, Client, Run};
 use clap::ValueEnum;
 use ren_harness::host::HostEnv;
 use ren_protocol::sse::{EventName, SseFramer, SseLimits, SseOutput};
@@ -37,7 +37,7 @@ pub enum AgentError {
     #[error("stdio failed: {0}")]
     Stdio(#[source] std::io::Error),
     #[error(transparent)]
-    Seed(#[from] super::seed::SeedError),
+    RunCount(#[from] super::seed::RunCountError),
     #[error("Login failed: That code wasn't accepted. The dev slot's code is `acme`.")]
     LoginRefused,
     /// The fake `codex login status`, signed out: it exits 1, as Codex does.
@@ -92,7 +92,7 @@ impl FakeAgent {
         state_dir: &Path,
         arguments: &[String],
     ) -> Result<Self, AgentError> {
-        let own = Run(Seeder::next_run(state_dir)?);
+        let own = Run::next(state_dir)?;
         let sessions = state_dir.join("opencode-sessions.tsv");
         match played {
             Played::Codex => {
@@ -272,7 +272,7 @@ impl FakeAgent {
                 session,
                 numbers,
                 prompt,
-            } => Step::Call(Scenario::step_call(
+            } => Step::Call(Call::step(
                 Client::Codex,
                 &Caller::Unidentified,
                 session,

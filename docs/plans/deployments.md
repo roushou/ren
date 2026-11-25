@@ -121,13 +121,22 @@ What points the right way, and is kept:
 Bottom-up, each passes every check on its own. A change that is more than
 a move lands before the move that needs it.
 
-1. **Seeding into the store.** Not built. `ren store seed` writes a
-   scenario into an empty store through the recorder and the store, with a
-   fixed clock and sequential ids. The scenarios move from
-   `xtask/src/dev/seed/scenario.rs` into data files. `cargo xtask dev
-   seed` calls it in place of playing calls through the fake provider.
-   Verified by comparing the dev UI's pages, and the read API's answers,
-   seeded both ways.
+1. **Seeding into the store.** Built. `ren seed --seed <n>` invents a
+   history from a number (`ren-cli`'s `seed`, pure, with a purity test)
+   and writes it through the recorder into the store, the daemon stopped:
+   sessions from Claude Code, Codex, Pi, and opencode, each turn's tool
+   calls in its client's own tool names and wire format, named users by
+   login and by token, an unlisted login, a rate limit, an upstream
+   error, a broken stream, and long prompts, over the last three days.
+   The store works sessions, turns, tools, and tokens out of the bytes, as
+   it does for real calls. `cargo xtask dev seed --seed <n>` and `dev up
+   --seed <n>` run the instance's own `ren seed`, the daemon stopped
+   meanwhile. Verified: one seed always invents the same history and
+   another a different one (tests); a scratch store seeded in under a
+   second read back 100 calls in 15 sessions from all four clients, four
+   kinds of caller, and every failure; this checkout's dev instance, reset
+   and seeded, rendered Traffic, a session, Usage, and every other page
+   (`dev shot`) from that history.
 2. **`Deployments`.** Not built. `ren-gateway`'s `Instances` moves into
    `ren-release` as `Deployments`, with `Trigger` and `Seed`. The
    canary's deployment is part of it, and its `release.json` is unchanged.
@@ -184,4 +193,19 @@ a move lands before the move that needs it.
 
 ## Deviations
 
-None yet.
+- **Phase 1: generated, not scenario files.** The plan moved the
+  scenarios into data files and wrote them through the recorder. Writing
+  a scenario's calls needs each call's answer, which only the fake
+  provider made, and stating every call as data would have repeated what
+  the gateway works out. Instead a number generates the history, answers
+  included, and the recorder takes it as the gateway would hand it over.
+  There are no scenario names; `--seed <n>` replaces `--scenario`.
+- **Phase 1: `ren seed`, not `ren store seed`.** `ren` has no `store`
+  group, and one command does not need one.
+- **Phase 1: calls only.** Agent runs, work items, and projects are not
+  seeded; the open question of what a seed holds stands. The xtask
+  scenario builders stay only for the traffic generator and the fake
+  agents (now `Call`'s constructors), and go with them in phase 5.
+- **Phase 1: checked by its pages, not side by side.** The history is
+  invented afresh, not the scenarios' calls replayed, so the two seeds
+  differ by design; the pages were checked against the new one.

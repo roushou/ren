@@ -6,7 +6,7 @@
 //! session Ren named and a turn id of Pi's own (as Ren's extension sends
 //! them), and its reply streams back. The run settles after it.
 
-use crate::dev::seed::{Call, Run, Scenario};
+use crate::dev::seed::{Call, Run};
 use serde_json::{Value, json};
 
 /// What the shell does next.
@@ -168,7 +168,7 @@ impl PiScript {
         }
         out.push(Out::Send(json!({ "type": "message_start",
             "message": { "role": "assistant", "content": [], "stopReason": "pending" } })));
-        out.push(Out::Call(Scenario::pi_turn_call(
+        out.push(Out::Call(Call::pi_turn(
             &self.session,
             &self.own.uuid(0x4000 + index),
             prompt,

@@ -1,7 +1,7 @@
 //! Live fake traffic for the dev slot: a generator that sends calls through
 //! the dev gateway at the rate, and with the mix, the settings file names,
-//! reading it again before every call. The calls themselves come from the
-//! seed scenarios' builders, so they carry each harness's real headers.
+//! reading it again before every call. The calls themselves are
+//! [`Call`](super::seed::Call)'s, so they carry each harness's real headers.
 
 mod control;
 mod settings;
@@ -9,7 +9,7 @@ mod settings;
 pub use settings::{Flow, Pace, Settings, SettingsError};
 
 use super::provider::Behaviour;
-use super::seed::{Call, Caller, Client, PROMPTS, Run, Scenario, Seeder, Side};
+use super::seed::{Call, Caller, Client, PROMPTS, Run, Side};
 use control::{Control, Stats};
 use futures_util::{StreamExt as _, stream::FuturesUnordered};
 use settings::{Choice as _, Sender};
@@ -30,7 +30,7 @@ pub enum TrafficError {
     #[error("cannot build the HTTP client: {0}")]
     Client(#[source] reqwest::Error),
     #[error(transparent)]
-    Seed(#[from] super::seed::SeedError),
+    RunCount(#[from] super::seed::RunCountError),
     #[error("the traffic control API cannot serve on {address}: {source}")]
     Control {
         address: SocketAddr,
@@ -128,12 +128,10 @@ impl Traffic {
             ) => None,
         };
         if let Some(side) = side {
-            return Some(vec![Scenario::side_call(
-                side, &caller, run, session, prompt,
-            )]);
+            return Some(vec![Call::side(side, &caller, run, session, prompt)]);
         }
         let ids = (session, turn);
-        let step = |done| Scenario::step_call(client, &caller, run, ids, model, prompt, done);
+        let step = |done| Call::step(client, &caller, run, ids, model, prompt, done);
         Some(match ask {
             Some("tools") => {
                 let tools = usize::try_from(1 + (n / 7) % 3).unwrap_or(1);
@@ -187,7 +185,7 @@ impl Traffic {
     /// flight so a slow call never holds up the next.
     pub fn run(&self, control: Option<SocketAddr>) -> Result<(), TrafficError> {
         let client = Self::client()?;
-        let run = Run(Seeder::next_run(&self.data_dir)?);
+        let run = Run::next(&self.data_dir)?;
         let stats = Arc::new(Stats::default());
         Self::runtime()?.block_on(async {
             let page = async {
@@ -283,7 +281,7 @@ impl Traffic {
     pub fn burst(&self, count: u16) -> Result<(), TrafficError> {
         let client = Self::client()?;
         let settings = self.settings()?;
-        let run = Run(Seeder::next_run(&self.data_dir)?);
+        let run = Run::next(&self.data_dir)?;
         Self::runtime()?.block_on(async {
             let calls: FuturesUnordered<Sending> = (0..u64::from(count))
                 .filter_map(|n| Self::turn(n, run, &settings, &self.token))

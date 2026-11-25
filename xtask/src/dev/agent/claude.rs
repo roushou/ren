@@ -8,7 +8,7 @@
 //! each prompt under its own message id, which is not the prompt id its
 //! model call carries.
 
-use crate::dev::seed::{Call, Run, Scenario};
+use crate::dev::seed::{Call, Run};
 use serde_json::{Value, json};
 
 /// What the shell does next.
@@ -320,7 +320,7 @@ impl ClaudeScript {
         // The prompt id the model call carries is Claude Code's own, apart
         // from the echo's message id.
         let prompt_id = self.own.uuid(0x3000 + turn.index);
-        let call = Scenario::claude_turn_call(&self.session, &prompt_id, &turn.prompt);
+        let call = Call::claude_turn(&self.session, &prompt_id, &turn.prompt);
         let stream = |event: Value| {
             json!({ "type": "stream_event", "event": event, "session_id": self.session,
                     "parent_tool_use_id": null })

@@ -7,6 +7,7 @@ mod context;
 pub mod doctor;
 mod management;
 pub mod mcp;
+mod seed;
 mod service;
 pub mod style;
 mod tail;
@@ -63,6 +64,7 @@ enum Command {
     Release(commands::release::ReleaseCmd),
     Preview(commands::preview::PreviewCmd),
     Project(commands::project::ProjectCmd),
+    Seed(commands::seed::SeedCmd),
     #[command(hide = true)]
     RunHost(commands::run_host::RunHostCmd),
     #[command(hide = true)]
@@ -121,6 +123,7 @@ impl Cli {
             Command::Release(cmd) => cmd.run(&ctx).await,
             Command::Preview(cmd) => cmd.run(&ctx).await,
             Command::Project(cmd) => cmd.run(&ctx).await,
+            Command::Seed(cmd) => cmd.run(&ctx).await,
             Command::RunHost(cmd) => cmd.run().await,
             Command::Credential(cmd) => cmd.run(&ctx.env).await,
         }

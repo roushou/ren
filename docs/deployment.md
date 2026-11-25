@@ -341,10 +341,17 @@ it is installed. Each checkout has an instance of its own: `dev up` claims the
 lowest free one of eight for the checkout it runs in, and every other `dev`
 command there acts on that one (`--instance <n>` picks another):
 
+Seeding writes invented history straight into the instance's store with
+its own `ren seed`, the daemon stopped meanwhile: sessions from Claude
+Code, Codex, Pi, and opencode with turns and tool calls, named users and
+unlisted callers, a rate limit, an upstream error, a broken stream, and
+long prompts, placed over the last three days. A number decides it all,
+so the same number always writes the same history.
+
 ```sh
 cargo xtask dev up --ui      # build, then start this checkout's instance and its UI, and publish them
-cargo xtask dev up --ui --scenario all   # and, the first time, seed its data with a scenario
-cargo xtask dev seed         # play a scenario once (sessions, users, long, errors, websocket, all)
+cargo xtask dev up --ui --seed 1   # and, the first time, seed its data
+cargo xtask dev seed --seed 2      # write the history another number invents
 cargo xtask dev traffic      # show the live traffic settings
 cargo xtask dev traffic set --rate 60 --pace slow --replies tools=50,error=5
 cargo xtask dev traffic pause    # or resume; burst 20 sends 20 calls now

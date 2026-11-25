@@ -986,6 +986,36 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
         Ok(())
     }
 
+    /// The file that says the instance was seeded, in its data directory,
+    /// which a reset removes.
+    const SEEDED: &str = "seeded";
+
+    /// Whether the instance's data was ever seeded.
+    pub fn seeded(&self) -> bool {
+        self.data_dir.join(Self::SEEDED).exists()
+    }
+
+    /// Write the history `seed` invents into the instance's store with its
+    /// own `ren seed`, the daemon stopped meanwhile and started again.
+    pub fn seed(&self, seed: u64) -> Result<(), DevError> {
+        Unit::Daemon.stop(self.index)?;
+        Progress(&format!("Seeding the history of seed {seed}")).show();
+        Invocation::new(self.bin_dir.join("ren"))
+            .arg("--config")
+            .arg(&self.config)
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+            .args(["seed", "--seed", &seed.to_string()])
+            .run()?;
+        let marker = self.data_dir.join(Self::SEEDED);
+        fs::write(&marker, seed.to_string()).map_err(FileError::at(&marker))?;
+        // The daemon was stopped above: no run is left to wait for.
+        self.up(RunWait {
+            policy: RunPolicy::Drain,
+            timeout: 0,
+        })
+    }
+
     pub fn status(&self) -> Result<(), DevError> {
         for unit in Unit::ALL.iter().rev() {
             let state = if unit.active(self.index)? {

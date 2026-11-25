@@ -9,7 +9,7 @@
 //! model call goes through the gateway under the session's header, its reply
 //! streams back, and the prompt is answered.
 
-use crate::dev::seed::{Call, Run, Scenario};
+use crate::dev::seed::{Call, Run};
 use serde_json::{Value, json};
 
 /// What the shell does next.
@@ -341,10 +341,7 @@ impl OpenCodeScript {
     fn call(&self) -> Vec<Out> {
         match (&self.turn, &self.session) {
             (Some(turn), Some(session)) => {
-                vec![Out::Call(Scenario::opencode_turn_call(
-                    session,
-                    &turn.prompt,
-                ))]
+                vec![Out::Call(Call::opencode_turn(session, &turn.prompt))]
             }
             (None | Some(_), _) => Vec::new(),
         }

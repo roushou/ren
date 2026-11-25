@@ -1120,7 +1120,7 @@ mod tests {
 
     #[test]
     fn a_follow_up_carries_the_results_of_the_tool_calls_the_provider_made() {
-        use crate::dev::seed::{Caller, Client, Run, Scenario};
+        use crate::dev::seed::{Call, Caller, Client, Run};
         for (client, wire, model) in [
             (Client::ClaudeCode, Wire::Messages, "claude-opus-5-5"),
             (Client::Codex, Wire::Responses, "gpt-5.5-codex"),
@@ -1128,7 +1128,7 @@ mod tests {
             (Client::OpenCode, Wire::Responses, "gpt-5.5"),
         ] {
             let step = |done| {
-                let call = Scenario::step_call(
+                let call = Call::step(
                     client,
                     &Caller::Unidentified,
                     Run(1),

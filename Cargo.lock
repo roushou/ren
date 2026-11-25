@@ -2116,6 +2116,7 @@ dependencies = [
  "bytes",
  "clap",
  "futures-util",
+ "http",
  "ren-daemon",
  "ren-depot",
  "ren-gateway",

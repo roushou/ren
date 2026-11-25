@@ -32,7 +32,6 @@ use instance::{ClaimsFile, DevInstance, Preview, RunWait};
 use provider::{FakeProvider, ProviderError};
 use ren_harness::host::HostEnv;
 use ren_network::tailscale::Cli;
-use seed::{Scenario, SeedError, Seeder};
 use shot::{Camera, Page};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -137,10 +136,10 @@ struct UpArgs {
     /// (`runsc` installed on the host).
     #[arg(long, default_value = "host_kernel")]
     runtime: ren_daemon::config::RunRuntime,
-    /// The data it starts with: once up, an instance never seeded plays
-    /// this scenario; one seeded already keeps what it has.
-    #[arg(long, value_enum)]
-    scenario: Option<Scenario>,
+    /// Seed an instance never seeded with the history this number invents
+    /// (`ren seed`); one seeded already keeps what it has.
+    #[arg(long, value_name = "NUMBER")]
+    seed: Option<u64>,
     #[command(flatten)]
     tailnet: TailnetArgs,
 }
@@ -179,8 +178,9 @@ impl TailnetArgs {
 
 #[derive(Args)]
 struct SeedArgs {
-    #[arg(value_enum, default_value = "all")]
-    scenario: Scenario,
+    /// The number the history is made from (`ren seed --seed`).
+    #[arg(long, default_value_t = 1)]
+    seed: u64,
 }
 
 #[derive(Args)]
@@ -284,8 +284,6 @@ pub enum DevError {
     AllClaimed(#[from] AllClaimed),
     #[error("the dev instances' claims in {} do not read: {why}", .path.display())]
     Claims { path: PathBuf, why: String },
-    #[error(transparent)]
-    Seed(#[from] SeedError),
     #[error("no headless Chromium found: set REN_CHROME, or install chrome-headless-shell")]
     NoChrome,
     #[error(transparent)]
@@ -346,15 +344,11 @@ impl Dev {
                 } else {
                     slot.up(wait)?;
                 }
-                if let Some(scenario) = args.scenario {
-                    if Seeder::seeded(&slot.data_dir) {
+                if let Some(seed) = args.seed {
+                    if slot.seeded() {
                         Progress("Seeded already: the instance keeps its data").show();
                     } else {
-                        Seeder::new(
-                            slot.index.daemon(),
-                            DevInstance::ci_token().expose().to_owned(),
-                        )
-                        .play(scenario, &slot.data_dir)?;
+                        slot.seed(seed)?;
                     }
                 }
                 slot.status()
@@ -400,13 +394,7 @@ impl Dev {
                 Ok(())
             }
             DevAction::Seed(args) => {
-                let slot = DevInstance::new(env, Self::index(instance, env, Claim::Held)?)?;
-                Seeder::new(
-                    slot.index.daemon(),
-                    DevInstance::ci_token().expose().to_owned(),
-                )
-                .play(args.scenario, &slot.data_dir)?;
-                Ok(())
+                DevInstance::new(env, Self::index(instance, env, Claim::Held)?)?.seed(args.seed)
             }
             DevAction::Shot(args) => {
                 let slot = DevInstance::new(env, Self::index(instance, env, Claim::Held)?)?;
