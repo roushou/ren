@@ -1888,7 +1888,6 @@ dependencies = [
  "ren-protocol",
  "ren-recorder",
  "ren-relay",
- "ren-release",
  "ren-store",
  "ren-supervisor",
  "reqwest",
@@ -1947,7 +1946,6 @@ dependencies = [
  "ren-network",
  "ren-protocol",
  "ren-recorder",
- "ren-release",
  "ren-store",
  "ren-supervisor",
  "reqwest",
@@ -2093,19 +2091,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ren-release"
-version = "0.1.0"
-dependencies = [
- "ren-git",
- "ren-protocol",
- "serde",
- "serde_json",
- "serde_with",
- "strum",
- "thiserror",
-]
-
-[[package]]
 name = "ren-rs"
 version = "0.1.0"
 dependencies = [
@@ -2125,7 +2110,6 @@ dependencies = [
  "ren-network",
  "ren-protocol",
  "ren-recorder",
- "ren-release",
  "ren-store",
  "ren-supervisor",
  "reqwest",
@@ -3674,7 +3658,6 @@ dependencies = [
  "ren-network",
  "ren-protocol",
  "ren-recorder",
- "ren-release",
  "ren-store",
  "ren-supervisor",
  "reqwest",

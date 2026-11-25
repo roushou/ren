@@ -13,7 +13,7 @@ mod support;
 
 use axum::Router;
 use http::StatusCode;
-use ren_release::{
+use ren_gateway::release::{
     Assessment, Attempt, Canary, Check, CheckKind, Lineage, Outcome, Policy, PromotionRequest,
     Release, ShotName, Verdict,
 };

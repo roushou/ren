@@ -53,7 +53,7 @@ mod tests {
         assert_eq!(slots[2].published(), (9_454, 9_455));
         assert_eq!(slots[1].name(), "preview-1");
         // The most slots a capacity allows stays clear of the canary's ports.
-        let last = Slot::first(ren_release::PreviewCapacity::MOST.get())
+        let last = Slot::first(crate::release::PreviewCapacity::MOST.get())
             .last()
             .unwrap();
         assert!(last.ports().1 < 17_000 || last.ports().0 > 17_787);

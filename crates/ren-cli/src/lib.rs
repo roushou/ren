@@ -16,9 +16,9 @@ use crate::context::Context;
 use crate::style::{Terminal, Tone};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use ren_gateway::release::Build;
 use ren_git::SourceRevision;
 use ren_harness::host::HostEnv;
-use ren_release::Build;
 use std::{path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]

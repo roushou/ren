@@ -8,9 +8,9 @@
 use ren_gateway::instance::{
     Action, Event, InstanceState, Instances, Reach, Slot, Source, StaleReport, Wanted,
 };
+use ren_gateway::release::PreviewCapacity;
 use ren_git::Commit;
 use ren_github::Readiness;
-use ren_release::PreviewCapacity;
 
 fn commit(digit: char) -> Commit {
     digit.to_string().repeat(40).parse().unwrap()

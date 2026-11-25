@@ -34,16 +34,16 @@ use crate::{
 use clap::{Args, Subcommand, ValueEnum};
 use ren_daemon::host::SystemClock;
 use ren_gateway::factory::FactoryRequest;
+use ren_gateway::release::{
+    Assessment, Canary as CanaryBuild, Decision, Lineage, MinuteOfDay, Policy, Release,
+    ReleaseOptions,
+};
 use ren_git::SourceRevision;
 use ren_git::{Branch, Commit, Git, GitError, Tree};
 use ren_harness::host::HostEnv;
 use ren_network::tailscale::Cli;
 use ren_protocol::label::Stored;
 use ren_recorder::time::Clock as _;
-use ren_release::{
-    Assessment, Canary as CanaryBuild, Decision, Lineage, MinuteOfDay, Policy, Release,
-    ReleaseOptions,
-};
 use std::{
     fs,
     path::{Path, PathBuf},

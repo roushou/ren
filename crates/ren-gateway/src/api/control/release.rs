@@ -1,6 +1,6 @@
 //! `POST /control/v1/release/promote`: the operator asks that production
 //! take the canary's build. The gateway records the request
-//! (`ren_release::PromotionRequest`); the factory carries it out with the
+//! (`crate::release::PromotionRequest`); the factory carries it out with the
 //! install's steps, since an install restarts the daemon that would
 //! otherwise run it: at once with a [`Factory`] on the host, which is asked
 //! to ([`FactoryRequest::Promote`]), else at its next timed pass. Refused,
@@ -23,6 +23,7 @@ use super::{
 use crate::api::release::ReleaseFolder;
 use crate::factory::{Factory, FactoryAnswer, FactoryRequest};
 use crate::instance::CommitAsks;
+use crate::release::PromotionRequest;
 use axum::{
     Json, Router,
     extract::{State, rejection::JsonRejection},
@@ -31,7 +32,6 @@ use axum::{
 };
 use http::{HeaderMap, StatusCode};
 use ren_git::Commit;
-use ren_release::PromotionRequest;
 use std::sync::Arc;
 
 pub(super) struct ReleaseApi {

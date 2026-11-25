@@ -4,6 +4,7 @@
 use super::{CheckId, Report, Status};
 use crate::Cli;
 use ren_gateway::Environment;
+use ren_gateway::release::{Build, Comparison};
 use ren_git::SourceRevision;
 use ren_harness::{
     endpoint::{GatewayEndpoint, UserToken},
@@ -12,7 +13,6 @@ use ren_harness::{
 use ren_protocol::label::Stored;
 use ren_recorder::caller::CallerKind;
 use ren_recorder::retention::RetentionPolicy;
-use ren_release::{Build, Comparison};
 use serde::{Deserialize, de::DeserializeOwned};
 use std::time::Duration;
 

@@ -20,3 +20,6 @@ packages::GenerationState: current in_use idle
 packages::ChangeOutcome: unchanged activated failed
 packages::ChangeKind: add replace remove
 preview::Reach: loopback tailnet
+release::CheckKind: doctor reads pages build serve declared
+release::Suite: ren project
+release::Decision: promote current failed unchecked production_ahead unconfirmed awaiting_operator outside_window promotion_failed

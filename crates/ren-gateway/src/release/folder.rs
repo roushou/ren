@@ -2,7 +2,7 @@
 //! for the Release view: the pages the canary captured ([`ShotName`]), the
 //! operator's request that production take the canary's build
 //! ([`PromotionRequest`]), and each project's release
-//! ([`crate::Release::PROJECTS`]).
+//! ([`crate::release::Release::PROJECTS`]).
 
 use ren_git::Commit;
 use serde::{Deserialize, Serialize};

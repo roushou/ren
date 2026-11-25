@@ -7,6 +7,7 @@ pub mod agent;
 
 use axum::Router;
 use ren_daemon::config::Config;
+use ren_gateway::release::Build;
 use ren_gateway::{
     ControlToken, Gateway, Ingress, IngressError, ManagementSetup, ReleaseFolder, ReqwestUpstream,
     Shutdown, Stopped, Upstream, control::Controls, github::PullBoard,
@@ -20,7 +21,6 @@ use ren_recorder::{
     id::{CallId, SequentialIds},
     time::{ManualClock, UnixMillis},
 };
-use ren_release::Build;
 use ren_store::{
     Reader, Store, StoreError,
     backup::Backup,

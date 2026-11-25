@@ -25,6 +25,10 @@ use ren_gateway::api::{
     control::request::{ControlRequest, LandWorkRequest, ShipWorkRequest, WorkChange},
     read::ReadBody,
 };
+use ren_gateway::release::{
+    Assessment, Attempt, Canary, Check, CheckKind, Decision, Lineage, MinuteOfDay, Outcome,
+    Release, ReleaseOptions, Verdict,
+};
 use ren_git::SourceRevision;
 use ren_git::{Branch, Commit, Git, Tree};
 use ren_manifest::{Manifest, Place};
@@ -34,10 +38,6 @@ use ren_recorder::{
     work::{Landing, WorkStateKind},
 };
 use ren_recorder::{project::Factory, time::Clock as _};
-use ren_release::{
-    Assessment, Attempt, Canary, Check, CheckKind, Decision, Lineage, MinuteOfDay, Outcome,
-    Release, ReleaseOptions, Verdict,
-};
 use ren_store::view::ProjectView;
 use ren_store::{
     query::{PageLimit, Shelf},

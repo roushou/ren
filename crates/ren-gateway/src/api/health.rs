@@ -38,8 +38,8 @@ pub(super) struct Build {
     revision: SourceRevision,
 }
 
-impl From<&ren_release::Build> for Build {
-    fn from(build: &ren_release::Build) -> Self {
+impl From<&crate::release::Build> for Build {
+    fn from(build: &crate::release::Build) -> Self {
         Self {
             version: build.version().to_owned(),
             revision: build.revision().clone(),

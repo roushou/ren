@@ -20,6 +20,7 @@ use crate::{
 use ren_container::{Access, Mount};
 use ren_daemon::config::{Config, ConfigError, FactoryOptions, GithubOptions, RunsOptions};
 use ren_gateway::instance::{CommitAsks, Instances, Slot as PreviewSlot};
+use ren_gateway::release::{PromotionRequest, Release, ShotName};
 use ren_gateway::{
     ControlToken, Environment, InstanceOptions,
     api::control::request::{ControlRequest, WorkChange},
@@ -33,7 +34,6 @@ use ren_recorder::{
     id::WorkItemId,
     work::{PreviewUrl, WorkStateKind},
 };
-use ren_release::{PromotionRequest, Release, ShotName};
 use serde::Deserialize;
 use std::{
     fs,

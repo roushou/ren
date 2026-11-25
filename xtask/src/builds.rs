@@ -19,9 +19,9 @@ use crate::{
     progress::Progress,
     ui::{UiBuild, UiBuildError},
 };
+use ren_gateway::release::Attempt;
 use ren_git::Commit;
 use ren_harness::host::HostEnv;
-use ren_release::Attempt;
 use std::{
     fs,
     os::unix::fs::DirBuilderExt,

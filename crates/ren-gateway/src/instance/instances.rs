@@ -2,9 +2,9 @@
 //! moves them on: `(Instances, Event) -> (Instances, Vec<Action>)`.
 
 use super::slot::Slot;
+use crate::release::PreviewCapacity;
 use ren_git::Commit;
 use ren_github::{PullNumber, Readiness};
-use ren_release::PreviewCapacity;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};

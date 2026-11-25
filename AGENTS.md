@@ -235,10 +235,6 @@ dependencies under "Crates" below. Read the code for current module ownership.
   previews a worktree of it, and runs its canary and promotion
   (`commands/project/canary.rs`: `ProjectFactory`, with its release in
   `<data>/projects/<name>`).
-- `crates/ren-release`: how a build of Ren moves from `main` to production,
-  sans-IO: which build an instance runs (`Build`, its `ren_git::SourceRevision`
-  of a `Commit` and `Tree`, and how two compare, `Comparison`). Its
-  manifest allows only pure dependencies and `ren-git`.
 - `crates/ren-container`: containers as Ren runs them, with `Container`
   as its primary type. It depends on none of Ren's crates. A
   `Container` is what one sees of the host (`Mount`, read-only or
@@ -305,6 +301,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ren_daemon::host::Grants`, which a relayed run's git asks through
   `ren credential`; the gateway's `PullBoard` keeps its
   observations by project and serves them.
+- `ren-gateway`'s `release` module: how a build of Ren moves from `main` to
+  production: which build an instance runs (`Build`, its
+  `ren_git::SourceRevision`, and how two compare, `Comparison`), what the
+  canary's checks found (`Verdict`), when production takes a build
+  (`Policy`), and where a release stands with what promotion decided
+  (`Release`, `Decision`). The gateway reports them; the factory writes them.
 - `ren-gateway`'s `instance` module: which instances of Ren the factory runs
   (docs/plans/instances.md; today, the previews of docs/plans/self-build.md,
   phase 9), sans-IO, in `Instances`: each `Instance` in its `Slot` (its
@@ -313,7 +315,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (whose outcome a later pass takes as unknown), `Running`, or `Failed`
   (`InstanceState`). One step moves them on, `Instances::step`: an `Event`
   (the `Wanted` instances in priority order with the
-  `ren_release::PreviewCapacity`, or the factory's report that a start
+  `release::PreviewCapacity`, or the factory's report that a start
   ended) to the instances and the `Action`s that follow (stop a slot, start
   a commit in one); a report that does not fit is refused (`StaleReport`)
   and changes nothing. A failed build is not tried again for its commit.
@@ -603,7 +605,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   1024, which every configured limit is; `TimeoutSecs`, in `timeout`, is
   every configured timeout, 1 to 3600 seconds), the `Controls` that hold
   it with the running-call registry (`control`), the instance's
-  environment that `/health` reports beside its `ren_release::Build`
+  environment that `/health` reports beside its `release::Build`
   (`build`), what the factory keeps for the Release page (`api::release`:
   `ReleaseFolder`, Ren's release, the canary's shots, project releases, and
   the operator's promotion request), and
@@ -867,7 +869,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   with `--of dev` the dev slot, and the canary's derived configuration),
   checks it (`canary::checks`: doctor, a sweep of every read, kept whole by a
   test that matches every `ReadRequest`, and every page through the dev
-  slot's camera), writes the `ren_release::Release` to production's data
+  slot's camera), writes the `ren_gateway::release::Release` to production's data
   folder, and promotes under the operator's policy; `enable` runs it on a
   timer. Its parsing of Tailscale status and of the installed `ren`'s
   output, its UI unit rendering, its saved flags, and the upgrade's wait,
@@ -907,7 +909,6 @@ directly.
 | `ren-protocol`                             | `CallInspector`                                     | none of ours      |
 | `ren-depot`                                | `Depot`, with its `ProgramHost` port                | none of ours      |
 | `ren-git`                                  | `Git`                                               | none of ours      |
-| `ren-release`                              | `Release`                                           | protocol, git     |
 | `ren-container`                            | `Container`                                         | none of ours      |
 | `ren-network`                              | `Network`                                           | none of ours      |
 | `ren-github`                               | `Client`                                            | none of ours      |

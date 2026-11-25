@@ -12,8 +12,8 @@ use crate::{
     progress::Progress,
     replica::Replica,
 };
+use ren_gateway::release::{Check, CheckKind, Outcome, Verdict};
 use ren_harness::host::HostEnv;
-use ren_release::{Check, CheckKind, Outcome, Verdict};
 use std::net::SocketAddr;
 
 /// Runs the checks against one canary.

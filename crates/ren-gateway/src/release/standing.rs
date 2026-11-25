@@ -4,7 +4,7 @@
 //! The factory writes it to production's data folder ([`Release::FILE`]);
 //! the gateway reads it back and serves it, so `ren` and the UI show it.
 
-use crate::{
+use crate::release::{
     Verdict,
     policy::{MinuteOfDay, Policy},
 };
@@ -217,7 +217,7 @@ impl Release {
 #[cfg(test)]
 mod tests {
     use super::{Assessment, Attempt, Canary, Decision, Lineage, Release};
-    use crate::{Check, CheckKind, Outcome, Policy, Verdict, policy::MinuteOfDay};
+    use crate::release::{Check, CheckKind, Outcome, Policy, Verdict, policy::MinuteOfDay};
     use ren_protocol::label::Stored;
     use strum::VariantArray;
 

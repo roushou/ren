@@ -7,11 +7,11 @@
 //! views back.
 
 use crate::instance::{CommitAsks, Instances};
+use crate::release::{CheckKind, Decision, Outcome, Policy, PromotionRequest, Release, ShotName};
 use ren_git::Commit;
 use ren_git::SourceRevision;
 use ren_protocol::label::Stored;
 use ren_recorder::project::Factory;
-use ren_release::{CheckKind, Decision, Outcome, Policy, PromotionRequest, Release, ShotName};
 use ren_store::view::ProjectView;
 use serde::{Deserialize, Serialize};
 use std::{

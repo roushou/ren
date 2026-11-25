@@ -17,6 +17,7 @@ use crate::host::{
 };
 use crate::packages::HostPrograms;
 use crate::packages::{HostPackages, PackageStore, fetch::ReqwestFetch};
+use ren_gateway::release::Build;
 use ren_gateway::{
     ControlToken, Gateway, ManagementSetup, ReleaseFolder, ReqwestUpstream, Shutdown, Stopped,
     control::Controls,
@@ -34,7 +35,6 @@ use ren_recorder::CaptureOptionsError;
 use ren_recorder::secrets::SecretScanner;
 use ren_recorder::{Recorder, RecorderSetup, id::IdSource, time::Clock};
 use ren_relay::{Course, Passage, Relay, TunnelEnd};
-use ren_release::Build;
 use ren_store::StoreError;
 use ren_store::{Reader, Store, backup::Backup};
 use ren_supervisor::{Supervisor, SupervisorError, SupervisorOptions, SupervisorTask, Warmup};

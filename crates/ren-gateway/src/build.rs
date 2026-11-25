@@ -1,5 +1,5 @@
 //! What kind of instance a gateway is ([`Environment`]), as `/health`
-//! reports it beside its build ([`ren_release::Build`]): a production
+//! reports it beside its build ([`crate::release::Build`]): a production
 //! instance, a development one (such as `cargo xtask dev`'s slot), the
 //! canary, or a worktree's preview. The gateway is the authority; the UI and the CLI show what
 //! `/health` reports.
