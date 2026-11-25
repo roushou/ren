@@ -6,6 +6,7 @@
 //! storage.
 
 pub mod config;
+pub mod factory;
 pub mod host;
 pub mod packages;
 
@@ -19,6 +20,7 @@ use crate::packages::{HostPackages, PackageStore, fetch::ReqwestFetch};
 use ren_gateway::{
     ControlToken, Gateway, ManagementSetup, ReleaseFolder, ReqwestUpstream, Shutdown, Stopped,
     control::Controls,
+    factory::{Factory, FactoryAnswer, FactoryRequest, Follower},
     github::PullBoard,
     operator::{OperatorState, Pause, RestoreError},
 };
@@ -284,7 +286,11 @@ impl Daemon {
             shutdown.clone(),
         );
         let packages = Self::packages(config, data_dir, &reader);
-        let pulls = Self::watch_github(config, clock, &shutdown, projects, &reader);
+        let factory = config.factory().map(|socket| -> Arc<dyn Factory> {
+            Arc::new(crate::factory::FactorySocket::new(socket.to_path_buf()))
+        });
+        let pulls =
+            Self::watch_github(config, clock, &shutdown, projects, &reader, factory.clone());
         let ingress = gateway.into_ingress(
             listener,
             forwarding,
@@ -300,6 +306,7 @@ impl Daemon {
                 runs: runs.as_ref().map(|(supervisor, _)| supervisor.clone()),
                 release: ReleaseFolder::in_data(data_dir),
                 pulls: pulls.clone(),
+                factory,
             },
         );
         // The gateway holds the only supervisor handles: the runs drain once
@@ -613,10 +620,13 @@ impl Daemon {
         shutdown: &Shutdown,
         projects: WatchedProjects,
         reader: &Reader,
+        factory: Option<Arc<dyn Factory>>,
     ) -> PullBoard {
         let Some(setup) = config.github() else {
             return PullBoard::default();
         };
+        let asks = factory.map(Self::follow);
+        let mut follower = Follower::watching(setup.projects.iter().cloned());
         Self::learn_folders(setup, projects.clone(), reader.clone(), shutdown.clone());
         let board = PullBoard::watching(setup.projects.iter().cloned());
         let poller = Poller::new(setup.client.clone(), setup.period, board.repositories());
@@ -636,6 +646,14 @@ impl Daemon {
                             tracing::warn!(%repository, %error, "a project's manifest on its default branch does not read; its runs reach nothing of its own");
                         }
                         recording.record(repository, observation);
+                        // Recorded first: the pass reads what was seen.
+                        if let Some(asks) = &asks {
+                            for request in follower.see(repository, observation) {
+                                // A full queue already holds passes that
+                                // read every repository.
+                                let _ = asks.try_send(request);
+                            }
+                        }
                     },
                     || {
                         std::time::SystemTime::UNIX_EPOCH
@@ -647,6 +665,44 @@ impl Daemon {
         });
         board
     }
+    /// Asks the factory what the GitHub watch's sightings ask of it, one
+    /// at a time (docs/plans/instances.md, phases 4 and 6): previews follow
+    /// their pull requests, and the canary follows `main`, as the watch sees
+    /// them move, not at the factory's timer. Each ask waits a few seconds
+    /// for its answer: a busy factory takes it up after its pass. Ends when
+    /// the watch, which holds the sender, ends.
+    fn follow(factory: Arc<dyn Factory>) -> tokio::sync::mpsc::Sender<FactoryRequest> {
+        const ANSWER_WAIT: Duration = Duration::from_secs(5);
+        let (asks, mut asked) = tokio::sync::mpsc::channel::<FactoryRequest>(8);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "process wiring: the daemon owns the GitHub follower's task"
+        )]
+        tokio::spawn(async move {
+            while let Some(request) = asked.recv().await {
+                let line = request.line();
+                match tokio::time::timeout(ANSWER_WAIT, factory.ask(request)).await {
+                    Ok(Ok(FactoryAnswer::Planned | FactoryAnswer::Started)) => {}
+                    Ok(Ok(FactoryAnswer::NotBuilt)) => {
+                        tracing::debug!(
+                            request = line.trim_end(),
+                            "the factory does not build that project"
+                        );
+                    }
+                    Ok(Ok(FactoryAnswer::Failed(why))) => {
+                        tracing::warn!(%why, request = line.trim_end(), "the factory could not take up what GitHub showed");
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(%error, "the factory was not asked to follow GitHub");
+                    }
+                    // Busy with a pass: it takes the ask up after.
+                    Err(_) => {}
+                }
+            }
+        });
+        asks
+    }
+
     /// Keeps `projects` told which folder each watched project is
     /// registered in: read from the store now, then each period, as
     /// projects are registered and archived.

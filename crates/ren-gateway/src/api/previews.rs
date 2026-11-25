@@ -6,7 +6,7 @@
 //! itself is previewed so; any other project has none.
 
 use super::{ApiError, ApiState};
-use crate::preview::{Preview, PreviewKey, PreviewState, Reach};
+use crate::instance::{Instance, InstanceState, Reach, Source};
 use axum::{
     extract::{Path, State},
     response::{IntoResponse, Response},
@@ -85,7 +85,7 @@ impl ApiState {
                     .release
                     .previews()
                     .await?
-                    .previews()
+                    .instances()
                     .iter()
                     .map(PreviewBody::of)
                     .collect(),
@@ -101,25 +101,25 @@ impl ApiState {
 }
 
 impl PreviewBody {
-    fn of(preview: &Preview) -> Self {
+    fn of(instance: &Instance) -> Self {
         Self {
-            slot: u64::try_from(preview.slot.index()).unwrap_or(u64::MAX),
-            of: match &preview.key {
-                PreviewKey::Pull(number) => PreviewOfBody::Pull {
+            slot: u64::try_from(instance.slot.index()).unwrap_or(u64::MAX),
+            of: match &instance.source {
+                Source::Pull(number) => PreviewOfBody::Pull {
                     number: number.get(),
                 },
-                PreviewKey::Commit(_) => PreviewOfBody::Commit,
+                Source::Commit(_) => PreviewOfBody::Commit,
             },
-            commit: preview.commit.clone(),
-            state: match &preview.state {
-                PreviewState::Building => PreviewStateBody::Building,
-                PreviewState::Running { reach } => PreviewStateBody::Running { reach: *reach },
-                PreviewState::Failed { detail } => PreviewStateBody::Failed {
+            commit: instance.commit.clone(),
+            state: match &instance.state {
+                InstanceState::Building => PreviewStateBody::Building,
+                InstanceState::Running { reach } => PreviewStateBody::Running { reach: *reach },
+                InstanceState::Failed { detail } => PreviewStateBody::Failed {
                     detail: detail.clone(),
                 },
             },
-            ui_port: preview.slot.ports().1,
-            published_ui_port: preview.slot.published().1,
+            ui_port: instance.slot.ports().1,
+            published_ui_port: instance.slot.published().1,
         }
     }
 }

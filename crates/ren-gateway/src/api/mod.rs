@@ -77,6 +77,9 @@ pub struct ManagementSetup {
     pub release: ReleaseFolder,
     /// What the daemon's poller last saw of each watched GitHub repository.
     pub pulls: PullBoard,
+    /// The factory on the host, asked to plan the previews when one is
+    /// asked for; without it, the factory's next timed pass does.
+    pub factory: Option<std::sync::Arc<dyn crate::factory::Factory>>,
 }
 
 /// What the read API reads and reports, from the management setup.

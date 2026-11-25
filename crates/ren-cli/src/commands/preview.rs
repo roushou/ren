@@ -2,7 +2,8 @@
 //! phase 9). `list` prints each preview in its slot and the commits asked
 //! for, as a gateway's `/api/projects/{name}/previews` reports them; `ask`
 //! and `withdraw` ask for a preview of a commit, or withdraw the ask,
-//! through the control API, for the factory's next pass to start or stop.
+//! through the control API, for the factory to start or stop: at once when
+//! it listens (`[factory] socket`), else at its next pass.
 
 use super::{control::ControlTarget, history::TargetArgs};
 use crate::context::Context;
@@ -12,7 +13,7 @@ use ren_gateway::api::{
     control::request::{ControlRequest, PreviewAskRequest},
     previews::{PreviewOfBody, PreviewStateBody, PreviewsBody},
 };
-use ren_gateway::preview::Reach;
+use ren_gateway::instance::Reach;
 use ren_git::Commit;
 use ren_recorder::project::ProjectName;
 use std::{fmt::Write as _, process::ExitCode};
@@ -28,9 +29,9 @@ pub struct PreviewCmd {
 enum PreviewAction {
     /// Each preview in its slot, and the commits asked for.
     List(ListArgs),
-    /// Ask for a preview of a commit; the factory's next pass starts it.
+    /// Ask for a preview of a commit; the factory starts it.
     Ask(AskArgs),
-    /// Withdraw the ask; the factory's next pass stops its preview.
+    /// Withdraw the ask; the factory stops its preview.
     Withdraw(AskArgs),
 }
 
@@ -135,7 +136,7 @@ impl PreviewCmd {
 mod tests {
     use super::PreviewCmd;
     use ren_gateway::api::previews::{PreviewBody, PreviewOfBody, PreviewStateBody, PreviewsBody};
-    use ren_gateway::preview::Reach;
+    use ren_gateway::instance::Reach;
 
     #[test]
     fn previews_read_as_lines() {

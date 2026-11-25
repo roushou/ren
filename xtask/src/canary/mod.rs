@@ -16,9 +16,10 @@
 
 mod checks;
 mod previews;
+mod serve;
 mod work;
 
-use self::{checks::Checks, previews::PreviewPass, work::WorkLedger};
+use self::{checks::Checks, previews::PreviewPass, serve::FactoryService, work::WorkLedger};
 use crate::{
     builds::{Builds, BuildsError, StoredBuild},
     dev::DevError,
@@ -32,6 +33,7 @@ use crate::{
 };
 use clap::{Args, Subcommand, ValueEnum};
 use ren_daemon::host::SystemClock;
+use ren_gateway::factory::FactoryRequest;
 use ren_git::{Branch, Commit, Git, GitError, Tree};
 use ren_harness::host::HostEnv;
 use ren_network::tailscale::Cli;
@@ -69,6 +71,10 @@ enum CanaryAction {
     /// open pull request that is not a draft, as many as release.toml's
     /// `previews` allows. Every pass does this too.
     Previews(PreviewsArgs),
+    /// Listen on a socket and run a previews pass for each ask, at once:
+    /// the factory the daemon asks (`[factory] socket`), so a preview asked
+    /// for starts now. The timer's passes then leave previews to it.
+    Serve(ServeArgs),
     /// Stop the canary and remove its routes.
     Down(PublishArgs),
     /// Run a pass on a systemd user timer.
@@ -94,6 +100,16 @@ struct TargetArgs {
     /// The instance the canary copies and promotes into.
     #[arg(long, value_enum, default_value_t = Production::Installed)]
     of: Production,
+}
+
+#[derive(Args)]
+struct ServeArgs {
+    #[command(flatten)]
+    previews: PreviewsArgs,
+    /// Where to listen; `$XDG_RUNTIME_DIR/ren-factory/factory.sock` by
+    /// default.
+    #[arg(long)]
+    socket: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -145,6 +161,8 @@ enum Source {
 pub enum CanaryError {
     #[error("{0} is not set")]
     MissingEnv(&'static str),
+    #[error("the factory could not listen: {0}")]
+    Serve(#[source] std::io::Error),
     #[error("tracked files differ from the commit; the canary checks only a clean commit")]
     Dirty,
     #[error("{0} is not a commit the release reads")]
@@ -208,6 +226,8 @@ impl Factory {
     const REN: &str = "ren";
     const MAIN: &str = "main";
     const TIMER: &str = "ren-canary";
+    /// The factory service's unit (`canary serve`), beside the timer.
+    const SERVICE: &str = "ren-factory";
     /// The canary's tailnet HTTPS ports, with `--publish`, beside the
     /// installed service's and the dev slot's (9443 and 9444).
     const GATEWAY_PORT: u16 = 9445;
@@ -259,9 +279,33 @@ impl Factory {
         }))
     }
 
+    /// A pass over main's tip: handed to the factory service when it
+    /// listens for production (it runs one pass at a time, and the timer's
+    /// would race it), else run here.
+    fn follow(&self, env: &HostEnv, args: &RunArgs) -> Result<(), CanaryError> {
+        let served = match args.target.of {
+            Production::Installed => {
+                let ren = Self::REN
+                    .parse()
+                    .map_err(|_| CanaryError::Commit(Self::REN.to_owned()))?;
+                FactoryService::socket(env).is_some_and(|socket| {
+                    FactoryService::nudge(&socket, &FactoryRequest::Canary(ren))
+                })
+            }
+            Production::Dev => false,
+        };
+        if served {
+            Progress("The factory service runs the canary pass").show();
+            return Ok(());
+        }
+        self.delegate(args)
+    }
+
     /// Fetches main, checks its tip out in the factory's worktree, and goes
-    /// on there with that commit's own xtask.
+    /// on there with that commit's own xtask. One at a time: a second waits
+    /// for the first.
     fn delegate(&self, args: &RunArgs) -> Result<(), CanaryError> {
+        let lock = self.lock()?;
         let main: Branch = Self::MAIN
             .parse()
             .map_err(|_| CanaryError::Commit(Self::MAIN.to_owned()))?;
@@ -287,7 +331,24 @@ impl Factory {
         if args.publish.publish {
             pass = pass.arg("--publish");
         }
-        Ok(pass.run()?)
+        let ran = pass.run();
+        drop(lock);
+        Ok(ran?)
+    }
+
+    /// The canary's lock, held while a pass runs over main.
+    fn lock(&self) -> Result<fs::File, CanaryError> {
+        let dir = self.home.join(".local/share/ren");
+        fs::create_dir_all(&dir).map_err(FileError::at(&dir))?;
+        let path = dir.join("canary.lock");
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(FileError::at(&path))?;
+        file.lock().map_err(FileError::at(&path))?;
+        Ok(file)
     }
 
     /// One pass over this checkout's commit.
@@ -326,23 +387,35 @@ impl Factory {
         }
         self.requested(env, &production)?;
         WorkLedger::new(&production).close(self, &id)?;
-        // A previews pass that fails leaves the canary's verdict standing.
-        let previewed = PreviewPass {
-            factory: self,
-            production: &production,
-            publish: args.publish,
-            project: Self::REN,
-        }
-        .run(env)
-        .unwrap_or_else(|error| {
-            println!("warning: the previews pass failed: {error}");
+        // The factory service, when it listens, runs the previews: two
+        // passes at once would race over them. Its previews are kept.
+        let served = FactoryService::socket(env)
+            .is_some_and(|socket| FactoryService::nudge(&socket, &FactoryRequest::Previews));
+        let running = || -> Vec<Commit> {
             production
                 .previews()
-                .previews()
+                .instances()
                 .iter()
-                .map(|preview| preview.commit.clone())
+                .map(|instance| instance.commit.clone())
                 .collect()
-        });
+        };
+        let previewed = if served {
+            Progress("The factory service runs the previews").show();
+            running()
+        } else {
+            // A previews pass that fails leaves the canary's verdict standing.
+            PreviewPass {
+                factory: self,
+                production: &production,
+                publish: args.publish,
+                project: Self::REN,
+            }
+            .run(env)
+            .unwrap_or_else(|error| {
+                println!("warning: the previews pass failed: {error}");
+                running()
+            })
+        };
         let keep: Vec<Commit> = [Some(commit), Self::running(&production)]
             .into_iter()
             .flatten()
@@ -559,12 +632,27 @@ impl Factory {
             &units.join(format!("{}.timer", Self::TIMER)),
             timer.as_bytes(),
         )?;
+        // The factory service: previews asked for start as they are asked,
+        // with the timer's environment and publishing.
+        let factory = format!(
+            "[Unit]\nDescription=Ren factory: previews started as they are asked for\n\n[Service]\nType=simple\nWorkingDirectory={}\n{environment}ExecStart={} xtask canary serve{publish}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+            self.repo.display(),
+            self.cargo.display(),
+        );
+        FileMode::Readable.write(
+            &units.join(format!("{}.service", Self::SERVICE)),
+            factory.as_bytes(),
+        )?;
         Invocation::new("systemctl")
             .args(["--user", "daemon-reload"])
             .run()?;
         Invocation::new("systemctl")
             .args(["--user", "enable", "--now"])
             .arg(format!("{}.timer", Self::TIMER))
+            .run()?;
+        Invocation::new("systemctl")
+            .args(["--user", "enable", "--now"])
+            .arg(format!("{}.service", Self::SERVICE))
             .run()?;
         Progress(&format!(
             "A pass runs every {} minutes; follow it with `journalctl --user -u {}`",
@@ -581,8 +669,16 @@ impl Factory {
             .args(["--user", "disable", "--now"])
             .arg(format!("{}.timer", Self::TIMER))
             .succeeds(crate::invocation::Echo::Show)?;
-        for unit in ["service", "timer"] {
-            let path = units.join(format!("{}.{unit}", Self::TIMER));
+        Invocation::new("systemctl")
+            .args(["--user", "disable", "--now"])
+            .arg(format!("{}.service", Self::SERVICE))
+            .succeeds(crate::invocation::Echo::Show)?;
+        for unit in [
+            format!("{}.service", Self::TIMER),
+            format!("{}.timer", Self::TIMER),
+            format!("{}.service", Self::SERVICE),
+        ] {
+            let path = units.join(unit);
             match fs::remove_file(&path) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -601,7 +697,7 @@ impl Canary {
         let factory = Factory::new(env)?;
         match self.action {
             CanaryAction::Run(args) => match args.source {
-                Source::Main => factory.delegate(&args),
+                Source::Main => factory.follow(env, &args),
                 Source::Checkout => factory.pass(env, &args),
             },
             CanaryAction::Promote(target) => factory.promote_now(env, target),
@@ -625,6 +721,21 @@ impl Canary {
                 }
                 .run(env)
                 .map(drop)
+            }
+            CanaryAction::Serve(args) => {
+                let production = ProductionPlace::new(env, args.previews.target.of)?;
+                let socket = args
+                    .socket
+                    .or_else(|| FactoryService::socket(env))
+                    .ok_or(CanaryError::MissingEnv("XDG_RUNTIME_DIR"))?;
+                FactoryService {
+                    factory: &factory,
+                    production: &production,
+                    of: args.previews.target.of,
+                    publish: args.previews.publish,
+                    project: &args.previews.project,
+                }
+                .serve(env, &socket)
             }
             CanaryAction::Down(publish) => {
                 let canary = Replica::canary(env)?;

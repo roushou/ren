@@ -8,7 +8,7 @@
 //! another (`cargo xtask preview`).
 
 use crate::{
-    dev::{DevError, slot::Slot},
+    dev::{DevError, index::DevIndex, instance::DevInstance},
     file::{FileError, FileMode},
     invocation::{Echo, Invocation, InvocationError},
     pod::{Container, Pod},
@@ -18,8 +18,8 @@ use crate::{
     unit::{KillMode, Listener, TransientUnit},
 };
 use ren_container::{Access, Mount};
-use ren_daemon::config::{Config, ConfigError, GithubOptions, RunsOptions};
-use ren_gateway::preview::{PreviewRequests, Previews, Slot as PreviewSlot};
+use ren_daemon::config::{Config, ConfigError, FactoryOptions, GithubOptions, RunsOptions};
+use ren_gateway::instance::{CommitAsks, Instances, Slot as PreviewSlot};
 use ren_gateway::{
     ControlToken, Environment, InstanceOptions,
     api::control::request::{ControlRequest, WorkChange},
@@ -204,13 +204,14 @@ impl ProductionPlace {
                 })
             }
             Production::Dev => {
-                let slot = Slot::new(env)?;
+                // The canary rehearses against the first dev instance.
+                let slot = DevInstance::new(env, DevIndex::FIRST)?;
                 Ok(Self {
                     kind,
                     config: slot.config,
                     data_dir: slot.data_dir,
                     binary: slot.bin_dir.join("ren"),
-                    listen: Slot::DAEMON,
+                    listen: DevIndex::FIRST.daemon(),
                 })
             }
         }
@@ -369,22 +370,22 @@ impl ProductionPlace {
     }
 
     /// The previews the factory last wrote here; none before the first.
-    pub fn previews(&self) -> Previews {
-        fs::read(self.data_dir.join(Previews::FILE))
+    pub fn previews(&self) -> Instances {
+        fs::read(self.data_dir.join(Instances::FILE))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default()
     }
 
     /// Writes the previews where production's gateway serves them from.
-    pub fn write_previews(&self, previews: &Previews) -> Result<(), ReplicaError> {
+    pub fn write_previews(&self, previews: &Instances) -> Result<(), ReplicaError> {
         let json = serde_json::to_vec_pretty(previews).map_err(ReplicaError::Json)?;
-        Ok(FileMode::Private.write(&self.data_dir.join(Previews::FILE), &json)?)
+        Ok(FileMode::Private.write(&self.data_dir.join(Instances::FILE), &json)?)
     }
 
     /// The commits the operator asked to preview; none when none were.
-    pub fn preview_requests(&self) -> PreviewRequests {
-        fs::read(self.data_dir.join(PreviewRequests::FILE))
+    pub fn preview_requests(&self) -> CommitAsks {
+        fs::read(self.data_dir.join(CommitAsks::FILE))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default()
@@ -520,6 +521,9 @@ impl Replica {
             runs: RunsOptions::default(),
             // Production watches GitHub; a replica has no token to.
             github: GithubOptions::default(),
+            // Only production asks the factory for previews; a replica's
+            // asks would start production's passes.
+            factory: FactoryOptions::default(),
             ..production
         }
     }
@@ -733,7 +737,7 @@ impl Replica {
 #[cfg(test)]
 mod tests {
     use super::Replica;
-    use ren_daemon::config::Config;
+    use ren_daemon::config::{Config, FactoryOptions};
     use ren_gateway::Environment;
     use std::path::Path;
 
@@ -757,6 +761,9 @@ operator_key_env = "ACME_ANTHROPIC_KEY"
 [[github.repository]]
 project = "ren"
 github = "acme/ren"
+
+[factory]
+socket = "/run/user/1000/ren-factory/factory.sock"
 "#,
         )
         .unwrap()
@@ -773,6 +780,10 @@ github = "acme/ren"
         assert!(config.runs.roots.is_empty());
         assert_eq!(config.upstreams[0].operator_key_env, "ACME_ANTHROPIC_KEY");
         assert!(config.github.repository.is_empty());
+        // Nor asks the factory, and a build that predates `[factory]` reads
+        // its configuration.
+        assert_eq!(config.factory, FactoryOptions::default());
+        assert!(!toml::to_string(&config).unwrap().contains("[factory]"));
         config.check().unwrap();
 
         let preview = Replica::preview("ren-3", 20_200, Path::new("/data/worktrees/.data/ren-3"));

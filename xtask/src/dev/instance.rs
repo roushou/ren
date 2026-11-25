@@ -1,10 +1,12 @@
-//! The dev slot: this checkout's build running beside the installed service,
-//! with its own configuration, data, and loopback ports, pointed only at the
-//! fake provider. Each process runs as a transient systemd user unit named
-//! `ren-dev-*`, so it is stopped by name and never by a pattern that could
-//! match the installed service.
+//! A dev instance (docs/plans/instances.md, phase 5): a checkout's build
+//! running beside the installed service, with its own configuration, data,
+//! and loopback ports from its [`DevIndex`], pointed only at the fake
+//! provider. Each process runs as a transient systemd user unit named for
+//! the instance (`ren-dev-*` for the first, `ren-dev-<index>-*` after), so
+//! it is stopped by name and never by a pattern that could match the
+//! installed service or another instance.
 
-use super::DevError;
+use super::{DevError, claims::DevClaims, index::DevIndex};
 use crate::file::{FileError, FileMode};
 use crate::gvisor_service::GvisorService;
 use crate::progress::Progress;
@@ -19,8 +21,8 @@ use crate::{
 };
 use ren_container::Engine;
 use ren_daemon::config::{
-    Config, GithubApp, GithubOptions, RelayedOptions, RunContainerOptions, RunHold, RunRuntime,
-    RunsOptions, UpstreamConfig, WatchedRepository,
+    Config, FactoryOptions, GithubApp, GithubOptions, RelayedOptions, RunContainerOptions, RunHold,
+    RunRuntime, RunsOptions, UpstreamConfig, WatchedRepository,
 };
 use ren_daemon::host::HeldRuns;
 use ren_gateway::{
@@ -40,7 +42,7 @@ use std::{
     time::Duration,
 };
 
-/// One process of the slot.
+/// One process of a dev instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unit {
     Provider,
@@ -53,14 +55,15 @@ impl Unit {
     /// Every unit, in the order they stop.
     pub const ALL: [Self; 4] = [Self::Traffic, Self::Ui, Self::Daemon, Self::Provider];
 
-    /// The transient unit; every one's name starts with `ren-dev-`.
-    pub fn unit(self) -> TransientUnit {
-        let (name, description) = match self {
-            Self::Provider => ("ren-dev-provider", "Ren dev slot: ren-dev-provider"),
-            Self::Daemon => ("ren-dev-daemon", "Ren dev slot: ren-dev-daemon"),
-            Self::Ui => ("ren-dev-ui", "Ren dev slot: ren-dev-ui"),
-            Self::Traffic => ("ren-dev-traffic", "Ren dev slot: ren-dev-traffic"),
+    /// The transient unit of `index`'s instance, named for it.
+    pub fn unit(self, index: DevIndex) -> TransientUnit {
+        let process = match self {
+            Self::Provider => "provider",
+            Self::Daemon => "daemon",
+            Self::Ui => "ui",
+            Self::Traffic => "traffic",
         };
+        let name = format!("{}-{process}", index.name());
         // The daemon is signalled alone, as the installed unit does; the
         // rest stop as a whole.
         let kill = match self {
@@ -68,33 +71,35 @@ impl Unit {
             Self::Provider | Self::Ui | Self::Traffic => KillMode::ControlGroup,
         };
         TransientUnit {
-            name: name.to_owned(),
-            description: description.to_owned(),
+            description: format!("Ren dev instance: {name}"),
+            name,
             kill,
         }
     }
 
-    pub fn name(self) -> String {
-        self.unit().name
+    pub fn name(self, index: DevIndex) -> String {
+        self.unit(index).name
     }
 
-    pub fn active(self) -> Result<bool, InvocationError> {
-        self.unit().active()
+    pub fn active(self, index: DevIndex) -> Result<bool, InvocationError> {
+        self.unit(index).active()
     }
 
-    pub fn stop(self) -> Result<(), InvocationError> {
-        self.unit().stop()
+    pub fn stop(self, index: DevIndex) -> Result<(), InvocationError> {
+        self.unit(index).stop()
     }
 
-    /// Run `command` as this unit, with `environment`, until stopped.
+    /// Run `command` as this unit of `index`'s instance, with
+    /// `environment`, until stopped.
     pub fn start(
         self,
+        index: DevIndex,
         dir: Option<&Path>,
         command: &[&Path],
         args: &[String],
         environment: &[(&str, String)],
     ) -> Result<(), InvocationError> {
-        self.unit().start(dir, command, args, environment)
+        self.unit(index).start(dir, command, args, environment)
     }
 }
 
@@ -115,8 +120,62 @@ pub enum Preview {
     Local,
 }
 
-/// Where the slot lives and listens.
-pub struct Slot {
+/// The host's [`DevClaims`], in their file, changed under a lock so two
+/// checkouts starting at once never take the same instance.
+pub struct ClaimsFile {
+    path: PathBuf,
+}
+
+impl ClaimsFile {
+    pub fn new(env: &HostEnv) -> Result<Self, DevError> {
+        let home = env
+            .absolute_path("HOME")
+            .ok_or(DevError::MissingEnv("HOME"))?;
+        Ok(Self {
+            path: home.join(".local/state").join(DevClaims::FILE),
+        })
+    }
+
+    /// The claims as they stand; none before the first.
+    pub fn read(&self) -> Result<DevClaims, DevError> {
+        match fs::read(&self.path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| DevError::Claims {
+                path: self.path.clone(),
+                why: error.to_string(),
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(DevClaims::default()),
+            Err(error) => Err(FileError::at(&self.path)(error).into()),
+        }
+    }
+
+    /// Changes the claims with `change`, under the file's lock.
+    pub fn change<T>(
+        &self,
+        change: impl FnOnce(DevClaims) -> Result<(DevClaims, T), DevError>,
+    ) -> Result<T, DevError> {
+        let dir = self.path.parent().unwrap_or(Path::new("/"));
+        fs::create_dir_all(dir).map_err(FileError::at(dir))?;
+        let lock_path = self.path.with_extension("lock");
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .map_err(FileError::at(&lock_path))?;
+        lock.lock().map_err(FileError::at(&lock_path))?;
+        let (claims, answer) = change(self.read()?)?;
+        let text = serde_json::to_string_pretty(&claims).map_err(|error| DevError::Claims {
+            path: self.path.clone(),
+            why: error.to_string(),
+        })?;
+        FileMode::Private.write(&self.path, text.as_bytes())?;
+        Ok(answer)
+    }
+}
+
+/// Where a dev instance lives and listens.
+pub struct DevInstance {
+    pub index: DevIndex,
     pub repo: PathBuf,
     cargo: PathBuf,
     pub config: PathBuf,
@@ -139,21 +198,7 @@ pub struct Slot {
     env: HostEnv,
 }
 
-impl Slot {
-    pub const PROVIDER: SocketAddr =
-        SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 18999);
-    pub const DAEMON: SocketAddr =
-        SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 18787);
-    pub const UI: SocketAddr =
-        SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 13000);
-    /// The tailnet HTTPS ports of the dev preview, beside the installed
-    /// service's.
-    pub const GATEWAY_PORT: u16 = 9443;
-    pub const UI_PORT: u16 = 9444;
-    /// The traffic generator's control API, which the dev UI's toolbar
-    /// reaches through the UI server; never published.
-    pub const CONTROL: SocketAddr =
-        SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 13001);
+impl DevInstance {
     /// The operator key the dev config's operator-key entries read: fake.
     const OPERATOR_KEY_ENV: &'static str = "REN_DEV_OPERATOR_KEY";
     const OPERATOR_KEY: &'static str = "fake-dev-operator-key";
@@ -164,20 +209,27 @@ impl Slot {
     /// Seconds between checks for runs mid-way.
     const RUN_POLL: Duration = Duration::from_secs(2);
 
-    pub fn new(env: &HostEnv) -> Result<Self, DevError> {
+    /// The checkout this xtask was built from, which its instance builds.
+    pub fn checkout() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+    }
+
+    pub fn new(env: &HostEnv, index: DevIndex) -> Result<Self, DevError> {
         let home = env
             .absolute_path("HOME")
             .ok_or(DevError::MissingEnv("HOME"))?;
-        let share = home.join(".local/share/ren-dev");
+        let name = index.name();
+        let share = home.join(".local/share").join(&name);
         Ok(Self {
-            repo: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
+            index,
+            repo: Self::checkout(),
             cargo: env
                 .absolute_path("CARGO")
                 .unwrap_or_else(|| PathBuf::from("cargo")),
-            config: home.join(".config/ren-dev/ren.toml"),
-            data_dir: home.join(".local/state/ren-dev"),
+            config: home.join(".config").join(&name).join("ren.toml"),
+            data_dir: home.join(".local/state").join(&name),
             bin_dir: share.join("bin"),
             ui_dir: share.join("ui"),
             ui_next: share.join("ui.next"),
@@ -190,7 +242,7 @@ impl Slot {
         })
     }
 
-    /// The slot, with what `contain` says in containers.
+    /// The instance, with what `contain` says in containers.
     #[must_use]
     pub fn containing(mut self, contain: Contain) -> Self {
         self.contain = contain;
@@ -207,7 +259,7 @@ impl Slot {
         })
     }
 
-    /// The slot, its contained runs run by `runtime`.
+    /// The instance, its contained runs run by `runtime`.
     #[must_use]
     pub fn running_on(mut self, runtime: RunRuntime) -> Self {
         self.runtime = runtime;
@@ -226,14 +278,15 @@ impl Slot {
     /// The dev configuration: every provider is the fake one, two named
     /// users, and operator-key entries whose key is fake.
     pub fn config(&self) -> Result<Config, DevError> {
-        let fake = |prefix: &str| format!("http://{}/{prefix}", Self::PROVIDER);
+        let provider = self.index.provider();
+        let fake = |prefix: &str| format!("http://{provider}/{prefix}");
         let id = |text: &str| text.parse::<UpstreamId>().map_err(|_| DevError::Config);
         let user = |text: &str| text.parse::<UserId>().map_err(|_| DevError::Config);
         let login = "alice@example.com"
             .parse::<Login>()
             .map_err(|_| DevError::Config)?;
         Ok(Config {
-            listen: Self::DAEMON,
+            listen: self.index.daemon(),
             data_dir: Some(self.data_dir.clone()),
             anthropic_base_url: fake("anthropic"),
             codex_base_url: fake("codex"),
@@ -340,6 +393,16 @@ impl Slot {
                     })
                     .collect::<Result<_, DevError>>()?,
             },
+            // A factory of its own, if one listens (`cargo xtask canary
+            // serve --of dev --socket` here): asked to plan a preview at
+            // once.
+            factory: FactoryOptions {
+                socket: self.env.absolute_path("XDG_RUNTIME_DIR").map(|runtime| {
+                    runtime
+                        .join(format!("{}-factory", self.index.name()))
+                        .join("factory.sock")
+                }),
+            },
             ..Config::default()
         })
     }
@@ -419,6 +482,8 @@ program_at = "acme-lint"
             );
             FileMode::Executable.write(&dir.join(program), script.as_bytes())?;
         }
+        // Its runs' scratch folders' parent, which a contained daemon mounts.
+        fs::create_dir_all(&self.scratch_dir).map_err(FileError::at(&self.scratch_dir))?;
         for place in Self::PLACES {
             let folder = self.places_dir.join(place);
             fs::create_dir_all(&folder).map_err(FileError::at(&folder))?;
@@ -574,32 +639,35 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
         let ui = UiBuild::new(env, &self.repo)?;
         self.start_core(wait)?;
         ui.build_into(&self.ui_next)?;
-        Unit::Ui.stop()?;
+        Unit::Ui.stop(self.index)?;
         if self.ui_dir.exists() {
             fs::remove_dir_all(&self.ui_dir).map_err(FileError::at(&self.ui_dir))?;
         }
         fs::rename(&self.ui_next, &self.ui_dir).map_err(FileError::at(&self.ui_dir))?;
         let (public_gateway, origin) = match preview {
             Preview::Local => (
-                format!("http://{}", Self::DAEMON),
-                format!("http://{}", Self::UI),
+                format!("http://{}", self.index.daemon()),
+                format!("http://{}", self.index.ui()),
             ),
             Preview::Tailnet(tailscale) => {
                 let dns = tailscale
-                    .publish(Self::GATEWAY_PORT, &format!("http://{}", Self::DAEMON))?
+                    .publish(
+                        self.index.tailnet().0,
+                        &format!("http://{}", self.index.daemon()),
+                    )?
                     .ok_or(TailscaleError::NoDnsName)?;
                 (
-                    format!("https://{dns}:{}", Self::GATEWAY_PORT),
-                    format!("https://{dns}:{}", Self::UI_PORT),
+                    format!("https://{dns}:{}", self.index.tailnet().0),
+                    format!("https://{dns}:{}", self.index.tailnet().1),
                 )
             }
         };
-        Progress(&format!("Starting the dev UI on {}", Self::UI)).show();
+        Progress(&format!("Starting the dev UI on {}", self.index.ui())).show();
         let token = self.data_dir.join(ControlToken::FILE);
         let vars = [
-            ("HOST", Self::UI.ip().to_string()),
-            ("PORT", Self::UI.port().to_string()),
-            ("REN_GATEWAY_URL", format!("http://{}", Self::DAEMON)),
+            ("HOST", self.index.ui().ip().to_string()),
+            ("PORT", self.index.ui().port().to_string()),
+            ("REN_GATEWAY_URL", format!("http://{}", self.index.daemon())),
             ("REN_PUBLIC_GATEWAY_URL", public_gateway),
             ("ORIGIN", origin.clone()),
             ("REN_CONTROL_TOKEN_FILE", token.display().to_string()),
@@ -612,15 +680,22 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
         ];
         match self.contain {
             Contain::None | Contain::Runs => Unit::Ui.start(
+                self.index,
                 Some(&self.ui_dir),
                 &[ui.node()],
                 &[UiBuild::entry().display().to_string()],
                 &vars,
             )?,
             Contain::All => {
-                let container = UiContainer::new("dev", Pod::image(), &self.ui_dir, Some(&token));
+                let container = UiContainer::new(
+                    &self.index.label(),
+                    Pod::image(),
+                    &self.ui_dir,
+                    Some(&token),
+                );
                 Progress(&format!("In container {}", container.name())).show();
                 Unit::Ui.start(
+                    self.index,
                     None,
                     &[Path::new(Engine::Podman.program())],
                     &container.run_args(),
@@ -629,9 +704,12 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
             }
         }
         // The UI's /health relays the dev daemon's.
-        Self::wait_for(Self::UI, "/health")?;
+        Self::wait_for(self.index.ui(), "/health")?;
         if let Preview::Tailnet(tailscale) = preview {
-            tailscale.publish(Self::UI_PORT, &format!("http://{}", Self::UI))?;
+            tailscale.publish(
+                self.index.tailnet().1,
+                &format!("http://{}", self.index.ui()),
+            )?;
         }
         println!("\nDev preview: {origin}\n");
         Ok(())
@@ -658,26 +736,37 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
         let ending = self.settle_runs(wait)?;
         ending.announce();
         for unit in [Unit::Daemon, Unit::Provider] {
-            unit.stop()?;
+            unit.stop(self.index)?;
         }
         let xtask = self.bin_dir.join("xtask");
         let ren = self.bin_dir.join("ren");
-        Progress(&format!("Starting the fake provider on {}", Self::PROVIDER)).show();
+        Progress(&format!(
+            "Starting the fake provider on {}",
+            self.index.provider()
+        ))
+        .show();
         Unit::Provider.start(
+            self.index,
             None,
             &[&xtask],
             &[
                 "dev".into(),
                 "provider".into(),
                 "--listen".into(),
-                Self::PROVIDER.to_string(),
+                self.index.provider().to_string(),
                 "--settings".into(),
                 self.traffic_settings().display().to_string(),
+                "--github".into(),
+                self.fake_github().display().to_string(),
             ],
             &[],
         )?;
-        Self::wait_for(Self::PROVIDER, "/anthropic/v1/models")?;
-        Progress(&format!("Starting the dev daemon on {}", Self::DAEMON)).show();
+        Self::wait_for(self.index.provider(), "/anthropic/v1/models")?;
+        Progress(&format!(
+            "Starting the dev daemon on {}",
+            self.index.daemon()
+        ))
+        .show();
         let vars = vec![
             (
                 Self::OPERATOR_KEY_ENV.to_owned(),
@@ -703,6 +792,7 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                     .map(|(name, value)| (name.as_str(), value.clone()))
                     .collect();
                 Unit::Daemon.start(
+                    self.index,
                     None,
                     &[&ren],
                     &[
@@ -716,7 +806,7 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
             Contain::All => {
                 let config = self.config()?;
                 let container = DaemonContainer::new(
-                    "dev",
+                    &self.index.label(),
                     Pod::image(),
                     &ren,
                     (&self.config, &config),
@@ -726,6 +816,7 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                 )?;
                 Progress(&format!("In container {}", container.name())).show();
                 Unit::Daemon.start(
+                    self.index,
                     None,
                     &[Path::new(Engine::Podman.program())],
                     &container.run_args(),
@@ -733,7 +824,7 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
                 )?;
             }
         }
-        Self::wait_for(Self::DAEMON, "/health")?;
+        Self::wait_for(self.index.daemon(), "/health")?;
         self.register_projects();
         ending.remind();
         self.start_traffic()
@@ -782,7 +873,7 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
     /// end with it. Polls are counted rather than timed, so this reads no
     /// clock.
     fn settle_runs(&self, wait: RunWait) -> Result<Ending, DevError> {
-        if !Unit::Daemon.active()? {
+        if !Unit::Daemon.active(self.index)? {
             return Ok(Ending::default());
         }
         let ren = || {
@@ -810,17 +901,20 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
 
     /// (Re)start the traffic generator, which follows the settings file.
     pub fn start_traffic(&self) -> Result<(), DevError> {
-        Unit::Traffic.stop()?;
+        Unit::Traffic.stop(self.index)?;
         Progress("Starting the traffic generator").show();
         Unit::Traffic.start(
+            self.index,
             None,
             &[&self.bin_dir.join("xtask")],
             &[
                 "dev".into(),
+                "--instance".into(),
+                self.index.to_string(),
                 "traffic".into(),
                 "run".into(),
                 "--control".into(),
-                Self::CONTROL.to_string(),
+                self.index.control().to_string(),
             ],
             // The user manager gives its units HOME, which the slot reads.
             &[],
@@ -833,12 +927,19 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
         self.config.with_file_name("traffic.toml")
     }
 
+    /// The fake GitHub's `acme/ren`, when written by hand (its `main`, and
+    /// `[[pull]]`, each a `number`, a `head`, and whether it is a
+    /// `draft`); without it, invented.
+    pub fn fake_github(&self) -> PathBuf {
+        self.config.with_file_name("fake-github.toml")
+    }
+
     /// Stop the slot's units, then its runs' run hosts, which outlive its
     /// daemon: each in a unit or a container of its own, named for the run.
     pub fn down(&self) -> Result<(), DevError> {
         for unit in Unit::ALL {
-            Progress(&format!("Stopping {}", unit.name())).show();
-            unit.stop()?;
+            Progress(&format!("Stopping {}", unit.name(self.index))).show();
+            unit.stop(self.index)?;
         }
         let runs = self.data_dir.join(HeldRuns::FOLDER);
         for run in HeldRuns::folders(&runs).map_err(FileError::at(&runs))? {
@@ -860,18 +961,25 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
 
     /// Remove the dev preview's Serve routes, each only if it still proxies
     /// to the slot; the installed service's routes are never touched.
-    pub fn unpublish(tailscale: Tailnet) -> Result<(), DevError> {
+    pub fn unpublish(&self, tailscale: Tailnet) -> Result<(), DevError> {
         Ok(tailscale.unpublish(&[
-            (Self::GATEWAY_PORT, format!("http://{}", Self::DAEMON)),
-            (Self::UI_PORT, format!("http://{}", Self::UI)),
+            (
+                self.index.tailnet().0,
+                format!("http://{}", self.index.daemon()),
+            ),
+            (
+                self.index.tailnet().1,
+                format!("http://{}", self.index.ui()),
+            ),
         ])?)
     }
 
-    /// Stop the slot and remove its data. Only the slot's own directory is
-    /// removed, and only if it is the one this slot names.
+    /// Stop the instance and remove its data. Only the instance's own
+    /// directory is removed, and only if it is the one its index names.
     pub fn wipe(&self) -> Result<(), DevError> {
         self.down()?;
-        if self.data_dir.ends_with(".local/state/ren-dev") && self.data_dir.exists() {
+        let ours = Path::new(".local/state").join(self.index.name());
+        if self.data_dir.ends_with(&ours) && self.data_dir.exists() {
             Progress(&format!("Removing {}", self.data_dir.display())).show();
             fs::remove_dir_all(&self.data_dir).map_err(FileError::at(&self.data_dir))?;
         }
@@ -880,13 +988,17 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
 
     pub fn status(&self) -> Result<(), DevError> {
         for unit in Unit::ALL.iter().rev() {
-            let state = if unit.active()? { "running" } else { "stopped" };
-            println!("{:<18} {state}", unit.name());
+            let state = if unit.active(self.index)? {
+                "running"
+            } else {
+                "stopped"
+            };
+            println!("{:<18} {state}", unit.name(self.index));
         }
-        println!("fake provider      http://{}", Self::PROVIDER);
-        println!("dev gateway        http://{}", Self::DAEMON);
-        println!("dev UI             http://{}", Self::UI);
-        println!("traffic control    http://{}", Self::CONTROL);
+        println!("fake provider      http://{}", self.index.provider());
+        println!("dev gateway        http://{}", self.index.daemon());
+        println!("dev UI             http://{}", self.index.ui());
+        println!("traffic control    http://{}", self.index.control());
         println!("config             {}", self.config.display());
         println!("data               {}", self.data_dir.display());
         println!("run root           {}", self.work_dir.display());
@@ -895,29 +1007,40 @@ run = ["python3", "-c", "import pathlib, shutil; p = pathlib.Path('{data}') / 'p
             self.bin_dir.join("ren").display(),
             self.config.display()
         );
-        println!("logs               journalctl --user -u 'ren-dev-*'");
+        let units: Vec<String> = Unit::ALL
+            .iter()
+            .rev()
+            .map(|unit| format!("-u {}", unit.name(self.index)))
+            .collect();
+        println!("logs               journalctl --user {}", units.join(" "));
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Slot, Unit};
+    use super::{DevIndex, DevInstance, Unit};
     use ren_harness::host::HostEnv;
 
     #[test]
-    fn every_unit_is_named_for_the_dev_slot() {
-        for unit in Unit::ALL {
-            assert!(unit.name().starts_with("ren-dev-"), "{unit:?}");
-            assert_ne!(unit.name(), "ren");
-            assert_ne!(unit.name(), "ren-ui");
+    fn every_unit_is_named_for_its_instance() {
+        for index in (0..DevIndex::COUNT).map(|index| index.to_string().parse().unwrap()) {
+            for unit in Unit::ALL {
+                let name = unit.name(index);
+                assert!(name.starts_with(&format!("{}-", index.name())), "{name}");
+                assert_ne!(name, "ren");
+                assert_ne!(name, "ren-ui");
+            }
         }
+        // The first's are the dev slot's.
+        assert_eq!(Unit::Daemon.name(DevIndex::FIRST), "ren-dev-daemon");
+        assert_eq!(Unit::Daemon.name("2".parse().unwrap()), "ren-dev-2-daemon");
     }
 
     #[test]
     fn every_fake_project_declares_a_manifest_ren_reads() {
-        for project in Slot::PROJECTS {
-            let [_, (name, text)] = Slot::site(project);
+        for project in DevInstance::PROJECTS {
+            let [_, (name, text)] = DevInstance::site(project);
             assert_eq!(name, ren_manifest::Manifest::FILE);
             let manifest = ren_manifest::Manifest::read(&text).unwrap();
             assert!(manifest.serve().is_some() && !manifest.checks().is_empty());
@@ -927,7 +1050,11 @@ mod tests {
 
     #[test]
     fn the_dev_config_is_valid_and_reaches_only_the_fake_provider() {
-        let slot = Slot::new(&HostEnv::from_pairs([("HOME", "/home/dev")])).unwrap();
+        let slot = DevInstance::new(
+            &HostEnv::from_pairs([("HOME", "/home/dev")]),
+            DevIndex::FIRST,
+        )
+        .unwrap();
         let config = slot.config().unwrap();
         config.check().unwrap();
         assert_eq!(config.packages.entries().len(), 1);
@@ -960,6 +1087,6 @@ mod tests {
             std::path::Path::new("/home/dev/.local/state/ren-dev")
         );
         // The token itself is never written, only its digest.
-        assert!(!text.contains(Slot::ci_token().expose()));
+        assert!(!text.contains(DevInstance::ci_token().expose()));
     }
 }

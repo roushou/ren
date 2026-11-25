@@ -303,17 +303,28 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ren_daemon::host::Grants`, which a relayed run's git asks through
   `ren credential`; the gateway's `PullBoard` keeps its
   observations by project and serves them.
-- `ren-gateway`'s `preview` module: which previews of Ren run, sans-IO, in
-  `Previews` (docs/plans/self-build.md, phase 9): each
-  `Preview` in its `Slot` (its loopback and tailnet ports), of a
-  `PreviewKey` (an open pull request, or a commit the operator asked for),
-  at a commit, `Building`, `Running`, or `Failed` (`PreviewState`).
-  `Previews::want` takes the `Wanted` previews in priority order and the
-  `ren_release::PreviewCapacity`, and answers the previews that hold slots
-  and the `Action`s to get there (stop a slot, start a commit in one);
-  `started` and `failed` take the factory's reports, refusing a
-  `StaleReport`. A failed build is not tried again for its commit. The
-  factory keeps it in production's data folder (`Previews::FILE`). The
+- `ren-gateway`'s `instance` module: which instances of Ren the factory runs
+  (docs/plans/instances.md; today, the previews of docs/plans/self-build.md,
+  phase 9), sans-IO, in `Instances`: each `Instance` in its `Slot` (its
+  loopback and tailnet ports), of a `Source` (an open pull request, or a
+  commit the operator asked for, `CommitAsks`), at a commit, `Building`
+  (whose outcome a later pass takes as unknown), `Running`, or `Failed`
+  (`InstanceState`). One step moves them on, `Instances::step`: an `Event`
+  (the `Wanted` instances in priority order with the
+  `ren_release::PreviewCapacity`, or the factory's report that a start
+  ended) to the instances and the `Action`s that follow (stop a slot, start
+  a commit in one); a report that does not fit is refused (`StaleReport`)
+  and changes nothing. A failed build is not tried again for its commit.
+  A pull request wants a preview of its head unless it is a draft
+  (`Wanted::pull`). `ren-gateway`'s `factory` module (pure, but the
+  `Factory` trait) is the factory's one-line protocol (`FactoryRequest`:
+  previews, a project's canary, a promotion; `FactoryAnswer`) and the
+  `Follower`, which turns what the daemon's GitHub watch sees into requests:
+  previews when pull requests move, the canary when a default branch moves
+  from a head seen before. The daemon asks them of the factory service
+  (`[factory] socket`, `xtask canary serve`).
+  The factory keeps it in production's data folder (`Instances::FILE`,
+  still `previews.json`, in the shape production's gateway reads). The
   gateway's `src/purity.rs` keeps the module free of I/O.
 - `crates/ren-depot`: the packages Ren's agents run with, with `Depot` as its
   primary type: the package catalog (`package`: `Package`, `PackageId`,
@@ -602,7 +613,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`reply`: `RenCode`, `ren_`-prefixed on the wire and pinned in
   `tests/fixtures/labels.txt`).
   `src/purity.rs` keeps `lifecycle` (`attempt`, `call`, `channel`,
-  `retry`), `operator`, `user`, and `preview` free of runtime, I/O, storage, and shell-module
+  `retry`), `operator`, `user`, and `instance` free of runtime, I/O, storage, and shell-module
   dependencies. Management receives `Reader`, `Backup`, retention settings, and
   control credentials through `ManagementSetup`; SQL stays in `ren-store`, and
   forwarding records only through the recorder.
@@ -830,7 +841,12 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the runs that end), building the UI (`ui`), transient user units and the
   listeners they answer on (`unit`: `TransientUnit`, `Listener`), and builds
   made once per commit (`builds`: `Builds`, `StoredBuild`, which
-  `install-vps --build` installs).
+  `install-vps --build` installs): a commit's dependencies fetched by its
+  lockfiles on the host, running none of its code, into the builds' own
+  caches (`~/.local/share/ren/build-cache`), and each step that runs its
+  code in a container of its own (`build_job`: `BuildJob`, with no network
+  and no home, seeing the checkout, the toolchains read-only, and those
+  caches).
   `replica`: Ren on a copy of production's history (`ProductionPlace`,
   production and its work item API, and `Replica`, the canary's and each
   preview's instance). `cargo xtask preview` (`preview`) runs a worktree's
@@ -855,15 +871,21 @@ dependencies under "Crates" below. Read the code for current module ownership.
   output, its UI unit rendering, its saved flags, and the upgrade's wait,
   pause, and build-check decisions are unit-tested; the commands it runs
   are exercised only by running it.
-  `cargo xtask dev` runs the dev slot (`dev`, `docs/deployment.md#dev-slot`):
-  this checkout's build beside the installed service, with its own config,
+  `cargo xtask dev` runs dev instances (`dev`,
+  `docs/deployment.md#dev-instances`, `docs/plans/instances.md` phase 5):
+  each checkout claims one (`dev::claims`, pure, kept under a lock) whose
+  `DevIndex` places it (`dev::index`: ports, folders, unit and container
+  names; index 0 keeps the old slot's), and `dev::instance` runs it: the
+  checkout's build beside the installed service, with its own config,
   data, and ports, against a fake provider (`dev::provider`, whose replies are
   the pure, tested `script`), seeded with fake traffic (`dev::seed`, scenarios
   as pure data), as `ren-dev-*` transient units, runs driven against a fake `codex`, `claude`, `pi`, and `opencode`
   (`dev::agent`: the shell, and `script`, `claude`, `pi`, and `opencode`, the pure
   conversations it plays as each client), with live traffic whose
   settings both the generator and the fake provider reread (`dev::traffic`,
-  with its loopback control API for the dev UI's toolbar), an optional private
+  with its loopback control API for the dev UI's toolbar), a fake GitHub
+  whose `acme/ren` can be written by hand (its `main` and pull requests,
+  in `fake-github.toml` beside the config, reread at each poll), an optional private
   preview on the tailnet, and
   headless screenshots (`dev::shot`).
 - `deploy`: systemd units, and in `deploy/container` the compose file, Podman
@@ -1001,12 +1023,13 @@ bun install --frozen-lockfile
 bun run format:check && bun run check && bun run test && bun run build
 ```
 
-Verify changed UI interactions with synthetic traffic in the dev slot before
-they reach the installed service: `cargo xtask dev up --ui`, `cargo xtask dev seed`,
-then `cargo xtask dev shot` for screenshots and the private preview
-(`https://<node>:9444`) for a browser. Keep focused unit tests and don't add a
+Verify changed UI interactions with synthetic traffic in your checkout's dev
+instance before they reach the installed service: `cargo xtask dev up --ui`,
+`cargo xtask dev seed`, then `cargo xtask dev shot` for screenshots and the
+private preview (`dev up --ui` prints it: `https://<node>:9444` for instance 0,
+`9444 + 100n` for instance `n`) for a browser. Keep focused unit tests and don't add a
 browser integration suite yet. UI changes don't require rebuilding Rust.
-Never stop processes by a name pattern: the slot's units are stopped by name
+Never stop processes by a name pattern: an instance's units are stopped by name
 (`cargo xtask dev down`), and the installed `ren` and `ren-ui` services must keep
 running.
 

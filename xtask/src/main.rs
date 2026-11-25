@@ -1,4 +1,5 @@
 //! `cargo xtask`: repository tasks, run from a checkout.
+mod build_job;
 mod builds;
 mod canary;
 mod compat;

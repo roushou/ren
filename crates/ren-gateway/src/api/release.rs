@@ -6,7 +6,7 @@
 //! operator's promotion request for the factory; the CLI reads these same
 //! views back.
 
-use crate::preview::{PreviewRequests, Previews};
+use crate::instance::{CommitAsks, Instances};
 use ren_git::Commit;
 use ren_protocol::label::Stored;
 use ren_recorder::project::Factory;
@@ -128,15 +128,15 @@ impl ReleaseFolder {
     }
 
     /// The previews the factory runs; none before its first previews pass.
-    pub(super) async fn previews(&self) -> Result<Previews, ReleaseFileError> {
-        Ok(Self::json(&self.data.join(Previews::FILE))
+    pub(super) async fn previews(&self) -> Result<Instances, ReleaseFileError> {
+        Ok(Self::json(&self.data.join(Instances::FILE))
             .await?
             .unwrap_or_default())
     }
 
     /// The commits the operator asked to preview.
-    pub(super) async fn preview_requests(&self) -> Result<PreviewRequests, ReleaseFileError> {
-        Ok(Self::json(&self.data.join(PreviewRequests::FILE))
+    pub(super) async fn preview_requests(&self) -> Result<CommitAsks, ReleaseFileError> {
+        Ok(Self::json(&self.data.join(CommitAsks::FILE))
             .await?
             .unwrap_or_default())
     }
@@ -145,12 +145,12 @@ impl ReleaseFolder {
     /// one change at a time; answers what `change` answered.
     pub(super) async fn change_preview_requests<T>(
         &self,
-        change: impl FnOnce(&mut PreviewRequests) -> T,
-    ) -> Result<(T, PreviewRequests), ReleaseFileError> {
+        change: impl FnOnce(&mut CommitAsks) -> T,
+    ) -> Result<(T, CommitAsks), ReleaseFileError> {
         let _held = self.asks.lock().await;
         let mut requests = self.preview_requests().await?;
         let answer = change(&mut requests);
-        let path = self.data.join(PreviewRequests::FILE);
+        let path = self.data.join(CommitAsks::FILE);
         let bytes = serde_json::to_vec(&requests).map_err(|source| ReleaseFileError::Shape {
             path: path.clone(),
             source,

@@ -59,12 +59,13 @@ mod instance {
 mod upstream {
     pub use ren_gateway::{AuthOverride, EntryIngress};
 }
+mod preview {
+    pub use ren_gateway::instance::Reach;
+}
 
 #[test]
 fn every_label_is_pinned() {
-    use ren_gateway::{
-        WebSocketMode, api, lifecycle::retry, operator, packages, policy, preview, reply,
-    };
+    use ren_gateway::{WebSocketMode, api, lifecycle::retry, operator, packages, policy, reply};
     let table = table![
         api::HealthStatus,
         api::ErrorCode,

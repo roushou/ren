@@ -279,6 +279,6 @@ bun run build
 ```
 
 `tests/*.test.ts` holds focused unit tests that Node runs directly. There is no
-browser integration suite: verify UI changes with synthetic traffic in the dev slot
-(`cargo xtask dev up --ui`, `dev seed`, `dev shot`; see
-[Deployment](../docs/deployment.md#dev-slot)).
+browser integration suite: verify UI changes with synthetic traffic in your
+checkout's dev instance (`cargo xtask dev up --ui`, `dev seed`, `dev shot`; see
+[Deployment](../docs/deployment.md#dev-instances)).

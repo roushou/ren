@@ -1,5 +1,5 @@
 //! The factory's previews (docs/plans/self-build.md, phase 9): one pass
-//! asks `ren_gateway::preview::Previews` which previews should run, from the
+//! asks `ren_gateway::instance::Instances` which previews should run, from the
 //! commits the operator asked for and Ren's open pull requests as
 //! production last saw them on GitHub, and carries out what it says: each
 //! start fetches the commit, builds it once (`crate::builds`) in the
@@ -13,9 +13,8 @@ use crate::{
     progress::Progress,
     replica::{ListedPull, ProductionPlace, Replica},
 };
-use ren_gateway::preview::{Action, PreviewKey, Previews, Reach, Slot, Wanted};
+use ren_gateway::instance::{Action, Event, Instances, Reach, Slot, Source, Wanted};
 use ren_git::Commit;
-use ren_github::Readiness;
 use ren_harness::host::HostEnv;
 use ren_protocol::label::Stored;
 use std::path::PathBuf;
@@ -33,11 +32,24 @@ impl PreviewPass<'_> {
     /// Runs the pass; returns the commits its previews run, so their builds
     /// are kept.
     pub fn run(&self, env: &HostEnv) -> Result<Vec<Commit>, CanaryError> {
+        self.run_planned(env, || {})
+    }
+
+    /// Runs the pass, calling `planned` once it has written which previews
+    /// run, before it builds and starts any.
+    pub fn run_planned(
+        &self,
+        env: &HostEnv,
+        planned: impl FnOnce(),
+    ) -> Result<Vec<Commit>, CanaryError> {
         let capacity = self.factory.options()?.previews;
         let before = self.production.previews();
         let wanted = self.wanted(&before)?;
-        let (mut previews, actions) = before.want(&wanted, capacity);
-        self.production.write_previews(&previews)?;
+        let (mut instances, actions) = before
+            .step(Event::Wanted { wanted, capacity })
+            .map_err(|stale| CanaryError::Preview(stale.to_string()))?;
+        self.production.write_previews(&instances)?;
+        planned();
         let tailscale = self.factory.tailscale(self.publish)?;
         let mut backup: Option<PathBuf> = None;
         for action in actions {
@@ -46,11 +58,15 @@ impl PreviewPass<'_> {
                     Progress(&format!("Stopping the preview in slot {}", slot.index())).show();
                     self.stop(env, slot, tailscale)?;
                 }
-                Action::Start { slot, key, commit } => {
+                Action::Start {
+                    slot,
+                    source,
+                    commit,
+                } => {
                     Progress(&format!(
                         "Previewing {} ({}) in slot {}",
                         commit.short(),
-                        Self::describe(&key),
+                        Self::describe(&source),
                         slot.index()
                     ))
                     .show();
@@ -58,34 +74,41 @@ impl PreviewPass<'_> {
                         Some(path) => path.clone(),
                         None => backup.insert(self.production.backup()?).clone(),
                     };
-                    let started = self.start(env, slot, &commit, &backup, tailscale);
-                    let report = match started {
-                        Ok(()) => previews.started(
+                    let event = match self.start(env, slot, &commit, &backup, tailscale) {
+                        Ok(()) => Event::Started {
                             slot,
-                            &commit,
-                            if tailscale.is_some() {
+                            commit,
+                            reach: if tailscale.is_some() {
                                 Reach::Tailnet
                             } else {
                                 Reach::Loopback
                             },
-                        ),
+                        },
                         Err(error) => {
                             println!("warning: the preview of {} failed: {error}", commit.short());
                             // What ran in the slot before is not this
                             // preview: it never outlives the failure.
                             self.stop(env, slot, tailscale)?;
-                            previews.failed(slot, &commit, error.to_string())
+                            Event::Failed {
+                                slot,
+                                commit,
+                                detail: error.to_string(),
+                            }
                         }
                     };
-                    report.map_err(|stale| CanaryError::Preview(stale.to_string()))?;
-                    self.production.write_previews(&previews)?;
+                    // A start reports no further actions.
+                    let (after, _) = instances
+                        .step(event)
+                        .map_err(|stale| CanaryError::Preview(stale.to_string()))?;
+                    instances = after;
+                    self.production.write_previews(&instances)?;
                 }
             }
         }
-        Ok(previews
-            .previews()
+        Ok(instances
+            .instances()
             .iter()
-            .map(|preview| preview.commit.clone())
+            .map(|instance| instance.commit.clone())
             .collect())
     }
 
@@ -94,47 +117,47 @@ impl PreviewPass<'_> {
     /// updated first. While production has not seen the pull requests, the
     /// pull requests previewed now are kept as they are, never taken as
     /// closed.
-    fn wanted(&self, current: &Previews) -> Result<Vec<Wanted>, CanaryError> {
+    fn wanted(&self, current: &Instances) -> Result<Vec<Wanted>, CanaryError> {
         let asked = self
             .production
             .preview_requests()
             .commits()
             .iter()
             .map(|commit| Wanted {
-                key: PreviewKey::Commit(commit.clone()),
+                source: Source::Commit(commit.clone()),
                 commit: commit.clone(),
             })
             .collect::<Vec<_>>();
         let pulls: Vec<Wanted> = match self.production.pulls(self.project)? {
             Some(pulls) => pulls.into_iter().filter_map(Self::pull).collect(),
             None => current
-                .previews()
+                .instances()
                 .iter()
-                .filter(|preview| matches!(preview.key, PreviewKey::Pull(_)))
-                .map(|preview| Wanted {
-                    key: preview.key.clone(),
-                    commit: preview.commit.clone(),
+                .filter(|instance| matches!(instance.source, Source::Pull(_)))
+                .map(|instance| Wanted {
+                    source: instance.source.clone(),
+                    commit: instance.commit.clone(),
                 })
                 .collect(),
         };
         Ok(asked.into_iter().chain(pulls).collect())
     }
 
-    /// A pull request that wants a preview: one that is not a draft.
+    /// What a pull request wants ([`Wanted::pull`]); one whose readiness
+    /// this build does not know wants nothing.
     fn pull(pull: ListedPull) -> Option<Wanted> {
         match pull.readiness {
-            Stored::Known(Readiness::Ready) => Some(Wanted {
-                key: PreviewKey::Pull(pull.number.to_string().parse().ok()?),
-                commit: pull.head,
-            }),
-            Stored::Known(Readiness::Draft) | Stored::Unknown(_) => None,
+            Stored::Known(readiness) => {
+                Wanted::pull(pull.number.to_string().parse().ok()?, pull.head, readiness)
+            }
+            Stored::Unknown(_) => None,
         }
     }
 
-    fn describe(key: &PreviewKey) -> String {
-        match key {
-            PreviewKey::Pull(number) => format!("pull request #{number}"),
-            PreviewKey::Commit(_) => "asked for".to_owned(),
+    fn describe(source: &Source) -> String {
+        match source {
+            Source::Pull(number) => format!("pull request #{number}"),
+            Source::Commit(_) => "asked for".to_owned(),
         }
     }
 
@@ -181,7 +204,7 @@ impl PreviewPass<'_> {
             (tailscale, gateway, ui)
         });
         let reached = replica.start(&factory.repo, &build.ren(), &build.ui(), &keys, publish)?;
-        println!("Preview of {}: {}", commit.short(), reached.ui);
+        println!("Instance of {}: {}", commit.short(), reached.ui);
         Ok(())
     }
 }

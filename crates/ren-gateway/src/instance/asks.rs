@@ -1,4 +1,4 @@
-//! The commits the operator asked to preview.
+//! The commits the operator asked to preview: each wants an instance.
 
 use ren_git::Commit;
 use serde::{Deserialize, Serialize};
@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 /// withdrawn.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PreviewRequests {
+pub struct CommitAsks {
     commits: Vec<Commit>,
 }
 
-impl PreviewRequests {
+impl CommitAsks {
     /// Its file in production's data folder.
     pub const FILE: &str = "preview-requests.json";
 
@@ -38,7 +38,7 @@ impl PreviewRequests {
 
 #[cfg(test)]
 mod tests {
-    use super::PreviewRequests;
+    use super::CommitAsks;
     use ren_git::Commit;
 
     fn commit(digit: char) -> Commit {
@@ -47,7 +47,7 @@ mod tests {
 
     #[test]
     fn the_newest_ask_comes_first_and_once() {
-        let mut requests = PreviewRequests::default();
+        let mut requests = CommitAsks::default();
         requests.ask(commit('a'));
         requests.ask(commit('b'));
         requests.ask(commit('a'));

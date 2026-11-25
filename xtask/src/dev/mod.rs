@@ -1,17 +1,21 @@
-//! `cargo xtask dev`: a development slot on this host, with fake providers
-//! and fake data, separate from the installed service.
+//! `cargo xtask dev`: development instances on this host, with fake
+//! providers and fake data, separate from the installed service
+//! (docs/plans/instances.md, phase 5).
 
 mod agent;
+mod claims;
+pub(crate) mod index;
+pub(crate) mod instance;
 mod provider;
 mod seed;
 pub(crate) mod shot;
-pub(crate) mod slot;
 mod traffic;
 mod work;
 
 use crate::daemon_container::Contain;
 use crate::file::FileError;
 use crate::invocation::InvocationError;
+use crate::progress::Progress;
 use crate::tailscale::{Tailnet, TailscaleError};
 use crate::{
     daemon::{RunPolicy, StillBusy},
@@ -21,20 +25,26 @@ use crate::{
 use agent::{
     AgentError, FakeAgent, FakeClaudeAuth, FakeCodexAuth, FakeOpenCodeAuth, FakePiAuth, Played,
 };
+use claims::AllClaimed;
 use clap::{Args, Subcommand};
+use index::DevIndex;
+use instance::{ClaimsFile, DevInstance, Preview, RunWait};
 use provider::{FakeProvider, ProviderError};
 use ren_harness::host::HostEnv;
 use ren_network::tailscale::Cli;
 use seed::{Scenario, SeedError, Seeder};
 use shot::{Camera, Page};
-use slot::{Preview, RunWait, Slot};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use traffic::{Pace, SettingsError, Traffic, TrafficError};
 
-/// A development slot with fake providers and fake data.
+/// Development instances with fake providers and fake data.
 #[derive(Args)]
 pub struct Dev {
+    /// The dev instance acted on; by default, the one this checkout
+    /// claimed (`dev up` claims one).
+    #[arg(long, global = true)]
+    instance: Option<DevIndex>,
     #[command(subcommand)]
     action: DevAction,
 }
@@ -50,13 +60,15 @@ enum DevAction {
     /// dev daemon, as `ren-dev-*` systemd user units; with --ui, also the UI,
     /// published privately on the tailnet (ports 9443 and 9444).
     Up(UpArgs),
-    /// Stop every `ren-dev-*` unit and remove the dev preview's tailnet
-    /// routes. The slot's data is kept.
-    Down(TailnetArgs),
+    /// Stop the instance's units and remove its tailnet routes. Its data is
+    /// kept; with --release, this checkout gives up its claim on it too.
+    Down(DownArgs),
     /// Stop the slot, remove its data, and start it again.
     Reset,
-    /// Show the slot's units, addresses, and files.
+    /// Show the instance's units, addresses, and files.
     Status,
+    /// Show each dev instance's index, checkout, and dev UI.
+    List,
     /// Send fake traffic through the dev gateway: harness sessions, named
     /// users, long prompts, errors, and a Codex WebSocket channel.
     Seed(SeedArgs),
@@ -125,8 +137,21 @@ struct UpArgs {
     /// (`runsc` installed on the host).
     #[arg(long, default_value = "host_kernel")]
     runtime: ren_daemon::config::RunRuntime,
+    /// The data it starts with: once up, an instance never seeded plays
+    /// this scenario; one seeded already keeps what it has.
+    #[arg(long, value_enum)]
+    scenario: Option<Scenario>,
     #[command(flatten)]
     tailnet: TailnetArgs,
+}
+
+#[derive(Args)]
+struct DownArgs {
+    #[command(flatten)]
+    tailnet: TailnetArgs,
+    /// Also let another checkout claim the instance.
+    #[arg(long)]
+    release: bool,
 }
 
 #[derive(Args)]
@@ -179,8 +204,8 @@ enum TrafficAction {
         #[arg(default_value_t = 20, value_parser = clap::value_parser!(u16).range(1..=500))]
         count: u16,
     },
-    /// Run the generator in the foreground (what the ren-dev-traffic unit
-    /// runs).
+    /// Run the generator in the foreground (what an instance's traffic
+    /// unit runs).
     #[command(hide = true)]
     Run {
         /// Also serve the control API (for the dev UI's toolbar) on this
@@ -218,6 +243,10 @@ struct ProviderArgs {
     /// A traffic settings file whose pace the replies follow.
     #[arg(long)]
     settings: Option<PathBuf>,
+    /// A file `acme/ren` is written in by hand (its `main` and its open
+    /// pull requests), read for each of the fake GitHub's answers.
+    #[arg(long)]
+    github: Option<PathBuf>,
 }
 
 /// Why a dev task failed.
@@ -247,8 +276,14 @@ pub enum DevError {
     Busy(#[from] StillBusy),
     #[error("the dev configuration is invalid; this is a bug in `xtask dev`")]
     Config,
-    #[error("nothing answered on {0} in time; see `journalctl --user -u 'ren-dev-*'`")]
+    #[error("nothing answered on {0} in time; see `cargo xtask dev status` for its logs")]
     NotReady(SocketAddr),
+    #[error("{} has no dev instance: `cargo xtask dev up` claims one", .0.display())]
+    Unclaimed(PathBuf),
+    #[error(transparent)]
+    AllClaimed(#[from] AllClaimed),
+    #[error("the dev instances' claims in {} do not read: {why}", .path.display())]
+    Claims { path: PathBuf, why: String },
     #[error(transparent)]
     Seed(#[from] SeedError),
     #[error("no headless Chromium found: set REN_CHROME, or install chrome-headless-shell")]
@@ -265,8 +300,13 @@ pub enum DevError {
 
 impl Dev {
     pub fn run(self, env: &HostEnv) -> Result<(), DevError> {
+        let instance = self.instance;
         match self.action {
-            DevAction::Provider(args) => Ok(FakeProvider::serve(args.listen, args.settings)?),
+            DevAction::Provider(args) => Ok(FakeProvider::serve(
+                args.listen,
+                args.settings,
+                args.github,
+            )?),
             DevAction::Agent(args) => match args.client {
                 Played::Claude if FakeClaudeAuth::asked(&args.arguments) => {
                     Ok(FakeClaudeAuth::run(&args.state_dir, &args.arguments)?)
@@ -285,7 +325,7 @@ impl Dev {
                 ),
             },
             DevAction::Up(args) => {
-                let slot = Slot::new(env)?
+                let slot = DevInstance::new(env, Self::index(instance, env, Claim::Take)?)?
                     .containing(args.contain)
                     .running_on(args.runtime);
                 let wait = RunWait {
@@ -306,14 +346,37 @@ impl Dev {
                 } else {
                     slot.up(wait)?;
                 }
+                if let Some(scenario) = args.scenario {
+                    if Seeder::seeded(&slot.data_dir) {
+                        Progress("Seeded already: the instance keeps its data").show();
+                    } else {
+                        Seeder::new(
+                            slot.index.daemon(),
+                            DevInstance::ci_token().expose().to_owned(),
+                        )
+                        .play(scenario, &slot.data_dir)?;
+                    }
+                }
                 slot.status()
             }
             DevAction::Down(args) => {
-                Slot::new(env)?.down()?;
-                Slot::unpublish(args.cli(env)?)
+                let slot = DevInstance::new(env, Self::index(instance, env, Claim::Held)?)?;
+                slot.down()?;
+                slot.unpublish(args.tailnet.cli(env)?)?;
+                if args.release {
+                    let checkout = DevInstance::checkout();
+                    ClaimsFile::new(env)?.change(|claims| Ok((claims.release(&checkout), ())))?;
+                    Progress(&format!(
+                        "{} gave up {}",
+                        checkout.display(),
+                        slot.index.name()
+                    ))
+                    .show();
+                }
+                Ok(())
             }
             DevAction::Reset => {
-                let slot = Slot::new(env)?;
+                let slot = DevInstance::new(env, Self::index(instance, env, Claim::Take)?)?;
                 slot.wipe()?;
                 // The wipe stopped the daemon: no run is left to wait for.
                 slot.up(RunWait {
@@ -322,15 +385,31 @@ impl Dev {
                 })?;
                 slot.status()
             }
-            DevAction::Status => Slot::new(env)?.status(),
+            DevAction::Status => {
+                DevInstance::new(env, Self::index(instance, env, Claim::Held)?)?.status()
+            }
+            DevAction::List => {
+                for (index, checkout) in ClaimsFile::new(env)?.read()?.all() {
+                    println!(
+                        "{:<10} http://{:<16} {}",
+                        index.name(),
+                        index.ui(),
+                        checkout.display()
+                    );
+                }
+                Ok(())
+            }
             DevAction::Seed(args) => {
-                let slot = Slot::new(env)?;
-                Seeder::new(Slot::DAEMON, Slot::ci_token().expose().to_owned())
-                    .play(args.scenario, &slot.data_dir)?;
+                let slot = DevInstance::new(env, Self::index(instance, env, Claim::Held)?)?;
+                Seeder::new(
+                    slot.index.daemon(),
+                    DevInstance::ci_token().expose().to_owned(),
+                )
+                .play(args.scenario, &slot.data_dir)?;
                 Ok(())
             }
             DevAction::Shot(args) => {
-                let slot = Slot::new(env)?;
+                let slot = DevInstance::new(env, Self::index(instance, env, Claim::Held)?)?;
                 let out = args
                     .out
                     .unwrap_or_else(|| slot.repo.join("target/dev-shots"));
@@ -339,15 +418,15 @@ impl Dev {
                 } else {
                     args.pages
                 };
-                Camera::new(env, Slot::UI, Slot::DAEMON, out)?
+                Camera::new(env, slot.index.ui(), slot.index.daemon(), out)?
                     .shoot(&pages, (args.width, args.height))?;
                 Ok(())
             }
             DevAction::Traffic(args) => {
-                let slot = Slot::new(env)?;
+                let slot = DevInstance::new(env, Self::index(instance, env, Claim::Held)?)?;
                 let traffic = Traffic::new(
-                    Slot::DAEMON,
-                    Slot::ci_token().expose().to_owned(),
+                    slot.index.daemon(),
+                    DevInstance::ci_token().expose().to_owned(),
                     slot.traffic_settings(),
                     slot.data_dir.clone(),
                 );
@@ -357,7 +436,38 @@ impl Dev {
     }
 }
 
+/// What a command needs of this checkout's claim.
+#[derive(Debug, Clone, Copy)]
+enum Claim {
+    /// It starts the instance: one is claimed if none is held.
+    Take,
+    /// It acts on the instance already held.
+    Held,
+}
+
 impl Dev {
+    /// The instance acted on: the one asked for, else this checkout's.
+    fn index(
+        instance: Option<DevIndex>,
+        env: &HostEnv,
+        claim: Claim,
+    ) -> Result<DevIndex, DevError> {
+        if let Some(index) = instance {
+            return Ok(index);
+        }
+        let checkout = DevInstance::checkout();
+        let claims = ClaimsFile::new(env)?;
+        match claim {
+            Claim::Take => {
+                claims.change(|claims| Ok(claims.claim(&checkout, |held| held.exists())?))
+            }
+            Claim::Held => claims
+                .read()?
+                .of(&checkout)
+                .ok_or(DevError::Unclaimed(checkout)),
+        }
+    }
+
     fn traffic(traffic: &Traffic, action: TrafficAction) -> Result<(), DevError> {
         let mut settings = traffic.settings()?;
         match action {

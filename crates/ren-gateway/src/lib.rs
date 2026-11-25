@@ -46,14 +46,15 @@
 pub mod api;
 pub mod build;
 pub mod control;
+pub mod factory;
 mod forward;
 pub mod github;
+pub mod instance;
 pub mod lifecycle;
 mod limits;
 pub mod operator;
 pub mod packages;
 pub mod policy;
-pub mod preview;
 #[cfg(test)]
 mod purity;
 pub mod reply;
@@ -211,6 +212,7 @@ impl<U: Upstream> Gateway<U> {
                 management.runs,
                 management.packages,
                 release,
+                management.factory,
                 feeds_end,
             ))
     }
