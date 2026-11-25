@@ -6,9 +6,8 @@
 //! never holds it open. The pages under a project are those of a project in
 //! the history being shown: Ren's, else the first.
 
-use super::DevError;
 use crate::file::FileError;
-use crate::invocation::{Echo, Invocation};
+use crate::invocation::{Echo, Invocation, InvocationError};
 use clap::ValueEnum;
 use ren_harness::host::HostEnv;
 use std::{
@@ -146,6 +145,17 @@ pub enum PageFailure {
 }
 
 /// Takes screenshots of one UI.
+/// Why screenshots could not be taken.
+#[derive(Debug, thiserror::Error)]
+pub enum ShotError {
+    #[error("no headless Chromium found: set REN_CHROME, or install chrome-headless-shell")]
+    NoChrome,
+    #[error(transparent)]
+    File(#[from] FileError),
+    #[error(transparent)]
+    Invocation(#[from] InvocationError),
+}
+
 pub struct Camera {
     chrome: PathBuf,
     ui: SocketAddr,
@@ -164,12 +174,12 @@ impl Camera {
         ui: SocketAddr,
         gateway: SocketAddr,
         out: PathBuf,
-    ) -> Result<Self, DevError> {
+    ) -> Result<Self, ShotError> {
         let chrome = env
             .absolute_path("REN_CHROME")
             .or_else(|| Self::on_path(env))
             .or_else(|| Self::playwright(env))
-            .ok_or(DevError::NoChrome)?;
+            .ok_or(ShotError::NoChrome)?;
         Ok(Self {
             chrome,
             ui,
@@ -261,7 +271,7 @@ impl Camera {
     }
 
     /// Capture `pages` at `width`×`height`.
-    pub fn shoot(&self, pages: &[Page], (width, height): (u16, u16)) -> Result<Shots, DevError> {
+    pub fn shoot(&self, pages: &[Page], (width, height): (u16, u16)) -> Result<Shots, ShotError> {
         fs::create_dir_all(&self.out).map_err(FileError::at(&self.out))?;
         let project = self.project();
         let session = project.as_deref().and_then(|name| {

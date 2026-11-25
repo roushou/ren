@@ -8,7 +8,6 @@
 //! another (`cargo xtask preview`).
 
 use crate::{
-    dev::{DevError, index::DevIndex, instance::DevInstance},
     file::{FileError, FileMode},
     invocation::{Echo, Invocation, InvocationError},
     pod::{Container, Pod},
@@ -113,14 +112,6 @@ pub enum ReplicaError {
     Tailscale(#[from] TailscaleError),
     #[error(transparent)]
     Ui(#[from] UiBuildError),
-    #[error(transparent)]
-    Dev(#[from] Box<DevError>),
-}
-
-impl From<DevError> for ReplicaError {
-    fn from(error: DevError) -> Self {
-        Self::Dev(Box::new(error))
-    }
 }
 
 /// One work item, as production's `/api/work` lists it, as far as xtask
@@ -187,35 +178,27 @@ impl ProductionPlace {
         let home = env
             .absolute_path("HOME")
             .ok_or(ReplicaError::MissingEnv("HOME"))?;
-        match kind {
-            Production::Installed => {
-                let config = home.join(".config/ren/ren.toml");
-                let listen = Config::load(Some(&config))
-                    .map_err(|source| ReplicaError::Config {
-                        path: config.clone(),
-                        source,
-                    })?
-                    .listen;
-                Ok(Self {
-                    kind,
-                    config,
-                    data_dir: home.join(".local/state/ren"),
-                    binary: home.join(".local/bin/ren"),
-                    listen,
-                })
-            }
-            Production::Dev => {
-                // The canary rehearses against the first dev instance.
-                let slot = DevInstance::new(env, DevIndex::FIRST)?;
-                Ok(Self {
-                    kind,
-                    config: slot.config,
-                    data_dir: slot.data_dir,
-                    binary: slot.bin_dir.join("ren"),
-                    listen: DevIndex::FIRST.daemon(),
-                })
-            }
-        }
+        // Each is found by its folders: the installed service's, or the
+        // first dev instance's (`ren-dev`), which the canary rehearses
+        // against. Its gateway listens where its configuration says.
+        let (name, binary) = match kind {
+            Production::Installed => ("ren", home.join(".local/bin/ren")),
+            Production::Dev => ("ren-dev", home.join(".local/share/ren-dev/bin/ren")),
+        };
+        let config = home.join(".config").join(name).join("ren.toml");
+        let listen = Config::load(Some(&config))
+            .map_err(|source| ReplicaError::Config {
+                path: config.clone(),
+                source,
+            })?
+            .listen;
+        Ok(Self {
+            kind,
+            config,
+            data_dir: home.join(".local/state").join(name),
+            binary,
+            listen,
+        })
     }
 
     fn ren(&self) -> Invocation {

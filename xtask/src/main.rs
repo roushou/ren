@@ -14,6 +14,7 @@ mod pod;
 mod preview;
 mod progress;
 mod replica;
+mod shot;
 mod tailscale;
 mod ui;
 mod unit;

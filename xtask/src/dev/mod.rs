@@ -8,7 +8,6 @@ pub(crate) mod index;
 pub(crate) mod instance;
 mod provider;
 mod seed;
-pub(crate) mod shot;
 mod traffic;
 mod work;
 
@@ -16,6 +15,7 @@ use crate::daemon_container::Contain;
 use crate::file::FileError;
 use crate::invocation::InvocationError;
 use crate::progress::Progress;
+use crate::shot::{Camera, Page, ShotError};
 use crate::tailscale::{Tailnet, TailscaleError};
 use crate::{
     daemon::{RunPolicy, StillBusy},
@@ -32,7 +32,6 @@ use instance::{ClaimsFile, DevInstance, Preview, RunWait};
 use provider::{FakeProvider, ProviderError};
 use ren_harness::host::HostEnv;
 use ren_network::tailscale::Cli;
-use shot::{Camera, Page};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use traffic::{Pace, SettingsError, Traffic, TrafficError};
@@ -284,8 +283,8 @@ pub enum DevError {
     AllClaimed(#[from] AllClaimed),
     #[error("the dev instances' claims in {} do not read: {why}", .path.display())]
     Claims { path: PathBuf, why: String },
-    #[error("no headless Chromium found: set REN_CHROME, or install chrome-headless-shell")]
-    NoChrome,
+    #[error(transparent)]
+    Shot(#[from] ShotError),
     #[error(transparent)]
     Traffic(#[from] TrafficError),
     #[error(transparent)]

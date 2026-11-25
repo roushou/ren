@@ -22,7 +22,6 @@ mod work;
 use self::{checks::Checks, previews::PreviewPass, serve::FactoryService, work::WorkLedger};
 use crate::{
     builds::{Builds, BuildsError, StoredBuild},
-    dev::DevError,
     file::{FileError, FileMode},
     install::{InstallError, InstallVps, publish::Publish},
     invocation::{Invocation, InvocationError},
@@ -191,15 +190,7 @@ pub enum CanaryError {
     #[error(transparent)]
     Ui(#[from] UiBuildError),
     #[error(transparent)]
-    Dev(#[from] Box<DevError>),
-    #[error(transparent)]
     Publish(#[from] crate::install::publish::PublishError),
-}
-
-impl From<DevError> for CanaryError {
-    fn from(error: DevError) -> Self {
-        Self::Dev(Box::new(error))
-    }
 }
 
 impl From<InstallError> for CanaryError {

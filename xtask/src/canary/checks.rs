@@ -7,10 +7,10 @@
 use crate::{
     builds::StoredBuild,
     daemon::{CheckStatus, DoctorReport},
-    dev::shot::{Camera, Page},
     invocation::Invocation,
     progress::Progress,
     replica::Replica,
+    shot::{Camera, Page},
 };
 use ren_gateway::release::{Check, CheckKind, Outcome, Verdict};
 use ren_harness::host::HostEnv;

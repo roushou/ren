@@ -25,6 +25,7 @@ impl DevIndex {
     /// hundred on the tailnet.
     pub const COUNT: u8 = 8;
     /// The first: the one dev slot's places.
+    #[cfg(test)]
     pub const FIRST: Self = Self(0);
 
     /// `base`'s port for this instance, on loopback.
