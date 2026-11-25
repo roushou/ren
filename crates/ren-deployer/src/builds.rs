@@ -80,7 +80,6 @@ impl Builds {
     pub fn make(
         &self,
         env: &HostEnv,
-        cargo: &Path,
         checkout: &Path,
         commit: &Commit,
     ) -> Result<StoredBuild, BuildsError> {
@@ -100,6 +99,8 @@ impl Builds {
             commit.short()
         ))
         .show();
+        let cargo = Self::cargo(checkout)?;
+        let cargo = cargo.as_path();
         let ui = UiBuild::new(env, checkout)?;
         let job = self.job(cargo, checkout, &ui)?;
         Pod::ensure_image(checkout)?;
@@ -180,6 +181,17 @@ impl Builds {
     /// builds, apart from the factory's worktrees.
     fn caches(&self) -> PathBuf {
         self.root.with_file_name("build-cache")
+    }
+
+    /// The cargo that builds `checkout`: its toolchain's own, as rustup
+    /// picks it there (the checkout's `rust-toolchain.toml` decides), not
+    /// rustup's proxy, so the toolchain's folder is what a build sees.
+    fn cargo(checkout: &Path) -> Result<PathBuf, BuildsError> {
+        let found = Invocation::new("rustup")
+            .current_dir(checkout)
+            .args(["which", "cargo"])
+            .capture()?;
+        Ok(PathBuf::from(found.trim()))
     }
 
     /// The container `checkout`'s build steps run in: the host's programs
@@ -385,7 +397,7 @@ mod tests {
     #[test]
     #[ignore = "builds Ren in release; by hand, minutes"]
     fn a_commit_is_built_in_containers() {
-        let (env, cargo) = host();
+        let (env, _) = host();
         let home = env.absolute_path("HOME").unwrap();
         let scratch = tempfile::tempdir_in(home.join(".local/share")).unwrap();
         let checkout = scratch.path().join("checkout");
@@ -409,7 +421,7 @@ mod tests {
         let builds = Builds {
             root: scratch.path().join("builds"),
         };
-        let made = builds.make(&env, &cargo, &checkout, &commit);
+        let made = builds.make(&env, &checkout, &commit);
         Invocation::new("git")
             .arg("-C")
             .arg(repo())

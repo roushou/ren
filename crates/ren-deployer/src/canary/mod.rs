@@ -208,7 +208,6 @@ struct Factory {
     repo: PathBuf,
     /// Ren's own worktree, at the commit being checked.
     worktree: PathBuf,
-    cargo: PathBuf,
     builds: Builds,
     git: Git,
 }
@@ -234,9 +233,6 @@ impl Factory {
             worktree: home.join(".local/share/ren/factory"),
             builds: Builds::new(&home),
             repo: checkout.to_path_buf(),
-            cargo: env
-                .absolute_path("CARGO")
-                .unwrap_or_else(|| PathBuf::from("cargo")),
             git: Git::inherited(),
             home,
         })
@@ -304,7 +300,7 @@ impl Factory {
         let tip = self.git.fetch(&self.repo, Self::REMOTE, &main)?;
         self.git
             .check_out_detached(&self.repo, &self.worktree, &tip)?;
-        let build = self.builds.make(env, &self.cargo, &self.worktree, &tip)?;
+        let build = self.builds.make(env, &self.worktree, &tip)?;
         Progress(&format!(
             "Checking {} with its own checks, in {}",
             tip.abbreviated(12),
@@ -355,7 +351,7 @@ impl Factory {
         let commit = id.clone();
         let production = ProductionPlace::new(env, args.target.of)?;
         let canary = Replica::canary(env)?;
-        let build = self.builds.make(env, &self.cargo, &self.repo, &commit)?;
+        let build = self.builds.make(env, &self.repo, &commit)?;
         let backup = production.backup()?;
         canary.replace_data(&backup)?;
         let keys = canary.configure(&production)?;

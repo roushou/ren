@@ -193,9 +193,7 @@ impl PreviewPass<'_> {
         factory
             .git
             .check_out_detached(&factory.repo, &worktree, commit)?;
-        let build = factory
-            .builds
-            .make(env, &factory.cargo, &worktree, commit)?;
+        let build = factory.builds.make(env, &worktree, commit)?;
         let replica = Replica::preview_slot(env, slot)?;
         replica.replace_data(backup)?;
         let keys = replica.configure(self.production)?;
