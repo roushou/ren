@@ -152,15 +152,22 @@ a move lands before the move that needs it.
    at each commit: the same 1229 tests pass (the release labels test folded
    into the gateway's), lint, and the compatibility gate against the commit
    before reports no change to labels, fixtures, or the API.
-3. **`ren-deployer`.** Not built. Each of xtask's runtime modules moves
-   into the crate in its own commit, bottom-up: build jobs and builds,
-   pods and units, the configuration derivation (one owner, replacing
-   three), the canary and its checks (`ren check`, with the page shots),
-   the previews pass, then the service. `ren deployer serve` replaces
-   `cargo xtask canary serve`, and `[deployer]` replaces `[factory]`.
-   Verified by comparison against the commit before: the pinned labels,
-   the test count, `ren --help`, and a whole canary pass in a rehearsal
-   whose production is a scenario-seeded deployment.
+3. **`ren-deployer`.** In progress. Built so far, in two commits: the
+   factory's code no longer reaches into xtask's `dev` (the page camera is
+   its own module, the dev rehearsal is found by instance 0's folders),
+   and then every runtime module moved, unchanged, into
+   `crates/ren-deployer`, which xtask's commands call; xtask keeps `compat`
+   and `dev`. Verified by comparison: the same 1229 tests, the same help
+   for every moved command, no change at the compatibility gate. Left:
+   `ren deployer` commands in the `ren` binary, with the checkout they
+   build from as an input rather than the path the binary was compiled
+   in; the canary handing off to the built commit's own `ren deployer`
+   (its checks, `ren check`) instead of its checkout's xtask; `ren
+   deployer serve` as the service in place of `cargo xtask canary serve`,
+   and `[deployer]` in place of `[factory]`; the factory service named
+   `Deployer`, the crate's primary type. Verified by comparison against
+   the commit before (labels, test count, `ren --help`) and a whole canary
+   pass in a rehearsal.
 4. **Chosen previews, seeded.** Not built. `ren deploy <commit> --seed
    <scenario | replica>` starts a chosen preview and answers with its
    state and address. `ren deployments` lists them, and `ren deploy stop`
@@ -222,6 +229,16 @@ a move lands before the move that needs it.
   running state to merge (`release.json` holds a verdict), so each joins
   `Deployments` with the phase that gives it one: seeds in phase 4, the
   canary when the deployer runs it (phase 3).
+- **Phase 3: one move, not one per module.** The modules depend on each
+  other in a web (the canary on builds, replicas, install, and checks;
+  install on builds and the daemon's container), so they moved together,
+  unchanged, after one commit that cut their ties to `dev`. The move is a
+  file move and nothing else, which the comparison checks.
+- **Phase 3: one configuration owner comes with phase 5.** Of the three
+  derivations, `DevInstance`'s is the dev world's and goes with it;
+  `DaemonContainer` reads a configuration rather than deriving one. What
+  is left is `Replica`'s, already the one owner of a deployment's
+  configuration.
 - **Phase 1: checked by its pages, not side by side.** The history is
   invented afresh, not the scenarios' calls replayed, so the two seeds
   differ by design; the pages were checked against the new one.
