@@ -415,7 +415,13 @@ impl Factory {
             .flatten()
             .chain(previewed)
             .collect();
-        self.builds.prune(&keep.iter().collect::<Vec<_>>())?;
+        // The builds are shared with the installed production's canary and
+        // previews: only a pass for it knows which of them are still
+        // needed, so a rehearsal prunes nothing.
+        match production.kind {
+            Production::Installed => self.builds.prune(&keep.iter().collect::<Vec<_>>())?,
+            Production::Dev => {}
+        }
         Ok(())
     }
 
