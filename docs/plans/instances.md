@@ -1,5 +1,8 @@
 # Plan: instances
 
+Superseded by [`deployments.md`](deployments.md), which folds these
+instances into deployments of commits.
+
 Ren can run more of itself than production: the canary, a preview of each
 pull request, a preview of a commit asked for, and the dev slot. Each is a
 Ren daemon and UI, on its own data, at its own address. But none of them is
