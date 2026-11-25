@@ -4,6 +4,7 @@
 use super::{CheckId, Report, Status};
 use crate::Cli;
 use ren_gateway::Environment;
+use ren_git::SourceRevision;
 use ren_harness::{
     endpoint::{GatewayEndpoint, UserToken},
     host::HostEnv,
@@ -11,7 +12,7 @@ use ren_harness::{
 use ren_protocol::label::Stored;
 use ren_recorder::caller::CallerKind;
 use ren_recorder::retention::RetentionPolicy;
-use ren_release::{Build, Comparison, Revision};
+use ren_release::{Build, Comparison};
 use serde::{Deserialize, de::DeserializeOwned};
 use std::time::Duration;
 
@@ -132,7 +133,7 @@ impl Report {
     /// Whether the daemon runs the same build as this CLI. A mismatch is a
     /// warning: the API is versioned, but one of them needs an upgrade.
     fn build(&mut self, local: &Build, remote: ReportedBuild) {
-        let revision = match remote.revision.parse::<Revision>() {
+        let revision = match remote.revision.parse::<SourceRevision>() {
             Ok(revision) => revision,
             Err(_) => {
                 self.add(

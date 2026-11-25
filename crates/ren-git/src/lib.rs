@@ -6,12 +6,14 @@
 mod error;
 mod git;
 mod repository;
+mod source;
 
 pub use error::{Exit, GitError};
 pub use git::{Author, BranchRemoval, Git, Published, Tree};
 pub use repository::{
     Branch, Commit, Head, NotABranch, NotACommit, NotARevision, Repository, Revision,
 };
+pub use source::{NotASourceRevision, SourceRevision};
 
 #[cfg(test)]
 mod tests;

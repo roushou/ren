@@ -8,11 +8,10 @@
 
 use crate::instance::{CommitAsks, Instances};
 use ren_git::Commit;
+use ren_git::SourceRevision;
 use ren_protocol::label::Stored;
 use ren_recorder::project::Factory;
-use ren_release::{
-    CheckKind, Decision, Outcome, Policy, PromotionRequest, Release, Revision, ShotName,
-};
+use ren_release::{CheckKind, Decision, Outcome, Policy, PromotionRequest, Release, ShotName};
 use ren_store::view::ProjectView;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -212,7 +211,7 @@ pub struct ReleaseView {
     /// The build production ran then: `<commit>`, `<commit>-dirty`, or
     /// `unknown`.
     #[ts(type = "string")]
-    pub production: Revision,
+    pub production: SourceRevision,
     /// Commits `main` has that production does not; null when production's
     /// revision is not a commit of `main`'s history.
     pub behind: Option<u64>,

@@ -25,6 +25,7 @@ use ren_gateway::api::{
     control::request::{ControlRequest, LandWorkRequest, ShipWorkRequest, WorkChange},
     read::ReadBody,
 };
+use ren_git::SourceRevision;
 use ren_git::{Branch, Commit, Git, Tree};
 use ren_manifest::{Manifest, Place};
 use ren_protocol::label::Stored;
@@ -35,7 +36,7 @@ use ren_recorder::{
 use ren_recorder::{project::Factory, time::Clock as _};
 use ren_release::{
     Assessment, Attempt, Canary, Check, CheckKind, Decision, Lineage, MinuteOfDay, Outcome,
-    Release, ReleaseOptions, Revision, Verdict,
+    Release, ReleaseOptions, Verdict,
 };
 use ren_store::view::ProjectView;
 use ren_store::{
@@ -327,18 +328,18 @@ impl ProjectFactory {
         &self,
         tip: &Commit,
         canary: Option<Canary>,
-        deployed: Option<Revision>,
+        deployed: Option<SourceRevision>,
     ) -> Result<Release> {
         let running = match &deployed {
-            Some(Revision::Commit {
+            Some(SourceRevision::Commit {
                 commit,
                 tree: Tree::Clean,
             }) => Some(commit.clone()),
-            Some(Revision::Commit {
+            Some(SourceRevision::Commit {
                 tree: Tree::Modified,
                 ..
             })
-            | Some(Revision::Unknown)
+            | Some(SourceRevision::Unknown)
             | None => None,
         };
         let running_id: Option<&Commit> = running.as_ref();
@@ -360,7 +361,7 @@ impl ProjectFactory {
         Ok(Release::assess(
             Assessment {
                 main: tip.clone(),
-                production: deployed.unwrap_or(Revision::Unknown),
+                production: deployed.unwrap_or(SourceRevision::Unknown),
                 behind,
                 canary,
             },
@@ -392,7 +393,7 @@ impl ProjectFactory {
         let tip = release.main().clone();
         let canary = release.canary().cloned();
         let production = if deployed {
-            Revision::Commit {
+            SourceRevision::Commit {
                 commit: commit.clone(),
                 tree: Tree::Clean,
             }
@@ -474,15 +475,15 @@ impl ProjectFactory {
             }
         }
         let production = match self.read()?.map(|release| release.production().clone()) {
-            Some(Revision::Commit {
+            Some(SourceRevision::Commit {
                 commit,
                 tree: Tree::Clean,
             }) => commit,
-            Some(Revision::Commit {
+            Some(SourceRevision::Commit {
                 tree: Tree::Modified,
                 ..
             })
-            | Some(Revision::Unknown)
+            | Some(SourceRevision::Unknown)
             | None => return Ok(()),
         };
         for (item, commit) in &landed {
@@ -490,7 +491,7 @@ impl ProjectFactory {
                 send(
                     *item,
                     WorkChange::Ship(ShipWorkRequest {
-                        revision: Revision::Commit {
+                        revision: SourceRevision::Commit {
                             commit: production.clone(),
                             tree: Tree::Clean,
                         },

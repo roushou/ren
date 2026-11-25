@@ -36,6 +36,7 @@ use ren_gateway::api::{
     read::{ReadBody, work::WorkPreviewBody},
 };
 use ren_git::Git;
+use ren_git::SourceRevision;
 use ren_harness::host::HostEnv;
 use ren_manifest::{Expanded, Manifest, Place};
 use ren_network::tailscale::{Cli, PublishError, Route};
@@ -44,7 +45,6 @@ use ren_recorder::{
     id::WorkItemId,
     work::{Landing, PreviewUrl, WorkStateKind},
 };
-use ren_release::Revision;
 use ren_store::{
     query::{PageLimit, Shelf},
     read::ReadRequest,
@@ -340,9 +340,9 @@ impl ProjectCmd {
     }
 
     /// The build the worktree's checkout is: its commit, modified or not.
-    fn revision(dir: &Path) -> Result<Revision> {
+    fn revision(dir: &Path) -> Result<SourceRevision> {
         let git = Git::inherited();
-        Ok(Revision::Commit {
+        Ok(SourceRevision::Commit {
             commit: git.head_commit(dir)?,
             tree: git.tree(dir)?,
         })

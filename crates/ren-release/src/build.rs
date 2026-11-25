@@ -4,26 +4,15 @@
 //! instance runs. The binary's package works out the revision when it is
 //! compiled; everything else only reports or compares it.
 
-use ren_git::{Commit, Tree};
+use ren_git::{SourceRevision, Tree};
 use serde::{Deserialize, Serialize};
-use serde_with::{DeserializeFromStr, SerializeDisplay};
-use std::{fmt, str::FromStr};
+use std::fmt;
 
 /// A package version and the source revision it was compiled from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Build {
     version: String,
-    revision: Revision,
-}
-
-/// The source a binary was compiled from. Written `<commit>`,
-/// `<commit>-dirty`, or `unknown`.
-#[derive(Debug, Clone, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
-pub enum Revision {
-    /// A commit, and whether tracked files differed from it.
-    Commit { commit: Commit, tree: Tree },
-    /// The build had neither git metadata nor packaging metadata.
-    Unknown,
+    revision: SourceRevision,
 }
 
 /// How two builds relate.
@@ -38,12 +27,8 @@ pub enum Comparison {
     Unconfirmed,
 }
 
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[error("not a revision (`<commit>`, `<commit>-dirty`, or `unknown`): {0:?}")]
-pub struct RevisionError(String);
-
 impl Build {
-    pub fn new(version: impl Into<String>, revision: Revision) -> Self {
+    pub fn new(version: impl Into<String>, revision: SourceRevision) -> Self {
         Self {
             version: version.into(),
             revision,
@@ -54,7 +39,7 @@ impl Build {
         &self.version
     }
 
-    pub fn revision(&self) -> &Revision {
+    pub fn revision(&self) -> &SourceRevision {
         &self.revision
     }
 
@@ -64,11 +49,11 @@ impl Build {
         }
         match (&self.revision, &other.revision) {
             (
-                Revision::Commit {
+                SourceRevision::Commit {
                     commit: ours,
                     tree: our_tree,
                 },
-                Revision::Commit {
+                SourceRevision::Commit {
                     commit: theirs,
                     tree: their_tree,
                 },
@@ -84,8 +69,8 @@ impl Build {
                     }
                 }
             }
-            (Revision::Unknown, Revision::Commit { .. } | Revision::Unknown)
-            | (Revision::Commit { .. }, Revision::Unknown) => Comparison::Unconfirmed,
+            (SourceRevision::Unknown, SourceRevision::Commit { .. } | SourceRevision::Unknown)
+            | (SourceRevision::Commit { .. }, SourceRevision::Unknown) => Comparison::Unconfirmed,
         }
     }
 }
@@ -94,51 +79,15 @@ impl Build {
 impl fmt::Display for Build {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.revision {
-            Revision::Commit { commit, tree } => {
+            SourceRevision::Commit { commit, tree } => {
                 write!(f, "{} ({}", self.version, commit.short())?;
                 match tree {
                     Tree::Clean => f.write_str(")"),
                     Tree::Modified => f.write_str(", modified)"),
                 }
             }
-            Revision::Unknown => write!(f, "{} (unknown revision)", self.version),
+            SourceRevision::Unknown => write!(f, "{} (unknown revision)", self.version),
         }
-    }
-}
-
-impl Revision {
-    const DIRTY: &str = "-dirty";
-    const UNKNOWN: &str = "unknown";
-}
-
-impl fmt::Display for Revision {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Commit { commit, tree } => {
-                write!(f, "{commit}")?;
-                match tree {
-                    Tree::Clean => Ok(()),
-                    Tree::Modified => f.write_str(Self::DIRTY),
-                }
-            }
-            Self::Unknown => f.write_str(Self::UNKNOWN),
-        }
-    }
-}
-
-impl FromStr for Revision {
-    type Err = RevisionError;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        if text == Self::UNKNOWN {
-            return Ok(Self::Unknown);
-        }
-        let (commit, tree) = match text.strip_suffix(Self::DIRTY) {
-            Some(commit) => (commit, Tree::Modified),
-            None => (text, Tree::Clean),
-        };
-        let commit = commit.parse().map_err(|_| RevisionError(text.to_owned()))?;
-        Ok(Self::Commit { commit, tree })
     }
 }
 
@@ -151,26 +100,6 @@ mod tests {
 
     fn build(version: &str, revision: &str) -> Build {
         Build::new(version, revision.parse().unwrap())
-    }
-
-    #[test]
-    fn revisions_round_trip_through_their_text_and_malformed_ones_are_refused() {
-        for text in [A.to_owned(), format!("{A}-dirty"), "unknown".to_owned()] {
-            assert_eq!(text.parse::<Revision>().unwrap().to_string(), text);
-        }
-        let sha256 = "a".repeat(64);
-        assert_eq!(sha256.parse::<Revision>().unwrap().to_string(), sha256);
-        assert_eq!(A.to_uppercase().parse::<Revision>().unwrap().to_string(), A);
-        for text in [
-            "",
-            "-dirty",
-            "07f4bb7",
-            &format!("{A}-modified"),
-            "unknown-dirty",
-            &format!("{}g", &A[..39]),
-        ] {
-            assert!(text.parse::<Revision>().is_err(), "{text:?}");
-        }
     }
 
     #[test]

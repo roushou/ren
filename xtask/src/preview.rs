@@ -25,6 +25,7 @@ use ren_gateway::api::{
     control::request::{PreviewWorkRequest, WorkChange},
     read::work::WorkPreviewBody,
 };
+use ren_git::SourceRevision;
 use ren_git::{Git, GitError};
 use ren_harness::host::HostEnv;
 use ren_network::tailscale::Cli;
@@ -33,7 +34,6 @@ use ren_recorder::{
     id::WorkItemId,
     work::{Landing, PreviewUrl, WorkStateKind},
 };
-use ren_release::Revision;
 use ren_supervisor::Worktree;
 use std::{
     fs,
@@ -258,7 +258,7 @@ impl Preview {
         env: &HostEnv,
         worktree: &PreviewPlace,
         repo: &Path,
-    ) -> Result<(PathBuf, Revision), PreviewError> {
+    ) -> Result<(PathBuf, SourceRevision), PreviewError> {
         let cargo = env
             .absolute_path("CARGO")
             .unwrap_or_else(|| PathBuf::from("cargo"));
@@ -279,7 +279,7 @@ impl Preview {
         let revision = version
             .split_once('(')
             .and_then(|(_, rest)| rest.split_once(')'))
-            .and_then(|(text, _)| text.parse::<Revision>().ok())
+            .and_then(|(text, _)| text.parse::<SourceRevision>().ok())
             .ok_or_else(|| PreviewError::Revision(version.trim().to_owned()))?;
         let next = root.join("ui.next");
         UiBuild::new(env, repo)?.build_into(&next)?;

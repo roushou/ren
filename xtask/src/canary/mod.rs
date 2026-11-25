@@ -34,6 +34,7 @@ use crate::{
 use clap::{Args, Subcommand, ValueEnum};
 use ren_daemon::host::SystemClock;
 use ren_gateway::factory::FactoryRequest;
+use ren_git::SourceRevision;
 use ren_git::{Branch, Commit, Git, GitError, Tree};
 use ren_harness::host::HostEnv;
 use ren_network::tailscale::Cli;
@@ -41,7 +42,7 @@ use ren_protocol::label::Stored;
 use ren_recorder::time::Clock as _;
 use ren_release::{
     Assessment, Canary as CanaryBuild, Decision, Lineage, MinuteOfDay, Policy, Release,
-    ReleaseOptions, Revision,
+    ReleaseOptions,
 };
 use std::{
     fs,
@@ -428,15 +429,15 @@ impl Factory {
     /// The commit production runs, when it is a clean one.
     fn running(production: &ProductionPlace) -> Option<Commit> {
         match production.revision().ok()? {
-            Revision::Commit {
+            SourceRevision::Commit {
                 commit,
                 tree: Tree::Clean,
             } => Some(commit),
-            Revision::Commit {
+            SourceRevision::Commit {
                 tree: Tree::Modified,
                 ..
             }
-            | Revision::Unknown => None,
+            | SourceRevision::Unknown => None,
         }
     }
 
@@ -450,15 +451,15 @@ impl Factory {
     ) -> Result<Release, CanaryError> {
         let revision = production.revision()?;
         let running = match &revision {
-            Revision::Commit {
+            SourceRevision::Commit {
                 commit,
                 tree: Tree::Clean,
             } => Some(commit.clone()),
-            Revision::Commit {
+            SourceRevision::Commit {
                 tree: Tree::Modified,
                 ..
             }
-            | Revision::Unknown => None,
+            | SourceRevision::Unknown => None,
         };
         let main_id = main.clone();
         // A commit the factory's repository does not have counts as none.

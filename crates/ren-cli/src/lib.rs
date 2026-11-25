@@ -16,8 +16,9 @@ use crate::context::Context;
 use crate::style::{Terminal, Tone};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use ren_git::SourceRevision;
 use ren_harness::host::HostEnv;
-use ren_release::{Build, Revision};
+use ren_release::Build;
 use std::{path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
@@ -80,7 +81,9 @@ impl Cli {
         // build.rs writes only `<commit>`, `<commit>-dirty`, or `unknown`
         // (pinned by a test), so a parse failure cannot happen; it would
         // still read as an unknown revision, never as a known one.
-        let revision = env!("REN_REVISION").parse().unwrap_or(Revision::Unknown);
+        let revision = env!("REN_REVISION")
+            .parse()
+            .unwrap_or(SourceRevision::Unknown);
         Build::new(env!("CARGO_PKG_VERSION"), revision)
     }
 
@@ -136,6 +139,6 @@ mod tests {
 
     #[test]
     fn the_recorded_revision_parses() {
-        assert!(env!("REN_REVISION").parse::<Revision>().is_ok());
+        assert!(env!("REN_REVISION").parse::<SourceRevision>().is_ok());
     }
 }

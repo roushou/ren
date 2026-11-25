@@ -12,13 +12,13 @@ use crate::{
 };
 use ren_gateway::api::control::request::{LandWorkRequest, ShipWorkRequest, WorkChange};
 use ren_git::Commit;
+use ren_git::SourceRevision;
 use ren_git::Tree;
 use ren_protocol::label::Stored;
 use ren_recorder::{
     id::WorkItemId,
     work::{Landing, WorkStateKind},
 };
-use ren_release::Revision;
 use std::{thread, time::Duration};
 
 /// Production's work items, as far as closing them needs.
@@ -93,15 +93,15 @@ impl<'a> WorkLedger<'a> {
             self.settle(&landed)?;
         }
         let running = match self.production.revision()? {
-            Revision::Commit {
+            SourceRevision::Commit {
                 commit,
                 tree: Tree::Clean,
             } => Some(commit),
-            Revision::Commit {
+            SourceRevision::Commit {
                 tree: Tree::Modified,
                 ..
             }
-            | Revision::Unknown => None,
+            | SourceRevision::Unknown => None,
         };
         if let Some(running) = running {
             for (item, commit) in &landed {
@@ -109,7 +109,7 @@ impl<'a> WorkLedger<'a> {
                     self.production.move_work(
                         *item,
                         WorkChange::Ship(ShipWorkRequest {
-                            revision: Revision::Commit {
+                            revision: SourceRevision::Commit {
                                 commit: running.clone(),
                                 tree: Tree::Clean,
                             },

@@ -214,7 +214,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Git::add_worktree` and `remove_worktree`, a branch deleted only once
   merged, `delete_merged`, and `commit_all`, as a fixed `Author`), and a folder's
   repository read from disk without it (`Git::repository`: its `HEAD`,
-  through a linked worktree's `.git` file). It is the one place Ren reads or
+  through a linked worktree's `.git` file), and the source a binary was
+  compiled from (`SourceRevision`: a commit and its `Tree`, written
+  `<commit>`, `<commit>-dirty`, or `unknown`). It is the one place Ren reads or
   runs git, and the one `disallowed_methods` exemption for it. It performs
   filesystem and process I/O but has no async runtime, HTTP, database, or
   CLI dependency.
@@ -234,9 +236,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   (`commands/project/canary.rs`: `ProjectFactory`, with its release in
   `<data>/projects/<name>`).
 - `crates/ren-release`: how a build of Ren moves from `main` to production,
-  sans-IO: which build an instance runs (`Build`, its `Revision` of a
-  `ren_git::Commit` and `Tree`, and how two compare, `Comparison`). Its
-  manifest allows only pure dependencies and `ren-git`, for those two types.
+  sans-IO: which build an instance runs (`Build`, its `ren_git::SourceRevision`
+  of a `Commit` and `Tree`, and how two compare, `Comparison`). Its
+  manifest allows only pure dependencies and `ren-git`.
 - `crates/ren-container`: containers as Ren runs them, with `Container`
   as its primary type. It depends on none of Ren's crates. A
   `Container` is what one sees of the host (`Mount`, read-only or

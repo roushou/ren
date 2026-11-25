@@ -9,7 +9,7 @@
 
 use super::HealthStatus;
 use crate::{build, operator};
-use ren_release::Revision;
+use ren_git::SourceRevision;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -35,7 +35,7 @@ pub(super) struct Build {
     version: String,
     /// `<commit>`, `<commit>-dirty`, or `unknown`.
     #[ts(type = "string")]
-    revision: Revision,
+    revision: SourceRevision,
 }
 
 impl From<&ren_release::Build> for Build {

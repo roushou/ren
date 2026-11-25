@@ -8,10 +8,11 @@ use crate::context::Context;
 use anyhow::{Result, bail};
 use clap::Args;
 use ren_gateway::api::release::{ReleaseBody, ReleaseView};
+use ren_git::SourceRevision;
 use ren_git::Tree;
 use ren_protocol::label::Stored;
 use ren_recorder::project::{Factory, ProjectName};
-use ren_release::{Decision, Policy, Revision};
+use ren_release::{Decision, Policy};
 use std::{fmt::Write as _, process::ExitCode};
 
 /// Show where a release stands: main, production, and the canary.
@@ -66,15 +67,15 @@ impl ReleaseCmd {
         let mut text = String::new();
         let _ = writeln!(text, "main        {}", release.main.short());
         let production = match &release.production {
-            Revision::Commit {
+            SourceRevision::Commit {
                 commit,
                 tree: Tree::Clean,
             } => commit.short().to_owned(),
-            Revision::Commit {
+            SourceRevision::Commit {
                 commit,
                 tree: Tree::Modified,
             } => format!("{}, modified", commit.short()),
-            Revision::Unknown => "unknown".to_owned(),
+            SourceRevision::Unknown => "unknown".to_owned(),
         };
         let behind = match release.behind {
             Some(0) => "up to date with main".to_owned(),

@@ -5,10 +5,10 @@
 //! the gateway reads it back and serves it, so `ren` and the UI show it.
 
 use crate::{
-    Revision, Verdict,
+    Verdict,
     policy::{MinuteOfDay, Policy},
 };
-use ren_git::Commit;
+use ren_git::{Commit, SourceRevision};
 use ren_protocol::label::Stored;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
@@ -18,7 +18,7 @@ use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Release {
     main: Commit,
-    production: Revision,
+    production: SourceRevision,
     /// Commits `main` has that production does not; none when production's
     /// revision is not a commit of `main`'s history.
     behind: Option<u64>,
@@ -88,7 +88,7 @@ pub enum Decision {
 /// What the factory found, before the policy decides.
 pub struct Assessment {
     pub main: Commit,
-    pub production: Revision,
+    pub production: SourceRevision,
     pub behind: Option<u64>,
     pub canary: Option<(Canary, Lineage, Attempt)>,
 }
@@ -193,7 +193,7 @@ impl Release {
         &self.main
     }
 
-    pub fn production(&self) -> &Revision {
+    pub fn production(&self) -> &SourceRevision {
         &self.production
     }
 
