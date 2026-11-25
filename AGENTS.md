@@ -829,8 +829,11 @@ dependencies under "Crates" below. Read the code for current module ownership.
   request (again when its title or body is edited) and push to main.
   Deploying lives in `crates/ren-deployer`, run as `ren deployer`
   (docs/plans/deployments.md); xtask keeps only `compat`.
-  `ren deployer install-vps` installs or upgrades Ren from a checkout as a
-  systemd user service and can publish it with Tailscale Serve; it restarts a
+  `ren deployer install-vps` installs Ren from a checkout, once, as a
+  systemd user service and can publish it with Tailscale Serve; after that
+  production is upgraded only to a kept build (a promotion, `ren deploy
+  --production`, or `ren deployer settings` with the build it runs), with
+  the same steps: an upgrade restarts a
   running daemon only between calls and between runs' turns, paused (a pause
   it marks, so one it could not lift is lifted by the next), and checks the
   new build; started inside `ren.service` it carries on in the background as the unit
@@ -847,7 +850,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the runs that end), building the UI (`ui`), transient user units and the
   listeners they answer on (`unit`: `TransientUnit`, `Listener`), and builds
   made once per commit (`builds`: `Builds`, `StoredBuild`, which
-  `install-vps --build` installs): a commit's dependencies fetched by its
+  a promotion and `ren deploy --production` install, and which are marked
+  once they pass the canary's checks or run production): a commit's dependencies fetched by its
   lockfiles on the host, running none of its code, into the builds' own
   caches (`~/.local/share/ren/build-cache`), and each step that runs its
   code in a container of its own (`build_job`: `BuildJob`, with no network

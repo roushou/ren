@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 use ren_deployer::{
     canary::{Canary, ServeArgs},
-    install::InstallVps,
+    install::{InstallVps, Settings},
 };
 use std::{path::PathBuf, process::ExitCode};
 
@@ -23,8 +23,12 @@ pub struct DeployerCmd {
 
 #[derive(Subcommand)]
 enum DeployerAction {
-    /// Install or upgrade Ren from the checkout as a systemd user service.
+    /// Install Ren from the checkout as a systemd user service, the first
+    /// time.
     InstallVps(InstallVps),
+    /// Apply changed publishing settings to production, restarting it with
+    /// the kept build it runs.
+    Settings(Settings),
     /// Take up each ask of the daemon at once: previews, the canary, and
     /// promotions.
     Serve(ServeArgs),
@@ -37,6 +41,7 @@ impl DeployerCmd {
         let checkout = std::path::absolute(&self.checkout)?;
         match self.action {
             DeployerAction::InstallVps(task) => task.run(&ctx.env, &checkout)?,
+            DeployerAction::Settings(task) => task.run(&ctx.env, &checkout)?,
             DeployerAction::Serve(task) => task.run(&ctx.env, &checkout)?,
             DeployerAction::Canary(task) => task.run(&ctx.env, &checkout)?,
         }

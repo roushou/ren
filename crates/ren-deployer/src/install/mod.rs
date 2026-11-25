@@ -1,5 +1,8 @@
-//! `ren deployer install-vps`: install or upgrade Ren from this checkout as a
-//! Linux systemd user service, optionally published with Tailscale Serve.
+//! `ren deployer install-vps`: install Ren from this checkout as a Linux
+//! systemd user service, optionally published with Tailscale Serve, once.
+//! After that production is upgraded only to a kept build chosen for it
+//! (the canary's promotion, `ren deploy --production`), and `ren deployer
+//! settings` applies changed publishing settings with the build it runs.
 //!
 //! An upgrade restarts the daemon only between calls and between runs' turns:
 //! it waits until no call is running and no run is starting, working, or
@@ -32,7 +35,7 @@ use crate::{
 };
 use clap::Args;
 use ren_daemon::config::{Config, ConfigError, RunRuntime};
-use ren_git::Commit;
+use ren_git::{Commit, SourceRevision};
 use ren_git::{Git, GitError, Published, Tree};
 use ren_harness::host::HostEnv;
 use ren_network::tailscale::Cli;
@@ -47,13 +50,40 @@ use std::{
     time::Duration,
 };
 
-/// Install or upgrade Ren from this checkout as a systemd user service.
+/// Install Ren from this checkout as a systemd user service, the first
+/// time.
 ///
 /// Run on the host, as the user that owns the service, from the commit to
-/// deploy. Each step checks the current state and changes only what differs.
-/// Provider credentials and client configuration are never touched.
+/// install. Each step checks the current state and changes only what
+/// differs. Provider credentials and client configuration are never
+/// touched. Once installed, production takes a kept build chosen for it
+/// (`ren deploy <commit> --production`), and `ren deployer settings`
+/// applies changed publishing settings.
 #[derive(Args)]
 pub struct InstallVps {
+    #[command(flatten)]
+    upgrade: UpgradeArgs,
+    /// Install even though tracked files differ from the commit; the daemon
+    /// then reports a `-dirty` revision.
+    #[arg(long)]
+    allow_dirty: bool,
+    /// What it installs: this checkout, built here, the first time; a kept
+    /// build, for a promotion or new settings.
+    #[arg(skip)]
+    source: Source,
+}
+
+/// Apply changed publishing settings (`install-vps`'s flags) to production,
+/// restarting it with the kept build it runs.
+#[derive(Args)]
+pub struct Settings {
+    #[command(flatten)]
+    upgrade: UpgradeArgs,
+}
+
+/// What an install or upgrade does around the restart.
+#[derive(Args)]
+struct UpgradeArgs {
     /// Publishing choices; with none given, the ones saved by the last
     /// successful run.
     #[command(flatten)]
@@ -61,14 +91,6 @@ pub struct InstallVps {
     /// Skip `ren control backup` before replacing a running daemon.
     #[arg(long)]
     skip_backup: bool,
-    /// Install even though tracked files differ from the commit; the daemon
-    /// then reports a `-dirty` revision.
-    #[arg(long, conflicts_with = "build")]
-    allow_dirty: bool,
-    /// Install the build of this commit kept in `~/.local/share/ren/builds`
-    /// (the one the canary checked), instead of building this checkout.
-    #[arg(long, value_name = "COMMIT")]
-    build: Option<Commit>,
     /// How long to wait for running calls and working runs to finish before
     /// giving up, without having changed anything.
     #[arg(long, value_name = "SECONDS", default_value_t = 900)]
@@ -81,10 +103,42 @@ pub struct InstallVps {
     drain_runs: bool,
 }
 
+/// What an install puts in place.
+#[derive(Default)]
+enum Source {
+    /// This checkout, built here: only where Ren is not installed yet.
+    #[default]
+    Checkout,
+    /// The build of this commit kept in `~/.local/share/ren/builds`.
+    Kept(Commit),
+}
+
+impl Source {
+    /// Refused when it is a checkout and Ren's `unit` is installed: once
+    /// installed, production takes only kept builds, each made by the
+    /// deployer in a container.
+    fn admitted(&self, unit: &Path) -> Result<(), InstallError> {
+        match self {
+            Self::Checkout if unit.exists() => Err(InstallError::Installed),
+            Self::Checkout | Self::Kept(_) => Ok(()),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
     #[error("install-vps requires Linux with a systemd user manager")]
     NotLinux,
+    #[error(
+        "Ren is installed: production takes a kept build chosen for it (`ren deploy <commit> --production`), and `ren deployer settings` applies changed publishing settings"
+    )]
+    Installed,
+    #[error(
+        "production does not run a clean commit whose build is kept; choose one with `ren deploy <commit> --production`"
+    )]
+    NoKeptBuild,
+    #[error(transparent)]
+    Production(Box<crate::replica::ReplicaError>),
     #[error(transparent)]
     Contain(#[from] DaemonContainerError),
     #[error(transparent)]
@@ -370,34 +424,83 @@ impl Layout {
     }
 }
 
+impl Settings {
+    /// Restarts production with the kept build it runs, under these
+    /// settings.
+    pub fn run(self, env: &HostEnv, checkout: &Path) -> Result<(), InstallError> {
+        let production = crate::replica::ProductionPlace::new(env)
+            .map_err(|error| InstallError::Production(Box::new(error)))?;
+        let revision = production
+            .revision()
+            .map_err(|error| InstallError::Production(Box::new(error)))?;
+        let commit = match revision {
+            SourceRevision::Commit {
+                commit,
+                tree: Tree::Clean,
+            } => commit,
+            SourceRevision::Commit {
+                tree: Tree::Modified,
+                ..
+            }
+            | SourceRevision::Unknown => return Err(InstallError::NoKeptBuild),
+        };
+        let home = env
+            .absolute_path("HOME")
+            .ok_or(InstallError::MissingEnv("HOME"))?;
+        if Builds::new(&home).get(&commit).is_none() {
+            return Err(InstallError::NoKeptBuild);
+        }
+        InstallVps {
+            upgrade: self.upgrade,
+            allow_dirty: false,
+            source: Source::Kept(commit),
+        }
+        .run(env, checkout)
+    }
+}
+
 impl InstallVps {
     /// The install a promotion makes: the kept build of `commit`, with the
     /// saved publishing choices, waiting for runs as an operator's install.
     pub fn promotion(commit: Commit) -> Self {
         Self {
-            publish: Publish::default(),
-            skip_backup: false,
+            upgrade: UpgradeArgs {
+                publish: Publish::default(),
+                skip_backup: false,
+                idle_timeout: 900,
+                drain_runs: false,
+            },
             allow_dirty: false,
-            build: Some(commit),
-            idle_timeout: 900,
-            drain_runs: false,
+            source: Source::Kept(commit),
         }
     }
 
-    /// Installs or upgrades from `checkout`.
+    /// Installs from `checkout`, or upgrades to a kept build.
     pub fn run(self, env: &HostEnv, checkout: &Path) -> Result<(), InstallError> {
-        let backup = if self.skip_backup {
+        let Self {
+            upgrade:
+                UpgradeArgs {
+                    publish,
+                    skip_backup,
+                    idle_timeout,
+                    drain_runs,
+                },
+            allow_dirty,
+            source,
+        } = self;
+        let backup = if skip_backup {
             Backup::Skip
         } else {
             Backup::Run
         };
-        let policy = if self.drain_runs {
+        let policy = if drain_runs {
             RunPolicy::Drain
         } else {
             RunPolicy::Wait
         };
         Self::preflight()?;
         let layout = Layout::new(env, checkout)?;
+        source.admitted(&layout.unit)?;
         // Inside the service it restarts, the restart would stop this task
         // between its pause and its resume: carry on outside it.
         let cgroup = fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
@@ -406,7 +509,7 @@ impl InstallVps {
             Placement::Elsewhere => {}
         }
         let saved = Publish::path(&layout.home);
-        let publish = self.publish.resolve(&saved)?;
+        let publish = publish.resolve(&saved)?;
         let tailscale = if publish.sudo_tailscale {
             Tailnet::new(Cli::Sudo)
         } else {
@@ -416,16 +519,16 @@ impl InstallVps {
             Some(_) => Some(UiDeploy::new(env, &layout.home, &layout.repo)?),
             None => None,
         };
-        let (tree, built) = match &self.build {
-            Some(commit) => {
+        let (tree, built) = match &source {
+            Source::Kept(commit) => {
                 let stored = Self::stored(&layout, commit)?;
                 if let Some(ui) = &ui {
                     ui.stage(&stored.ui())?;
                 }
                 (Tree::Clean, stored.ren())
             }
-            None => {
-                let tree = Self::check_tree(&layout, self.allow_dirty)?;
+            Source::Checkout => {
+                let tree = Self::check_tree(&layout, allow_dirty)?;
                 let built = Self::build(&layout)?;
                 if let Some(ui) = &ui {
                     ui.build()?;
@@ -442,7 +545,7 @@ impl InstallVps {
             Contain::None | Contain::Runs => None,
             Contain::All => Some(Self::contain(&layout, &config, env)?),
         };
-        let quiesced = Self::quiesce(&layout, self.idle_timeout, policy)?;
+        let quiesced = Self::quiesce(&layout, idle_timeout, policy)?;
         quiesced.ending.announce();
         let replaced = Self::replace(&layout, &built, backup, tree, contained.as_ref());
         Self::release(&layout, quiesced.admission);
@@ -1039,6 +1142,20 @@ impl InstallVps {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_checkout_is_installed_only_where_ren_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let unit = dir.path().join("ren.service");
+        let kept = super::Source::Kept("a".repeat(40).parse().unwrap());
+        assert!(super::Source::Checkout.admitted(&unit).is_ok());
+        std::fs::write(&unit, "[Service]\n").unwrap();
+        assert!(matches!(
+            super::Source::Checkout.admitted(&unit),
+            Err(super::InstallError::Installed)
+        ));
+        assert!(kept.admitted(&unit).is_ok());
+    }
+
     #[test]
     fn ren_is_registered_when_a_project_not_archived_is_built_as_ren() {
         let listed = |projects: &str| {

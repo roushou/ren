@@ -264,13 +264,17 @@ connected Tailscale:
 cargo run --release -p ren-rs -- deployer install-vps --https-port 8443 --ui-https-port 8444
 ```
 
-The first install has no `ren` yet, so cargo runs the checkout's own; after
-it, the installed `ren deployer install-vps` does the same from the checkout
-it runs in (`--checkout` names another). It runs the steps below and is safe
-to repeat: run it again from the commit to deploy to upgrade. After a successful run it saves its publishing flags
-(`--https-port`, `--ui-https-port`, `--sudo-tailscale`) to
-`~/.config/ren/install-vps.toml`, so later runs need no flags:
-`ren deployer install-vps`. Giving any publishing flag replaces the saved set. It refuses a checkout whose tracked files differ from the
+The first install has no `ren` yet, so cargo runs the checkout's own. It
+installs once: where `ren.service` exists it refuses. After it, production
+runs only builds the deployer made in a container and kept: the canary's
+promotion ([canary and promotion](#canary-and-promotion)), or a passed build
+chosen with `ren deploy <commit> --production`, each upgraded with the steps
+below. To change the publishing settings, `ren deployer settings` takes the
+same flags and runs those steps with the kept build production runs. After a
+successful run each saves its publishing flags
+(`--https-port`, `--ui-https-port`, `--sudo-tailscale`, `--contain`) to
+`~/.config/ren/install-vps.toml`, which promotions reuse. Giving any
+publishing flag replaces the saved set. The first install refuses a checkout whose tracked files differ from the
 commit (`--allow-dirty` installs a `-dirty` build) and warns when the commit is on
 no remote branch. It builds the release binary while the old daemon keeps
 serving, creates `~/.config/ren/ren.toml` only if missing, and checks the
@@ -412,7 +416,7 @@ promote = "manual" # the default: `ren deployer canary promote`
 # promote = "02:00-05:00"    # as soon as it passes inside this daily UTC window
 ```
 
-Promoting runs `install-vps --build <commit>` with the saved publishing
+Promoting upgrades production to the kept build with the saved publishing
 flags: the install's own steps (the wait for calls and bound runs' turns, the
 pause, the backup, the build check, and the rollback on failure), with the
 kept build instead of building the checkout. No policy promotes a build that failed its checks, that production already runs, or that lacks commits production has, nor one over a production build that is not a clean commit of `main`; `canary promote` promotes any build that passed. A promotion that fails is rolled back by the install and marked on the build, and is not tried again unless you promote
