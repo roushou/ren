@@ -1,10 +1,11 @@
 //! The deployments the deployer runs in their slots, and the one pure step that
 //! moves them on: `(Deployments, Event) -> (Deployments, Vec<Action>)`.
 
-use super::slot::Slot;
+use super::{Seed, slot::Slot};
 use crate::release::PreviewCapacity;
 use ren_git::Commit;
 use ren_github::{PullNumber, Readiness};
+use ren_recorder::id::WorkItemId;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -30,6 +31,14 @@ pub struct Deployment {
     #[serde(rename = "key")]
     pub trigger: Trigger,
     pub commit: Commit,
+    /// Left out when a copy of production, as files written before seeds
+    /// hold every one, so an older reader still reads them.
+    #[serde(default, skip_serializing_if = "Seed::is_copy")]
+    pub seed: Seed,
+    /// The work items whose change it previews, recorded on each once it
+    /// runs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub work: Vec<WorkItemId>,
     pub state: DeploymentState,
 }
 
@@ -77,6 +86,9 @@ pub enum Reach {
 pub struct Wanted {
     pub trigger: Trigger,
     pub commit: Commit,
+    pub seed: Seed,
+    /// The work items whose change it previews.
+    pub work: Vec<WorkItemId>,
 }
 
 /// What moves the deployments on.
@@ -113,6 +125,7 @@ pub enum Action {
         slot: Slot,
         trigger: Trigger,
         commit: Commit,
+        seed: Seed,
     },
 }
 
@@ -133,6 +146,8 @@ impl Wanted {
             Readiness::Ready => Some(Self {
                 trigger: Trigger::FollowsPull(number),
                 commit: head,
+                seed: Seed::Copy,
+                work: Vec::new(),
             }),
             Readiness::Draft => None,
         }
@@ -206,13 +221,18 @@ impl Deployments {
                 .find(|want| want.trigger == deployment.trigger);
             match still {
                 Some(want) if slots.contains(&deployment.slot) => {
-                    let current = want.commit == deployment.commit;
+                    // Another commit or other data is another deployment;
+                    // other work items are only recorded on.
+                    let current = want.commit == deployment.commit && want.seed == deployment.seed;
                     match (&deployment.state, current) {
                         (
                             DeploymentState::Running { .. } | DeploymentState::Failed { .. },
                             true,
                         ) => {
-                            kept.push(deployment);
+                            kept.push(Deployment {
+                                work: want.work.clone(),
+                                ..deployment
+                            });
                         }
                         (DeploymentState::Building, true)
                         | (
@@ -225,9 +245,12 @@ impl Deployments {
                                 slot: deployment.slot,
                                 trigger: want.trigger.clone(),
                                 commit: want.commit.clone(),
+                                seed: want.seed,
                             });
                             kept.push(Deployment {
                                 commit: want.commit.clone(),
+                                seed: want.seed,
+                                work: want.work.clone(),
                                 state: DeploymentState::Building,
                                 ..deployment
                             });
@@ -257,11 +280,14 @@ impl Deployments {
                 slot,
                 trigger: want.trigger.clone(),
                 commit: want.commit.clone(),
+                seed: want.seed,
             });
             kept.push(Deployment {
                 slot,
                 trigger: want.trigger.clone(),
                 commit: want.commit.clone(),
+                seed: want.seed,
+                work: want.work.clone(),
                 state: DeploymentState::Building,
             });
         }

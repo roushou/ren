@@ -13,10 +13,15 @@ use crate::{
     progress::Progress,
     replica::{ListedPull, ProductionPlace, Replica},
 };
-use ren_gateway::deployment::{Action, Deployments, Event, Reach, Slot, Trigger, Wanted};
-use ren_git::Commit;
+use ren_gateway::api::control::request::{PreviewWorkRequest, WorkChange};
+use ren_gateway::api::read::work::WorkPreviewBody;
+use ren_gateway::deployment::{
+    Action, Deployment, Deployments, Event, Reach, Seed, Slot, Trigger, Wanted,
+};
+use ren_git::{Commit, SourceRevision, Tree};
 use ren_harness::host::HostEnv;
 use ren_protocol::label::Stored;
+use ren_recorder::id::WorkItemId;
 use std::path::PathBuf;
 
 /// One previews pass, against `production`.
@@ -46,10 +51,25 @@ impl PreviewPass<'_> {
         let before = self.production.previews();
         let wanted = self.wanted(&before)?;
         let (mut instances, actions) = before
+            .clone()
             .step(Event::Wanted { wanted, capacity })
             .map_err(|stale| CanaryError::Preview(stale.to_string()))?;
         self.production.write_previews(&instances)?;
         planned();
+        // A work item no deployment previews any longer has its record
+        // taken off: its deployment stopped, or was chosen without it.
+        for gone in before.deployments() {
+            let kept = instances
+                .of(&gone.trigger)
+                .map_or(&[][..], |now| now.work.as_slice());
+            let left: Vec<WorkItemId> = gone
+                .work
+                .iter()
+                .filter(|item| !kept.contains(item))
+                .copied()
+                .collect();
+            self.record(&left, None);
+        }
         let tailscale = self.deployer.tailscale(self.publish)?;
         let mut backup: Option<PathBuf> = None;
         for action in actions {
@@ -62,28 +82,41 @@ impl PreviewPass<'_> {
                     slot,
                     trigger,
                     commit,
+                    seed,
                 } => {
                     Progress(&format!(
-                        "Previewing {} ({}) in slot {}",
+                        "Previewing {} ({}, on {seed}) in slot {}",
                         commit.short(),
                         Self::describe(&trigger),
                         slot.index()
                     ))
                     .show();
-                    let backup = match &backup {
-                        Some(path) => path.clone(),
-                        None => backup.insert(self.production.backup()?).clone(),
+                    let data = match seed {
+                        Seed::Copy => Data::Copy(match &backup {
+                            Some(path) => path.clone(),
+                            None => backup.insert(self.production.backup()?).clone(),
+                        }),
+                        Seed::Invented(number) => Data::Invented(number),
                     };
-                    let event = match self.start(env, slot, &commit, &backup, tailscale) {
-                        Ok(()) => Event::Started {
-                            slot,
-                            commit,
-                            reach: if tailscale.is_some() {
-                                Reach::Tailnet
-                            } else {
-                                Reach::Loopback
-                            },
-                        },
+                    let event = match self.start(env, slot, &commit, &data, tailscale) {
+                        Ok(ui) => {
+                            let work = instances
+                                .deployments()
+                                .iter()
+                                .find(|d| d.slot == slot)
+                                .map(|d: &Deployment| d.work.clone())
+                                .unwrap_or_default();
+                            self.record(&work, Some((&ui, &commit)));
+                            Event::Started {
+                                slot,
+                                commit,
+                                reach: if tailscale.is_some() {
+                                    Reach::Tailnet
+                                } else {
+                                    Reach::Loopback
+                                },
+                            }
+                        }
                         Err(error) => {
                             println!("warning: the preview of {} failed: {error}", commit.short());
                             // What ran in the slot before is not this
@@ -121,11 +154,13 @@ impl PreviewPass<'_> {
         let asked = self
             .production
             .preview_requests()
-            .commits()
+            .chosen()
             .iter()
-            .map(|commit| Wanted {
-                trigger: Trigger::Chosen(commit.clone()),
-                commit: commit.clone(),
+            .map(|chosen| Wanted {
+                trigger: Trigger::Chosen(chosen.commit.clone()),
+                commit: chosen.commit.clone(),
+                seed: chosen.seed,
+                work: chosen.work.clone(),
             })
             .collect::<Vec<_>>();
         let pulls: Vec<Wanted> = match self.production.pulls(self.project)? {
@@ -137,6 +172,8 @@ impl PreviewPass<'_> {
                 .map(|instance| Wanted {
                     trigger: instance.trigger.clone(),
                     commit: instance.commit.clone(),
+                    seed: instance.seed,
+                    work: instance.work.clone(),
                 })
                 .collect(),
         };
@@ -176,33 +213,81 @@ impl PreviewPass<'_> {
         Ok(())
     }
 
-    /// Fetches, builds, and starts `commit` in `slot` on `backup`'s history.
+    /// Records the preview at `ui` of `commit` on each of `work`, or that
+    /// there is none any longer. A record that fails is a warning: the
+    /// deployment stands either way.
+    fn record(&self, work: &[WorkItemId], preview: Option<(&str, &Commit)>) {
+        let preview = match preview {
+            None => None,
+            Some((ui, commit)) => match ui.parse() {
+                Ok(ui) => Some(WorkPreviewBody {
+                    ui,
+                    revision: SourceRevision::Commit {
+                        commit: commit.clone(),
+                        tree: Tree::Clean,
+                    },
+                }),
+                Err(_) => {
+                    println!("warning: {ui} is not an address a work item keeps");
+                    return;
+                }
+            },
+        };
+        for item in work {
+            let change = WorkChange::Preview(PreviewWorkRequest {
+                preview: preview.clone(),
+            });
+            if let Err(error) = self.production.move_work(*item, change) {
+                println!("warning: the preview was not recorded on work item {item}: {error}");
+            }
+        }
+    }
+
+    /// Fetches, builds, and starts `commit` in `slot` on `data`; answers
+    /// its UI's address.
     fn start(
         &self,
         env: &HostEnv,
         slot: Slot,
         commit: &Commit,
-        backup: &std::path::Path,
+        data: &Data,
         tailscale: Option<crate::tailscale::Tailnet>,
-    ) -> Result<(), CanaryError> {
+    ) -> Result<String, CanaryError> {
         let deployer = self.deployer;
-        deployer
-            .git
-            .fetch_commit(&deployer.repo, Deployer::REMOTE, commit)?;
+        // A commit this host already holds (an agent's, in a worktree of
+        // the same repository) needs no fetch, and may be on no remote.
+        if !deployer.git.has_commit(&deployer.repo, commit)? {
+            deployer
+                .git
+                .fetch_commit(&deployer.repo, Deployer::REMOTE, commit)?;
+        }
         let worktree = deployer.home.join(".local/share/ren/preview-factory");
         deployer
             .git
             .check_out_detached(&deployer.repo, &worktree, commit)?;
         let build = deployer.builds.make(env, &worktree, commit)?;
         let replica = Replica::preview_slot(env, slot)?;
-        replica.replace_data(backup)?;
+        match data {
+            Data::Copy(backup) => replica.replace_data(backup)?,
+            Data::Invented(_) => replica.empty_data()?,
+        }
         let keys = replica.configure(self.production)?;
+        if let Data::Invented(number) = data {
+            replica.seed(&build.ren(), *number)?;
+        }
         let publish = tailscale.map(|tailscale| {
             let (gateway, ui) = slot.published();
             (tailscale, gateway, ui)
         });
         let reached = replica.start(&deployer.repo, &build.ren(), &build.ui(), &keys, publish)?;
         println!("Deployment of {}: {}", commit.short(), reached.ui);
-        Ok(())
+        Ok(reached.ui)
     }
+}
+
+/// What a deployment's data starts as, ready to write: a backup of
+/// production's, or the number a history is invented from.
+enum Data {
+    Copy(PathBuf),
+    Invented(ren_gateway::deployment::SeedNumber),
 }

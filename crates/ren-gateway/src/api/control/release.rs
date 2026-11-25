@@ -18,11 +18,11 @@
 
 use super::{
     ControlApi, ControlRefusal,
-    request::{PreviewAskRequest, PromoteRequest},
+    request::{PreviewAskRequest, PreviewWithdrawRequest, PromoteRequest},
 };
 use crate::api::release::ReleaseFolder;
 use crate::deployer::{Deployer, DeployerAnswer, DeployerRequest};
-use crate::deployment::ChosenCommits;
+use crate::deployment::{Chosen, ChosenCommits, Seed};
 use crate::release::PromotionRequest;
 use axum::{
     Json, Router,
@@ -31,7 +31,6 @@ use axum::{
     routing::post,
 };
 use http::{HeaderMap, StatusCode};
-use ren_git::Commit;
 use std::sync::Arc;
 
 pub(super) struct ReleaseApi {
@@ -97,8 +96,16 @@ impl ReleaseApi {
         headers: HeaderMap,
         body: Result<Json<PreviewAskRequest>, JsonRejection>,
     ) -> Response {
-        api.change_asks(&headers, body, |requests, commit| {
-            requests.ask(commit);
+        let Ok(Json(PreviewAskRequest { commit, seed, work })) = body else {
+            return ControlRefusal::InvalidRequest.into_response();
+        };
+        let chosen = Chosen {
+            commit,
+            seed: seed.map_or(Seed::Copy, Seed::Invented),
+            work,
+        };
+        api.change_asks(&headers, |requests| {
+            requests.choose(chosen);
             true
         })
         .await
@@ -125,12 +132,13 @@ impl ReleaseApi {
     async fn withdraw_preview(
         State(api): State<Arc<Self>>,
         headers: HeaderMap,
-        body: Result<Json<PreviewAskRequest>, JsonRejection>,
+        body: Result<Json<PreviewWithdrawRequest>, JsonRejection>,
     ) -> Response {
-        api.change_asks(&headers, body, |requests, commit| {
-            requests.withdraw(&commit)
-        })
-        .await
+        let Ok(Json(PreviewWithdrawRequest { commit })) = body else {
+            return ControlRefusal::InvalidRequest.into_response();
+        };
+        api.change_asks(&headers, |requests| requests.withdraw(&commit))
+            .await
     }
 
     /// Changes the preview requests with `change`, which says whether the
@@ -139,20 +147,12 @@ impl ReleaseApi {
     async fn change_asks(
         &self,
         headers: &HeaderMap,
-        body: Result<Json<PreviewAskRequest>, JsonRejection>,
-        change: impl FnOnce(&mut ChosenCommits, Commit) -> bool,
+        change: impl FnOnce(&mut ChosenCommits) -> bool,
     ) -> Response {
         if let Err(refusal) = self.control.authorize(headers) {
             return refusal.into_response();
         }
-        let Ok(Json(PreviewAskRequest { commit })) = body else {
-            return ControlRefusal::InvalidRequest.into_response();
-        };
-        match self
-            .folder
-            .change_preview_requests(|requests| change(requests, commit))
-            .await
-        {
+        match self.folder.change_preview_requests(change).await {
             Ok((true, requests)) => {
                 if let Some(deployer) = &self.deployer {
                     self.ask(deployer.as_ref(), DeployerRequest::Previews).await;

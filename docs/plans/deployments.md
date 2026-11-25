@@ -176,12 +176,27 @@ a move lands before the move that needs it.
    `ren deployer serve` for a preview of that commit, which ran and
    answered `/health` as that commit, a preview, and was stopped when
    withdrawn.
-4. **Chosen previews, seeded.** Not built. `ren deploy <commit> --seed
-   <scenario | replica>` starts a chosen preview and answers with its
-   state and address. `ren deployments` lists them, and `ren deploy stop`
-   stops one. The worktree preview (`xtask/src/preview.rs`) and `ren
-   preview ask`'s file go. Verified by deploying a branch's commit on a
-   scenario and reading its pages and `/health`.
+4. **Chosen previews, seeded.** Built. A deployment has a `Seed`: a copy
+   of production's latest backup, or the history a `SeedNumber` invents.
+   `ren deploy <commit> [--seed N] [--work ITEM]...` chooses a commit (a
+   revision of this folder's repository, `HEAD`, or a full id), `ren deploy
+   stop` withdraws it, and `ren deployments` lists each deployment in its
+   slot with its seed; they replace `ren preview`. A seeded deployment
+   starts on an empty store its own build writes with `ren seed`
+   (`Replica::seed`). Once it runs, its address is recorded on each work
+   item it was chosen for, and taken off when no deployment previews the
+   item any longer. A commit the repository already holds (an agent's
+   unpushed one, in a worktree) is not fetched. The agents' brief says to
+   commit and run `ren deploy HEAD --work <id>`; the worktree preview
+   (`ren deployer preview`, its pod, and the daemon's removal of it) is
+   gone. Verified: the state machine's tests (another seed starts again,
+   other work items are only recorded, a copy is left out of the file),
+   the chosen file's tolerant read of bare commits, and in the dev
+   rehearsal: `ren deploy <commit> --seed 7 --work <item>` through the dev
+   daemon and a served deployer started the build in a slot, seeded 100
+   calls (served by its read API), answered `/health` as that commit, a
+   preview, and recorded its address on the sent work item; `ren deploy
+   stop` stopped it and took the record off.
 5. **The dev world goes.** Not built. Delete `xtask/src/dev` (instances,
    claims, index, the fake provider and agents, traffic, seed's player),
    `devtraffic.ts` and the toolbar, and `Environment::Development` with its
@@ -268,6 +283,15 @@ a move lands before the move that needs it.
   shipping a toolchain file (`atoi`, Rust 1.57) switched compilers mid-build.
   `canary enable` drops the pin; the deployer's builds run the toolchain's
   own `rustc` in their container and need none.
+- **Phase 4: the API keeps its paths.** `/control/v1/previews/ask` and
+  `/withdraw` and `/api/projects/{name}/previews` keep their names and gain
+  fields (an ask's `seed` and `work`, a preview's `seed` and `work`); the
+  files keep their shapes for production's older gateway (a copy of
+  production is written as before). Renaming the routes is a change of its
+  own.
+- **Phase 4: the seed is not a scenario.** The plan named scenarios; phase
+  1 made an invented history a number, so a deployment's seed is a copy of
+  production or a `SeedNumber`.
 - **Phase 1: checked by its pages, not side by side.** The history is
   invented afresh, not the scenarios' calls replayed, so the two seeds
   differ by design; the pages were checked against the new one.

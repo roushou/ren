@@ -22,8 +22,8 @@ pub enum Environment {
     /// The tip of `main` checked on a copy of production's history before
     /// production takes it (`ren deployer canary`).
     Canary,
-    /// One worktree's branch on a copy of production's history, for
-    /// judging its change (`ren deployer preview`).
+    /// A pull request's head or a chosen commit, on a copy of production's
+    /// history or an invented one, for judging its change (`ren deploy`).
     Preview,
 }
 

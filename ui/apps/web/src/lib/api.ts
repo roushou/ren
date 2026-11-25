@@ -830,6 +830,10 @@ export interface Preview {
   of: PreviewOf;
   commit: string;
   state: PreviewState;
+  /** The number of the history its data was invented from; none for a copy of production. */
+  seed: number | null;
+  /** The work items whose change it previews. */
+  work: string[];
   ui_port: number;
   /** The tailnet port its UI is published on. */
   published_ui_port: number;
@@ -1274,6 +1278,8 @@ const previews = object<Previews, WirePreviewsBody>({
       of: previewOf,
       commit: string,
       state: previewState,
+      seed: nullable(count),
+      work: array(string),
       ui_port: count,
       published_ui_port: count,
     }),

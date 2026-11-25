@@ -14,7 +14,6 @@ pub mod gvisor_service;
 pub mod install;
 pub mod invocation;
 pub mod pod;
-pub mod preview;
 pub mod progress;
 pub mod replica;
 pub mod shot;

@@ -13,6 +13,7 @@ ListRequest
 LoginAnswer
 PauseRequest
 PreviewAskRequest
+PreviewWithdrawRequest
 PreviewWorkRequest
 PromoteRequest
 PromptRequest

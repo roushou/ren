@@ -3,10 +3,11 @@
 //! history is the seed's ([`crate::seed`]); this only writes it.
 
 use crate::context::Context;
-use crate::seed::{Ending, History, Seed};
+use crate::seed::{Ending, History};
 use anyhow::{Context as _, Result};
 use clap::Args;
 use ren_daemon::host::{RandomIds, SystemClock};
+use ren_gateway::deployment::SeedNumber;
 use ren_protocol::route::{Method, Transport};
 use ren_protocol::{direction::Direction, encoding::ResponseEncoding, limits::LimitHeaders};
 use ren_recorder::{
@@ -28,7 +29,7 @@ pub struct SeedCmd {
     /// The number the history is made from: the same number always
     /// writes the same history.
     #[arg(long, default_value = "1")]
-    seed: Seed,
+    seed: SeedNumber,
 }
 
 impl SeedCmd {

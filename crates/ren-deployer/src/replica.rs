@@ -4,8 +4,8 @@
 //! production's: its own loopback ports and data folder, its own
 //! `[instance] environment`, no runs, and a placeholder for each operator
 //! key, so it forwards no operator-keyed call. Its UI only reads. The
-//! canary is one (`ren deployer canary`); each worktree's preview is
-//! another (`ren deployer preview`).
+//! canary is one (`ren deployer canary`); each deployment in a preview slot
+//! is another.
 
 use crate::{
     file::{FileError, FileMode},
@@ -18,7 +18,7 @@ use crate::{
 };
 use ren_container::{Access, Mount};
 use ren_daemon::config::{Config, ConfigError, DeployerOptions, GithubOptions, RunsOptions};
-use ren_gateway::deployment::{ChosenCommits, Deployments, Slot as PreviewSlot};
+use ren_gateway::deployment::{ChosenCommits, Deployments, SeedNumber, Slot as PreviewSlot};
 use ren_gateway::release::{PromotionRequest, Release, ShotName};
 use ren_gateway::{
     ControlToken, Environment, InstanceOptions,
@@ -443,20 +443,6 @@ impl Replica {
         })
     }
 
-    /// The preview of the worktree `name`: its daemon on the worktree's
-    /// first port and its UI on the next, in `<data>/preview`.
-    pub fn preview(name: &str, first_port: u16, data: &Path) -> Self {
-        let root = data.join("preview");
-        Self {
-            name: format!("preview-{name}"),
-            environment: Environment::Preview,
-            daemon: SocketAddr::new(Self::LOOPBACK, first_port),
-            ui: SocketAddr::new(Self::LOOPBACK, first_port.saturating_add(1)),
-            config: root.join("ren.toml"),
-            data_dir: root.join("data"),
-        }
-    }
-
     /// The preview in `slot` of the deployer's previews: its slot's ports,
     /// in `~/.config/ren-previews/<slot>` and
     /// `~/.local/state/ren-previews/<slot>`.
@@ -513,11 +499,19 @@ impl Replica {
     }
 
     /// Stops the replica and replaces its data with `backup`'s history.
-    /// Only a data folder a replica names (the canary's, or a preview's
-    /// `preview/data`) is ever removed.
     pub fn replace_data(&self, backup: &Path) -> Result<(), ReplicaError> {
+        self.empty_data()?;
+        for file in ["ren.sqlite3", "blobs.sqlite3"] {
+            let (from, to) = (backup.join(file), self.data_dir.join(file));
+            fs::copy(&from, &to).map_err(FileError::at(&from))?;
+        }
+        Ok(())
+    }
+
+    /// Stops the replica and empties its data folder. Only a data folder a
+    /// replica names (the canary's, or a preview's) is ever removed.
+    pub fn empty_data(&self) -> Result<(), ReplicaError> {
         let ours = self.data_dir.ends_with(".local/state/ren-canary")
-            || self.data_dir.ends_with("preview/data")
             || self
                 .data_dir
                 .parent()
@@ -534,10 +528,20 @@ impl Replica {
             .mode(0o700)
             .create(&self.data_dir)
             .map_err(FileError::at(&self.data_dir))?;
-        for file in ["ren.sqlite3", "blobs.sqlite3"] {
-            let (from, to) = (backup.join(file), self.data_dir.join(file));
-            fs::copy(&from, &to).map_err(FileError::at(&from))?;
-        }
+        Ok(())
+    }
+
+    /// Writes the history `number` invents into its empty data with `ren`,
+    /// the build it runs (`ren seed`), as configured.
+    pub fn seed(&self, ren: &Path, number: SeedNumber) -> Result<(), ReplicaError> {
+        Progress(&format!("Seeding {} with history {number}", self.name)).show();
+        Invocation::new(ren)
+            .arg("--config")
+            .arg(&self.config)
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+            .args(["seed", "--seed", &number.to_string()])
+            .run()?;
         Ok(())
     }
 
@@ -770,19 +774,21 @@ socket = "/run/user/1000/ren-deployer/deployer.sock"
         assert!(!toml::to_string(&config).unwrap().contains("[deployer]"));
         config.check().unwrap();
 
-        let preview = Replica::preview("ren-3", 20_200, Path::new("/data/worktrees/.data/ren-3"));
+        let env = ren_harness::host::HostEnv::from_pairs([("HOME", "/home/op")]);
+        let slot = ren_gateway::deployment::Slot::first(2).last().unwrap();
+        let preview = Replica::preview_slot(&env, slot).unwrap();
         let config = preview.derive(production());
-        assert_eq!(config.listen.port(), 20_200);
-        assert_eq!(preview.ui().port(), 20_201);
+        assert_eq!(config.listen.port(), slot.ports().0);
+        assert_eq!(preview.ui().port(), slot.ports().1);
         assert_eq!(config.instance.environment, Environment::Preview);
         assert_eq!(
             preview.data_dir,
-            Path::new("/data/worktrees/.data/ren-3/preview/data")
+            Path::new("/home/op/.local/state/ren-previews/1")
         );
         // A data folder no replica names is never removed.
         let stray = Replica {
             data_dir: Path::new("/home/op").to_path_buf(),
-            ..Replica::preview("ren-3", 20_200, Path::new("/data/worktrees/.data/ren-3"))
+            ..Replica::preview_slot(&env, slot).unwrap()
         };
         assert!(matches!(
             stray.replace_data(Path::new("/tmp/backup")),
@@ -791,20 +797,11 @@ socket = "/run/user/1000/ren-deployer/deployer.sock"
     }
 
     #[test]
-    fn a_preview_runs_as_the_pod_its_worktree_stops() {
-        let worktree = ren_supervisor::Worktree::of(
-            Path::new("/data/worktrees"),
-            Path::new("/data/worktrees/ren-3"),
-        )
-        .unwrap();
-        let preview = Replica::preview("ren-3", 20_200, &worktree.data());
-        assert_eq!(preview.pod().name(), worktree.preview_pod());
-    }
-
-    #[test]
     fn every_pod_is_named_for_its_replica() {
-        let preview = Replica::preview("acme-web-2", 20_100, Path::new("/tmp/acme"));
-        assert_eq!(preview.pod().name(), "ren-preview-acme-web-2");
+        let env = ren_harness::host::HostEnv::from_pairs([("HOME", "/home/op")]);
+        let slot = ren_gateway::deployment::Slot::first(1).last().unwrap();
+        let preview = Replica::preview_slot(&env, slot).unwrap();
+        assert_eq!(preview.pod().name(), "ren-preview-0");
         assert_eq!(
             Replica::canary(&ren_harness::host::HostEnv::from_pairs([(
                 "HOME", "/home/op"

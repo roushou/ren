@@ -6,6 +6,7 @@
 
 use crate::api::control::projects::RegisterProjectRequest;
 use crate::api::read::work::{WorkOrderBody, WorkPreviewBody};
+use crate::deployment::SeedNumber;
 use ren_git::Commit;
 use ren_git::SourceRevision;
 use ren_harness::{
@@ -72,12 +73,28 @@ pub struct PromoteRequest {
     pub commit: Commit,
 }
 
-/// `POST previews/ask` and `previews/withdraw`: the operator asks for a
-/// preview of `commit`, or withdraws the ask, for the deployer's next pass.
+/// `POST previews/ask`: the operator chooses `commit` to deploy, for the
+/// deployer's next pass: on a copy of production, or on the history `seed`
+/// invents (`ren seed`), recorded on each of `work` once it runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewAskRequest {
+    #[ts(as = "String")]
+    pub commit: Commit,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(as = "Option<u64>")]
+    pub seed: Option<SeedNumber>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Vec<String>")]
+    pub work: Vec<WorkItemId>,
+}
+
+/// `POST previews/withdraw`: the operator withdraws the choice of `commit`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewWithdrawRequest {
     #[ts(as = "String")]
     pub commit: Commit,
 }
@@ -412,10 +429,10 @@ pub enum ControlRequest {
     },
     /// Ask that production take the canary's build.
     Promote(PromoteRequest),
-    /// Ask for a preview of a commit.
+    /// Choose a commit to deploy.
     AskPreview(PreviewAskRequest),
-    /// Withdraw the ask for a preview of a commit.
-    WithdrawPreview(PreviewAskRequest),
+    /// Withdraw the choice of a commit.
+    WithdrawPreview(PreviewWithdrawRequest),
     /// Move a work item on.
     Work {
         item: WorkItemId,
@@ -552,7 +569,8 @@ impl ControlRequest {
             Self::Reply { reply, .. } => serde_json::to_vec(reply).map(Some),
             Self::QueueWork { order, .. } => serde_json::to_vec(order).map(Some),
             Self::Promote(promote) => serde_json::to_vec(promote).map(Some),
-            Self::AskPreview(ask) | Self::WithdrawPreview(ask) => serde_json::to_vec(ask).map(Some),
+            Self::AskPreview(ask) => serde_json::to_vec(ask).map(Some),
+            Self::WithdrawPreview(withdraw) => serde_json::to_vec(withdraw).map(Some),
             Self::RegisterProject(project) => serde_json::to_vec(project).map(Some),
             Self::Work { change, .. } => match change {
                 WorkChange::Send(send) => serde_json::to_vec(send).map(Some),

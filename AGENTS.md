@@ -856,10 +856,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   caches).
   `replica`: Ren on a copy of production's history (`ProductionPlace`,
   production and its work item API, and `Replica`, the canary's and each
-  preview's instance). `ren deployer preview` (`preview`) runs a worktree's
-  branch as a replica on the worktree's ports and records it on the work
-  items the branch names; `ren_supervisor::Worktree::preview_pod` names
-  its pod, which removing the worktree removes. `pod` is how a replica
+  preview slot's instance); a deployment chosen with `ren deploy` starts in
+  a slot on a copy of production or on a history `ren seed` invents
+  (`Replica::seed`), and the previews pass records its address on the work
+  items it was chosen for. `pod` is how a replica
   runs: a rootless Podman pod (`Pod`), one `ren-container` `Container` per process, each
   seeing only the kept build it runs (read-only) and the replica's own
   configuration and data at their host paths, on the host's network, from

@@ -1,7 +1,7 @@
 //! Invented history for a deployment's empty store (docs/plans/deployments.md,
 //! phase 1): sessions from each client Ren attributes (Claude Code, Codex,
 //! Pi, opencode), with turns and tool calls, several callers, failures, and
-//! long prompts, all about an invented project ("acme"). A [`Seed`] decides
+//! long prompts, all about an invented project ("acme"). A [`SeedNumber`] decides
 //! everything, so the same seed always invents the same history.
 //!
 //! Each [`InventedCall`] is what the gateway would hand the recorder: the
@@ -14,6 +14,7 @@
 mod purity;
 
 use http::{HeaderMap, HeaderName, HeaderValue};
+use ren_gateway::deployment::SeedNumber;
 use ren_harness::Harness;
 use ren_network::tailscale::Login;
 use ren_protocol::{
@@ -24,18 +25,6 @@ use ren_recorder::caller::{Caller, Proof, UserId};
 use serde_json::{Value, json};
 use std::time::Duration;
 use uuid::Uuid;
-
-/// The number an invented history is made from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Seed(u64);
-
-impl std::str::FromStr for Seed {
-    type Err = std::num::ParseIntError;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        text.parse().map(Self)
-    }
-}
 
 /// Invented history: its calls, oldest first.
 #[derive(Debug)]
@@ -219,8 +208,8 @@ const REPLIES: [&str; 6] = [
 
 impl History {
     /// The history `seed` invents.
-    pub fn invent(seed: Seed) -> Self {
-        let mut dice = Dice(seed.0);
+    pub fn invent(seed: SeedNumber) -> Self {
+        let mut dice = Dice(seed.get());
         let mut calls = Vec::new();
         let sessions = dice.between(10, 14);
         for number in 0..sessions {
@@ -762,15 +751,15 @@ impl Who {
 
 #[cfg(test)]
 mod tests {
-    use super::{Ending, History, Seed, Who};
+    use super::{Ending, History, SeedNumber, Who};
     use ren_harness::Harness;
     use ren_recorder::caller::Caller;
 
     #[test]
     fn a_seed_always_invents_the_same_history_and_another_seed_another() {
-        let one = History::invent(Seed(7));
-        let again = History::invent(Seed(7));
-        let other = History::invent(Seed(8));
+        let one = History::invent(SeedNumber::new(7));
+        let again = History::invent(SeedNumber::new(7));
+        let other = History::invent(SeedNumber::new(8));
         let bodies = |history: &History| -> Vec<Vec<u8>> {
             history
                 .calls()
@@ -784,7 +773,7 @@ mod tests {
 
     #[test]
     fn the_history_holds_every_client_caller_and_ending_oldest_first() {
-        let history = History::invent(Seed(1));
+        let history = History::invent(SeedNumber::new(1));
         let calls = history.calls();
         assert!(calls.windows(2).all(|pair| pair[0].ago >= pair[1].ago));
         for request in calls.iter().map(|call| &call.request) {

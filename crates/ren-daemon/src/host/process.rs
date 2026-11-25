@@ -4,7 +4,6 @@
 
 use super::HeldRuns;
 use crate::packages::PackageStore;
-use ren_container::Engine;
 use ren_depot::package_set::Generation;
 use ren_git::{Git, GitError, Head, Repository};
 use ren_harness::{launch::LaunchPlan, pi::PiCache, sign_in::LocalRedirect};
@@ -658,18 +657,14 @@ where
 }
 
 impl ProcessHost {
-    /// Stops a worktree's preview, if one runs: Ren's own (`ren deployer
-    /// preview`), a Podman pod, and a project's (`ren project preview`), a
-    /// transient unit, each named for the worktree. Removing one that does
-    /// not exist (or on a host without Podman or systemd) changes nothing.
+    /// Stops a worktree's preview, if one runs: a project's (`ren project
+    /// preview`), a transient unit named for the worktree. Stopping one
+    /// that does not exist (or on a host without systemd) changes nothing.
     #[expect(
         clippy::disallowed_methods,
         reason = "stopping a removed worktree's preview, by its exact names"
     )]
     fn stop_preview(worktree: &Worktree) {
-        if let Err(error) = Engine::Podman.remove_pod(&worktree.preview_pod(), None) {
-            tracing::debug!(%error, "nothing to stop a worktree's preview pod with");
-        }
         let commands = [(
             "systemctl",
             vec![

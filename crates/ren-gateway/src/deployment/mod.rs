@@ -15,10 +15,12 @@
 
 mod chosen;
 mod deployments;
+mod seed;
 mod slot;
 
-pub use chosen::ChosenCommits;
+pub use chosen::{Chosen, ChosenCommits};
 pub use deployments::{
     Action, Deployment, DeploymentState, Deployments, Event, Reach, StaleReport, Trigger, Wanted,
 };
+pub use seed::{Seed, SeedNumber};
 pub use slot::Slot;

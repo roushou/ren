@@ -1,12 +1,14 @@
-//! The instances' one step: which wants hold slots, what starts and stops,
-//! and the factory's reports, with invented commits and pull requests.
+//! The deployments' one step: which wants hold slots, what starts and
+//! stops, and the deployer's reports, with invented commits and pull
+//! requests.
 #![allow(
     clippy::unwrap_used,
     reason = "integration tests are a shell: helpers outside #[test] fail loudly"
 )]
 
 use ren_gateway::deployment::{
-    Action, DeploymentState, Deployments, Event, Reach, Slot, StaleReport, Trigger, Wanted,
+    Action, DeploymentState, Deployments, Event, Reach, Seed, SeedNumber, Slot, StaleReport,
+    Trigger, Wanted,
 };
 use ren_gateway::release::PreviewCapacity;
 use ren_git::Commit;
@@ -20,6 +22,8 @@ fn pull(number: u64, head: char) -> Wanted {
     Wanted {
         trigger: Trigger::FollowsPull(number.to_string().parse().unwrap()),
         commit: commit(head),
+        seed: Seed::Copy,
+        work: Vec::new(),
     }
 }
 
@@ -27,6 +31,8 @@ fn asked(head: char) -> Wanted {
     Wanted {
         trigger: Trigger::Chosen(commit(head)),
         commit: commit(head),
+        seed: Seed::Copy,
+        work: Vec::new(),
     }
 }
 
@@ -43,6 +49,7 @@ fn start(index: usize, want: &Wanted) -> Action {
         slot: slot(index),
         trigger: want.trigger.clone(),
         commit: want.commit.clone(),
+        seed: want.seed,
     }
 }
 
@@ -235,4 +242,37 @@ fn a_draft_wants_no_preview_and_a_ready_pull_wants_its_head() {
         Some(pull(7, 'a'))
     );
     assert_eq!(Wanted::pull(number, commit('a'), Readiness::Draft), None);
+}
+
+#[test]
+fn another_seed_starts_again_and_other_work_items_are_only_recorded() {
+    let copy = asked('a');
+    let (deployments, actions) = want(Deployments::default(), std::slice::from_ref(&copy), 1);
+    let deployments = running(deployments, &actions);
+    let item = "00000000-0000-0000-0000-000000000009".parse().unwrap();
+    let recorded = Wanted {
+        work: vec![item],
+        ..copy.clone()
+    };
+    let (deployments, actions) = want(deployments, &[recorded], 1);
+    assert_eq!(actions, []);
+    assert_eq!(deployments.of(&copy.trigger).unwrap().work, [item]);
+    let invented = Wanted {
+        seed: Seed::Invented(SeedNumber::new(7)),
+        ..copy
+    };
+    let (deployments, actions) = want(deployments, std::slice::from_ref(&invented), 1);
+    assert_eq!(actions, [start(0, &invented)]);
+    assert_eq!(
+        deployments.of(&invented.trigger).unwrap().seed,
+        Seed::Invented(SeedNumber::new(7))
+    );
+    // An invented history is written; a copy of production is left out,
+    // as the files production's older gateway reads hold none.
+    let json = serde_json::to_value(&deployments).unwrap();
+    assert_eq!(
+        json["previews"][0]["seed"],
+        serde_json::json!({ "invented": 7 })
+    );
+    assert!(json["previews"][0].get("work").is_none());
 }

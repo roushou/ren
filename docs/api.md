@@ -415,17 +415,18 @@ canary's and its build passed. Ren's Release page in the UI
 
 ### Previews
 
-`POST /control/v1/previews/ask` with `{commit}` asks for a preview of that
-commit, and `POST /control/v1/previews/withdraw` with `{commit}` withdraws
-the ask. The gateway records the asks (`preview-requests.json` in its data
+`POST /control/v1/previews/ask` with `{commit, seed?, work?}` chooses that
+commit to deploy: on a copy of production, or on the history `seed`
+invents, recorded on each of the `work` items once it runs; `POST
+/control/v1/previews/withdraw` with `{commit}` withdraws the choice. The gateway records the asks (`preview-requests.json` in its data
 folder) and answers `202` `{api_version, commits}`, every commit asked for,
 the newest ask first. With `[deployer] socket` set, the gateway first asks
 the factory to plan the change and answers once it has (the commit holds
 its slot, building) or after five seconds; otherwise the factory's next
 canary pass starts or stops the preview
 ([deployment](deployment.md#previews-of-pull-requests-and-commits)).
-A withdrawal of a commit not asked for is `404` `not_found`. `ren preview ask
-<commit>` and `ren preview withdraw <commit>` send them.
+A withdrawal of a commit not chosen is `404` `not_found`. `ren deploy
+<commit>` and `ren deploy stop <commit>` send them.
 
 ### Projects
 
@@ -506,8 +507,8 @@ session in a worktree of its own.
   item's change, `{preview: {ui, revision}}`, where `ui` is an `http` or
   `https` origin with no path (`400` `invalid_request` otherwise), or clears
   it with `{preview: null}`; the item's state stays `sent` (`409`
-  `work_state` for any other state). `ren deployer preview` records it
-  ([previews](deployment.md#previews)).
+  `work_state` for any other state). The deployer records it for a
+  deployment chosen with `--work` ([previews](deployment.md#previews)).
 
 Ren lands and ships items itself ([canary and
 promotion](deployment.md#canary-and-promotion)): a brief asks for a

@@ -7,6 +7,15 @@ import type { PreviewStateBody } from "./PreviewStateBody.ts";
  */
 export type PreviewBody = { slot: number, of: PreviewOfBody, commit: string, state: PreviewStateBody, 
 /**
+ * The number of the history its data was invented from (`ren seed`);
+ * none for a copy of production.
+ */
+seed: number | null, 
+/**
+ * The work items whose change it previews.
+ */
+work: Array<string>, 
+/**
  * The loopback port its UI answers on.
  */
 ui_port: number, 

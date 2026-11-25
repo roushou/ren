@@ -342,12 +342,16 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
                 ren_gateway::deployment::Wanted {
                     trigger: ren_gateway::deployment::Trigger::FollowsPull("12".parse().unwrap()),
                     commit: "2222222222222222222222222222222222222222".parse().unwrap(),
+                    seed: ren_gateway::deployment::Seed::Copy,
+                    work: Vec::new(),
                 },
                 ren_gateway::deployment::Wanted {
                     trigger: ren_gateway::deployment::Trigger::Chosen(
                         "3333333333333333333333333333333333333333".parse().unwrap(),
                     ),
                     commit: "3333333333333333333333333333333333333333".parse().unwrap(),
+                    seed: ren_gateway::deployment::Seed::Copy,
+                    work: Vec::new(),
                 },
             ];
             use ren_gateway::deployment::{Action, Deployments, Event, Reach};
@@ -381,7 +385,9 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
             )
             .unwrap();
             let mut requests = ren_gateway::deployment::ChosenCommits::default();
-            requests.ask("3333333333333333333333333333333333333333".parse().unwrap());
+            requests.choose(ren_gateway::deployment::Chosen::copy(
+                "3333333333333333333333333333333333333333".parse().unwrap(),
+            ));
             std::fs::write(
                 dir.path()
                     .join(ren_gateway::deployment::ChosenCommits::FILE),

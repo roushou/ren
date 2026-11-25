@@ -21,6 +21,7 @@ fn pure_modules_stay_free_of_runtime_and_io_dependencies() {
         ("deployer/mod.rs", include_str!("deployer/mod.rs")),
         ("deployer/follow.rs", include_str!("deployer/follow.rs")),
         ("deployment/slot.rs", include_str!("deployment/slot.rs")),
+        ("deployment/seed.rs", include_str!("deployment/seed.rs")),
     ];
     let forbidden = [
         "tokio",

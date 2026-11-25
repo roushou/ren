@@ -1,12 +1,12 @@
 pub mod control;
 pub mod credential;
+pub mod deploy;
 pub mod deployer;
 pub mod doctor;
 pub mod history;
 pub mod init;
 pub mod mcp;
 pub mod packages;
-pub mod preview;
 pub mod project;
 pub mod release;
 pub mod run;

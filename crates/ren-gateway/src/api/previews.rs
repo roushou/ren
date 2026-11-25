@@ -6,13 +6,14 @@
 //! itself is previewed so; any other project has none.
 
 use super::{ApiError, ApiState};
-use crate::deployment::{Deployment, DeploymentState, Reach, Trigger};
+use crate::deployment::{Deployment, DeploymentState, Reach, Seed, SeedNumber, Trigger};
 use axum::{
     extract::{Path, State},
     response::{IntoResponse, Response},
 };
 use ren_git::Commit;
 use ren_protocol::label::Stored;
+use ren_recorder::id::WorkItemId;
 use ren_recorder::project::Factory;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -37,6 +38,13 @@ pub struct PreviewBody {
     #[ts(as = "String")]
     pub commit: Commit,
     pub state: PreviewStateBody,
+    /// The number of the history its data was invented from (`ren seed`);
+    /// none for a copy of production.
+    #[ts(as = "Option<u64>")]
+    pub seed: Option<SeedNumber>,
+    /// The work items whose change it previews.
+    #[ts(as = "Vec<String>")]
+    pub work: Vec<WorkItemId>,
     /// The loopback port its UI answers on.
     pub ui_port: u16,
     /// The tailnet port its UI is published on, when the deployer publishes.
@@ -89,7 +97,14 @@ impl ApiState {
                     .iter()
                     .map(PreviewBody::of)
                     .collect(),
-                requested: state.release.preview_requests().await?.commits().to_vec(),
+                requested: state
+                    .release
+                    .preview_requests()
+                    .await?
+                    .chosen()
+                    .iter()
+                    .map(|chosen| chosen.commit.clone())
+                    .collect(),
             },
             Stored::Known(Factory::Contract) | Stored::Unknown(_) => PreviewsBody {
                 previews: Vec::new(),
@@ -111,6 +126,11 @@ impl PreviewBody {
                 Trigger::Chosen(_) => PreviewOfBody::Commit,
             },
             commit: instance.commit.clone(),
+            seed: match instance.seed {
+                Seed::Copy => None,
+                Seed::Invented(number) => Some(number),
+            },
+            work: instance.work.clone(),
             state: match &instance.state {
                 DeploymentState::Building => PreviewStateBody::Building,
                 DeploymentState::Running { reach } => PreviewStateBody::Running { reach: *reach },

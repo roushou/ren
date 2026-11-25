@@ -546,31 +546,25 @@ history, its `release.json`, and never a promotion.
 
 ### Previews
 
-`ren deployer preview` runs one worktree's branch on a copy of production's
-history, so its change is judged on the page it was marked on, beside
-production's. It runs in a worktree Ren made: it reads `REN_WORKTREE`,
-which the worktree's runs are told, refuses a folder that is not one of
-Ren's worktrees named `<repo>-<slot>`, and takes the data folder and ports
-Ren gives that slot. A brief asks the agent to start one once its change is
-ready:
+A preview is a deployment of a commit: of each ready pull request's head,
+which it follows, and of each commit chosen with `ren deploy`. Each runs in
+a preview slot on a copy of production's latest backup, or, with `--seed`,
+on a history invented from that number (`ren seed`), every operator key a
+placeholder:
 
 ```sh
-ren deployer preview up --publish   # build, copy production's history, start, record
-ren deployer preview down --publish # stop, unpublish, take it off the work items
+ren deploy HEAD                      # this folder's commit, on a copy of production
+ren deploy HEAD --seed 7 --work <id> # on invented history 7; recorded on the work item
+ren deployments                      # each deployment in its slot, and the commits chosen
+ren deploy stop HEAD                 # withdraw the choice; its deployment stops
 ```
 
-`up` builds the branch (debug) into `<data>/preview`, backs up production's
-history with production's own `ren`, and starts the build as a replica, as
-the canary is: the pod `ren-preview-<worktree>`, its daemon on the slot's
-first port and its UI on the next, with production's configuration but
-`environment = "preview"`, no runs, no operator key, and a UI that only reads.
-`--publish` publishes both on the tailnet on the same port numbers, with the
-install's saved Tailscale choice. It then records the preview on every sent
-work item the branch's recent commits name (`Work-Item: <id>`), and on each
-`--work <id>`: a work item's page opens the marked page on it beside
-production's.
-`--of dev` copies the dev slot instead. Deleting the worktree's session
-stops its preview with it, and takes it off the session's work items.
+A commit this host's repository already holds (an agent's, in one of its
+worktrees) is built as it is; any other is fetched from `origin`. Once a
+deployment runs, its address is recorded on each `--work` item, so the
+item's page opens the marked page on it beside production's; when it stops,
+the record is taken off. A brief asks the agent to commit its change and
+deploy it this way once it is ready.
 
 #### Previews of pull requests and commits
 

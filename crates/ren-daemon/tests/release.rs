@@ -231,7 +231,12 @@ async fn previews_are_asked_for_withdrawn_and_listed() {
         .unwrap(),
     )
     .unwrap();
-    assert_eq!(read.commits(), [CANARY.parse().unwrap()]);
+    assert_eq!(
+        read.chosen(),
+        [ren_gateway::deployment::Chosen::copy(
+            CANARY.parse().unwrap()
+        )]
+    );
 
     // Without the control token, nothing changes.
     let refused = client()

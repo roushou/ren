@@ -94,7 +94,7 @@
                 rel="noopener">Open <Icon name="arrow" size={11} /></a
               >{:else}<span
                 class="quiet-line"
-                title="The agent starts one with `ren deployer preview up --publish` in its worktree"
+                title="The agent starts one with `ren deploy HEAD --work` from its worktree"
                 >No preview yet</span
               >{/if}
           </div>

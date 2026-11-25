@@ -118,12 +118,6 @@ impl Worktree {
         self.slot.ports()
     }
 
-    /// The Podman pod Ren's own preview runs in (`ren deployer preview`),
-    /// removed when the worktree is.
-    pub fn preview_pod(&self) -> String {
-        format!("ren-preview-{}", self.name)
-    }
-
     /// The transient unit a project's preview runs as (`ren project
     /// preview`: its serve step), stopped when the worktree is removed.
     pub fn preview_unit(&self) -> String {
@@ -163,7 +157,6 @@ mod tests {
         assert_eq!(worktree.folder(), Path::new("/data/worktrees/ren-3"));
         assert_eq!(worktree.data(), Path::new("/data/worktrees/.data/ren-3"));
         assert_eq!(worktree.branch("1a2b3c4d"), "ren/ren-3-1a2b3c4d");
-        assert_eq!(worktree.preview_pod(), "ren-preview-ren-3");
         assert_eq!(worktree.preview_unit(), "ren-preview-ren-3-serve");
         assert_eq!(
             worktree.env(),

@@ -281,6 +281,20 @@ impl Git {
         }
     }
 
+    /// Whether `dir`'s repository holds `commit` (any of its worktrees
+    /// shares it), whether or not a remote does.
+    pub fn has_commit(&self, dir: &Path, commit: &Commit) -> Result<bool, GitError> {
+        let object = format!("{}^{{commit}}", commit.as_str());
+        match self.answer(dir, &["cat-file", "-e", &object]) {
+            Ok(_) => Ok(true),
+            Err(GitError::Failed {
+                exit: Exit::Code(1 | 128),
+                ..
+            }) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     /// How many commits `to` has that `from` does not.
     pub fn commits_between(&self, dir: &Path, from: &Commit, to: &Commit) -> Result<u64, GitError> {
         let range = format!("{from}..{to}");
