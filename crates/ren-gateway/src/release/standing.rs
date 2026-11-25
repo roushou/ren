@@ -25,6 +25,11 @@ pub struct Release {
     canary: Option<Canary>,
     policy: Policy,
     decision: Stored<Decision>,
+    /// The kept builds production may be given, the newest first: each
+    /// passed the canary's checks or ran production. Left out when none, as
+    /// files written before it hold.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    passed: Vec<Commit>,
 }
 
 /// The build on the canary, and what its checks found.
@@ -186,7 +191,23 @@ impl Release {
             canary,
             policy,
             decision: decision.into(),
+            passed: Vec::new(),
         }
+    }
+
+    /// This release, with `passed` the kept builds production may be given.
+    #[must_use]
+    pub fn with_passed(self, passed: Vec<Commit>) -> Self {
+        Self { passed, ..self }
+    }
+
+    /// Whether production may be given `commit`: the canary's build that
+    /// passed, or another kept build that passed or ran production.
+    pub fn may_deploy(&self, commit: &Commit) -> bool {
+        self.canary
+            .as_ref()
+            .is_some_and(|canary| canary.commit == *commit && canary.verdict.passed())
+            || self.passed.contains(commit)
     }
 
     pub fn main(&self) -> &Commit {
@@ -211,6 +232,10 @@ impl Release {
 
     pub fn decision(&self) -> &Stored<Decision> {
         &self.decision
+    }
+
+    pub fn passed(&self) -> &[Commit] {
+        &self.passed
     }
 }
 
@@ -316,6 +341,42 @@ mod tests {
         assert_eq!(
             Lineage::read(Some(&production), &candidate, None),
             Lineage::Unknown
+        );
+    }
+
+    #[test]
+    fn production_may_take_the_canarys_passed_build_or_another_that_passed() {
+        let assess = |outcome| {
+            Release::assess(
+                Assessment {
+                    main: MAIN.parse().unwrap(),
+                    production: PRODUCTION.parse().unwrap(),
+                    behind: Some(1),
+                    canary: Some((canary(outcome), Lineage::Ahead, Attempt::Untried)),
+                },
+                Policy::Manual,
+                at("03:00"),
+            )
+        };
+        let main = MAIN.parse().unwrap();
+        let earlier = PRODUCTION.parse().unwrap();
+        let other = "a".repeat(40).parse().unwrap();
+        assert!(assess(Outcome::Passed).may_deploy(&main));
+        let failed = assess(Outcome::Failed {
+            detail: "a page did not load".to_owned(),
+        });
+        assert!(!failed.may_deploy(&main));
+        assert!(!failed.may_deploy(&earlier));
+        // A rollback: a build that ran production, kept.
+        let kept = failed.with_passed(vec![earlier]);
+        assert!(kept.may_deploy(&PRODUCTION.parse().unwrap()));
+        assert!(!kept.may_deploy(&other));
+        // Written only when there are some, so an older reader reads it.
+        let json = serde_json::to_value(assess(Outcome::Passed)).unwrap();
+        assert!(json.get("passed").is_none());
+        assert_eq!(
+            serde_json::to_value(&kept).unwrap()["passed"],
+            serde_json::json!([PRODUCTION])
         );
     }
 

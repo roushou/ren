@@ -2,7 +2,9 @@
 //! (docs/plans/deployments.md, phase 4). `ren deploy <commit>` chooses a
 //! commit to deploy, on a copy of production or on the history `--seed`
 //! invents, recorded on each `--work` item once it runs; `ren deploy stop`
-//! withdraws the choice. Both go through the control API, for the deployer
+//! withdraws the choice. `ren deploy <commit> --production` chooses the
+//! commit production runs: a kept build that passed the canary's checks or
+//! ran production, so an earlier one rolls it back. Both go through the control API, for the deployer
 //! to start or stop: at once when it listens (`[deployer] socket`), else at
 //! its next pass. `ren deployments` prints each deployment in its slot and
 //! the commits chosen, as a gateway's `/api/projects/{name}/previews`
@@ -13,7 +15,7 @@ use crate::context::Context;
 use anyhow::{Context as _, Result};
 use clap::{Args, Subcommand};
 use ren_gateway::api::{
-    control::request::{ControlRequest, PreviewAskRequest, PreviewWithdrawRequest},
+    control::request::{ControlRequest, PreviewAskRequest, PreviewWithdrawRequest, PromoteRequest},
     previews::{PreviewOfBody, PreviewStateBody, PreviewsBody},
 };
 use ren_gateway::deployment::{Reach, SeedNumber};
@@ -21,8 +23,9 @@ use ren_git::{Commit, Git, Revision};
 use ren_recorder::{id::WorkItemId, project::ProjectName};
 use std::{fmt::Write as _, process::ExitCode};
 
-/// Deploy a commit of Ren: on a copy of production's history, or on an
-/// invented one; `ren deployments` shows where it stands.
+/// Deploy a commit of Ren: beside production, on a copy of its history or
+/// an invented one, or to production itself; `ren deployments` and `ren
+/// release` show where it stands.
 #[derive(Args)]
 #[command(args_conflicts_with_subcommands = true)]
 pub struct DeployCmd {
@@ -51,8 +54,20 @@ struct ChooseArgs {
     /// once it runs. Repeat for more.
     #[arg(long = "work", value_name = "ITEM")]
     work: Vec<WorkItemId>,
+    /// Deploy it to production, on production's own history: its build
+    /// must be kept and have passed the canary's checks or run production.
+    #[arg(long, conflicts_with_all = ["seed", "work"])]
+    production: bool,
     #[command(flatten)]
     target: TargetArgs,
+}
+
+/// Where a chosen commit runs.
+enum Destination {
+    /// A deployment of its own, beside production.
+    Preview,
+    /// Production itself.
+    Production,
 }
 
 #[derive(Args)]
@@ -94,16 +109,20 @@ impl DeployCmd {
                     .commit
                     .context("name the commit to deploy (`ren deploy HEAD`)")?;
                 let commit = Self::commit(&text)?;
-                Self::send(
-                    ctx,
-                    &args.target,
-                    ControlRequest::AskPreview(PreviewAskRequest {
+                let destination = if args.production {
+                    Destination::Production
+                } else {
+                    Destination::Preview
+                };
+                let request = match destination {
+                    Destination::Preview => ControlRequest::AskPreview(PreviewAskRequest {
                         commit,
                         seed: args.seed,
                         work: args.work,
                     }),
-                )
-                .await
+                    Destination::Production => ControlRequest::Promote(PromoteRequest { commit }),
+                };
+                Self::send(ctx, &args.target, request).await
             }
         }
     }

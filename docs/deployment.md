@@ -344,6 +344,7 @@ pass:
 ```sh
 ren deployer canary run              # fetch main, build, check, promote by policy
 ren deployer canary promote          # install the canary's build now, once it passed
+ren deploy <commit> --production     # production runs a kept build that passed: a rollback too
 ren release                         # main, production, the canary, and the decision
 ren deployer canary enable --every 10   # a pass every 10 minutes, on a user timer
 ren deployer canary disable
@@ -415,7 +416,15 @@ Promoting runs `install-vps --build <commit>` with the saved publishing
 flags: the install's own steps (the wait for calls and bound runs' turns, the
 pause, the backup, the build check, and the rollback on failure), with the
 kept build instead of building the checkout. No policy promotes a build that failed its checks, that production already runs, or that lacks commits production has, nor one over a production build that is not a clean commit of `main`; `canary promote` promotes any build that passed. A promotion that fails is rolled back by the install and marked on the build, and is not tried again unless you promote
-it. `install-vps --build <commit>` also installs a kept build by hand.
+it.
+
+Production runs the commit chosen for it: the policy's or the operator's
+promotion of the canary's build, or `ren deploy <commit> --production`
+(through the control API, as the Release page's Promote). That takes any
+kept build that passed the canary's checks or ran production, so choosing
+an earlier one rolls production back; a build that is not kept, or did not
+pass, is refused. Each build that passes or runs production is marked so
+in its folder, and `release.json` lists them (`passed`).
 
 Every pass also closes work items ([work items](api.md#work-items)): it
 lands each sent item that a commit in `main`'s recent history names in a

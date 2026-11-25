@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{fmt, str::FromStr};
 
-/// The operator asked that production take the canary's build `commit`.
+/// The operator chose `commit` for production: a kept build that passed.
 /// The gateway records it; the deployer carries it out on its next pass, as
-/// an install restarts the daemon that would otherwise run it.
+/// an upgrade restarts the daemon that would otherwise run it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PromotionRequest {

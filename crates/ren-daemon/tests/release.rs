@@ -104,6 +104,19 @@ async fn the_release_view_reads_shots_and_records_a_promotion_request() {
         serde_json::from_slice(&std::fs::read(dir.path().join(PromotionRequest::FILE)).unwrap())
             .unwrap();
     assert_eq!(kept.commit.to_string(), CANARY);
+    // An earlier build that passed, kept: production may be rolled back to it.
+    write(
+        &release(Outcome::Failed {
+            detail: "the sessions page did not load".into(),
+        })
+        .with_passed(vec![PRODUCTION.parse().unwrap()]),
+    );
+    let (status, body) = promote(&gateway, PRODUCTION).await;
+    assert_eq!(
+        (status, body["commit"].as_str()),
+        (StatusCode::ACCEPTED, Some(PRODUCTION))
+    );
+    assert_eq!(promote(&gateway, CANARY).await.0, StatusCode::CONFLICT);
 
     // Ren's release is read as its project's: registered, it reads.
     for (name, repository, factory) in [
@@ -139,7 +152,7 @@ async fn the_release_view_reads_shots_and_records_a_promotion_request() {
     std::fs::write(shots.join("notes.txt"), b"not a shot").unwrap();
     let (_, body) = read("/api/projects/ren/release".to_owned()).await;
     assert_eq!(body["shots"], json!(["sessions"]));
-    assert_eq!(body["promotion_requested"], CANARY);
+    assert_eq!(body["promotion_requested"], PRODUCTION);
     assert_eq!(body["release"]["main"], CANARY);
     // A contract project's release is its own, with no pages or request.
     let (_, body) = read("/api/projects/acme-web/release".to_owned()).await;

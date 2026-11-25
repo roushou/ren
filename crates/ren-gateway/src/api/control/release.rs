@@ -1,11 +1,13 @@
-//! `POST /control/v1/release/promote`: the operator asks that production
-//! take the canary's build. The gateway records the request
+//! `POST /control/v1/release/promote`: the operator chooses the commit
+//! production runs (`ren deploy <commit> --production`, or the Release
+//! view's Promote for the canary's build). The gateway records the request
 //! (`crate::release::PromotionRequest`); the deployer carries it out with the
 //! install's steps, since an install restarts the daemon that would
 //! otherwise run it: at once with a [`Deployer`] on the host, which is asked
 //! to ([`DeployerRequest::Promote`]), else at its next timed pass. Refused,
-//! `409` `not_promotable`, unless the commit is the canary's and its build
-//! passed.
+//! `409` `not_promotable`, unless the commit's build is kept and passed the
+//! canary's checks or ran production (`Release::may_deploy`): the canary's,
+//! or an earlier one, which rolls production back.
 //!
 //! `POST /control/v1/previews/ask` and `/previews/withdraw`: the operator
 //! asks for a preview of a commit, or withdraws the ask
@@ -74,10 +76,7 @@ impl ReleaseApi {
                 return ControlRefusal::Unreadable.into_response();
             }
         };
-        let checked = release
-            .canary()
-            .is_some_and(|canary| *canary.commit() == commit && canary.verdict().passed());
-        if !checked {
+        if !release.may_deploy(&commit) {
             return ControlRefusal::NotPromotable.into_response();
         }
         let request = PromotionRequest { commit };

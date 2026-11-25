@@ -237,29 +237,45 @@ impl Builds {
         ))
     }
 
-    /// Removes every build but `keep` and the newest few.
-    pub fn prune(&self, keep: &[&Commit]) -> Result<(), BuildsError> {
+    /// Every kept build's folder, by its commit, the newest first: folders
+    /// named for a commit, not the store's lock or a build being made.
+    fn listed(&self) -> Vec<(Commit, PathBuf)> {
         let Ok(entries) = fs::read_dir(&self.root) else {
-            return Ok(());
+            return Vec::new();
         };
-        let mut builds: Vec<(SystemTime, PathBuf)> = entries
+        let mut builds: Vec<(SystemTime, Commit, PathBuf)> = entries
             .filter_map(Result::ok)
-            // Builds alone: folders named for a commit, not the store's
-            // lock or a build being made.
-            .filter(|entry| {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                name.parse::<Commit>().is_ok()
-                    && entry.file_type().is_ok_and(|kind| kind.is_dir())
-                    && !keep.iter().any(|commit| commit.to_string() == name)
-            })
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
             .filter_map(|entry| {
+                let commit = entry.file_name().to_string_lossy().parse().ok()?;
                 let modified = entry.metadata().ok()?.modified().ok()?;
-                Some((modified, entry.path()))
+                Some((modified, commit, entry.path()))
             })
             .collect();
-        builds.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
-        for (_, dir) in builds.into_iter().skip(Self::NEWEST) {
+        builds.sort_by_key(|(modified, ..)| std::cmp::Reverse(*modified));
+        builds
+            .into_iter()
+            .map(|(_, commit, dir)| (commit, dir))
+            .collect()
+    }
+
+    /// The kept builds production may be given, the newest first: each
+    /// passed the canary's checks or ran production.
+    pub fn passed(&self) -> Vec<Commit> {
+        self.listed()
+            .into_iter()
+            .filter(|(commit, _)| self.get(commit).is_some_and(|build| build.has_passed()))
+            .map(|(commit, _)| commit)
+            .collect()
+    }
+
+    /// Removes every build but `keep` and the newest few.
+    pub fn prune(&self, keep: &[&Commit]) -> Result<(), BuildsError> {
+        let builds = self
+            .listed()
+            .into_iter()
+            .filter(|(commit, _)| !keep.contains(&commit));
+        for (_, dir) in builds.skip(Self::NEWEST) {
             fs::remove_dir_all(&dir).map_err(FileError::at(&dir))?;
         }
         Ok(())
@@ -269,6 +285,9 @@ impl Builds {
 impl StoredBuild {
     /// Marks a build production failed to take, so it is not tried again.
     const PROMOTION_FAILED: &str = "promotion-failed";
+    /// Marks a build that passed the canary's checks or ran production, so
+    /// production may be given it again.
+    const PASSED: &str = "passed";
 
     /// The release binary.
     pub fn ren(&self) -> PathBuf {
@@ -287,6 +306,16 @@ impl StoredBuild {
         } else {
             Attempt::Untried
         }
+    }
+
+    /// Whether it passed the canary's checks or ran production.
+    pub fn has_passed(&self) -> bool {
+        self.dir.join(Self::PASSED).exists()
+    }
+
+    /// Records that it passed the canary's checks, or ran production.
+    pub fn mark_passed(&self) -> Result<(), BuildsError> {
+        Ok(FileMode::Private.write(&self.dir.join(Self::PASSED), b"")?)
     }
 
     /// Records that production tried to take this build and was rolled back.
@@ -309,6 +338,7 @@ impl StoredBuild {
 mod tests {
     use super::Builds;
     use crate::{invocation::Invocation, ui::UiBuild};
+    use ren_git::Commit;
     use ren_harness::host::HostEnv;
     use std::path::PathBuf;
 
@@ -330,6 +360,31 @@ mod tests {
 
     /// A build step runs the commit's own code: here, code that tries to
     /// read the operator's home and keys and to reach the internet.
+    #[test]
+    fn production_may_take_the_builds_that_passed_and_pruning_keeps_what_is_named() {
+        let home = tempfile::tempdir().unwrap();
+        let builds = Builds::new(home.path());
+        let commit = |digit: char| -> Commit { digit.to_string().repeat(40).parse().unwrap() };
+        for digit in ['a', 'b', 'c', 'd', 'e'] {
+            let dir = builds.root.join(commit(digit).to_string());
+            std::fs::create_dir_all(dir.join("ui")).unwrap();
+            std::fs::write(dir.join("ren"), b"").unwrap();
+        }
+        // Not a build: a build being made.
+        std::fs::create_dir_all(builds.root.join(format!(".{}.partial", commit('f')))).unwrap();
+        assert!(builds.passed().is_empty());
+        builds.get(&commit('b')).unwrap().mark_passed().unwrap();
+        assert_eq!(builds.passed(), [commit('b')]);
+        builds.prune(&[&commit('a')]).unwrap();
+        let kept: Vec<_> = ['a', 'b', 'c', 'd', 'e']
+            .into_iter()
+            .filter(|digit| builds.get(&commit(*digit)).is_some())
+            .collect();
+        // `a` named, and the newest three others.
+        assert_eq!(kept.len(), 4);
+        assert!(kept.contains(&'a'));
+    }
+
     #[test]
     #[ignore = "runs a container; by hand, with the instance image built"]
     fn a_build_step_cannot_read_the_home_or_reach_out() {

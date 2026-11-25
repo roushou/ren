@@ -341,6 +341,9 @@ impl Deployer {
         }
         .run();
         production.keep_shots(&self.home.join(".local/share/ren-canary/shots"))?;
+        if verdict.passed() {
+            build.mark_passed()?;
+        }
         let checked = CanaryBuild::new(commit.clone(), verdict);
         let release = self.assess(&production, &commit, Some((checked, &build)))?;
         production.write_release(&release)?;
@@ -453,7 +456,8 @@ impl Deployer {
             },
             policy,
             MinuteOfDay::of_unix_ms(now),
-        ))
+        )
+        .with_passed(self.builds.passed()))
     }
 
     /// Installs `build` into production, and writes where the release
@@ -468,8 +472,10 @@ impl Deployer {
     ) -> Result<(), CanaryError> {
         Progress(&format!("Promoting {} into production", commit.short())).show();
         let installed = InstallVps::promotion(commit.clone()).run(env, &self.repo);
-        if installed.is_err() {
-            build.failed_promotion()?;
+        match &installed {
+            // It ran production: production may be given it again.
+            Ok(()) => build.mark_passed()?,
+            Err(_) => build.failed_promotion()?,
         }
         let canary = production
             .release()
@@ -483,33 +489,37 @@ impl Deployer {
         Ok(installed?)
     }
 
-    /// Carries out the operator's promotion request from the Release view,
-    /// if one waits: only for the canary's build that passed, which
-    /// production does not run yet; any other is dropped, with why.
+    /// Carries out the commit the operator chose for production (`ren
+    /// deploy --production`, the Release view's Promote), if one waits: a
+    /// kept build that passed the canary's checks or ran production, which
+    /// production does not run; any other is dropped, with why.
     fn requested(&self, env: &HostEnv, production: &ProductionPlace) -> Result<(), CanaryError> {
         let Some(request) = production.take_request() else {
             return Ok(());
         };
-        let release = production.release();
-        let canary = release.as_ref().and_then(Release::canary);
-        let current = release
-            .as_ref()
-            .is_some_and(|release| release.decision() == &Stored::Known(Decision::Current));
-        match canary {
-            Some(canary)
-                if *canary.commit() == request.commit && canary.verdict().passed() && !current =>
-            {
+        let commit = request.commit;
+        // Builds checked before builds were marked count by the release.
+        let passed = |build: &StoredBuild| {
+            build.has_passed()
+                || production
+                    .release()
+                    .is_some_and(|release| release.may_deploy(&commit))
+        };
+        let runs = Self::running(production).as_ref() == Some(&commit);
+        match self.builds.get(&commit).filter(passed) {
+            Some(build) if !runs => {
                 Progress(&format!(
-                    "Promoting {}, as the operator asked in the Release view",
-                    request.commit.short()
+                    "Deploying {} to production, as the operator chose",
+                    commit.short()
                 ))
                 .show();
-                self.promote_now(env)
+                build.retry_promotion()?;
+                self.promote(env, production, &commit, &build)
             }
             Some(_) | None => {
                 Progress(&format!(
-                    "A promotion of {} was asked, but it is not the canary's passed build, or production runs it; dropped",
-                    request.commit.short()
+                    "{} was chosen for production, but production runs it, or no build of it that passed is kept; dropped",
+                    commit.short()
                 ))
                 .show();
                 Ok(())

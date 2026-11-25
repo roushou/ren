@@ -63,8 +63,9 @@ pub struct PreviewWorkRequest {
     pub preview: Option<WorkPreviewBody>,
 }
 
-/// `POST release/promote`: production is to take the canary's build of
-/// `commit`, on the deployer's next pass.
+/// `POST release/promote`: production is to run `commit`, a kept build
+/// that passed the canary's checks or ran production, from the deployer's
+/// next pass.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(deny_unknown_fields)]

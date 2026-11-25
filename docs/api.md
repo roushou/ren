@@ -402,15 +402,17 @@ unknown subject or change.
 
 ### Promoting from the Release page
 
-`POST /control/v1/release/promote` with `{commit}` asks that production take
-the canary's build of that commit. The gateway records the request
+`POST /control/v1/release/promote` with `{commit}` chooses the commit
+production runs (`ren deploy <commit> --production`, and the Release
+page's Promote for the canary's build). The gateway records the request
 (`release-promote.json` in its data folder) and answers `202`
-`{api_version, commit}`; the factory carries it out with the install's
-steps, since an install restarts the daemon: at once with `[deployer] socket`
-set (the gateway asks it to and waits up to five seconds for the pass to
-start), else at its next canary pass. `404`
-`not_found` before any pass; `409` `not_promotable` unless the commit is the
-canary's and its build passed. Ren's Release page in the UI
+`{api_version, commit}`; the deployer carries it out with the upgrade's
+steps, since an upgrade restarts the daemon: at once with `[deployer]
+socket` set (the gateway asks it to and waits up to five seconds for the
+pass to start), else at its next canary pass. `404` `not_found` before any
+pass; `409` `not_promotable` unless the commit's build is kept and passed
+the canary's checks or ran production: the canary's, or an earlier one,
+which rolls production back. Ren's Release page in the UI
 (`/projects/<name>/release`) sends it.
 
 ### Previews
