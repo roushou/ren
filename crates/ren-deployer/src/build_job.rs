@@ -135,7 +135,7 @@ mod tests {
     fn job() -> BuildJob {
         BuildJob::new(
             "localhost/ren-instance:abc".into(),
-            "/home/op/.local/share/ren/preview-factory".into(),
+            "/home/op/.local/share/ren/deployer/preview".into(),
             "/home/op/.local/share/ren/build-cache/cargo".into(),
             vec![
                 "/usr".into(),
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn a_build_step_sees_only_its_checkout_toolchains_and_the_deployers_cache() {
-        let checkout = Path::new("/home/op/.local/share/ren/preview-factory");
+        let checkout = Path::new("/home/op/.local/share/ren/deployer/preview");
         let args = Engine::Podman.run_args(&job().container(
             checkout,
             &[
@@ -175,7 +175,7 @@ mod tests {
                 "/opt/node:/opt/node:ro",
                 "/home/op/.rustup:/home/op/.rustup:ro",
                 "/home/op/.bun:/home/op/.bun:ro",
-                "/home/op/.local/share/ren/preview-factory:/home/op/.local/share/ren/preview-factory:rw",
+                "/home/op/.local/share/ren/deployer/preview:/home/op/.local/share/ren/deployer/preview:rw",
                 "/home/op/.local/share/ren/build-cache/cargo:/home/op/.local/share/ren/build-cache/cargo:rw",
             ]
         );
@@ -191,7 +191,7 @@ mod tests {
         // Its home is in the checkout's build output, not the operator's.
         assert!(
             args.iter().any(|arg| arg
-                == "--env=HOME=/home/op/.local/share/ren/preview-factory/target/.build-home")
+                == "--env=HOME=/home/op/.local/share/ren/deployer/preview/target/.build-home")
         );
         assert!(args.iter().any(|arg| arg == "--env=CARGO_NET_OFFLINE=true"));
         assert_eq!(

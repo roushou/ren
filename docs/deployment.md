@@ -356,7 +356,7 @@ ren deployer canary down             # stop the canary
 ```
 
 A pass fetches `main` from `origin` and checks its tip out, detached, in
-Ren's own worktree, `~/.local/share/ren/factory`, builds it, then goes on
+Ren's own worktree, `~/.local/share/ren/deployer/main` (moved there once from `~/.local/share/ren/factory`), builds it, then goes on
 with that build's own `ren deployer`, so a commit is checked by its own
 checks. It builds the commit once into `~/.local/share/ren/builds/<commit>` (the release `ren`
 and the UI's deployable copy; the newest few are kept). A commit may be a pull
@@ -488,7 +488,7 @@ and `~/.local/state/ren-previews/<n>`. The canary timer publishes previews only 
 without it answers on loopback alone, and says so. A pass fetches each new commit from
 `origin` by its id (a pull request's head included), builds it once into
 `~/.local/share/ren/builds` from its own worktree,
-`~/.local/share/ren/preview-factory`, and starts it on a fresh copy of
+`~/.local/share/ren/deployer/preview`, and starts it on a fresh copy of
 production's history, as the canary is. A pull request whose head moves is
 previewed again in its slot; one that closes, or a commit no longer asked
 for, is stopped. A build or start that fails is recorded with why, its slot

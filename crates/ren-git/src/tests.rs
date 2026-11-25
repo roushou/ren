@@ -383,7 +383,12 @@ fn a_fetched_branch_is_checked_out_detached_and_counted() {
     let remote = origin.to_str().unwrap();
     assert_eq!(git.fetch(&local, remote, &branch).unwrap(), main);
 
-    let tree = dir.path().join("factory");
+    let before = dir.path().join("factory");
+    git.check_out_detached(&local, &before, &main).unwrap();
+    // Moved, it is the same worktree of the same repository.
+    let tree = dir.path().join("main");
+    git.move_worktree(&before, &tree).unwrap();
+    assert!(!before.exists());
     git.check_out_detached(&local, &tree, &main).unwrap();
     assert_eq!(git.head_commit(&tree).unwrap(), main);
     assert_eq!(

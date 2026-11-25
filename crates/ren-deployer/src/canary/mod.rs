@@ -2,7 +2,7 @@
 //! (docs/plans/self-build.md, phase 4). One pass:
 //!
 //! 1. fetches `main`, checks its tip out in the deployer's own worktree
-//!    (`~/.local/share/ren/factory`), and builds it once (`crate::builds`);
+//!    (`~/.local/share/ren/deployer/main`), and builds it once (`crate::builds`);
 //! 2. goes on with that build's own `ren deployer`, so a commit is checked
 //!    by its own checks;
 //! 3. starts it as the canary on a fresh backup of production's history;
@@ -190,8 +190,10 @@ pub struct Deployer {
     /// The checkout it builds from: the operator's clone, or, for a pass
     /// handed off, the deployer's worktree at the commit being checked.
     repo: PathBuf,
-    /// Ren's own worktree, at the commit being checked.
+    /// Ren's own worktree of `main`, at the commit being checked.
     worktree: PathBuf,
+    /// Its worktree for a preview's commit.
+    pub(super) preview_worktree: PathBuf,
     builds: Builds,
     git: Git,
 }
@@ -201,6 +203,12 @@ impl Deployer {
     /// The project Ren itself is registered as.
     const REN: &str = "ren";
     const MAIN: &str = "main";
+    /// Its worktrees, under the home: `main`'s, and a preview's.
+    const MAIN_WORKTREE: &str = ".local/share/ren/deployer/main";
+    const PREVIEW_WORKTREE: &str = ".local/share/ren/deployer/preview";
+    /// Where the factory kept them, moved on first use.
+    const MAIN_WORKTREE_BEFORE: &str = ".local/share/ren/factory";
+    const PREVIEW_WORKTREE_BEFORE: &str = ".local/share/ren/preview-factory";
     const TIMER: &str = "ren-canary";
     /// The deployer service's unit (`ren deployer serve`), beside the timer.
     const SERVICE: &str = "ren-deployer";
@@ -215,7 +223,8 @@ impl Deployer {
             .absolute_path("HOME")
             .ok_or(CanaryError::MissingEnv("HOME"))?;
         Ok(Self {
-            worktree: home.join(".local/share/ren/factory"),
+            worktree: home.join(Self::MAIN_WORKTREE),
+            preview_worktree: home.join(Self::PREVIEW_WORKTREE),
             builds: Builds::new(&home),
             repo: checkout.to_path_buf(),
             git: Git::inherited(),
@@ -277,6 +286,7 @@ impl Deployer {
             .map_err(|_| CanaryError::Commit(Self::MAIN.to_owned()))?;
         Progress(&format!("Fetching {} from {}", Self::MAIN, Self::REMOTE)).show();
         let tip = self.git.fetch(&self.repo, Self::REMOTE, &main)?;
+        self.worktree_moved(&self.worktree, Self::MAIN_WORKTREE_BEFORE)?;
         self.git
             .check_out_detached(&self.repo, &self.worktree, &tip)?;
         let build = self.builds.make(env, &self.worktree, &tip)?;
@@ -297,6 +307,26 @@ impl Deployer {
         let ran = pass.run();
         drop(lock);
         Ok(ran?)
+    }
+
+    /// Moves the factory's worktree at `before` (under the home) to
+    /// `worktree`, once, keeping its build caches; nothing when there is
+    /// none or it is moved already.
+    pub(super) fn worktree_moved(&self, worktree: &Path, before: &str) -> Result<(), CanaryError> {
+        let before = self.home.join(before);
+        if worktree.exists() || !before.exists() {
+            return Ok(());
+        }
+        if let Some(parent) = worktree.parent() {
+            fs::create_dir_all(parent).map_err(FileError::at(parent))?;
+        }
+        Progress(&format!(
+            "Moving the worktree {} to {}",
+            before.display(),
+            worktree.display()
+        ))
+        .show();
+        Ok(self.git.move_worktree(&before, worktree)?)
     }
 
     /// The canary's lock, held while a pass runs over main.

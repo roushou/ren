@@ -261,11 +261,12 @@ impl PreviewPass<'_> {
                 .git
                 .fetch_commit(&deployer.repo, Deployer::REMOTE, commit)?;
         }
-        let worktree = deployer.home.join(".local/share/ren/preview-factory");
+        let worktree = &deployer.preview_worktree;
+        deployer.worktree_moved(worktree, Deployer::PREVIEW_WORKTREE_BEFORE)?;
         deployer
             .git
-            .check_out_detached(&deployer.repo, &worktree, commit)?;
-        let build = deployer.builds.make(env, &worktree, commit)?;
+            .check_out_detached(&deployer.repo, worktree, commit)?;
+        let build = deployer.builds.make(env, worktree, commit)?;
         let replica = Replica::preview_slot(env, slot)?;
         match data {
             Data::Copy(backup) => replica.replace_data(backup)?,

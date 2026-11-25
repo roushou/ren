@@ -314,6 +314,15 @@ impl Git {
         self.answer(&main, &["worktree", "remove", path]).map(drop)
     }
 
+    /// Move the worktree at `from` to `to`, which must not exist yet; its
+    /// folder above must.
+    pub fn move_worktree(&self, from: &Path, to: &Path) -> Result<(), GitError> {
+        let main = self.main_worktree(from)?;
+        let (from, to) = (Self::text(from)?, Self::text(to)?);
+        self.answer(&main, &["worktree", "move", from, to])
+            .map(drop)
+    }
+
     /// The main worktree of the repository `path` is a worktree of: the
     /// folder its git folder is in.
     pub fn main_worktree(&self, path: &Path) -> Result<PathBuf, GitError> {
