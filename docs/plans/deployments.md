@@ -211,12 +211,26 @@ a move lands before the move that needs it.
    before, less the 49 that were the dev world's), the UI's 384, and the
    compatibility gate, whose report names only `instance::Environment`
    losing `development`.
-6. **Production is a chosen deployment.** Not built. `install-vps`'s
-   upgrade (drain, swap, check, resume) moves into the deployer as
-   deploying the chosen commit to production. Promotion is choosing the
-   canary's build. `cargo xtask install-vps` shrinks to the first install.
-   Verified by a promotion of production through `ren deployer`, which the
-   operator runs.
+6. **Production is a chosen deployment.** Built, as three commits.
+   Production runs the commit chosen for it: the policy's or the operator's
+   promotion of the canary's build, or `ren deploy <commit> --production`
+   (the control API's `release/promote`, as the Release view's Promote).
+   It takes any kept build that passed the canary's checks or ran
+   production, so an earlier one rolls production back: each such build is
+   marked in its folder, `release.json` lists them (`passed`, left out when
+   none), and the gateway refuses any other with `409`. `ren deployer
+   install-vps` installs once: where `ren.service` exists it refuses, its
+   `--build` is gone, and `ren deployer settings` restarts production under
+   changed publishing settings with the kept build it runs. The deployer's
+   worktrees are `~/.local/share/ren/deployer/main` and `deployer/preview`,
+   moved once from `factory` and `preview-factory` with `git worktree
+   move`. Verified: the release's and the gateway's tests (a passed earlier
+   build is taken, a failed or unknown one refused), the builds' marks and
+   pruning, the install's refusal of a checkout over an installed service,
+   a worktree moved and checked out again, lint, the 1185 tests, and the
+   compatibility gate (no change at each commit). Not yet verified: a
+   promotion of production through `ren deployer`, which the operator runs
+   once this merges and production moves over.
 
 ## Open questions
 
@@ -311,3 +325,20 @@ a move lands before the move that needs it.
 - **Phase 5: older plans keep their history.** `instances.md`,
   `self-build.md`, and `attachments.md` record what was built then,
   `cargo xtask dev` included, and are left as written.
+- **Phase 6: production is not a row of `Deployments`.** Production's
+  record stays `release.json` and its chosen commit the promotion request
+  (`release-promote.json`): production's own, older gateway reads
+  `previews.json` strictly, slot by slot, and a production row in it would
+  stop that gateway reading the previews. The canary stays there too.
+- **Phase 6: what production may take.** The operator chose kept builds that
+  passed the canary's checks or ran production, rollback included, over
+  only the canary's build or any commit. Builds made before marks existed
+  count only while the release names them the canary's passed build.
+- **Phase 6: `ren deployer settings`.** With upgrades only to kept builds,
+  publishing settings needed a way in that builds nothing; the operator
+  chose a command of its own over `install-vps` re-applying them.
+- **Phase 6: no xtask install.** `cargo xtask install-vps` went with phase
+  3; the first install is `cargo run --release -p ren-rs -- deployer
+  install-vps` from a checkout, as the docs already said.
+- **Phase 6: the Release view lists no earlier builds.** Rolling back is
+  `ren deploy <commit> --production`; the UI shows `passed` nowhere yet.
