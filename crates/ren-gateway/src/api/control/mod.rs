@@ -150,7 +150,7 @@ impl ControlApi {
         supervisor: Option<Supervisor>,
         packages: Option<Arc<dyn crate::packages::Packages>>,
         release: crate::api::release::ReleaseFolder,
-        factory: Option<Arc<dyn crate::factory::Factory>>,
+        deployer: Option<Arc<dyn crate::deployer::Deployer>>,
         shutdown: CancellationToken,
     ) -> Router {
         let control = Arc::new(self);
@@ -186,7 +186,7 @@ impl ControlApi {
         let release_routes = release::ReleaseApi {
             control: control.clone(),
             folder: release,
-            factory,
+            deployer,
         }
         .router();
         let packages_routes = packages::PackagesApi {

@@ -1,4 +1,4 @@
-//! What the factory keeps beside the release in production's data folder,
+//! What the deployer keeps beside the release in production's data folder,
 //! for the Release view: the pages the canary captured ([`ShotName`]), the
 //! operator's request that production take the canary's build
 //! ([`PromotionRequest`]), and each project's release
@@ -10,7 +10,7 @@ use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{fmt, str::FromStr};
 
 /// The operator asked that production take the canary's build `commit`.
-/// The gateway records it; the factory carries it out on its next pass, as
+/// The gateway records it; the deployer carries it out on its next pass, as
 /// an install restarts the daemon that would otherwise run it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

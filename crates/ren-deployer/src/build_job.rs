@@ -1,7 +1,7 @@
 //! A build's steps in a container of their own (docs/plans/instances.md,
 //! phase 2). A build runs the commit's own code (`build.rs`, the UI's build
 //! script), which may be a pull request's, so a step sees only the checkout
-//! it builds, the toolchains read-only, and the factory's own dependency
+//! it builds, the toolchains read-only, and the deployer's own dependency
 //! cache: no home, no keys, and no network. What a step needs from the
 //! network is fetched before, on the host, by commands that run none of the
 //! commit's code ([`BuildJob::fetch_args`]).
@@ -17,7 +17,7 @@ pub struct BuildJob {
     image: String,
     /// The checkout of the commit, built in place.
     checkout: PathBuf,
-    /// The factory's cargo home: the registry it fetched into. Never the
+    /// The deployer's cargo home: the registry it fetched into. Never the
     /// operator's.
     cargo_home: PathBuf,
     /// Seen read-only: the host's programs and toolchains.
@@ -110,7 +110,7 @@ impl BuildJob {
     }
 
     /// The host's fetch of a commit's Rust dependencies, by its lockfile,
-    /// into the factory's cargo home: a download, which runs none of the
+    /// into the deployer's cargo home: a download, which runs none of the
     /// commit's code.
     pub fn fetch_args(&self) -> Vec<String> {
         vec![
@@ -154,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn a_build_step_sees_only_its_checkout_toolchains_and_the_factorys_cache() {
+    fn a_build_step_sees_only_its_checkout_toolchains_and_the_deployers_cache() {
         let checkout = Path::new("/home/op/.local/share/ren/preview-factory");
         let args = Engine::Podman.run_args(&job().container(
             checkout,

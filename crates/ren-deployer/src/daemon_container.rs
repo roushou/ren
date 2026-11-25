@@ -131,9 +131,9 @@ impl DaemonContainer {
         );
         let mut vars = vars;
         vars.push(("HOME".to_owned(), home.display().to_string()));
-        // The factory's socket's folder, so the daemon asks it to plan:
-        // made now, as the factory makes it, since a mount needs it there.
-        if let Some(socket) = config.factory.socket.as_deref() {
+        // The deployer's socket's folder, so the daemon asks it to plan:
+        // made now, as the deployer makes it, since a mount needs it there.
+        if let Some(socket) = config.deployer.socket.as_deref() {
             let folder = socket.parent().unwrap_or(socket);
             {
                 use std::os::unix::fs::DirBuilderExt as _;

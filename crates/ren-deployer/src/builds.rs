@@ -83,7 +83,7 @@ impl Builds {
         checkout: &Path,
         commit: &Commit,
     ) -> Result<StoredBuild, BuildsError> {
-        // One build at a time: the canary's and the factory service's
+        // One build at a time: the canary's and the deployer service's
         // passes build apart, and the same commit is built once.
         let _lock = self.lock()?;
         if let Some(build) = self.get(commit) {
@@ -178,7 +178,7 @@ impl Builds {
     }
 
     /// The builds' dependency caches, never the operator's: beside the
-    /// builds, apart from the factory's worktrees.
+    /// builds, apart from the deployer's worktrees.
     fn caches(&self) -> PathBuf {
         self.root.with_file_name("build-cache")
     }
@@ -392,7 +392,7 @@ mod tests {
         );
     }
 
-    /// The commit at `HEAD`, built into a store of its own as the factory
+    /// The commit at `HEAD`, built into a store of its own as the deployer
     /// builds: fetched on the host, built in containers.
     #[test]
     #[ignore = "builds Ren in release; by hand, minutes"]

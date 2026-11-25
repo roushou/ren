@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// The commits the operator asked to preview, the newest ask first. The
 /// gateway records an ask or a withdrawal (`ren preview`, the UI); the
-/// factory's next pass reads it, and each one wants a preview until it is
+/// deployer's next pass reads it, and each one wants a preview until it is
 /// withdrawn.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

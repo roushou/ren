@@ -1,4 +1,4 @@
-//! What the GitHub watch's sightings ask of the factory: previews when the
+//! What the GitHub watch's sightings ask of the deployer: previews when the
 //! pull requests that want one move, the canary when `main` moves. With
 //! invented repositories and commits.
 #![allow(
@@ -6,7 +6,7 @@
     reason = "integration tests are a shell: helpers outside #[test] fail loudly"
 )]
 
-use ren_gateway::factory::{FactoryRequest, Follower};
+use ren_gateway::deployer::{DeployerRequest, Follower};
 use ren_github::{
     Listing, Observation, PullRequest, Readiness, Reported, RepositorySlug, Sighting, Snapshot,
 };
@@ -53,7 +53,7 @@ fn follower() -> Follower {
     ])
 }
 
-const PREVIEWS: FactoryRequest = FactoryRequest::Previews;
+const PREVIEWS: DeployerRequest = DeployerRequest::Previews;
 
 #[test]
 fn previews_follow_pull_requests_opening_moving_and_closing() {
@@ -89,7 +89,7 @@ fn the_canary_follows_main_once_it_was_seen() {
     assert_eq!(follower.see(&ren(), &seen('a', vec![])), []);
     assert_eq!(
         follower.see(&ren(), &seen('b', vec![])),
-        [FactoryRequest::Canary("ren".parse().unwrap())]
+        [DeployerRequest::Canary("ren".parse().unwrap())]
     );
     // Each project watched on the repository that moved, and no other.
     let web: RepositorySlug = "acme/web".parse().unwrap();
@@ -98,7 +98,7 @@ fn the_canary_follows_main_once_it_was_seen() {
         follower.see(&web, &seen('c', vec![open(1, 'e', Readiness::Ready)])),
         [
             PREVIEWS,
-            FactoryRequest::Canary("acme-web".parse().unwrap())
+            DeployerRequest::Canary("acme-web".parse().unwrap())
         ]
     );
 }

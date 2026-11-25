@@ -1,7 +1,7 @@
-//! Where a release stands, as the factory last found it: `main`'s tip, the
+//! Where a release stands, as the deployer last found it: `main`'s tip, the
 //! build production runs and how far behind it is, the build on the canary
 //! and its verdict, and what promotion decided under the operator's policy.
-//! The factory writes it to production's data folder ([`Release::FILE`]);
+//! The deployer writes it to production's data folder ([`Release::FILE`]);
 //! the gateway reads it back and serves it, so `ren` and the UI show it.
 
 use crate::release::{
@@ -44,7 +44,7 @@ pub enum Lineage {
     /// Production has commits the canary's lacks: taking the canary's
     /// build would lose them.
     Behind,
-    /// Production runs a build not of a clean commit the factory knows.
+    /// Production runs a build not of a clean commit the deployer knows.
     Unknown,
 }
 
@@ -73,7 +73,7 @@ pub enum Decision {
     Unchecked,
     /// Production runs commits it lacks; it is never taken over them.
     ProductionAhead,
-    /// Production's build is not one the factory can place; only the
+    /// Production's build is not one the deployer can place; only the
     /// operator promotes over it.
     Unconfirmed,
     /// It passed; the policy leaves promoting it to the operator.
@@ -85,7 +85,7 @@ pub enum Decision {
     PromotionFailed,
 }
 
-/// What the factory found, before the policy decides.
+/// What the deployer found, before the policy decides.
 pub struct Assessment {
     pub main: Commit,
     pub production: SourceRevision,
@@ -158,7 +158,7 @@ impl Decision {
 }
 
 impl Release {
-    /// The file in production's data folder the factory writes it to.
+    /// The file in production's data folder the deployer writes it to.
     pub const FILE: &str = "release.json";
     /// The folder in Ren's data folder each project's release is kept in:
     /// `projects/<name>/release.json`.

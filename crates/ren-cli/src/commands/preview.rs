@@ -1,9 +1,9 @@
-//! `ren preview`: the factory's previews of Ren (docs/plans/self-build.md,
+//! `ren preview`: the deployer's previews of Ren (docs/plans/self-build.md,
 //! phase 9). `list` prints each preview in its slot and the commits asked
 //! for, as a gateway's `/api/projects/{name}/previews` reports them; `ask`
 //! and `withdraw` ask for a preview of a commit, or withdraw the ask,
-//! through the control API, for the factory to start or stop: at once when
-//! it listens (`[factory] socket`), else at its next pass.
+//! through the control API, for the deployer to start or stop: at once when
+//! it listens (`[deployer] socket`), else at its next pass.
 
 use super::{control::ControlTarget, history::TargetArgs};
 use crate::context::Context;
@@ -29,9 +29,9 @@ pub struct PreviewCmd {
 enum PreviewAction {
     /// Each preview in its slot, and the commits asked for.
     List(ListArgs),
-    /// Ask for a preview of a commit; the factory starts it.
+    /// Ask for a preview of a commit; the deployer starts it.
     Ask(AskArgs),
-    /// Withdraw the ask; the factory stops its preview.
+    /// Withdraw the ask; the deployer stops its preview.
     Withdraw(AskArgs),
 }
 
@@ -50,7 +50,7 @@ struct ListArgs {
 #[derive(Args)]
 struct AskArgs {
     /// The commit, all 40 hex digits; it must be on GitHub, where the
-    /// factory fetches it from.
+    /// deployer fetches it from.
     commit: Commit,
     #[command(flatten)]
     target: TargetArgs,

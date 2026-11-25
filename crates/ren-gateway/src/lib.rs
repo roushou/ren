@@ -46,8 +46,8 @@
 pub mod api;
 pub mod build;
 pub mod control;
+pub mod deployer;
 pub mod deployment;
-pub mod factory;
 mod forward;
 pub mod github;
 pub mod lifecycle;
@@ -213,7 +213,7 @@ impl<U: Upstream> Gateway<U> {
                 management.runs,
                 management.packages,
                 release,
-                management.factory,
+                management.deployer,
                 feeds_end,
             ))
     }

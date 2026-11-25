@@ -11,6 +11,6 @@ export type PreviewBody = { slot: number, of: PreviewOfBody, commit: string, sta
  */
 ui_port: number, 
 /**
- * The tailnet port its UI is published on, when the factory publishes.
+ * The tailnet port its UI is published on, when the deployer publishes.
  */
 published_ui_port: number, };

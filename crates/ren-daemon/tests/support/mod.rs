@@ -348,7 +348,7 @@ impl TestGateway {
             packages,
             release: ReleaseFolder::in_data(dir),
             pulls: pulls.clone(),
-            factory: None,
+            deployer: None,
         });
         let ingress = Ingress::new(listener, router.clone()).with_runs(runs_listener, forwarding);
         let server = tokio::spawn(ingress.serve(shutdown.clone(), Self::DRAIN_DEADLINE));

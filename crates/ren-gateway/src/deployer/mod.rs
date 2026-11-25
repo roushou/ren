@@ -1,11 +1,11 @@
-//! The factory, as the gateway asks it (docs/plans/instances.md, phases 3,
+//! The deployer, as the gateway asks it (docs/plans/instances.md, phases 3,
 //! 4, and 6): the process on the host that builds commits and runs
 //! instances of them, asked over a Unix socket to act now rather than at
 //! its next timed pass: to bring the previews up to date, to check a
 //! project's `main` as its canary, or to carry out a promotion the operator
-//! asked for. The gateway is handed a [`Factory`]; the factory's side reads
-//! a [`FactoryRequest`] and writes a [`FactoryAnswer`], each one line, pure
-//! here. What the GitHub watch sees asks the factory through the
+//! asked for. The gateway is handed a [`Deployer`]; the deployer's side reads
+//! a [`DeployerRequest`] and writes a [`DeployerAnswer`], each one line, pure
+//! here. What the GitHub watch sees asks the deployer through the
 //! [`Follower`].
 
 mod follow;
@@ -15,54 +15,54 @@ pub use follow::Follower;
 use futures_util::future::BoxFuture;
 use ren_recorder::project::ProjectName;
 
-/// The factory, asked to act now.
-pub trait Factory: Send + Sync + 'static {
-    /// Asks `request`, and answers once the factory has taken it up (for
+/// The deployer, asked to act now.
+pub trait Deployer: Send + Sync + 'static {
+    /// Asks `request`, and answers once the deployer has taken it up (for
     /// the previews, once it has planned which run), or failed to.
     fn ask(
         &self,
-        request: FactoryRequest,
-    ) -> BoxFuture<'static, Result<FactoryAnswer, FactoryError>>;
+        request: DeployerRequest,
+    ) -> BoxFuture<'static, Result<DeployerAnswer, DeployerError>>;
 }
 
-/// What the factory is asked.
+/// What the deployer is asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FactoryRequest {
+pub enum DeployerRequest {
     /// Bring the previews up to date.
     Previews,
     /// Check this project's `main`, as the canary, and promote it as the
-    /// policy says: the factory does for the project it builds.
+    /// policy says: the deployer does for the project it builds.
     Canary(ProjectName),
     /// Carry out the promotion the operator asked for.
     Promote,
 }
 
-/// What the factory answers a request.
+/// What the deployer answers a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FactoryAnswer {
+pub enum DeployerAnswer {
     /// The previews pass planned which instances run, and goes on building
     /// them.
     Planned,
     /// The canary's or the promotion's pass started.
     Started,
-    /// The factory does not build that project; nothing was done.
+    /// The deployer does not build that project; nothing was done.
     NotBuilt,
     /// The pass failed before it planned or started.
     Failed(String),
 }
 
-/// Why the factory could not be asked: not listening, or no answer.
+/// Why the deployer could not be asked: not listening, or no answer.
 #[derive(Debug, thiserror::Error)]
-pub enum FactoryError {
-    #[error("the factory is not listening: {0}")]
+pub enum DeployerError {
+    #[error("the deployer is not listening: {0}")]
     Unreachable(#[source] std::io::Error),
-    #[error("the factory did not answer in time")]
+    #[error("the deployer did not answer in time")]
     TimedOut,
-    #[error("the factory answered {0:?}, which is not an answer")]
+    #[error("the deployer answered {0:?}, which is not an answer")]
     Unread(String),
 }
 
-impl FactoryRequest {
+impl DeployerRequest {
     /// The request as its line on the socket.
     pub fn line(&self) -> String {
         match self {
@@ -84,7 +84,7 @@ impl FactoryRequest {
     }
 }
 
-impl FactoryAnswer {
+impl DeployerAnswer {
     /// The answer as its line on the socket.
     pub fn line(&self) -> String {
         match self {
@@ -97,51 +97,51 @@ impl FactoryAnswer {
     }
 
     /// The answer a line gives.
-    pub fn read(line: &str) -> Result<Self, FactoryError> {
+    pub fn read(line: &str) -> Result<Self, DeployerError> {
         let line = line.trim_end();
         match line.split_once(' ') {
             None if line == "planned" => Ok(Self::Planned),
             None if line == "started" => Ok(Self::Started),
             None if line == "not_built" => Ok(Self::NotBuilt),
             Some(("failed", why)) => Ok(Self::Failed(why.to_owned())),
-            None | Some(_) => Err(FactoryError::Unread(line.to_owned())),
+            None | Some(_) => Err(DeployerError::Unread(line.to_owned())),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FactoryAnswer, FactoryRequest};
+    use super::{DeployerAnswer, DeployerRequest};
 
     #[test]
     fn requests_and_answers_read_back_as_written() {
         for request in [
-            FactoryRequest::Previews,
-            FactoryRequest::Canary("ren".parse().unwrap()),
-            FactoryRequest::Promote,
+            DeployerRequest::Previews,
+            DeployerRequest::Canary("ren".parse().unwrap()),
+            DeployerRequest::Promote,
         ] {
-            assert_eq!(FactoryRequest::read(&request.line()), Some(request));
+            assert_eq!(DeployerRequest::read(&request.line()), Some(request));
         }
-        // The wire is pinned: a factory and a daemon are different builds.
-        assert_eq!(FactoryRequest::Previews.line(), "previews\n");
+        // The wire is pinned: a deployer and a daemon are different builds.
+        assert_eq!(DeployerRequest::Previews.line(), "previews\n");
         assert_eq!(
-            FactoryRequest::Canary("ren".parse().unwrap()).line(),
+            DeployerRequest::Canary("ren".parse().unwrap()).line(),
             "canary ren\n"
         );
-        assert_eq!(FactoryRequest::read("everything\n"), None);
-        assert_eq!(FactoryRequest::read("canary\n"), None);
+        assert_eq!(DeployerRequest::read("everything\n"), None);
+        assert_eq!(DeployerRequest::read("canary\n"), None);
         for answer in [
-            FactoryAnswer::Planned,
-            FactoryAnswer::Started,
-            FactoryAnswer::NotBuilt,
-            FactoryAnswer::Failed("the backup failed".into()),
+            DeployerAnswer::Planned,
+            DeployerAnswer::Started,
+            DeployerAnswer::NotBuilt,
+            DeployerAnswer::Failed("the backup failed".into()),
         ] {
-            assert_eq!(FactoryAnswer::read(&answer.line()).unwrap(), answer);
+            assert_eq!(DeployerAnswer::read(&answer.line()).unwrap(), answer);
         }
         assert_eq!(
-            FactoryAnswer::read(&FactoryAnswer::Failed("two\nlines".into()).line()).unwrap(),
-            FactoryAnswer::Failed("two lines".into())
+            DeployerAnswer::read(&DeployerAnswer::Failed("two\nlines".into()).line()).unwrap(),
+            DeployerAnswer::Failed("two lines".into())
         );
-        assert!(FactoryAnswer::read("maybe\n").is_err());
+        assert!(DeployerAnswer::read("maybe\n").is_err());
     }
 }

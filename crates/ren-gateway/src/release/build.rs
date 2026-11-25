@@ -1,6 +1,6 @@
 //! Which build of Ren is running: a package version and the source
 //! revision it was compiled from, so a client can tell whether it and the
-//! daemon come from the same source, and the factory which commit an
+//! daemon come from the same source, and the deployer which commit an
 //! instance runs. The binary's package works out the revision when it is
 //! compiled; everything else only reports or compares it.
 

@@ -1,4 +1,4 @@
-//! The deployments the factory runs in their slots, and the one pure step that
+//! The deployments the deployer runs in their slots, and the one pure step that
 //! moves them on: `(Deployments, Event) -> (Deployments, Vec<Action>)`.
 
 use super::slot::Slot;
@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
-/// The deployments the factory runs, each in its slot: today, the previews
-/// of Ren. Kept by the factory as a file in production's data folder
-/// ([`Deployments::FILE`]), which production's gateway reads. The factory and
+/// The deployments the deployer runs, each in its slot: today, the previews
+/// of Ren. Kept by the deployer as a file in production's data folder
+/// ([`Deployments::FILE`]), which production's gateway reads. The deployer and
 /// that gateway are different builds (the canary's and the promoted one),
 /// so the file keeps its shape: its keys are the ones previews had.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,7 +87,7 @@ pub enum Event {
         wanted: Vec<Wanted>,
         capacity: PreviewCapacity,
     },
-    /// The factory started `commit` in `slot`, reached as `reach`.
+    /// The deployer started `commit` in `slot`, reached as `reach`.
     Started {
         slot: Slot,
         commit: Commit,
@@ -101,7 +101,7 @@ pub enum Event {
     },
 }
 
-/// What the factory does next, in order.
+/// What the deployer does next, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     /// Stop whatever runs in the slot.

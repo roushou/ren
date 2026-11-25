@@ -1,14 +1,14 @@
-//! What the GitHub watch's sightings ask of the factory
+//! What the GitHub watch's sightings ask of the deployer
 //! (docs/plans/instances.md, phases 4 and 6): previews follow their pull
 //! requests, and the canary follows `main`. The daemon tells the
 //! [`Follower`] each repository it sees, and the follower answers the
 //! requests that sighting makes:
 //!
-//! - [`FactoryRequest::Previews`] when what its pull requests want moved
+//! - [`DeployerRequest::Previews`] when what its pull requests want moved
 //!   ([`Wanted::pull`]): one opened, closed, became ready or a draft, or its
 //!   head moved; also on the first sighting, which a pass of previews
 //!   takes up harmlessly;
-//! - [`FactoryRequest::Canary`], for each project watched on it, when its
+//! - [`DeployerRequest::Canary`], for each project watched on it, when its
 //!   default branch's head moved from one seen before. Not on the first
 //!   sighting: a canary pass is a build and its checks, and a daemon that
 //!   restarts (as a promotion restarts it) would otherwise start one.
@@ -16,7 +16,7 @@
 //! A read that failed, or none yet, asks nothing: the last answer is never
 //! taken as current.
 
-use super::FactoryRequest;
+use super::DeployerRequest;
 use crate::deployment::Wanted;
 use ren_github::{Observation, Oid, RepositorySlug};
 use ren_recorder::project::ProjectName;
@@ -29,7 +29,7 @@ pub struct Follower {
     seen: BTreeMap<RepositorySlug, Seen>,
 }
 
-/// What a sighting showed that the factory follows.
+/// What a sighting showed that the deployer follows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Seen {
     wanted: Vec<Wanted>,
@@ -50,12 +50,12 @@ impl Follower {
     }
 
     /// Takes what was seen of `repository`, and answers what it asks of
-    /// the factory.
+    /// the deployer.
     pub fn see(
         &mut self,
         repository: &RepositorySlug,
         observation: &Observation,
-    ) -> Vec<FactoryRequest> {
+    ) -> Vec<DeployerRequest> {
         let Some((sighting, true)) = observation.sighting() else {
             return Vec::new();
         };
@@ -81,7 +81,7 @@ impl Follower {
             .as_ref()
             .is_none_or(|before| before.wanted != now.wanted)
         {
-            asks.push(FactoryRequest::Previews);
+            asks.push(DeployerRequest::Previews);
         }
         if before.is_some_and(|before| before.main != now.main) {
             asks.extend(
@@ -89,7 +89,7 @@ impl Follower {
                     .get(repository)
                     .into_iter()
                     .flatten()
-                    .map(|project| FactoryRequest::Canary(project.clone())),
+                    .map(|project| DeployerRequest::Canary(project.clone())),
             );
         }
         asks

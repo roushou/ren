@@ -1,14 +1,14 @@
-//! The factory's previews (docs/plans/self-build.md, phase 9): one pass
+//! The deployer's previews (docs/plans/self-build.md, phase 9): one pass
 //! asks `ren_gateway::deployment::Deployments` which previews should run, from the
 //! commits the operator asked for and Ren's open pull requests as
 //! production last saw them on GitHub, and carries out what it says: each
 //! start fetches the commit, builds it once (`crate::builds`) in the
-//! factory's previews worktree, and starts it on a fresh copy of
+//! deployer's previews worktree, and starts it on a fresh copy of
 //! production's history in its slot's pod; each stop removes a slot's pod.
 //! What happened is written to production's data folder after every step,
 //! where the gateway serves it.
 
-use super::{CanaryError, Factory, PublishArgs};
+use super::{CanaryError, Deployer, PublishArgs};
 use crate::{
     progress::Progress,
     replica::{ListedPull, ProductionPlace, Replica},
@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 /// One previews pass, against `production`.
 pub(super) struct PreviewPass<'a> {
-    pub factory: &'a Factory,
+    pub deployer: &'a Deployer,
     pub production: &'a ProductionPlace,
     pub publish: PublishArgs,
     /// The project Ren is registered as, whose pull requests are previewed.
@@ -42,7 +42,7 @@ impl PreviewPass<'_> {
         env: &HostEnv,
         planned: impl FnOnce(),
     ) -> Result<Vec<Commit>, CanaryError> {
-        let capacity = self.factory.options()?.previews;
+        let capacity = self.deployer.options()?.previews;
         let before = self.production.previews();
         let wanted = self.wanted(&before)?;
         let (mut instances, actions) = before
@@ -50,7 +50,7 @@ impl PreviewPass<'_> {
             .map_err(|stale| CanaryError::Preview(stale.to_string()))?;
         self.production.write_previews(&instances)?;
         planned();
-        let tailscale = self.factory.tailscale(self.publish)?;
+        let tailscale = self.deployer.tailscale(self.publish)?;
         let mut backup: Option<PathBuf> = None;
         for action in actions {
             match action {
@@ -185,15 +185,15 @@ impl PreviewPass<'_> {
         backup: &std::path::Path,
         tailscale: Option<crate::tailscale::Tailnet>,
     ) -> Result<(), CanaryError> {
-        let factory = self.factory;
-        factory
+        let deployer = self.deployer;
+        deployer
             .git
-            .fetch_commit(&factory.repo, Factory::REMOTE, commit)?;
-        let worktree = factory.home.join(".local/share/ren/preview-factory");
-        factory
+            .fetch_commit(&deployer.repo, Deployer::REMOTE, commit)?;
+        let worktree = deployer.home.join(".local/share/ren/preview-factory");
+        deployer
             .git
-            .check_out_detached(&factory.repo, &worktree, commit)?;
-        let build = factory.builds.make(env, &worktree, commit)?;
+            .check_out_detached(&deployer.repo, &worktree, commit)?;
+        let build = deployer.builds.make(env, &worktree, commit)?;
         let replica = Replica::preview_slot(env, slot)?;
         replica.replace_data(backup)?;
         let keys = replica.configure(self.production)?;
@@ -201,7 +201,7 @@ impl PreviewPass<'_> {
             let (gateway, ui) = slot.published();
             (tailscale, gateway, ui)
         });
-        let reached = replica.start(&factory.repo, &build.ren(), &build.ui(), &keys, publish)?;
+        let reached = replica.start(&deployer.repo, &build.ren(), &build.ui(), &keys, publish)?;
         println!("Deployment of {}: {}", commit.short(), reached.ui);
         Ok(())
     }

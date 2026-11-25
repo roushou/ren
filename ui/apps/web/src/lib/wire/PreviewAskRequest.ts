@@ -2,6 +2,6 @@
 
 /**
  * `POST previews/ask` and `previews/withdraw`: the operator asks for a
- * preview of `commit`, or withdraws the ask, for the factory's next pass.
+ * preview of `commit`, or withdraws the ask, for the deployer's next pass.
  */
 export type PreviewAskRequest = { commit: string, };

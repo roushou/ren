@@ -461,9 +461,9 @@ ren deployer canary down             # stop the canary
 ```
 
 A pass fetches `main` from `origin` and checks its tip out, detached, in
-Ren's own worktree, `~/.local/share/ren/factory`, then goes on with that
-commit's own xtask, so a commit is checked by its own checks. It builds the
-commit once into `~/.local/share/ren/builds/<commit>` (the release `ren`
+Ren's own worktree, `~/.local/share/ren/factory`, builds it, then goes on
+with that build's own `ren deployer`, so a commit is checked by its own
+checks. It builds the commit once into `~/.local/share/ren/builds/<commit>` (the release `ren`
 and the UI's deployable copy; the newest few are kept). A commit may be a pull
 request's, so its build runs none of its code on the host: its dependencies
 are fetched by its lockfiles (`cargo fetch --locked`, `bun install
@@ -507,9 +507,9 @@ shows all of it: the three builds, each check, the pages the canary
 captured (kept in production's data folder, `release-shots`), what the
 policy decided, the work items production's build shipped and those on
 `main` waiting for it, and each project's release. The view's Promote asks
-for the canary's passed build; the factory installs it, as `canary
+for the canary's passed build; the deployer installs it, as `canary
 promote` would, and drops a request that is no longer the canary's passed
-build: at once when the factory service listens (below), else at the next
+build: at once when the deployer service listens (below), else at the next
 pass, within one timer period.
 
 When the build passed and follows production's commit, the policy in
@@ -574,7 +574,7 @@ stops its preview with it, and takes it off the session's work items.
 
 #### Previews of pull requests and commits
 
-Every canary pass also brings the factory's own previews up to date
+Every canary pass also brings the deployer's own previews up to date
 (`ren deployer canary previews` runs just that): one for each commit the
 operator asked to preview, newest ask first, then one for each of Ren's
 open pull requests that is not a draft, as production last saw them on
@@ -604,31 +604,31 @@ folder (`previews.json`); the commits asked for are read from
 `preview-requests.json` beside it.
 
 A preview asked for starts at once, not at the next timed pass, when the
-factory listens: `canary enable` also writes `ren-factory.service`, which
-runs `ren deployer canary serve` on
-`$XDG_RUNTIME_DIR/ren-factory/factory.sock`, and production's daemon names
+deployer listens: `canary enable` also writes `ren-deployer.service`, which
+runs the installed `ren deployer serve` on
+`$XDG_RUNTIME_DIR/ren-deployer/deployer.sock`, and production's daemon names
 that socket:
 
 ```toml
-[factory]
-socket = "/run/user/1000/ren-factory/factory.sock"
+[deployer]
+socket = "/run/user/1000/ren-deployer/deployer.sock"
 ```
 
-An ask or a withdrawal then asks the factory for a previews pass, and is
+An ask or a withdrawal then asks the deployer for a previews pass, and is
 answered once the pass has given the commit its slot or taken it back (or
 after five seconds, while another pass runs). Passes run one at a time;
 asks that arrive during one are taken by the next. While the service
 listens, the timer's pass hands its previews pass to it. Follow it with
-`journalctl --user -u ren-factory`.
+`journalctl --user -u ren-deployer`.
 
 Previews of pull requests follow them the same way, and the canary follows
 `main`: when production's GitHub watch (`[github]`) sees a watched
 repository's pull requests that want a preview (open, not drafts) open,
 close, become ready or drafts, or move their heads, the daemon asks the
-factory for a previews pass; when it sees the repository's default branch
+deployer for a previews pass; when it sees the repository's default branch
 move from a head it saw before, it asks for a canary pass for each project
-watched on it, which the factory runs for the project it builds (`canary
-serve --project`, `ren` by default). A preview of a pull request starts,
+watched on it, which the deployer runs for the project it builds (`ren
+deployer serve --project`, `ren` by default). A preview of a pull request starts,
 moves, or stops, and a canary pass over a new `main` starts, within one
 poll (`poll_seconds`). A daemon's first sighting starts no canary pass, so
 a promotion's restart does not start another. The service runs one pass at
@@ -637,10 +637,10 @@ listens, the timer's pass hands the canary to it, and is left to catch up
 on what a stopped service missed; a lock keeps two canary passes from
 overlapping.
 
-Set `[factory] socket` in production's configuration only once production
+Set `[deployer] socket` in production's configuration only once production
 and `main` both know the section (after the promotion that ships it): a
 canary pass checks `main` against production's configuration, and a build
-that predates `[factory]` refuses it.
+that predates `[deployer]` refuses it.
 
 In the dev slot, `~/.config/ren-dev/fake-github.toml` writes the fake
 `acme/ren` by hand, read at each poll: its `main` moved, and its pull
@@ -747,7 +747,7 @@ it into a folder under the canary's data.
 A project Ren builds is registered first, by name
 ([the plan](plans/hierarchy.md)); `install-vps` registers its checkout as
 `ren`, Ren itself, unless a project is already built as Ren (a promotion
-installs from the factory's own worktree), and the dev slot registers its
+installs from the deployer's own worktree), and the dev slot registers its
 fake projects:
 
 ```sh

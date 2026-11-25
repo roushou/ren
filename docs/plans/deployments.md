@@ -152,22 +152,30 @@ a move lands before the move that needs it.
    at each commit: the same 1229 tests pass (the release labels test folded
    into the gateway's), lint, and the compatibility gate against the commit
    before reports no change to labels, fixtures, or the API.
-3. **`ren-deployer`.** In progress. Built so far, in two commits: the
-   factory's code no longer reaches into xtask's `dev` (the page camera is
-   its own module, the dev rehearsal is found by instance 0's folders),
-   and then every runtime module moved, unchanged, into
-   `crates/ren-deployer`, which xtask's commands call; xtask keeps `compat`
-   and `dev`. Verified by comparison: the same 1229 tests, the same help
-   for every moved command, no change at the compatibility gate. Left:
-   `ren deployer` commands in the `ren` binary, with the checkout they
-   build from as an input rather than the path the binary was compiled
-   in; the canary handing off to the built commit's own `ren deployer`
-   (its checks, `ren check`) instead of its checkout's xtask; `ren
-   deployer serve` as the service in place of `cargo xtask canary serve`,
-   and `[deployer]` in place of `[factory]`; the factory service named
-   `Deployer`, the crate's primary type. Verified by comparison against
-   the commit before (labels, test count, `ren --help`) and a whole canary
-   pass in a rehearsal.
+3. **`ren-deployer`.** Built. The factory's code first stopped reaching into
+   xtask's `dev` (the page camera is its own module; the dev rehearsal is
+   found by instance 0's folders), then moved, unchanged, into
+   `crates/ren-deployer` (the same 1229 tests, the same help for every
+   moved command, no change at the compatibility gate). Then it became
+   `ren deployer` in the `ren` binary: `serve`, `canary`, `preview`, and
+   `install-vps`, building from `--checkout` (this folder by default), not
+   the folder the binary was compiled in; xtask keeps only `compat` and
+   `dev`. A canary pass builds `main`'s tip and goes on with that build's
+   own `ren deployer`. A build asks rustup which cargo builds the checkout,
+   so the commit's toolchain file decides. A rehearsal's pass prunes no
+   builds (the folder is shared with production's canary). The service the
+   daemon asks is the deployer: `[deployer] socket`
+   (`$XDG_RUNTIME_DIR/ren-deployer/deployer.sock`), `ren-deployer.service`
+   running the installed `ren deployer serve`, the gateway's `deployer`
+   module (`Deployer`, `DeployerRequest`, `DeployerAnswer`), the daemon's
+   `DeployerSocket`, and the crate's primary type `Deployer`. Verified: a
+   whole canary pass of this branch through `ren deployer canary run
+   --source checkout --of dev` built it in a container, started the canary,
+   and passed doctor, 19 reads, and every page, with production's builds
+   kept; then the dev daemon, configured with `[deployer]`, asked a served
+   `ren deployer serve` for a preview of that commit, which ran and
+   answered `/health` as that commit, a preview, and was stopped when
+   withdrawn.
 4. **Chosen previews, seeded.** Not built. `ren deploy <commit> --seed
    <scenario | replica>` starts a chosen preview and answers with its
    state and address. `ren deployments` lists them, and `ren deploy stop`
@@ -239,6 +247,21 @@ a move lands before the move that needs it.
   `DaemonContainer` reads a configuration rather than deriving one. What
   is left is `Replica`'s, already the one owner of a deployment's
   configuration.
+- **Phase 3: the handed-off pass is checked once `main` carries it.** A
+  timed pass fetches `main` and runs its build's `ren deployer`, which
+  `main` lacks until this merges; the pass itself was checked through
+  `--source checkout`.
+- **Phase 3: the folders on disk keep their names.** The deployer's
+  worktrees (`~/.local/share/ren/factory`, `preview-factory`) are
+  production's state; renaming them would leave the old worktrees behind.
+  They are renamed with phase 6, when production is a deployment.
+- **Phase 3: production moves over by hand, once.** Its timer still runs
+  `cargo xtask canary run` in the operator's checkout. After this merges:
+  promote production to a `main` that has `ren deployer` (by hand, `cargo
+  run --release -p ren-rs -- deployer canary run` from a checkout of
+  `main`, then `canary promote`), then `ren deployer canary enable`
+  rewrites the timer and writes `ren-deployer.service` around the installed
+  `ren`, and `[deployer] socket` goes into production's configuration.
 - **Phase 1: checked by its pages, not side by side.** The history is
   invented afresh, not the scenarios' calls replayed, so the two seeds
   differ by design; the pages were checked against the new one.

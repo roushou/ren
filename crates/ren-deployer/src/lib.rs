@@ -21,3 +21,5 @@ pub mod shot;
 pub mod tailscale;
 pub mod ui;
 pub mod unit;
+
+pub use canary::Deployer;

@@ -1,11 +1,11 @@
-//! Closing work items from what the factory sees: a sent item lands when a
+//! Closing work items from what the deployer sees: a sent item lands when a
 //! commit on `main` names it (`Work-Item: <id>`, a [`Landing`]), and a
 //! landed item ships when production runs a clean build whose history holds
 //! that commit. Each change goes through production's own control API, with
 //! its control token, as an operator's would; production's daemon checks it
 //! against the item's state.
 
-use super::{CanaryError, Factory};
+use super::{CanaryError, Deployer};
 use crate::{
     progress::Progress,
     replica::{ProductionPlace, ReplicaError},
@@ -47,7 +47,7 @@ impl<'a> WorkLedger<'a> {
     /// Lands the sent items `main`'s recent commits name, then ships the
     /// landed items production's build holds. A production whose daemon
     /// keeps no work items yet is left alone.
-    pub fn close(&self, factory: &Factory, main: &Commit) -> Result<Closed, CanaryError> {
+    pub fn close(&self, deployer: &Deployer, main: &Commit) -> Result<Closed, CanaryError> {
         let Some(items) = self.production.work_items()? else {
             Progress("Production keeps no work items yet; none to close").show();
             return Ok(Closed::default());
@@ -65,7 +65,7 @@ impl<'a> WorkLedger<'a> {
             .filter_map(|item| Some((item.id, item.landed.clone()?)))
             .collect();
         if !sent.is_empty() {
-            let mut log = factory.git.log(&factory.repo, main, Self::HISTORY)?;
+            let mut log = deployer.git.log(&deployer.repo, main, Self::HISTORY)?;
             log.reverse();
             for (commit, message) in log {
                 for item in Landing::read(commit.clone(), &message).items {
@@ -105,7 +105,7 @@ impl<'a> WorkLedger<'a> {
         };
         if let Some(running) = running {
             for (item, commit) in &landed {
-                if factory.git.contains(&factory.repo, &running, commit)? {
+                if deployer.git.contains(&deployer.repo, &running, commit)? {
                     self.production.move_work(
                         *item,
                         WorkChange::Ship(ShipWorkRequest {

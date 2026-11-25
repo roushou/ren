@@ -63,7 +63,7 @@ pub struct PreviewWorkRequest {
 }
 
 /// `POST release/promote`: production is to take the canary's build of
-/// `commit`, on the factory's next pass.
+/// `commit`, on the deployer's next pass.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(deny_unknown_fields)]
@@ -73,7 +73,7 @@ pub struct PromoteRequest {
 }
 
 /// `POST previews/ask` and `previews/withdraw`: the operator asks for a
-/// preview of `commit`, or withdraws the ask, for the factory's next pass.
+/// preview of `commit`, or withdraws the ask, for the deployer's next pass.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(deny_unknown_fields)]

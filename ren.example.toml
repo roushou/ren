@@ -213,9 +213,9 @@ prompt_bytes = 20971520
 # key_file = "/home/you/.config/ren/github-app.pem" # its private key, as GitHub gave it
 # api = "https://api.github.com"
 
-# Optional: where the factory on the host listens (`ren deployer canary
-# serve`, which `canary enable` runs as ren-factory.service). A preview asked
+# Optional: where the deployer on the host listens (`ren deployer serve`,
+# which `canary enable` runs as ren-deployer.service). A preview asked
 # for or withdrawn is then planned at once, not at the canary's next timed
 # pass (docs/deployment.md).
-# [factory]
-# socket = "/run/user/1000/ren-factory/factory.sock"
+# [deployer]
+# socket = "/run/user/1000/ren-deployer/deployer.sock"

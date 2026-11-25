@@ -406,7 +406,7 @@ unknown subject or change.
 the canary's build of that commit. The gateway records the request
 (`release-promote.json` in its data folder) and answers `202`
 `{api_version, commit}`; the factory carries it out with the install's
-steps, since an install restarts the daemon: at once with `[factory] socket`
+steps, since an install restarts the daemon: at once with `[deployer] socket`
 set (the gateway asks it to and waits up to five seconds for the pass to
 start), else at its next canary pass. `404`
 `not_found` before any pass; `409` `not_promotable` unless the commit is the
@@ -419,7 +419,7 @@ canary's and its build passed. Ren's Release page in the UI
 commit, and `POST /control/v1/previews/withdraw` with `{commit}` withdraws
 the ask. The gateway records the asks (`preview-requests.json` in its data
 folder) and answers `202` `{api_version, commits}`, every commit asked for,
-the newest ask first. With `[factory] socket` set, the gateway first asks
+the newest ask first. With `[deployer] socket` set, the gateway first asks
 the factory to plan the change and answers once it has (the commit holds
 its slot, building) or after five seconds; otherwise the factory's next
 canary pass starts or stops the preview

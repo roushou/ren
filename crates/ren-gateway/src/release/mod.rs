@@ -4,7 +4,7 @@
 //! ([`Verdict`]); when production takes a build that passed ([`Policy`]);
 //! and where a release stands, with what promotion decided ([`Release`],
 //! its [`Decision`]). The gateway reports
-//! them (`/health`, `/api/release`); the factory (`ren deployer canary`) runs
+//! them (`/health`, `/api/release`); the deployer (`ren deployer canary`) runs
 //! the canary and writes them.
 
 mod build;

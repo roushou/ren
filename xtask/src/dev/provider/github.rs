@@ -6,7 +6,7 @@
 //! Any other repository is not found, as GitHub says for one a token
 //! cannot read. `acme/ren` can instead be written by hand, in a file read
 //! for each answer ([`HandWritten`]): its `main` moved, and its pull
-//! requests opened, moved, and closed, so the factory's canary and
+//! requests opened, moved, and closed, so the deployer's canary and
 //! previews can be seen following them.
 
 use axum::{Json, http::StatusCode};
@@ -229,7 +229,7 @@ impl FakeGithub {
     }
 
     /// The checkout's own project, `ren`: its pull requests' invented heads
-    /// are on no remote, so the factory's previews of them fail to fetch,
+    /// are on no remote, so the deployer's previews of them fail to fetch,
     /// as the Overview shows.
     fn ren() -> Vec<FakePull> {
         vec![

@@ -39,7 +39,7 @@ pub struct PreviewBody {
     pub state: PreviewStateBody,
     /// The loopback port its UI answers on.
     pub ui_port: u16,
-    /// The tailnet port its UI is published on, when the factory publishes.
+    /// The tailnet port its UI is published on, when the deployer publishes.
     pub published_ui_port: u16,
 }
 

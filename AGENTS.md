@@ -320,13 +320,13 @@ dependencies under "Crates" below. Read the code for current module ownership.
   commit in one); a report that does not fit is refused (`StaleReport`)
   and changes nothing. A failed build is not tried again for its commit.
   A pull request wants a preview of its head unless it is a draft
-  (`Wanted::pull`). `ren-gateway`'s `factory` module (pure, but the
-  `Factory` trait) is the factory's one-line protocol (`FactoryRequest`:
-  previews, a project's canary, a promotion; `FactoryAnswer`) and the
+  (`Wanted::pull`). `ren-gateway`'s `deployer` module (pure, but the
+  `Deployer` trait) is the deployer's one-line protocol (`DeployerRequest`:
+  previews, a project's canary, a promotion; `DeployerAnswer`) and the
   `Follower`, which turns what the daemon's GitHub watch sees into requests:
   previews when pull requests move, the canary when a default branch moves
-  from a head seen before. The daemon asks them of the factory service
-  (`[factory] socket`, `ren deployer canary serve`).
+  from a head seen before. The daemon asks them of the deployer service
+  (`[deployer] socket`, `ren deployer serve`).
   The factory keeps it in production's data folder (`Deployments::FILE`,
   still `previews.json`, in the shape production's gateway reads). The
   gateway's `src/purity.rs` keeps the module free of I/O.

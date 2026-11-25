@@ -640,7 +640,7 @@ impl InstallVps {
 
     /// Registers this checkout as the project `ren`, built as Ren itself
     /// (docs/plans/hierarchy.md), unless a project already is: a promotion
-    /// installs from the factory's own worktree, never the checkout Ren is
+    /// installs from the deployer's own worktree, never the checkout Ren is
     /// registered at. The install is done by now, so a refusal (another
     /// project holds the name or the repository) is reported, not failed.
     fn register(layout: &Layout) {

@@ -9,8 +9,8 @@
 use super::{DevError, claims::DevClaims, index::DevIndex};
 use ren_container::Engine;
 use ren_daemon::config::{
-    Config, FactoryOptions, GithubApp, GithubOptions, RelayedOptions, RunContainerOptions, RunHold,
-    RunRuntime, RunsOptions, UpstreamConfig, WatchedRepository,
+    Config, DeployerOptions, GithubApp, GithubOptions, RelayedOptions, RunContainerOptions,
+    RunHold, RunRuntime, RunsOptions, UpstreamConfig, WatchedRepository,
 };
 use ren_daemon::host::HeldRuns;
 use ren_deployer::file::{FileError, FileMode};
@@ -393,14 +393,14 @@ impl DevInstance {
                     })
                     .collect::<Result<_, DevError>>()?,
             },
-            // A factory of its own, if one listens (`ren deployer canary
+            // A deployer of its own, if one listens (`ren deployer canary
             // serve --of dev --socket` here): asked to plan a preview at
             // once.
-            factory: FactoryOptions {
+            deployer: DeployerOptions {
                 socket: self.env.absolute_path("XDG_RUNTIME_DIR").map(|runtime| {
                     runtime
-                        .join(format!("{}-factory", self.index.name()))
-                        .join("factory.sock")
+                        .join(format!("{}-deployer", self.index.name()))
+                        .join("deployer.sock")
                 }),
             },
             ..Config::default()

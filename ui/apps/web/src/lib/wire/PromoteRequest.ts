@@ -2,6 +2,6 @@
 
 /**
  * `POST release/promote`: production is to take the canary's build of
- * `commit`, on the factory's next pass.
+ * `commit`, on the deployer's next pass.
  */
 export type PromoteRequest = { commit: string, };

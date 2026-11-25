@@ -135,7 +135,7 @@ impl ReleaseCmd {
                 "production has commits the canary's build lacks; it is not taken"
             }
             Stored::Known(Decision::Unconfirmed) => {
-                "production runs a build the factory cannot place; promote it by hand"
+                "production runs a build the deployer cannot place; promote it by hand"
             }
             Stored::Known(Decision::AwaitingOperator) => {
                 "passed; promote it with `ren deployer canary promote`"

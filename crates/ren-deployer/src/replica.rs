@@ -17,7 +17,7 @@ use crate::{
     unit::{KillMode, Listener, TransientUnit},
 };
 use ren_container::{Access, Mount};
-use ren_daemon::config::{Config, ConfigError, FactoryOptions, GithubOptions, RunsOptions};
+use ren_daemon::config::{Config, ConfigError, DeployerOptions, GithubOptions, RunsOptions};
 use ren_gateway::deployment::{ChosenCommits, Deployments, Slot as PreviewSlot};
 use ren_gateway::release::{PromotionRequest, Release, ShotName};
 use ren_gateway::{
@@ -136,7 +136,7 @@ struct WorkListing {
 }
 
 /// One open pull request, as production's `/api/projects/{name}/pulls`
-/// lists it, as far as the factory needs.
+/// lists it, as far as the deployer needs.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ListedPull {
     pub number: u64,
@@ -353,7 +353,7 @@ impl ProductionPlace {
         request
     }
 
-    /// The previews the factory last wrote here; none before the first.
+    /// The previews the deployer last wrote here; none before the first.
     pub fn previews(&self) -> Deployments {
         fs::read(self.data_dir.join(Deployments::FILE))
             .ok()
@@ -401,7 +401,7 @@ impl ProductionPlace {
         }
     }
 
-    /// The release the factory last wrote here, if it reads.
+    /// The release the deployer last wrote here, if it reads.
     pub fn release(&self) -> Option<Release> {
         let text = fs::read(self.data_dir.join(Release::FILE)).ok()?;
         serde_json::from_slice(&text).ok()
@@ -457,7 +457,7 @@ impl Replica {
         }
     }
 
-    /// The preview in `slot` of the factory's previews: its slot's ports,
+    /// The preview in `slot` of the deployer's previews: its slot's ports,
     /// in `~/.config/ren-previews/<slot>` and
     /// `~/.local/state/ren-previews/<slot>`.
     pub fn preview_slot(env: &HostEnv, slot: PreviewSlot) -> Result<Self, ReplicaError> {
@@ -501,13 +501,13 @@ impl Replica {
             instance: InstanceOptions {
                 environment: self.environment,
             },
-            // Only production runs the factory: a replica drives no runs.
+            // Only production runs the deployer: a replica drives no runs.
             runs: RunsOptions::default(),
             // Production watches GitHub; a replica has no token to.
             github: GithubOptions::default(),
-            // Only production asks the factory for previews; a replica's
+            // Only production asks the deployer for previews; a replica's
             // asks would start production's passes.
-            factory: FactoryOptions::default(),
+            deployer: DeployerOptions::default(),
             ..production
         }
     }
@@ -721,7 +721,7 @@ impl Replica {
 #[cfg(test)]
 mod tests {
     use super::Replica;
-    use ren_daemon::config::{Config, FactoryOptions};
+    use ren_daemon::config::{Config, DeployerOptions};
     use ren_gateway::Environment;
     use std::path::Path;
 
@@ -746,8 +746,8 @@ operator_key_env = "ACME_ANTHROPIC_KEY"
 project = "ren"
 github = "acme/ren"
 
-[factory]
-socket = "/run/user/1000/ren-factory/factory.sock"
+[deployer]
+socket = "/run/user/1000/ren-deployer/deployer.sock"
 "#,
         )
         .unwrap()
@@ -764,10 +764,10 @@ socket = "/run/user/1000/ren-factory/factory.sock"
         assert!(config.runs.roots.is_empty());
         assert_eq!(config.upstreams[0].operator_key_env, "ACME_ANTHROPIC_KEY");
         assert!(config.github.repository.is_empty());
-        // Nor asks the factory, and a build that predates `[factory]` reads
+        // Nor asks the deployer, and a build that predates `[deployer]` reads
         // its configuration.
-        assert_eq!(config.factory, FactoryOptions::default());
-        assert!(!toml::to_string(&config).unwrap().contains("[factory]"));
+        assert_eq!(config.deployer, DeployerOptions::default());
+        assert!(!toml::to_string(&config).unwrap().contains("[deployer]"));
         config.check().unwrap();
 
         let preview = Replica::preview("ren-3", 20_200, Path::new("/data/worktrees/.data/ren-3"));

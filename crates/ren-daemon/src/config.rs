@@ -101,8 +101,8 @@ pub enum ConfigError {
     GithubProjectTwice(String),
     #[error("GitHub token variable {0} is not set, or not a token")]
     MissingGithubToken(String),
-    #[error("[factory] socket must be an absolute path")]
-    FactorySocket,
+    #[error("[deployer] socket must be an absolute path")]
+    DeployerSocket,
     #[error("[github.app] key_file {0} could not be read")]
     GithubAppKeyFile(PathBuf, #[source] std::io::Error),
     #[error("[github.app] key_file {0}: {1}")]
@@ -167,30 +167,30 @@ pub struct Config {
     /// The GitHub repositories watched for registered projects.
     #[serde(skip_serializing_if = "GithubOptions::is_off")]
     pub github: GithubOptions,
-    /// The factory on the host, asked to plan a preview as it is asked for.
-    #[serde(skip_serializing_if = "FactoryOptions::is_unset")]
-    pub factory: FactoryOptions,
+    /// The deployer on the host, asked to plan a preview as it is asked for.
+    #[serde(skip_serializing_if = "DeployerOptions::is_unset")]
+    pub deployer: DeployerOptions,
 }
 
-/// `[factory]`: where the factory on the host listens (`ren deployer canary
-/// serve`). Without it, an asked-for preview waits for the factory's next
+/// `[deployer]`: where the deployer on the host listens (`ren deployer canary
+/// serve`). Without it, an asked-for preview waits for the deployer's next
 /// timed pass.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct FactoryOptions {
+pub struct DeployerOptions {
     /// Its socket, an absolute path.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub socket: Option<PathBuf>,
 }
 
-impl FactoryOptions {
+impl DeployerOptions {
     fn is_unset(&self) -> bool {
         self == &Self::default()
     }
 
     fn socket(&self) -> Result<Option<PathBuf>, ConfigError> {
         match &self.socket {
-            Some(socket) if !socket.is_absolute() => Err(ConfigError::FactorySocket),
+            Some(socket) if !socket.is_absolute() => Err(ConfigError::DeployerSocket),
             socket => Ok(socket.clone()),
         }
     }
@@ -754,7 +754,7 @@ impl Default for Config {
             packages: PackagesOptions::default(),
             tools: RenamedTools,
             github: GithubOptions::default(),
-            factory: FactoryOptions::default(),
+            deployer: DeployerOptions::default(),
         }
     }
 }
@@ -873,7 +873,7 @@ impl Config {
                 Keys::Env(env) => self.github.watch(env)?,
                 Keys::Unchecked => None,
             },
-            factory: self.factory.socket()?,
+            deployer: self.deployer.socket()?,
             revision: self.revision()?,
         })
     }
@@ -975,8 +975,8 @@ pub struct RuntimeConfig {
     depot: Depot,
     /// What is watched on GitHub; none while nothing is.
     github: Option<GithubSetup>,
-    /// The factory's socket on the host, when one is set.
-    factory: Option<PathBuf>,
+    /// The deployer's socket on the host, when one is set.
+    deployer: Option<PathBuf>,
     revision: String,
 }
 
@@ -1002,9 +1002,9 @@ impl RuntimeConfig {
         self.github.as_ref()
     }
 
-    /// The factory's socket on the host, when one is set.
-    pub fn factory(&self) -> Option<&Path> {
-        self.factory.as_deref()
+    /// The deployer's socket on the host, when one is set.
+    pub fn deployer(&self) -> Option<&Path> {
+        self.deployer.as_deref()
     }
 
     pub fn runs(&self) -> &RunsOptions {
