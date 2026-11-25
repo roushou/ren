@@ -1,6 +1,5 @@
-//! `cargo xtask dev shot`: screenshots of the dev UI's pages with a headless
-//! Chromium, for checking a UI change without a browser, and the canary's
-//! page check. Each page is first asked for, and fails unless the UI answers
+//! Screenshots of a deployment's UI pages with a headless Chromium: the
+//! canary's page check. Each page is first asked for, and fails unless the UI answers
 //! it (after its redirects) with a success: an error page is a failure, not
 //! a capture. Then it loads for a few seconds and is captured; the live feed
 //! never holds it open. The pages under a project are those of a project in

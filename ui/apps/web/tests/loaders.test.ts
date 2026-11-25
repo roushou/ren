@@ -100,8 +100,8 @@ test('the gateway names its environment', async () => {
         path(input) === '/health' ? versioned(body) : versioned(storageFixture()),
       ),
     );
-  const development = await read({ ...healthBody(), instance: { environment: 'development' } });
-  assert.equal(development.value?.health.instance.environment, 'development');
+  const preview = await read({ ...healthBody(), instance: { environment: 'preview' } });
+  assert.equal(preview.value?.health.instance.environment, 'preview');
 });
 
 test('every response is version-checked and a mismatch is reported distinctly', async () => {

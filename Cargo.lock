@@ -3667,29 +3667,9 @@ dependencies = [
 name = "xtask"
 version = "0.1.0"
 dependencies = [
- "aws-lc-rs",
- "axum",
- "base64 0.22.1",
  "clap",
- "futures-util",
- "ren-container",
- "ren-daemon",
- "ren-deployer",
- "ren-gateway",
  "ren-git",
- "ren-github",
- "ren-harness",
- "ren-manifest",
- "ren-network",
- "ren-protocol",
- "ren-recorder",
- "reqwest",
- "serde",
- "serde_json",
  "thiserror",
- "tokio",
- "toml",
- "uuid",
 ]
 
 [[package]]

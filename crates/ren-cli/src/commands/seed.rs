@@ -22,8 +22,8 @@ use std::{process::ExitCode, sync::Arc, time::Duration};
 
 /// Write invented history into this host's storage: sessions from each
 /// client, with turns and tool calls, several callers, failures, and long
-/// prompts, placed over the last three days. For a preview or a
-/// development instance; the daemon must be stopped.
+/// prompts, placed over the last three days. For a preview; the daemon
+/// must be stopped.
 #[derive(Args)]
 pub struct SeedCmd {
     /// The number the history is made from: the same number always

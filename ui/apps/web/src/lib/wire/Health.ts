@@ -9,7 +9,7 @@ import type { RecorderMetrics } from "./RecorderMetrics.ts";
  */
 export type Health = { status: string, build: Build, 
 /**
- * Production or development, as configured.
+ * Production, the canary, or a preview, as configured.
  */
 instance: InstanceOptions, 
 /**

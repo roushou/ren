@@ -20,7 +20,7 @@ pub(super) struct Health {
     #[ts(type = "string")]
     pub(super) status: HealthStatus,
     pub(super) build: Build,
-    /// Production or development, as configured.
+    /// Production, the canary, or a preview, as configured.
     pub(super) instance: InstanceOptions,
     /// Whether new calls are admitted, read-only: changing it takes the
     /// control API.

@@ -256,20 +256,15 @@ impl Report {
 }
 
 impl Report {
-    /// Says so when the gateway is not a production instance, so a dev
-    /// slot is never mistaken for the installed service.
+    /// Says so when the gateway is not a production instance, so a
+    /// deployment is never mistaken for the installed service.
     fn instance(&mut self, instance: &ReportedInstance) {
         match instance.environment.as_ref().map(Stored::known) {
             None | Some(Some(Environment::Production)) => {}
-            Some(Some(Environment::Development)) => self.add(
-                CheckId::Instance,
-                Status::Ok,
-                "a development instance (such as the dev slot), not a production gateway",
-            ),
             Some(Some(Environment::Preview)) => self.add(
                 CheckId::Instance,
                 Status::Ok,
-                "a preview: one worktree's branch on a copy of production's history, not a production gateway",
+                "a preview: a chosen commit or a pull request's head, not a production gateway",
             ),
             Some(Some(Environment::Canary)) => self.add(
                 CheckId::Instance,

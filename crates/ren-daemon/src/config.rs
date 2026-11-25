@@ -152,7 +152,7 @@ pub struct Config {
     /// The gateway's named users, each proven by a Tailscale login or a
     /// user token.
     pub users: Vec<UserConfig>,
-    /// Whether this is a production or a development instance.
+    /// Whether this is production, the canary, or a preview.
     pub instance: InstanceOptions,
     /// Agent runs: off until roots are configured.
     pub runs: RunsOptions,

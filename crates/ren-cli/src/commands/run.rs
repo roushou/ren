@@ -42,8 +42,8 @@ impl RunCmd {
         let report = doctor::Report::gateway(&gateway, &ctx.env).await;
         let stderr = ctx.terminal.stderr;
         for check in &report.checks {
-            // A development gateway is always named, so it is never mistaken
-            // for the installed one.
+            // A gateway that is not production is always named, so it is
+            // never mistaken for the installed one.
             if check.status != doctor::Status::Ok
                 || check.name == doctor::CheckName::Check(doctor::CheckId::Instance)
             {

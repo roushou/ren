@@ -335,116 +335,6 @@ and the install reports the failure. It then publishes the UI on that port
 under the same rules as the daemon's port. With no `--ui-https-port` given or saved,
 the UI is left untouched.
 
-### Dev instances
-
-`cargo xtask dev` runs a checkout's build beside the installed service, with
-fake providers and fake data, for development and for previewing a change before
-it is installed. Each checkout has an instance of its own: `dev up` claims the
-lowest free one of eight for the checkout it runs in, and every other `dev`
-command there acts on that one (`--instance <n>` picks another):
-
-Seeding writes invented history straight into the instance's store with
-its own `ren seed`, the daemon stopped meanwhile: sessions from Claude
-Code, Codex, Pi, and opencode with turns and tool calls, named users and
-unlisted callers, a rate limit, an upstream error, a broken stream, and
-long prompts, placed over the last three days. A number decides it all,
-so the same number always writes the same history.
-
-```sh
-cargo xtask dev up --ui      # build, then start this checkout's instance and its UI, and publish them
-cargo xtask dev up --ui --seed 1   # and, the first time, seed its data
-cargo xtask dev seed --seed 2      # write the history another number invents
-cargo xtask dev traffic      # show the live traffic settings
-cargo xtask dev traffic set --rate 60 --pace slow --replies tools=50,error=5
-cargo xtask dev traffic pause    # or resume; burst 20 sends 20 calls now
-cargo xtask dev shot         # screenshots of the UI's pages, in target/dev-shots
-cargo xtask dev status
-cargo xtask dev list         # every instance: its index, dev UI, and checkout
-cargo xtask dev reset        # remove the instance's data and start again
-cargo xtask dev down         # stop the instance and remove its routes; --release gives up its claim
-```
-
-Instance `n` (from 0) takes its places from its index; instance 0 is
-`ren-dev`, and instance `n` after it `ren-dev-<n>`:
-
-|          | Dev instance `n`                                                                               | Installed service                         |
-| -------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Units    | `<name>-provider`, `<name>-daemon`, `<name>-traffic`, `<name>-ui`                              | `ren`, `ren-ui`                           |
-| Loopback | fake provider `18999 + 10n`, daemon `18787 + 10n`, UI `13000 + 10n`, traffic API `13001 + 10n` | daemon `8787`, UI `3000`                  |
-| Tailnet  | `9443 + 100n` (gateway), `9444 + 100n` (UI), with `dev up --ui`                                | your `--https-port` and `--ui-https-port` |
-| Files    | `~/.config/<name>`, `~/.local/state/<name>`, `~/.local/share/<name>`                           | `~/.config/ren`, `~/.local/state/ren`     |
-
-The claims are kept in `~/.local/state/ren-dev-claims.json`; a checkout
-that no longer exists gives up its claim when another is made. The rest of
-this section names instance 0's places.
-
-The units are transient systemd user units, stopped by name. The dev
-configuration is regenerated on every `up`. It sets `[instance] environment =
-"development"`, which the gateway reports in `/health`: the UI's logo gets a dev
-badge, and `ren doctor` and `ren run` name the instance. Every
-provider in it is the fake one, which
-accepts any credentials and stores nothing, so no real credential or prompt
-reaches the slot. It names two users, `alice` (by the Tailscale login
-`alice@example.com`) and `ci` (by a fixed fake token), and two direct
-operator-key entries with a fake key: `team-key` (only `ci`) and `chat-key`
-(Chat Completions). Its UI's Redline sends to the fake `acme-web` project
-under the run root, standing in for Ren's checkout, so the slot's fake agents
-never work in the real one. Its replies read like real use: invented engineering answers
-about an invented project, with realistic model names, IDs, and error messages.
-The generated traffic picks a reply kind (tool work, a long or slow reply, a cut
-stream, an error, a rate limit) with an `x-dev-reply` request header, which the
-gateway forwards but never records; a request without it, as from a real client,
-gets an ordinary text answer. Tool work is a turn of several calls, sent one after
-another: each request declares its client's own tools (Claude Code's `Read`,
-`Edit`, `Write`, and `Bash`; Codex's `read_file`, `apply_patch`, and `shell`; Pi's
-and OpenCode's lowercase ones), the provider calls one of them, and the next
-request carries that call and its result back, so turns read files, write them,
-and run commands as real ones do. Like the real providers, it reports prompt-cache
-usage when a request asks for caching, thinks (Messages) or reasons
-(Responses) before answering when asked to, and stops at a request's
-`max_tokens`. The generated requests ask as coding agents do, and about one
-Claude Code call in ten is a side call with no turn (a title or a quota probe).
-So a real client can run against the slot, on the host or, after `dev up --ui`,
-from the tailnet:
-
-```sh
-ren run claude --gateway http://127.0.0.1:18787
-ren run claude --gateway https://<node>:9443
-```
-
-The slot always has live traffic: the `ren-dev-traffic` unit sends calls
-through the dev gateway as `~/.config/ren-dev/traffic.toml` says (running or
-paused, calls a minute, the fake provider's pace, and weights over replies,
-harnesses, and callers). The generator and the fake provider read the file again
-for every call, so `dev traffic set`, `pause`, and `resume` apply at once; an
-invalid file falls back to the defaults. The generator serves its controls on
-`127.0.0.1:13001`, never published, for `dev traffic`.
-
-The slot's daemon has runs on, with `~/.local/share/ren-dev/work` as its root
-(`acme-api` and `acme-web` in it), and the dev UI drives them. Its `codex`,
-`claude`, `pi`, and `opencode` are fakes (`cargo xtask dev agent`, first on the
-dev daemon's `PATH`), never the real clients: each speaks its client's protocol
-(Codex's app server, Claude Code's stream-json print mode, Pi's RPC mode,
-OpenCode's ACP mode), runs a command for prompts that mention testing, running,
-or building and changes files for ones that mention fixing, editing, changing,
-adding, or writing (Codex and Claude Code ask first; Pi asks for no approvals;
-OpenCode asks when the run's approval policy says so), and sends each
-turn's model call through the dev gateway to the fake provider, so a run's
-turns are recorded under its recording. The slot holds its runs as the
-installed service does ([runs through a restart](#runs-through-a-restart)), so
-`dev up` restarts its daemon with their turns going on. For runs bound to the
-daemon, `dev up` does as `install-vps` does: it waits for every one starting,
-working, or stopping (up to `--idle-timeout`, 300 seconds by default;
-`--drain-runs` does not wait), and names the idle ones that end with the
-restart, which can be continued. It does not wait for calls, since the fake
-traffic never stops. `dev down` and `dev reset` also stop the slot's run hosts.
-
-`--ui` publishes the preview with the same Serve step as `install-vps` (with
-`sudo -n` if it last did, or `--sudo-tailscale`); `--local` keeps it on
-loopback. `down` removes each preview route only while it still points at the
-slot. `shot` needs a headless Chromium: `REN_CHROME`, `chrome-headless-shell` or
-`chromium` on `PATH`, or Playwright's downloaded headless shell.
-
 ### Canary and promotion
 
 `ren deployer canary` checks `main`'s tip before production takes it, and
@@ -541,8 +431,6 @@ A production whose daemon keeps no work items yet is left alone.
 the checkout it was enabled in (a promotion upgrades it with production);
 each pass builds `main`'s tip and goes on with that build's own `ren
 deployer`; follow a pass with `journalctl --user -u ren-canary`.
-`--of dev` rehearses all of it with the dev slot as production: its fake
-history, its `release.json`, and never a promotion.
 
 ### Previews
 
@@ -636,20 +524,6 @@ and `main` both know the section (after the promotion that ships it): a
 canary pass checks `main` against production's configuration, and a build
 that predates `[deployer]` refuses it.
 
-In the dev slot, `~/.config/ren-dev/fake-github.toml` writes the fake
-`acme/ren` by hand, read at each poll: its `main` moved, and its pull
-requests opened, moved, and closed (what it leaves out stays invented;
-`pull = []` closes them all):
-
-```toml
-main = "<a commit of this repository>"
-
-[[pull]]
-number = 8
-head = "<a commit of this repository>"
-draft = false
-```
-
 ### Projects
 
 A repository declares how Ren builds, serves, checks, and quiesces it in
@@ -734,15 +608,12 @@ host's daemon. With `--publish` it publishes the port its page opens on, as
 for anything else, or exposes through Funnel, is refused; `down` removes
 the route only while it still points at the preview. Like Ren's, it works
 in a worktree read from `REN_WORKTREE` alone. Deleting the worktree's
-session stops it and takes it off its work items. The dev slot's fake
-projects declare one: a static page served by Python, deployed by copying
-it into a folder under the canary's data.
+session stops it and takes it off its work items.
 
 A project Ren builds is registered first, by name
 ([the plan](plans/hierarchy.md)); `install-vps` registers its checkout as
 `ren`, Ren itself, unless a project is already built as Ren (a promotion
-installs from the deployer's own worktree), and the dev slot registers its
-fake projects:
+installs from the deployer's own worktree):
 
 ```sh
 ren project add --dir ~/dev/acme    # its folder's name unless --name; --factory contract by default

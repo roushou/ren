@@ -287,14 +287,12 @@ export class Views {
     switch (environment) {
       case 'production':
         return null;
-      case 'development':
-        return { tag: 'dev', what: 'A development gateway, not the installed service' };
       case 'canary':
         return { tag: 'canary', what: "The canary: main's tip on a copy of production's history" };
       case 'preview':
         return {
           tag: 'preview',
-          what: "A preview: one worktree's branch on a copy of production's history",
+          what: "A preview: a chosen commit or a pull request's head",
         };
       default:
         unrecognised(environment);

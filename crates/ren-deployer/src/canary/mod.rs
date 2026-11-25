@@ -26,7 +26,7 @@ use crate::{
     install::{InstallError, InstallVps, publish::Publish},
     invocation::{Invocation, InvocationError},
     progress::Progress,
-    replica::{Production, ProductionPlace, Replica, ReplicaError},
+    replica::{ProductionPlace, Replica, ReplicaError},
     tailscale::{Tailnet, TailscaleError},
     ui::UiBuildError,
 };
@@ -34,8 +34,7 @@ use clap::{Args, Subcommand, ValueEnum};
 use ren_daemon::host::SystemClock;
 use ren_gateway::deployer::DeployerRequest;
 use ren_gateway::release::{
-    Assessment, Canary as CanaryBuild, Decision, Lineage, MinuteOfDay, Policy, Release,
-    ReleaseOptions,
+    Assessment, Canary as CanaryBuild, Decision, Lineage, MinuteOfDay, Release, ReleaseOptions,
 };
 use ren_git::SourceRevision;
 use ren_git::{Branch, Commit, Git, GitError, Tree};
@@ -63,7 +62,7 @@ enum CanaryAction {
     Run(RunArgs),
     /// Install the canary's build into production now, whatever the policy
     /// says, once it has passed.
-    Promote(TargetArgs),
+    Promote,
     /// Close work items: land those main's commits name, and ship those
     /// production's build holds. Every pass does this too.
     Work(WorkArgs),
@@ -86,16 +85,7 @@ struct RunArgs {
     #[arg(long, value_enum, default_value_t = Source::Main)]
     source: Source,
     #[command(flatten)]
-    target: TargetArgs,
-    #[command(flatten)]
     publish: PublishArgs,
-}
-
-#[derive(Args, Clone, Copy)]
-struct TargetArgs {
-    /// The instance the canary copies and promotes into.
-    #[arg(long, value_enum, default_value_t = Production::Installed)]
-    of: Production,
 }
 
 /// Listen on a socket and take up each ask at once: the deployer the
@@ -115,8 +105,6 @@ pub struct ServeArgs {
 #[derive(Args)]
 struct PreviewsArgs {
     #[command(flatten)]
-    target: TargetArgs,
-    #[command(flatten)]
     publish: PublishArgs,
     /// The project whose pull requests are previewed: Ren itself, as
     /// production registers it.
@@ -126,8 +114,6 @@ struct PreviewsArgs {
 
 #[derive(Args)]
 struct WorkArgs {
-    #[command(flatten)]
-    target: TargetArgs,
     /// The commit main is at; by default, this checkout's.
     #[arg(long, value_name = "COMMIT")]
     main: Option<Commit>,
@@ -169,8 +155,6 @@ pub enum CanaryError {
     Commit(String),
     #[error("the canary has no build that passed to promote ({0})")]
     NothingToPromote(&'static str),
-    #[error("the dev slot is never promoted into")]
-    DevPromotion,
     #[error(transparent)]
     Replica(#[from] ReplicaError),
     #[error("the previews: {0}")]
@@ -221,7 +205,7 @@ impl Deployer {
     /// The deployer service's unit (`ren deployer serve`), beside the timer.
     const SERVICE: &str = "ren-deployer";
     /// The canary's tailnet HTTPS ports, with `--publish`, beside the
-    /// installed service's and the dev slot's (9443 and 9444).
+    /// installed service's (9443).
     const GATEWAY_PORT: u16 = 9445;
     const UI_PORT: u16 = 9446;
 
@@ -270,16 +254,11 @@ impl Deployer {
     /// listens for production (it runs one pass at a time, and the timer's
     /// would race it), else run here.
     fn follow(&self, env: &HostEnv, args: &RunArgs) -> Result<(), CanaryError> {
-        let served = match args.target.of {
-            Production::Installed => {
-                let ren = Self::REN
-                    .parse()
-                    .map_err(|_| CanaryError::Commit(Self::REN.to_owned()))?;
-                Service::socket(env)
-                    .is_some_and(|socket| Service::nudge(&socket, &DeployerRequest::Canary(ren)))
-            }
-            Production::Dev => false,
-        };
+        let ren = Self::REN
+            .parse()
+            .map_err(|_| CanaryError::Commit(Self::REN.to_owned()))?;
+        let served = Service::socket(env)
+            .is_some_and(|socket| Service::nudge(&socket, &DeployerRequest::Canary(ren)));
         if served {
             Progress("The deployer service runs the canary pass").show();
             return Ok(());
@@ -311,13 +290,7 @@ impl Deployer {
             .current_dir(&self.worktree)
             .args(["deployer", "--checkout"])
             .arg(&self.worktree)
-            .args(["canary", "run", "--source", "checkout", "--of"])
-            .arg(
-                args.target
-                    .of
-                    .to_possible_value()
-                    .map_or_else(String::new, |value| value.get_name().to_owned()),
-            );
+            .args(["canary", "run", "--source", "checkout"]);
         if args.publish.publish {
             pass = pass.arg("--publish");
         }
@@ -349,7 +322,7 @@ impl Deployer {
         }
         let id = self.git.head_commit(&self.repo)?;
         let commit = id.clone();
-        let production = ProductionPlace::new(env, args.target.of)?;
+        let production = ProductionPlace::new(env)?;
         let canary = Replica::canary(env)?;
         let build = self.builds.make(env, &self.repo, &commit)?;
         let backup = production.backup()?;
@@ -411,13 +384,7 @@ impl Deployer {
             .flatten()
             .chain(previewed)
             .collect();
-        // The builds are shared with the installed production's canary and
-        // previews: only a pass for it knows which of them are still
-        // needed, so a rehearsal prunes nothing.
-        match production.kind {
-            Production::Installed => self.builds.prune(&keep.iter().collect::<Vec<_>>())?,
-            Production::Dev => {}
-        }
+        self.builds.prune(&keep.iter().collect::<Vec<_>>())?;
         Ok(())
     }
 
@@ -475,11 +442,7 @@ impl Deployer {
             }
             None => None,
         };
-        let policy = match production.kind {
-            Production::Installed => self.options()?.promote,
-            // The dev slot is never promoted into: only the operator's word.
-            Production::Dev => Policy::Manual,
-        };
+        let policy = self.options()?.promote;
         let now = SystemClock::start().now().wall.as_millis();
         Ok(Release::assess(
             Assessment {
@@ -503,10 +466,6 @@ impl Deployer {
         commit: &Commit,
         build: &StoredBuild,
     ) -> Result<(), CanaryError> {
-        match production.kind {
-            Production::Installed => {}
-            Production::Dev => return Err(CanaryError::DevPromotion),
-        }
         Progress(&format!("Promoting {} into production", commit.short())).show();
         let installed = InstallVps::promotion(commit.clone()).run(env, &self.repo);
         if installed.is_err() {
@@ -536,15 +495,8 @@ impl Deployer {
         let current = release
             .as_ref()
             .is_some_and(|release| release.decision() == &Stored::Known(Decision::Current));
-        match (production.kind, canary) {
-            (Production::Dev, _) => {
-                Progress(
-                    "A promotion was asked of the dev slot, which is never promoted into; dropped",
-                )
-                .show();
-                Ok(())
-            }
-            (Production::Installed, Some(canary))
+        match canary {
+            Some(canary)
                 if *canary.commit() == request.commit && canary.verdict().passed() && !current =>
             {
                 Progress(&format!(
@@ -552,14 +504,9 @@ impl Deployer {
                     request.commit.short()
                 ))
                 .show();
-                self.promote_now(
-                    env,
-                    TargetArgs {
-                        of: Production::Installed,
-                    },
-                )
+                self.promote_now(env)
             }
-            (Production::Installed, _) => {
+            Some(_) | None => {
                 Progress(&format!(
                     "A promotion of {} was asked, but it is not the canary's passed build, or production runs it; dropped",
                     request.commit.short()
@@ -571,8 +518,8 @@ impl Deployer {
     }
 
     /// `canary promote`: the canary's build, if it passed, now.
-    fn promote_now(&self, env: &HostEnv, target: TargetArgs) -> Result<(), CanaryError> {
-        let production = ProductionPlace::new(env, target.of)?;
+    fn promote_now(&self, env: &HostEnv) -> Result<(), CanaryError> {
+        let production = ProductionPlace::new(env)?;
         let release = production
             .release()
             .ok_or(CanaryError::NothingToPromote("no pass has run"))?;
@@ -695,7 +642,7 @@ impl ServeArgs {
     /// Serves until stopped, building from `checkout`.
     pub fn run(self, env: &HostEnv, checkout: &Path) -> Result<(), CanaryError> {
         let deployer = Deployer::new(env, checkout)?;
-        let production = ProductionPlace::new(env, self.previews.target.of)?;
+        let production = ProductionPlace::new(env)?;
         let socket = self
             .socket
             .or_else(|| Service::socket(env))
@@ -703,7 +650,6 @@ impl ServeArgs {
         Service {
             deployer: &deployer,
             production: &production,
-            of: self.previews.target.of,
             publish: self.previews.publish,
             project: &self.previews.project,
         }
@@ -720,9 +666,9 @@ impl Canary {
                 Source::Main => deployer.follow(env, &args),
                 Source::Checkout => deployer.pass(env, &args),
             },
-            CanaryAction::Promote(target) => deployer.promote_now(env, target),
+            CanaryAction::Promote => deployer.promote_now(env),
             CanaryAction::Work(args) => {
-                let production = ProductionPlace::new(env, args.target.of)?;
+                let production = ProductionPlace::new(env)?;
                 let main = match args.main {
                     Some(main) => main,
                     None => deployer.git.head_commit(&deployer.repo)?,
@@ -732,7 +678,7 @@ impl Canary {
                 Ok(())
             }
             CanaryAction::Previews(args) => {
-                let production = ProductionPlace::new(env, args.target.of)?;
+                let production = ProductionPlace::new(env)?;
                 PreviewPass {
                     deployer: &deployer,
                     production: &production,

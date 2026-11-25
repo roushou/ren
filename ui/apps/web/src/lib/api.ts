@@ -358,8 +358,8 @@ export const messagePayloads = ['text', 'binary'] as const;
 export type MessagePayload = (typeof messagePayloads)[number];
 export type ObservationKind = (typeof observationKinds)[number];
 export const healthStatuses = ['ok', 'degraded'] as const;
-/** What the gateway says it is: the installed service, or a development one. */
-export const environments = ['production', 'development', 'canary', 'preview'] as const;
+/** What the gateway says it is: the installed service, the canary, or a preview. */
+export const environments = ['production', 'canary', 'preview'] as const;
 export type Environment = (typeof environments)[number];
 /** What the canary checks of a build. */
 export const checkKinds = ['doctor', 'reads', 'pages', 'build', 'serve', 'declared'] as const;

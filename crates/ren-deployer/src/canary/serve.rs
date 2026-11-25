@@ -8,13 +8,8 @@
 //! ([`DeployerAnswer::Started`]); the previews' once the pass planned which
 //! run ([`DeployerAnswer::Planned`]), or that it failed before it did.
 
-use super::{
-    CanaryError, Deployer, PublishArgs, RunArgs, Source, TargetArgs, previews::PreviewPass,
-};
-use crate::{
-    progress::Progress,
-    replica::{Production, ProductionPlace},
-};
+use super::{CanaryError, Deployer, PublishArgs, RunArgs, Source, previews::PreviewPass};
+use crate::{progress::Progress, replica::ProductionPlace};
 use ren_gateway::deployer::{DeployerAnswer, DeployerRequest};
 use ren_harness::host::HostEnv;
 use std::{
@@ -28,8 +23,6 @@ use std::{
 pub(super) struct Service<'a> {
     pub deployer: &'a Deployer,
     pub production: &'a ProductionPlace,
-    /// Which instance `production` is: what the canary checks against.
-    pub of: Production,
     pub publish: PublishArgs,
     pub project: &'a str,
 }
@@ -143,7 +136,6 @@ impl Service<'_> {
             Progress("main moved: a canary pass").show();
             let pass = RunArgs {
                 source: Source::Main,
-                target: TargetArgs { of: self.of },
                 publish: self.publish,
             };
             if let Err(error) = self.deployer.delegate(env, &pass) {

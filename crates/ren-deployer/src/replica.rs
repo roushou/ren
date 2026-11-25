@@ -42,19 +42,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Which instance is production to a replica: the one it copies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum Production {
-    /// The installed service (`ren.service`), which promotions install into.
-    Installed,
-    /// The dev slot, with its fake history: for trying a replica out. It is
-    /// never promoted into.
-    Dev,
-}
-
 /// Where production is.
 pub struct ProductionPlace {
-    pub kind: Production,
     config: PathBuf,
     pub data_dir: PathBuf,
     binary: PathBuf,
@@ -174,18 +163,13 @@ pub struct Reached {
 }
 
 impl ProductionPlace {
-    pub fn new(env: &HostEnv, kind: Production) -> Result<Self, ReplicaError> {
+    pub fn new(env: &HostEnv) -> Result<Self, ReplicaError> {
         let home = env
             .absolute_path("HOME")
             .ok_or(ReplicaError::MissingEnv("HOME"))?;
-        // Each is found by its folders: the installed service's, or the
-        // first dev instance's (`ren-dev`), which the canary rehearses
-        // against. Its gateway listens where its configuration says.
-        let (name, binary) = match kind {
-            Production::Installed => ("ren", home.join(".local/bin/ren")),
-            Production::Dev => ("ren-dev", home.join(".local/share/ren-dev/bin/ren")),
-        };
-        let config = home.join(".config").join(name).join("ren.toml");
+        // The installed service, found by its folders; its gateway listens
+        // where its configuration says.
+        let config = home.join(".config/ren/ren.toml");
         let listen = Config::load(Some(&config))
             .map_err(|source| ReplicaError::Config {
                 path: config.clone(),
@@ -193,10 +177,9 @@ impl ProductionPlace {
             })?
             .listen;
         Ok(Self {
-            kind,
             config,
-            data_dir: home.join(".local/state").join(name),
-            binary,
+            data_dir: home.join(".local/state/ren"),
+            binary: home.join(".local/bin/ren"),
             listen,
         })
     }

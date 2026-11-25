@@ -15,7 +15,7 @@ policy::StepOutcome: applied unchanged not_json no_parent encoded
 retry::StopReason: pass_through acceptance_unknown delivered
 operator::PauseState: running paused
 WebSocketMode: relay refuse
-instance::Environment: production development canary preview
+instance::Environment: production canary preview
 packages::GenerationState: current in_use idle
 packages::ChangeOutcome: unchanged activated failed
 packages::ChangeKind: add replace remove

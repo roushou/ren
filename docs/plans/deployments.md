@@ -197,14 +197,20 @@ a move lands before the move that needs it.
    calls (served by its read API), answered `/health` as that commit, a
    preview, and recorded its address on the sent work item; `ren deploy
    stop` stopped it and took the record off.
-5. **The dev world goes.** Not built. Delete `xtask/src/dev` (instances,
-   claims, index, the fake provider and agents, traffic, seed's player),
-   `devtraffic.ts` and the toolbar, and `Environment::Development` with its
-   badge and doctor note. The removed label is sent in `/health`, so the
-   commit says so for the compatibility gate. The docs and the memory of
-   how changes are previewed change with it. Verified: lint and tests
-   pass, the compatibility gate's report names only the removed label,
-   and a preview of this commit on a scenario renders every page.
+5. **The dev world goes.** Built. `xtask/src/dev` is deleted: dev
+   instances, their claims and index, the fake provider, the fake agents,
+   fake GitHub, the traffic generator, and the scenario player, with their
+   49 tests; xtask keeps `compat` and depends only on `ren-git`. The UI's
+   orphaned `devtraffic.ts` goes (its toolbar went with the redesign), and
+   so do `Environment::Development`, its badge, and its doctor note. The
+   deployer's rehearsal against the dev slot (`--of dev`, `Production`)
+   goes with it: the deployer serves the installed production only. The
+   removed label is declared in the commit for the compatibility gate. The
+   docs and AGENTS.md say a change is seen in a preview of its commit (`ren
+   deploy HEAD --seed <n>`). Verified: lint, the 1182 tests (the 1231
+   before, less the 49 that were the dev world's), the UI's 384, and the
+   compatibility gate, whose report names only `instance::Environment`
+   losing `development`.
 6. **Production is a chosen deployment.** Not built. `install-vps`'s
    upgrade (drain, swap, check, resume) moves into the deployer as
    deploying the chosen commit to production. Promotion is choosing the
@@ -295,3 +301,13 @@ a move lands before the move that needs it.
 - **Phase 1: checked by its pages, not side by side.** The history is
   invented afresh, not the scenarios' calls replayed, so the two seeds
   differ by design; the pages were checked against the new one.
+- **Phase 5: no rehearsal production.** The deployer rehearsed against the
+  dev slot as production (`--of dev`), which xtask's dev world made. The
+  operator chose to drop it rather than install a second `ren` to stand
+  in: the deployer serves production only, so a change to the deployer is
+  tried against production, and this phase's check of a preview on an
+  invented history rendering every page waits for production to move over
+  to `ren deployer`.
+- **Phase 5: older plans keep their history.** `instances.md`,
+  `self-build.md`, and `attachments.md` record what was built then,
+  `cargo xtask dev` included, and are left as written.

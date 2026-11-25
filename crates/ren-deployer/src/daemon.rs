@@ -149,8 +149,7 @@ impl Busy {
         *reported = Some(self.clone());
     }
 
-    /// Only runs: the dev slot restarts its daemon under constant fake
-    /// traffic, so it waits for runs and not for calls.
+    /// Only runs, and no running calls.
     pub fn of_runs(runs: &Runs, policy: RunPolicy) -> Self {
         Self {
             calls: 0,

@@ -1,9 +1,8 @@
 //! Building the UI: `ui/`, built with Bun into a complete copy that Node
 //! runs from wherever it is put (ui/README.md): the build, `package.json`,
 //! `bun.lock`, the workspace packages, and production dependencies.
-//! `install-vps` deploys the copy as `ren-ui.service` (`install::ui`); the
-//! dev slot runs it as a transient unit. Either may run it in a container
-//! of its own ([`UiContainer`]).
+//! `install-vps` deploys the copy as `ren-ui.service` (`install::ui`); a
+//! deployment runs it in a container of its own ([`UiContainer`]).
 use crate::{
     file::FileError,
     invocation::{Invocation, InvocationError},
@@ -279,9 +278,9 @@ mod tests {
     #[test]
     fn without_a_token_it_sees_only_its_copy() {
         let container = UiContainer::new(
-            "dev",
+            "preview-1",
             "localhost/ren-instance:abc".to_owned(),
-            Path::new("/home/op/.local/share/ren-dev/ui"),
+            Path::new("/home/op/.local/share/ren/builds/abc/ui"),
             None,
         );
         let volumes = container

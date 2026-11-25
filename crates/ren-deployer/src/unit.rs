@@ -1,6 +1,6 @@
-//! A transient systemd user unit xtask starts (`systemd-run --user`) and
-//! stops by its exact name, never by a pattern that could match the
-//! installed service: the dev slot's and the canary's processes. And an
+//! A transient systemd user unit the deployer starts (`systemd-run --user`)
+//! and stops by its exact name, never by a pattern that could match the
+//! installed service: a deployment's processes. And an
 //! installed unit made to run a container in the foreground.
 
 use crate::invocation::{Echo, Invocation, InvocationError};
