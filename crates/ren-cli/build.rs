@@ -14,7 +14,7 @@ enum Source {
     /// `.cargo_vcs_info.json`, written by `cargo package`.
     Packaged(PathBuf),
     /// The git work tree this package is in.
-    Git,
+    Git(PathBuf),
 }
 
 /// What the build script found.
@@ -37,15 +37,21 @@ struct VcsGit {
 }
 
 impl Source {
-    const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
-
-    fn find() -> Self {
-        let vcs_info = Path::new(Self::MANIFEST_DIR).join(".cargo_vcs_info.json");
-        if vcs_info.is_file() {
+    /// Where the package is, as cargo tells the running script: read when
+    /// it runs, not baked in when it was compiled, so a checkout moved since
+    /// (the deployer's worktrees were) is read where it is now.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a build script's input is the environment cargo runs it in"
+    )]
+    fn find() -> Option<Self> {
+        let dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR")?);
+        let vcs_info = dir.join(".cargo_vcs_info.json");
+        Some(if vcs_info.is_file() {
             Self::Packaged(vcs_info)
         } else {
-            Self::Git
-        }
+            Self::Git(dir)
+        })
     }
 
     /// Reads the revision, and tells cargo which files to watch for a new one.
@@ -64,8 +70,8 @@ impl Source {
                     },
                 })
             }
-            Self::Git => {
-                let (git, dir) = (Git::inherited(), Path::new(Self::MANIFEST_DIR));
+            Self::Git(dir) => {
+                let git = Git::inherited();
                 Self::watch_git(&git, dir);
                 Some(Revision {
                     commit: git.head_commit(dir).ok()?,
@@ -89,7 +95,7 @@ impl Source {
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
-    let revision = match Source::find().revision() {
+    let revision = match Source::find().and_then(|source| source.revision()) {
         Some(Revision {
             commit,
             tree: Tree::Clean,
