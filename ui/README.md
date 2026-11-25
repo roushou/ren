@@ -186,7 +186,7 @@ says Queue); a new one, as its first. Below it, the approvals: the client's
 policies (Ask first, Edits alone, Auto, as each client offers them), which a new
 session starts under, or a running one runs under from its next turn when its
 client takes that mid-run. Send then opens the session. The checkout
-is `REN_SOURCE_DIR`, since the marks are on Ren's pages; `cargo xtask
+is `REN_SOURCE_DIR`, since the marks are on Ren's pages; `ren deployer
 install-vps` sets it to the checkout it installs from, and without it Redline
 marks but cannot send. The checkout must be under the daemon's `[runs]` roots.
 The brief asks the agent to answer questions without changing anything, to make
@@ -229,7 +229,7 @@ Use `ren inspect --body … --output …` for complete captured bytes.
 
 ## VPS service
 
-From a checkout on the VPS, `cargo xtask install-vps --https-port 8443 --ui-https-port 8444`
+From a checkout on the VPS, `ren deployer install-vps --https-port 8443 --ui-https-port 8444`
 performs the steps below and upgrades the UI along with the daemon (see
 [deployment](../docs/deployment.md#install-task)). To do it by hand:
 

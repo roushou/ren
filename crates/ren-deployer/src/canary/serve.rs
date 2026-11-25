@@ -146,7 +146,7 @@ impl FactoryService<'_> {
                 target: TargetArgs { of: self.of },
                 publish: self.publish,
             };
-            if let Err(error) = self.factory.delegate(&pass) {
+            if let Err(error) = self.factory.delegate(env, &pass) {
                 println!("warning: the canary pass failed: {error}");
             }
         }

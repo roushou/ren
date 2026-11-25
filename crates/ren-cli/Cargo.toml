@@ -29,6 +29,7 @@ anyhow = "1.0"
 clap.workspace = true
 http.workspace = true
 ren-daemon.workspace = true
+ren-deployer.workspace = true
 ren-depot.workspace = true
 ren-gateway.workspace = true
 ren-git.workspace = true

@@ -65,6 +65,7 @@ enum Command {
     Release(commands::release::ReleaseCmd),
     Preview(commands::preview::PreviewCmd),
     Project(commands::project::ProjectCmd),
+    Deployer(commands::deployer::DeployerCmd),
     Seed(commands::seed::SeedCmd),
     #[command(hide = true)]
     RunHost(commands::run_host::RunHostCmd),
@@ -126,6 +127,7 @@ impl Cli {
             Command::Release(cmd) => cmd.run(&ctx).await,
             Command::Preview(cmd) => cmd.run(&ctx).await,
             Command::Project(cmd) => cmd.run(&ctx).await,
+            Command::Deployer(cmd) => cmd.run(&ctx),
             Command::Seed(cmd) => cmd.run(&ctx).await,
             Command::RunHost(cmd) => cmd.run().await,
             Command::Credential(cmd) => cmd.run(&ctx.env).await,

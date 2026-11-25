@@ -172,7 +172,7 @@ pub struct Config {
     pub factory: FactoryOptions,
 }
 
-/// `[factory]`: where the factory on the host listens (`cargo xtask canary
+/// `[factory]`: where the factory on the host listens (`ren deployer canary
 /// serve`). Without it, an asked-for preview waits for the factory's next
 /// timed pass.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]

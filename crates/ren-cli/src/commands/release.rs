@@ -138,7 +138,7 @@ impl ReleaseCmd {
                 "production runs a build the factory cannot place; promote it by hand"
             }
             Stored::Known(Decision::AwaitingOperator) => {
-                "passed; promote it with `cargo xtask canary promote`"
+                "passed; promote it with `ren deployer canary promote`"
             }
             Stored::Known(Decision::OutsideWindow) => {
                 "passed; production takes it when the window opens"
@@ -168,7 +168,7 @@ mod tests {
             "main        62e9e9e00000\n\
              production  07f4bb7c1e2a (1 commit behind main)\n\
              canary      62e9e9e00000 passed (doctor passed, reads passed, pages passed)\n\
-             promotion   manual: passed; promote it with `cargo xtask canary promote`\n"
+             promotion   manual: passed; promote it with `ren deployer canary promote`\n"
         );
         let none: ReleaseBody = serde_json::from_str(r#"{ "release": null }"#).unwrap();
         assert!(ReleaseCmd::render(&none).starts_with("No release yet"));

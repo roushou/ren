@@ -326,7 +326,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Follower`, which turns what the daemon's GitHub watch sees into requests:
   previews when pull requests move, the canary when a default branch moves
   from a head seen before. The daemon asks them of the factory service
-  (`[factory] socket`, `xtask canary serve`).
+  (`[factory] socket`, `ren deployer canary serve`).
   The factory keeps it in production's data folder (`Deployments::FILE`,
   still `previews.json`, in the shape production's gateway reads). The
   gateway's `src/purity.rs` keeps the module free of I/O.
@@ -830,7 +830,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   The code behind `install-vps`, `preview`, and `canary` lives in
   `crates/ren-deployer` (docs/plans/deployments.md, phase 3); xtask's
   commands call it, and xtask keeps `compat` and `dev`.
-  `cargo xtask install-vps` installs or upgrades Ren from a checkout as a
+  `ren deployer install-vps` installs or upgrades Ren from a checkout as a
   systemd user service and can publish it with Tailscale Serve; it restarts a
   running daemon only between calls and between runs' turns, paused (a pause
   it marks, so one it could not lift is lifted by the next), and checks the
@@ -856,7 +856,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   caches).
   `replica`: Ren on a copy of production's history (`ProductionPlace`,
   production and its work item API, and `Replica`, the canary's and each
-  preview's instance). `cargo xtask preview` (`preview`) runs a worktree's
+  preview's instance). `ren deployer preview` (`preview`) runs a worktree's
   branch as a replica on the worktree's ports and records it on the work
   items the branch names; `ren_supervisor::Worktree::preview_pod` names
   its pod, which removing the worktree removes. `pod` is how a replica
@@ -864,7 +864,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   seeing only the kept build it runs (read-only) and the replica's own
   configuration and data at their host paths, on the host's network, from
   the image `deploy/instance/Containerfile` describes.
-  `cargo xtask canary` is the factory's canary and promotion (`canary`;
+  `ren deployer canary` is the factory's canary and promotion (`canary`;
   `docs/deployment.md#canary-and-promotion`, `docs/plans/self-build.md`,
   phase 4): a pass fetches `main` into Ren's own worktree and goes on with
   that commit's xtask, builds it once, starts it in the pod `ren-canary` on a
@@ -989,7 +989,7 @@ Use the toolchain pinned in `rust-toolchain.toml` and don't update it incidental
 New crates inherit workspace settings and lints. Cargo builds only Rust: never run
 frontend tooling from Cargo or embed UI assets. The daemon is headless and works
 with no UI checkout, build, or server. The exceptions are deployment and dev steps, not
-a build: `cargo xtask install-vps --ui-https-port` and `cargo xtask dev up --ui`
+a build: `ren deployer install-vps --ui-https-port` and `cargo xtask dev up --ui`
 run Bun to build and run the UI on the host.
 
 Markdown, JSON, and TOML formatting, from the repository root (dprint 0.56.0,

@@ -2,7 +2,7 @@
 //! `list`, `archive`, `unarchive`), and a project's declared manifest
 //! (`.ren/project.toml`) at work on this host: its checks (`check`), a
 //! preview of a worktree's branch (`preview up`, `preview down`), as Ren's
-//! own (`cargo xtask preview`) runs for Ren, and a registered project's
+//! own (`ren deployer preview`) runs for Ren, and a registered project's
 //! canary and promotion.
 //!
 //! A preview builds the worktree, starts its serve step as the transient

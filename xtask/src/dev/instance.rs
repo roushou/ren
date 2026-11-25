@@ -393,7 +393,7 @@ impl DevInstance {
                     })
                     .collect::<Result<_, DevError>>()?,
             },
-            // A factory of its own, if one listens (`cargo xtask canary
+            // A factory of its own, if one listens (`ren deployer canary
             // serve --of dev --socket` here): asked to plan a preview at
             // once.
             factory: FactoryOptions {

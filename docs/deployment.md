@@ -261,14 +261,16 @@ From a checkout on the VPS, as the user that owns the service, with Rust and a
 connected Tailscale:
 
 ```sh
-cargo xtask install-vps --https-port 8443 --ui-https-port 8444
+cargo run --release -p ren-rs -- deployer install-vps --https-port 8443 --ui-https-port 8444
 ```
 
-It runs the steps below and is safe to repeat: run it again from the commit to
-deploy to upgrade. After a successful run it saves its publishing flags
+The first install has no `ren` yet, so cargo runs the checkout's own; after
+it, the installed `ren deployer install-vps` does the same from the checkout
+it runs in (`--checkout` names another). It runs the steps below and is safe
+to repeat: run it again from the commit to deploy to upgrade. After a successful run it saves its publishing flags
 (`--https-port`, `--ui-https-port`, `--sudo-tailscale`) to
 `~/.config/ren/install-vps.toml`, so later runs need no flags:
-`cargo xtask install-vps`. Giving any publishing flag replaces the saved set. It refuses a checkout whose tracked files differ from the
+`ren deployer install-vps`. Giving any publishing flag replaces the saved set. It refuses a checkout whose tracked files differ from the
 commit (`--allow-dirty` installs a `-dirty` build) and warns when the commit is on
 no remote branch. It builds the release binary while the old daemon keeps
 serving, creates `~/.config/ren/ren.toml` only if missing, and checks the
@@ -445,17 +447,17 @@ slot. `shot` needs a headless Chromium: `REN_CHROME`, `chrome-headless-shell` or
 
 ### Canary and promotion
 
-`cargo xtask canary` checks `main`'s tip before production takes it, and
+`ren deployer canary` checks `main`'s tip before production takes it, and
 promotes it as you decide ([the plan](plans/self-build.md), phase 4). One
 pass:
 
 ```sh
-cargo xtask canary run              # fetch main, build, check, promote by policy
-cargo xtask canary promote          # install the canary's build now, once it passed
+ren deployer canary run              # fetch main, build, check, promote by policy
+ren deployer canary promote          # install the canary's build now, once it passed
 ren release                         # main, production, the canary, and the decision
-cargo xtask canary enable --every 10   # a pass every 10 minutes, on a user timer
-cargo xtask canary disable
-cargo xtask canary down             # stop the canary
+ren deployer canary enable --every 10   # a pass every 10 minutes, on a user timer
+ren deployer canary disable
+ren deployer canary down             # stop the canary
 ```
 
 A pass fetches `main` from `origin` and checks its tip out, detached, in
@@ -514,7 +516,7 @@ When the build passed and follows production's commit, the policy in
 `~/.config/ren/release.toml` decides:
 
 ```toml
-promote = "manual" # the default: `cargo xtask canary promote`
+promote = "manual" # the default: `ren deployer canary promote`
 # promote = "automatic"      # as soon as it passes
 # promote = "02:00-05:00"    # as soon as it passes inside this daily UTC window
 ```
@@ -530,19 +532,21 @@ lands each sent item that a commit in `main`'s recent history names in a
 `Work-Item: <id>` trailer, waits for production to store the landings, and
 ships each landed item whose commit production's clean build holds, through
 production's own control API with its control token (read from its data
-folder and handed to curl in a private file). `cargo xtask canary work` does
+folder and handed to curl in a private file). `ren deployer canary work` does
 only this, against this checkout's commit as `main` (or `--main <commit>`).
 A production whose daemon keeps no work items yet is left alone.
 
 `canary enable` writes `ren-canary.service` and `ren-canary.timer` to
-`~/.config/systemd/user`, running `cargo xtask canary run` from the checkout
-it was enabled in; follow a pass with `journalctl --user -u ren-canary`.
+`~/.config/systemd/user`, running the installed `ren deployer canary run` on
+the checkout it was enabled in (a promotion upgrades it with production);
+each pass builds `main`'s tip and goes on with that build's own `ren
+deployer`; follow a pass with `journalctl --user -u ren-canary`.
 `--of dev` rehearses all of it with the dev slot as production: its fake
 history, its `release.json`, and never a promotion.
 
 ### Previews
 
-`cargo xtask preview` runs one worktree's branch on a copy of production's
+`ren deployer preview` runs one worktree's branch on a copy of production's
 history, so its change is judged on the page it was marked on, beside
 production's. It runs in a worktree Ren made: it reads `REN_WORKTREE`,
 which the worktree's runs are told, refuses a folder that is not one of
@@ -551,8 +555,8 @@ Ren gives that slot. A brief asks the agent to start one once its change is
 ready:
 
 ```sh
-cargo xtask preview up --publish   # build, copy production's history, start, record
-cargo xtask preview down --publish # stop, unpublish, take it off the work items
+ren deployer preview up --publish   # build, copy production's history, start, record
+ren deployer preview down --publish # stop, unpublish, take it off the work items
 ```
 
 `up` builds the branch (debug) into `<data>/preview`, backs up production's
@@ -571,7 +575,7 @@ stops its preview with it, and takes it off the session's work items.
 #### Previews of pull requests and commits
 
 Every canary pass also brings the factory's own previews up to date
-(`cargo xtask canary previews` runs just that): one for each commit the
+(`ren deployer canary previews` runs just that): one for each commit the
 operator asked to preview, newest ask first, then one for each of Ren's
 open pull requests that is not a draft, as production last saw them on
 GitHub (`[github]`), most recently updated first. As many run as
@@ -585,7 +589,7 @@ Each runs in a slot: slot `n`'s daemon listens on loopback `18100 + 2n` and
 its UI on the next port, published on the tailnet on `9450 + 2n` and the next
 with `--publish`, in the pod `ren-preview-<n>`, with `~/.config/ren-previews/<n>`
 and `~/.local/state/ren-previews/<n>`. The canary timer publishes previews only when it was enabled with
-`--publish` (`cargo xtask canary enable --publish`); a preview started
+`--publish` (`ren deployer canary enable --publish`); a preview started
 without it answers on loopback alone, and says so. A pass fetches each new commit from
 `origin` by its id (a pull request's head included), builds it once into
 `~/.local/share/ren/builds` from its own worktree,
@@ -601,7 +605,7 @@ folder (`previews.json`); the commits asked for are read from
 
 A preview asked for starts at once, not at the next timed pass, when the
 factory listens: `canary enable` also writes `ren-factory.service`, which
-runs `cargo xtask canary serve` on
+runs `ren deployer canary serve` on
 `$XDG_RUNTIME_DIR/ren-factory/factory.sock`, and production's daemon names
 that socket:
 
@@ -765,7 +769,7 @@ ren project promote --project acme  # deploy the canary's passed build now
 ren project release --project acme  # main, production, the canary, and the decision
 ```
 
-Ren itself (`--factory ren`) is refused there: its canary is `cargo xtask
+Ren itself (`--factory ren`) is refused there: its canary is `ren deployer
 canary`. Each pass and each promotion also closes the project's work items
 as Ren's canary does: a sent item lands when a commit on `main` names it
 (`Work-Item: <id>`), and a landed item ships once production runs a build

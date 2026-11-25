@@ -506,7 +506,7 @@ session in a worktree of its own.
   item's change, `{preview: {ui, revision}}`, where `ui` is an `http` or
   `https` origin with no path (`400` `invalid_request` otherwise), or clears
   it with `{preview: null}`; the item's state stays `sent` (`409`
-  `work_state` for any other state). `cargo xtask preview` records it
+  `work_state` for any other state). `ren deployer preview` records it
   ([previews](deployment.md#previews)).
 
 Ren lands and ships items itself ([canary and

@@ -20,10 +20,10 @@ pub enum Environment {
     /// Fake or test traffic, for development.
     Development,
     /// The tip of `main` checked on a copy of production's history before
-    /// production takes it (`cargo xtask canary`).
+    /// production takes it (`ren deployer canary`).
     Canary,
     /// One worktree's branch on a copy of production's history, for
-    /// judging its change (`cargo xtask preview`).
+    /// judging its change (`ren deployer preview`).
     Preview,
 }
 

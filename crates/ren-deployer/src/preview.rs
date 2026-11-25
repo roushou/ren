@@ -1,4 +1,4 @@
-//! `cargo xtask preview`: this worktree's branch, built and run on a copy
+//! `ren deployer preview`: this worktree's branch, built and run on a copy
 //! of production's history, so its change can be judged on the page it was
 //! marked on, beside production's (docs/plans/self-build.md, phase 5).
 //!
@@ -91,7 +91,7 @@ struct TargetArgs {
 #[derive(Debug, thiserror::Error)]
 pub enum PreviewError {
     #[error(
-        "{0} is not set: run `cargo xtask preview` in a worktree Ren made, whose runs are told it"
+        "{0} is not set: run `ren deployer preview` in a worktree Ren made, whose runs are told it"
     )]
     NotAWorktree(&'static str),
     #[error("{0} is not a worktree Ren made (`<worktrees>/<repo>-<slot>`)")]
@@ -163,15 +163,12 @@ impl Preview {
     /// How far back the branch's history is read for trailers.
     const HISTORY: u32 = 200;
 
-    pub fn run(self, env: &HostEnv) -> Result<(), PreviewError> {
+    /// Runs the command on `checkout`, the worktree being previewed.
+    pub fn run(self, env: &HostEnv, checkout: &Path) -> Result<(), PreviewError> {
         let worktree = PreviewPlace::read(env)?;
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         match self.action {
-            PreviewAction::Up(args) => Self::up(env, &worktree, &repo, &args),
-            PreviewAction::Down(args) => Self::down(env, &worktree, &repo, &args),
+            PreviewAction::Up(args) => Self::up(env, &worktree, checkout, &args),
+            PreviewAction::Down(args) => Self::down(env, &worktree, checkout, &args),
         }
     }
 

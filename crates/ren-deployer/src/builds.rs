@@ -41,7 +41,7 @@ pub struct StoredBuild {
 
 #[derive(Debug, thiserror::Error)]
 pub enum BuildsError {
-    #[error("no build of {0} is kept; the canary makes one (`cargo xtask canary run`)")]
+    #[error("no build of {0} is kept; the canary makes one (`ren deployer canary run`)")]
     NotBuilt(Commit),
     #[error("the binary built for {expected} reports {found:?}")]
     Revision { expected: Commit, found: String },

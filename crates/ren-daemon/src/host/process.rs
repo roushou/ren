@@ -658,7 +658,7 @@ where
 }
 
 impl ProcessHost {
-    /// Stops a worktree's preview, if one runs: Ren's own (`cargo xtask
+    /// Stops a worktree's preview, if one runs: Ren's own (`ren deployer
     /// preview`), a Podman pod, and a project's (`ren project preview`), a
     /// transient unit, each named for the worktree. Removing one that does
     /// not exist (or on a host without Podman or systemd) changes nothing.

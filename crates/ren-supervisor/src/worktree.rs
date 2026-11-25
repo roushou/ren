@@ -118,7 +118,7 @@ impl Worktree {
         self.slot.ports()
     }
 
-    /// The Podman pod Ren's own preview runs in (`cargo xtask preview`),
+    /// The Podman pod Ren's own preview runs in (`ren deployer preview`),
     /// removed when the worktree is.
     pub fn preview_pod(&self) -> String {
         format!("ren-preview-{}", self.name)

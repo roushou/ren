@@ -1,5 +1,6 @@
 pub mod control;
 pub mod credential;
+pub mod deployer;
 pub mod doctor;
 pub mod history;
 pub mod init;

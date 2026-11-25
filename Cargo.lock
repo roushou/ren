@@ -2126,6 +2126,7 @@ dependencies = [
  "futures-util",
  "http",
  "ren-daemon",
+ "ren-deployer",
  "ren-depot",
  "ren-gateway",
  "ren-git",

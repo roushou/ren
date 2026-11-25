@@ -1,6 +1,6 @@
 //! What the factory keeps for the Release view: where each project's
 //! release stands, as its canary last wrote it to this instance's data
-//! folder (Ren's by `cargo xtask canary`, a contract project's by `ren
+//! folder (Ren's by `ren deployer canary`, a contract project's by `ren
 //! project canary`), and the pages Ren's canary captured. The gateway reads
 //! and reports them (`/api/projects/{name}/release`), and records the
 //! operator's promotion request for the factory; the CLI reads these same
@@ -65,7 +65,7 @@ impl ReleaseFolder {
     }
 
     /// `project`'s release, or none while its canary has written none:
-    /// Ren's where `cargo xtask canary` keeps it, a contract project's in
+    /// Ren's where `ren deployer canary` keeps it, a contract project's in
     /// its folder of [`Release::PROJECTS`], by its registered name.
     pub(super) async fn release_of(
         &self,

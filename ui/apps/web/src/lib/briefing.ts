@@ -21,7 +21,7 @@ import {
  * Whose page a brief is about: Ren's own UI (every page Redline marks, and
  * every item from before projects), or another registered project's, by
  * name. Only Ren's has a route file and a build to name, and a preview by
- * `cargo xtask preview`; another project's is previewed by
+ * `ren deployer preview`; another project's is previewed by
  * `ren project preview`.
  */
 export type BriefProject = { kind: 'ren' } | { kind: 'other'; name: string };
@@ -242,7 +242,7 @@ export class Briefing {
   static preview(project: BriefProject): string {
     switch (project.kind) {
       case 'ren':
-        return 'cargo xtask preview up --publish';
+        return 'ren deployer preview up --publish';
       case 'other':
         return 'ren project preview up --publish';
       default: {

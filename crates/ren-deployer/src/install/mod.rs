@@ -1,4 +1,4 @@
-//! `cargo xtask install-vps`: install or upgrade Ren from this checkout as a
+//! `ren deployer install-vps`: install or upgrade Ren from this checkout as a
 //! Linux systemd user service, optionally published with Tailscale Serve.
 //!
 //! An upgrade restarts the daemon only between calls and between runs' turns:
@@ -329,7 +329,7 @@ impl PauseMark {
 }
 
 impl Layout {
-    fn new(env: &HostEnv) -> Result<Self, InstallError> {
+    fn new(env: &HostEnv, checkout: &Path) -> Result<Self, InstallError> {
         let home = env
             .absolute_path("HOME")
             .ok_or(InstallError::MissingEnv("HOME"))?;
@@ -340,12 +340,7 @@ impl Layout {
         let bin_dir = home.join(".local/bin");
         Ok(Self {
             home: home.clone(),
-            // crates/ren-deployer/ sits two folders below the checkout's root.
-            repo: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .and_then(Path::parent)
-                .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
-            // `cargo xtask` sets CARGO to the cargo running it.
+            repo: checkout.to_path_buf(),
             cargo: env
                 .absolute_path("CARGO")
                 .unwrap_or_else(|| PathBuf::from("cargo")),
@@ -389,7 +384,8 @@ impl InstallVps {
         }
     }
 
-    pub fn run(self, env: &HostEnv) -> Result<(), InstallError> {
+    /// Installs or upgrades from `checkout`.
+    pub fn run(self, env: &HostEnv, checkout: &Path) -> Result<(), InstallError> {
         let backup = if self.skip_backup {
             Backup::Skip
         } else {
@@ -401,7 +397,7 @@ impl InstallVps {
             RunPolicy::Wait
         };
         Self::preflight()?;
-        let layout = Layout::new(env)?;
+        let layout = Layout::new(env, checkout)?;
         // Inside the service it restarts, the restart would stop this task
         // between its pause and its resume: carry on outside it.
         let cgroup = fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
@@ -492,7 +488,7 @@ impl InstallVps {
     /// that turn open and the two would wait on each other until the
     /// install gave up. Its output goes to the journal.
     fn relaunch(env: &HostEnv, layout: &Layout) -> Result<(), InstallError> {
-        let program = std::env::current_exe().map_err(FileError::at(Path::new("xtask")))?;
+        let program = std::env::current_exe().map_err(FileError::at(Path::new("ren")))?;
         Progress(&format!(
             "This runs inside {SERVICE}, which the install restarts; continuing in the background as the unit {RELAUNCH_UNIT}. It restarts the daemon once every run's turn has ended, the one that started it included, so end that turn rather than wait for the install in it. Follow it with `journalctl --user -u {RELAUNCH_UNIT} -f`"
         )).show();

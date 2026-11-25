@@ -4,8 +4,8 @@
 //! production's: its own loopback ports and data folder, its own
 //! `[instance] environment`, no runs, and a placeholder for each operator
 //! key, so it forwards no operator-keyed call. Its UI only reads. The
-//! canary is one (`cargo xtask canary`); each worktree's preview is
-//! another (`cargo xtask preview`).
+//! canary is one (`ren deployer canary`); each worktree's preview is
+//! another (`ren deployer preview`).
 
 use crate::{
     file::{FileError, FileMode},

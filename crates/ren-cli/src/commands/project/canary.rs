@@ -1,4 +1,4 @@
-//! A project's canary and promotion, as Ren's own (`cargo xtask canary`)
+//! A project's canary and promotion, as Ren's own (`ren deployer canary`)
 //! is for Ren (docs/plans/self-build.md, phase 6).
 //!
 //! A pass fetches the project's `main`, checks its tip out, detached, in a
@@ -105,7 +105,7 @@ impl ProjectFactory {
         match project.factory {
             Stored::Known(Factory::Contract) => {}
             Stored::Known(Factory::Ren) => bail!(
-                "{} is Ren itself: its canary is `cargo xtask canary`, and `install-vps` promotes it",
+                "{} is Ren itself: its canary is `ren deployer canary`, and `install-vps` promotes it",
                 project.name
             ),
             Stored::Unknown(ref label) => bail!(

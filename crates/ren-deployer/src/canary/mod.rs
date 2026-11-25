@@ -1,10 +1,10 @@
-//! `cargo xtask canary`: the factory's canary and promotion
+//! `ren deployer canary`: the factory's canary and promotion
 //! (docs/plans/self-build.md, phase 4). One pass:
 //!
-//! 1. fetches `main` and checks its tip out in the factory's own worktree
-//!    (`~/.local/share/ren/factory`), then goes on with that checkout's
-//!    xtask, so a commit is checked by its own checks;
-//! 2. builds the commit once (`crate::builds`);
+//! 1. fetches `main`, checks its tip out in the factory's own worktree
+//!    (`~/.local/share/ren/factory`), and builds it once (`crate::builds`);
+//! 2. goes on with that build's own `ren deployer`, so a commit is checked
+//!    by its own checks;
 //! 3. starts it as the canary on a fresh backup of production's history;
 //! 4. checks it (`checks`): doctor, every read, every page;
 //! 5. writes where the release stands to production's data folder, where
@@ -203,7 +203,8 @@ impl From<InstallError> for CanaryError {
 /// builds, and the programs it runs.
 struct Factory {
     home: PathBuf,
-    /// The checkout this xtask was built from.
+    /// The checkout it builds from: the operator's clone, or, for a pass
+    /// handed off, the factory's worktree at the commit being checked.
     repo: PathBuf,
     /// Ren's own worktree, at the commit being checked.
     worktree: PathBuf,
@@ -225,18 +226,14 @@ impl Factory {
     const GATEWAY_PORT: u16 = 9445;
     const UI_PORT: u16 = 9446;
 
-    fn new(env: &HostEnv) -> Result<Self, CanaryError> {
+    fn new(env: &HostEnv, checkout: &Path) -> Result<Self, CanaryError> {
         let home = env
             .absolute_path("HOME")
             .ok_or(CanaryError::MissingEnv("HOME"))?;
         Ok(Self {
             worktree: home.join(".local/share/ren/factory"),
             builds: Builds::new(&home),
-            // crates/ren-deployer/ sits two folders below the checkout's root.
-            repo: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .and_then(Path::parent)
-                .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
+            repo: checkout.to_path_buf(),
             cargo: env
                 .absolute_path("CARGO")
                 .unwrap_or_else(|| PathBuf::from("cargo")),
@@ -291,13 +288,14 @@ impl Factory {
             Progress("The factory service runs the canary pass").show();
             return Ok(());
         }
-        self.delegate(args)
+        self.delegate(env, args)
     }
 
-    /// Fetches main, checks its tip out in the factory's worktree, and goes
-    /// on there with that commit's own xtask. One at a time: a second waits
+    /// Fetches main, checks its tip out in the factory's worktree, builds
+    /// it, and goes on there with that build's own `ren deployer`, so a
+    /// commit is checked by its own checks. One at a time: a second waits
     /// for the first.
-    fn delegate(&self, args: &RunArgs) -> Result<(), CanaryError> {
+    fn delegate(&self, env: &HostEnv, args: &RunArgs) -> Result<(), CanaryError> {
         let lock = self.lock()?;
         let main: Branch = Self::MAIN
             .parse()
@@ -306,15 +304,18 @@ impl Factory {
         let tip = self.git.fetch(&self.repo, Self::REMOTE, &main)?;
         self.git
             .check_out_detached(&self.repo, &self.worktree, &tip)?;
+        let build = self.builds.make(env, &self.cargo, &self.worktree, &tip)?;
         Progress(&format!(
             "Checking {} with its own checks, in {}",
             tip.abbreviated(12),
             self.worktree.display()
         ))
         .show();
-        let mut pass = Invocation::new(&self.cargo)
+        let mut pass = Invocation::new(build.ren())
             .current_dir(&self.worktree)
-            .args(["xtask", "canary", "run", "--source", "checkout", "--of"])
+            .args(["deployer", "--checkout"])
+            .arg(&self.worktree)
+            .args(["canary", "run", "--source", "checkout", "--of"])
             .arg(
                 args.target
                     .of
@@ -505,7 +506,7 @@ impl Factory {
             Production::Dev => return Err(CanaryError::DevPromotion),
         }
         Progress(&format!("Promoting {} into production", commit.short())).show();
-        let installed = InstallVps::promotion(commit.clone()).run(env);
+        let installed = InstallVps::promotion(commit.clone()).run(env, &self.repo);
         if installed.is_err() {
             build.failed_promotion()?;
         }
@@ -608,10 +609,13 @@ impl Factory {
         } else {
             ""
         };
+        // The installed `ren` runs them: a promotion upgrades the deployer
+        // with production.
+        let ren = self.home.join(".local/bin/ren");
         let service = format!(
-            "[Unit]\nDescription=Ren canary: build main's tip, check it, and promote it by policy\n\n[Service]\nType=oneshot\nWorkingDirectory={}\n{environment}ExecStart={} xtask canary run{publish}\n",
-            self.repo.display(),
-            self.cargo.display(),
+            "[Unit]\nDescription=Ren canary: build main's tip, check it, and promote it by policy\n\n[Service]\nType=oneshot\nWorkingDirectory={repo}\n{environment}ExecStart={ren} deployer --checkout {repo} canary run{publish}\n",
+            repo = self.repo.display(),
+            ren = ren.display(),
         );
         let timer = format!(
             "[Unit]\nDescription=Ren canary, every {} minutes\n\n[Timer]\nOnBootSec=5min\nOnUnitInactiveSec={}min\n\n[Install]\nWantedBy=timers.target\n",
@@ -628,9 +632,9 @@ impl Factory {
         // The factory service: previews asked for start as they are asked,
         // with the timer's environment and publishing.
         let factory = format!(
-            "[Unit]\nDescription=Ren factory: previews started as they are asked for\n\n[Service]\nType=simple\nWorkingDirectory={}\n{environment}ExecStart={} xtask canary serve{publish}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
-            self.repo.display(),
-            self.cargo.display(),
+            "[Unit]\nDescription=Ren factory: previews started as they are asked for\n\n[Service]\nType=simple\nWorkingDirectory={repo}\n{environment}ExecStart={ren} deployer --checkout {repo} canary serve{publish}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+            repo = self.repo.display(),
+            ren = ren.display(),
         );
         FileMode::Readable.write(
             &units.join(format!("{}.service", Self::SERVICE)),
@@ -686,8 +690,9 @@ impl Factory {
 }
 
 impl Canary {
-    pub fn run(self, env: &HostEnv) -> Result<(), CanaryError> {
-        let factory = Factory::new(env)?;
+    /// Runs the command, building from `checkout`.
+    pub fn run(self, env: &HostEnv, checkout: &Path) -> Result<(), CanaryError> {
+        let factory = Factory::new(env, checkout)?;
         match self.action {
             CanaryAction::Run(args) => match args.source {
                 Source::Main => factory.follow(env, &args),

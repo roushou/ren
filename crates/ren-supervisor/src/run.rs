@@ -169,7 +169,7 @@ pub enum RunTenure {
 }
 
 /// Where a run is, without what each state carries: `RunState`'s `phase`
-/// as it is written, which other tools read (`cargo xtask install-vps`
+/// as it is written, which other tools read (`ren deployer install-vps`
 /// waits on it).
 #[derive(strum::Display, strum::EnumString, strum::IntoStaticStr, strum::VariantArray)]
 #[strum(serialize_all = "snake_case")]
