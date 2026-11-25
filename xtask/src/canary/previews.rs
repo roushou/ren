@@ -1,5 +1,5 @@
 //! The factory's previews (docs/plans/self-build.md, phase 9): one pass
-//! asks `ren_gateway::instance::Instances` which previews should run, from the
+//! asks `ren_gateway::deployment::Deployments` which previews should run, from the
 //! commits the operator asked for and Ren's open pull requests as
 //! production last saw them on GitHub, and carries out what it says: each
 //! start fetches the commit, builds it once (`crate::builds`) in the
@@ -13,7 +13,7 @@ use crate::{
     progress::Progress,
     replica::{ListedPull, ProductionPlace, Replica},
 };
-use ren_gateway::instance::{Action, Event, Instances, Reach, Slot, Source, Wanted};
+use ren_gateway::deployment::{Action, Deployments, Event, Reach, Slot, Trigger, Wanted};
 use ren_git::Commit;
 use ren_harness::host::HostEnv;
 use ren_protocol::label::Stored;
@@ -60,13 +60,13 @@ impl PreviewPass<'_> {
                 }
                 Action::Start {
                     slot,
-                    source,
+                    trigger,
                     commit,
                 } => {
                     Progress(&format!(
                         "Previewing {} ({}) in slot {}",
                         commit.short(),
-                        Self::describe(&source),
+                        Self::describe(&trigger),
                         slot.index()
                     ))
                     .show();
@@ -106,7 +106,7 @@ impl PreviewPass<'_> {
             }
         }
         Ok(instances
-            .instances()
+            .deployments()
             .iter()
             .map(|instance| instance.commit.clone())
             .collect())
@@ -117,25 +117,25 @@ impl PreviewPass<'_> {
     /// updated first. While production has not seen the pull requests, the
     /// pull requests previewed now are kept as they are, never taken as
     /// closed.
-    fn wanted(&self, current: &Instances) -> Result<Vec<Wanted>, CanaryError> {
+    fn wanted(&self, current: &Deployments) -> Result<Vec<Wanted>, CanaryError> {
         let asked = self
             .production
             .preview_requests()
             .commits()
             .iter()
             .map(|commit| Wanted {
-                source: Source::Commit(commit.clone()),
+                trigger: Trigger::Chosen(commit.clone()),
                 commit: commit.clone(),
             })
             .collect::<Vec<_>>();
         let pulls: Vec<Wanted> = match self.production.pulls(self.project)? {
             Some(pulls) => pulls.into_iter().filter_map(Self::pull).collect(),
             None => current
-                .instances()
+                .deployments()
                 .iter()
-                .filter(|instance| matches!(instance.source, Source::Pull(_)))
+                .filter(|instance| matches!(instance.trigger, Trigger::FollowsPull(_)))
                 .map(|instance| Wanted {
-                    source: instance.source.clone(),
+                    trigger: instance.trigger.clone(),
                     commit: instance.commit.clone(),
                 })
                 .collect(),
@@ -154,10 +154,10 @@ impl PreviewPass<'_> {
         }
     }
 
-    fn describe(source: &Source) -> String {
-        match source {
-            Source::Pull(number) => format!("pull request #{number}"),
-            Source::Commit(_) => "asked for".to_owned(),
+    fn describe(trigger: &Trigger) -> String {
+        match trigger {
+            Trigger::FollowsPull(number) => format!("pull request #{number}"),
+            Trigger::Chosen(_) => "asked for".to_owned(),
         }
     }
 
@@ -204,7 +204,7 @@ impl PreviewPass<'_> {
             (tailscale, gateway, ui)
         });
         let reached = replica.start(&factory.repo, &build.ren(), &build.ui(), &keys, publish)?;
-        println!("Instance of {}: {}", commit.short(), reached.ui);
+        println!("Deployment of {}: {}", commit.short(), reached.ui);
         Ok(())
     }
 }

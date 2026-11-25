@@ -39,7 +39,8 @@ no one owner.
 
 What points the right way, and is kept:
 
-- `ren-release`, pure: `Build`, `Verdict`, `Policy`, `Release`.
+- `Build`, `Verdict`, `Policy`, `Release` (then `ren-release`, now
+  `ren-gateway`'s `release` module).
 - The instances' state machine (`ren-gateway`'s `instance`): pure,
   persisted, a stale report refused.
 - Builds in containers, once per commit, kept in `builds/<commit>`;
@@ -76,19 +77,19 @@ What points the right way, and is kept:
   a trigger, a seed, a commit, and a state: building, starting, running,
   superseded, stopping, stopped, failed with why, or unknown when its
   outcome was lost. An unknown outcome is never rounded up to running. The
-  machine lives in `ren-release` beside `Build` and `Policy`, the lowest
-  crate that owns the rules. The gateway reads it, and the deployer writes
-  it.
+  machine lives in `ren-gateway` beside `release`'s `Build` and `Policy`:
+  the gateway reads it, and the deployer writes it.
 - **The deployer is a component, not glue.** A new crate, `ren-deployer`,
-  primary type `Deployer`, is the shell around `ren-release`. It builds
+  primary type `Deployer`, owns deploying and does its I/O openly. It builds
   commits in containers, seeds their data, starts their pods, runs the
   canary's checks, and promotes. It ships in the `ren` binary as `ren
   deployer` commands and runs as `ren-deployer.service`, installed and
   upgraded with the build it belongs to, never from a checkout. It replaces
   the factory service, and `[factory]` becomes `[deployer]`. The section
   has never been set in production's configuration, so it gets no alias.
-  Layering: `ren-deployer` depends on daemon, container, and release, and
-  `ren-cli` depends on it.
+  Layering: `ren-deployer` depends on daemon and container (the gateway's
+  `release` and `deployment` types come through the daemon), and `ren-cli`
+  depends on it.
 - **One owner for an instance's configuration.** The deployer derives a
   deployment's daemon configuration from production's, once: its ports,
   data folder, environment, placeholder keys, and no runs. `Replica`,
@@ -137,13 +138,20 @@ a move lands before the move that needs it.
    kinds of caller, and every failure; this checkout's dev instance, reset
    and seeded, rendered Traffic, a session, Usage, and every other page
    (`dev shot`) from that history.
-2. **`Deployments`.** Not built. `ren-gateway`'s `Instances` moves into
-   `ren-release` as `Deployments`, with `Trigger` and `Seed`. The
-   canary's deployment is part of it, and its `release.json` is unchanged.
-   The files keep the shapes production's older gateway reads until
-   production runs a build that reads the new one. Verified by the state
-   machine's tests (legal and illegal transitions, a lost outcome) and the
-   files' pinned shapes.
+2. **`Deployments`.** Built, as three commits. `ren-release`'s `Revision`
+   (a commit and whether tracked files differed) is a git fact the recorder
+   and store also use: it is `ren_git::SourceRevision`. The rest of
+   `ren-release` (`Build`, `Verdict`, `Policy`, `Release`, `Decision`) is
+   read and served by the gateway and used only above it: it is
+   `ren-gateway`'s `release` module, and the crate is gone. The compatibility
+   gate reads every crate's label table as one, so a vocabulary moving
+   between tables is no change. Then `ren-gateway`'s `instance` module is
+   `deployment`: `Deployments` of `Deployment`s in their `DeploymentState`,
+   each picked by a `Trigger`, `FollowsPull` or `Chosen` (`ChosenCommits`).
+   `previews.json` and `preview-requests.json` keep their shape. Verified
+   at each commit: the same 1229 tests pass (the release labels test folded
+   into the gateway's), lint, and the compatibility gate against the commit
+   before reports no change to labels, fixtures, or the API.
 3. **`ren-deployer`.** Not built. Each of xtask's runtime modules moves
    into the crate in its own commit, bottom-up: build jobs and builds,
    pods and units, the configuration derivation (one owner, replacing
@@ -183,8 +191,6 @@ a move lands before the move that needs it.
 - **What a scenario holds.** Calls and sessions for certain. Whether runs,
   work items, projects, and releases are seeded too, which needs the store
   to write each of them outside its live paths.
-- **`ren-release`'s primary type.** With `Deployments` in it, the crate
-  may be better named for that type than for `Release`.
 - **How the deployer upgrades itself.** It is part of the build it
   promotes, so it restarts into the new build after production's swap.
   The open question is what happens to a pass running at that moment.
@@ -206,6 +212,16 @@ a move lands before the move that needs it.
   seeded; the open question of what a seed holds stands. The xtask
   scenario builders stay only for the traffic generator and the fake
   agents (now `Call`'s constructors), and go with them in phase 5.
+- **Phase 2: no `ren-release`.** The plan moved the state machine into
+  `ren-release` to keep it free of I/O; a pull request's number is
+  `ren-github`'s, which does I/O, and staying pure is no reason for a
+  crate. `ren-release` folded into `ren-gateway` instead, where the
+  deployments now sit beside the release types.
+- **Phase 2: `Seed` and the canary wait.** A deployment's seed has one
+  value until phase 4 adds scenarios, and the canary has no building or
+  running state to merge (`release.json` holds a verdict), so each joins
+  `Deployments` with the phase that gives it one: seeds in phase 4, the
+  canary when the deployer runs it (phase 3).
 - **Phase 1: checked by its pages, not side by side.** The history is
   invented afresh, not the scenarios' calls replayed, so the two seeds
   differ by design; the pages were checked against the new one.

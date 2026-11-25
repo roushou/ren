@@ -5,8 +5,8 @@
     reason = "integration tests are a shell: helpers outside #[test] fail loudly"
 )]
 
-use ren_gateway::instance::{
-    Action, Event, InstanceState, Instances, Reach, Slot, Source, StaleReport, Wanted,
+use ren_gateway::deployment::{
+    Action, DeploymentState, Deployments, Event, Reach, Slot, StaleReport, Trigger, Wanted,
 };
 use ren_gateway::release::PreviewCapacity;
 use ren_git::Commit;
@@ -18,14 +18,14 @@ fn commit(digit: char) -> Commit {
 
 fn pull(number: u64, head: char) -> Wanted {
     Wanted {
-        source: Source::Pull(number.to_string().parse().unwrap()),
+        trigger: Trigger::FollowsPull(number.to_string().parse().unwrap()),
         commit: commit(head),
     }
 }
 
 fn asked(head: char) -> Wanted {
     Wanted {
-        source: Source::Commit(commit(head)),
+        trigger: Trigger::Chosen(commit(head)),
         commit: commit(head),
     }
 }
@@ -41,13 +41,13 @@ fn slot(index: usize) -> Slot {
 fn start(index: usize, want: &Wanted) -> Action {
     Action::Start {
         slot: slot(index),
-        source: want.source.clone(),
+        trigger: want.trigger.clone(),
         commit: want.commit.clone(),
     }
 }
 
 /// `instances` once `wanted` is wanted, with room for `count`.
-fn want(instances: Instances, wanted: &[Wanted], count: u64) -> (Instances, Vec<Action>) {
+fn want(instances: Deployments, wanted: &[Wanted], count: u64) -> (Deployments, Vec<Action>) {
     instances
         .step(Event::Wanted {
             wanted: wanted.to_vec(),
@@ -57,11 +57,11 @@ fn want(instances: Instances, wanted: &[Wanted], count: u64) -> (Instances, Vec<
 }
 
 fn started(
-    instances: Instances,
+    instances: Deployments,
     index: usize,
     head: char,
     reach: Reach,
-) -> Result<Instances, StaleReport> {
+) -> Result<Deployments, StaleReport> {
     let (instances, actions) = instances.step(Event::Started {
         slot: slot(index),
         commit: commit(head),
@@ -71,7 +71,7 @@ fn started(
     Ok(instances)
 }
 
-fn failed(instances: Instances, index: usize, head: char, detail: &str) -> Instances {
+fn failed(instances: Deployments, index: usize, head: char, detail: &str) -> Deployments {
     instances
         .step(Event::Failed {
             slot: slot(index),
@@ -83,7 +83,7 @@ fn failed(instances: Instances, index: usize, head: char, detail: &str) -> Insta
 }
 
 /// `instances` after each start it asked for succeeded.
-fn running(instances: Instances, actions: &[Action]) -> Instances {
+fn running(instances: Deployments, actions: &[Action]) -> Deployments {
     let mut instances = instances;
     for action in actions {
         if let Action::Start { slot, commit, .. } = action {
@@ -103,28 +103,28 @@ fn running(instances: Instances, actions: &[Action]) -> Instances {
 #[test]
 fn the_first_wants_take_the_slots_in_order() {
     let wanted = [asked('a'), pull(12, 'b'), pull(9, 'c')];
-    let (previews, actions) = want(Instances::default(), &wanted, 2);
+    let (previews, actions) = want(Deployments::default(), &wanted, 2);
     assert_eq!(actions, [start(0, &wanted[0]), start(1, &wanted[1])]);
     assert!(
         previews
-            .instances()
+            .deployments()
             .iter()
-            .all(|instance| instance.state == InstanceState::Building)
+            .all(|instance| instance.state == DeploymentState::Building)
     );
-    assert_eq!(previews.of(&wanted[2].source), None);
+    assert_eq!(previews.of(&wanted[2].trigger), None);
 }
 
 #[test]
 fn a_new_head_starts_again_in_its_slot_and_a_closed_pull_stops() {
     let first = [pull(12, 'a'), pull(9, 'b')];
-    let (previews, actions) = want(Instances::default(), &first, 2);
+    let (previews, actions) = want(Deployments::default(), &first, 2);
     let previews = running(previews, &actions);
 
     // #12 moved on; #9 closed; nothing else is wanted.
     let next = [pull(12, 'c')];
     let (previews, actions) = want(previews, &next, 2);
     assert_eq!(actions, [Action::Stop(slot(1)), start(0, &next[0])]);
-    assert_eq!(previews.instances().len(), 1);
+    assert_eq!(previews.deployments().len(), 1);
 
     // Unchanged wants change nothing once it runs.
     let previews = running(previews, &actions);
@@ -134,7 +134,7 @@ fn a_new_head_starts_again_in_its_slot_and_a_closed_pull_stops() {
 
 #[test]
 fn a_freed_slot_is_taken_by_the_next_want_without_a_stop() {
-    let (previews, actions) = want(Instances::default(), &[pull(12, 'a')], 1);
+    let (previews, actions) = want(Deployments::default(), &[pull(12, 'a')], 1);
     let previews = running(previews, &actions);
     let next = [pull(9, 'b')];
     let (_, actions) = want(previews, &next, 1);
@@ -144,13 +144,13 @@ fn a_freed_slot_is_taken_by_the_next_want_without_a_stop() {
 #[test]
 fn a_failure_is_kept_and_not_tried_again_for_the_same_commit() {
     let wanted = [pull(12, 'a')];
-    let (previews, _) = want(Instances::default(), &wanted, 1);
+    let (previews, _) = want(Deployments::default(), &wanted, 1);
     let previews = failed(previews, 0, 'a', "the build failed");
     let (previews, actions) = want(previews, &wanted, 1);
     assert_eq!(actions, []);
     assert_eq!(
-        previews.of(&wanted[0].source).unwrap().state,
-        InstanceState::Failed {
+        previews.of(&wanted[0].trigger).unwrap().state,
+        DeploymentState::Failed {
             detail: "the build failed".into()
         }
     );
@@ -163,7 +163,7 @@ fn a_failure_is_kept_and_not_tried_again_for_the_same_commit() {
 #[test]
 fn a_build_whose_outcome_is_unknown_is_started_again() {
     let wanted = [pull(12, 'a')];
-    let (previews, _) = want(Instances::default(), &wanted, 1);
+    let (previews, _) = want(Deployments::default(), &wanted, 1);
     let (_, actions) = want(previews, &wanted, 1);
     assert_eq!(actions, [start(0, &wanted[0])]);
 }
@@ -171,23 +171,23 @@ fn a_build_whose_outcome_is_unknown_is_started_again() {
 #[test]
 fn a_smaller_capacity_stops_what_no_longer_fits() {
     let wanted = [pull(1, 'a'), pull(2, 'b'), pull(3, 'c')];
-    let (previews, actions) = want(Instances::default(), &wanted, 3);
+    let (previews, actions) = want(Deployments::default(), &wanted, 3);
     let previews = running(previews, &actions);
     let (previews, actions) = want(previews, &wanted, 1);
     assert_eq!(actions, [Action::Stop(slot(1)), Action::Stop(slot(2))]);
-    assert_eq!(previews.instances().len(), 1);
+    assert_eq!(previews.deployments().len(), 1);
 }
 
 #[test]
 fn a_source_wanted_twice_counts_once() {
     let wanted = [pull(12, 'a'), pull(12, 'a'), pull(9, 'b')];
-    let (_, actions) = want(Instances::default(), &wanted, 2);
+    let (_, actions) = want(Deployments::default(), &wanted, 2);
     assert_eq!(actions, [start(0, &wanted[0]), start(1, &wanted[2])]);
 }
 
 #[test]
 fn a_report_about_another_build_is_refused_and_changes_nothing() {
-    let (instances, _) = want(Instances::default(), &[pull(12, 'a')], 1);
+    let (instances, _) = want(Deployments::default(), &[pull(12, 'a')], 1);
     assert_eq!(
         started(instances.clone(), 0, 'b', Reach::Loopback),
         Err(StaleReport {
@@ -212,7 +212,7 @@ fn a_report_about_another_build_is_refused_and_changes_nothing() {
 #[test]
 fn instances_keep_the_file_shape_previews_had() {
     // Production's gateway, another build than the factory's, reads it.
-    let (previews, _) = want(Instances::default(), &[pull(12, 'a'), asked('b')], 2);
+    let (previews, _) = want(Deployments::default(), &[pull(12, 'a'), asked('b')], 2);
     let previews = started(previews, 0, 'a', Reach::Tailnet).unwrap();
     let previews = failed(previews, 1, 'b', "no");
     let json = serde_json::to_value(&previews).unwrap();
@@ -223,7 +223,7 @@ fn instances_keep_the_file_shape_previews_had() {
             { "slot": 1, "key": { "commit": "b".repeat(40) }, "commit": "b".repeat(40), "state": { "state": "failed", "detail": "no" } },
         ] })
     );
-    let read: Instances = serde_json::from_value(json).unwrap();
+    let read: Deployments = serde_json::from_value(json).unwrap();
     assert_eq!(read, previews);
 }
 

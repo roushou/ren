@@ -6,7 +6,7 @@
 //! itself is previewed so; any other project has none.
 
 use super::{ApiError, ApiState};
-use crate::instance::{Instance, InstanceState, Reach, Source};
+use crate::deployment::{Deployment, DeploymentState, Reach, Trigger};
 use axum::{
     extract::{Path, State},
     response::{IntoResponse, Response},
@@ -85,7 +85,7 @@ impl ApiState {
                     .release
                     .previews()
                     .await?
-                    .instances()
+                    .deployments()
                     .iter()
                     .map(PreviewBody::of)
                     .collect(),
@@ -101,20 +101,20 @@ impl ApiState {
 }
 
 impl PreviewBody {
-    fn of(instance: &Instance) -> Self {
+    fn of(instance: &Deployment) -> Self {
         Self {
             slot: u64::try_from(instance.slot.index()).unwrap_or(u64::MAX),
-            of: match &instance.source {
-                Source::Pull(number) => PreviewOfBody::Pull {
+            of: match &instance.trigger {
+                Trigger::FollowsPull(number) => PreviewOfBody::Pull {
                     number: number.get(),
                 },
-                Source::Commit(_) => PreviewOfBody::Commit,
+                Trigger::Chosen(_) => PreviewOfBody::Commit,
             },
             commit: instance.commit.clone(),
             state: match &instance.state {
-                InstanceState::Building => PreviewStateBody::Building,
-                InstanceState::Running { reach } => PreviewStateBody::Running { reach: *reach },
-                InstanceState::Failed { detail } => PreviewStateBody::Failed {
+                DeploymentState::Building => PreviewStateBody::Building,
+                DeploymentState::Running { reach } => PreviewStateBody::Running { reach: *reach },
+                DeploymentState::Failed { detail } => PreviewStateBody::Failed {
                     detail: detail.clone(),
                 },
             },

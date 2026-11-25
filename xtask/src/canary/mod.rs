@@ -395,7 +395,7 @@ impl Factory {
         let running = || -> Vec<Commit> {
             production
                 .previews()
-                .instances()
+                .deployments()
                 .iter()
                 .map(|instance| instance.commit.clone())
                 .collect()

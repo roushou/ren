@@ -12,15 +12,15 @@ fn pure_modules_stay_free_of_runtime_and_io_dependencies() {
         ("operator.rs", include_str!("operator.rs")),
         ("lifecycle/retry.rs", include_str!("lifecycle/retry.rs")),
         ("user.rs", include_str!("user.rs")),
-        ("instance/mod.rs", include_str!("instance/mod.rs")),
+        ("deployment/mod.rs", include_str!("deployment/mod.rs")),
         (
-            "instance/instances.rs",
-            include_str!("instance/instances.rs"),
+            "deployment/deployments.rs",
+            include_str!("deployment/deployments.rs"),
         ),
-        ("instance/asks.rs", include_str!("instance/asks.rs")),
+        ("deployment/chosen.rs", include_str!("deployment/chosen.rs")),
         ("factory/mod.rs", include_str!("factory/mod.rs")),
         ("factory/follow.rs", include_str!("factory/follow.rs")),
-        ("instance/slot.rs", include_str!("instance/slot.rs")),
+        ("deployment/slot.rs", include_str!("deployment/slot.rs")),
     ];
     let forbidden = [
         "tokio",

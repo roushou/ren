@@ -6,7 +6,7 @@
 //! operator's promotion request for the factory; the CLI reads these same
 //! views back.
 
-use crate::instance::{CommitAsks, Instances};
+use crate::deployment::{ChosenCommits, Deployments};
 use crate::release::{CheckKind, Decision, Outcome, Policy, PromotionRequest, Release, ShotName};
 use ren_git::Commit;
 use ren_git::SourceRevision;
@@ -127,15 +127,15 @@ impl ReleaseFolder {
     }
 
     /// The previews the factory runs; none before its first previews pass.
-    pub(super) async fn previews(&self) -> Result<Instances, ReleaseFileError> {
-        Ok(Self::json(&self.data.join(Instances::FILE))
+    pub(super) async fn previews(&self) -> Result<Deployments, ReleaseFileError> {
+        Ok(Self::json(&self.data.join(Deployments::FILE))
             .await?
             .unwrap_or_default())
     }
 
     /// The commits the operator asked to preview.
-    pub(super) async fn preview_requests(&self) -> Result<CommitAsks, ReleaseFileError> {
-        Ok(Self::json(&self.data.join(CommitAsks::FILE))
+    pub(super) async fn preview_requests(&self) -> Result<ChosenCommits, ReleaseFileError> {
+        Ok(Self::json(&self.data.join(ChosenCommits::FILE))
             .await?
             .unwrap_or_default())
     }
@@ -144,12 +144,12 @@ impl ReleaseFolder {
     /// one change at a time; answers what `change` answered.
     pub(super) async fn change_preview_requests<T>(
         &self,
-        change: impl FnOnce(&mut CommitAsks) -> T,
-    ) -> Result<(T, CommitAsks), ReleaseFileError> {
+        change: impl FnOnce(&mut ChosenCommits) -> T,
+    ) -> Result<(T, ChosenCommits), ReleaseFileError> {
         let _held = self.asks.lock().await;
         let mut requests = self.preview_requests().await?;
         let answer = change(&mut requests);
-        let path = self.data.join(CommitAsks::FILE);
+        let path = self.data.join(ChosenCommits::FILE);
         let bytes = serde_json::to_vec(&requests).map_err(|source| ReleaseFileError::Shape {
             path: path.clone(),
             source,

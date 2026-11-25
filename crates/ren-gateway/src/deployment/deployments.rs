@@ -1,5 +1,5 @@
-//! The instances the factory runs in their slots, and the one pure step that
-//! moves them on: `(Instances, Event) -> (Instances, Vec<Action>)`.
+//! The deployments the factory runs in their slots, and the one pure step that
+//! moves them on: `(Deployments, Event) -> (Deployments, Vec<Action>)`.
 
 use super::slot::Slot;
 use crate::release::PreviewCapacity;
@@ -9,45 +9,46 @@ use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
 
-/// The instances the factory runs, each in its slot: today, the previews
+/// The deployments the factory runs, each in its slot: today, the previews
 /// of Ren. Kept by the factory as a file in production's data folder
-/// ([`Instances::FILE`]), which production's gateway reads. The factory and
+/// ([`Deployments::FILE`]), which production's gateway reads. The factory and
 /// that gateway are different builds (the canary's and the promoted one),
 /// so the file keeps its shape: its keys are the ones previews had.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Instances {
+pub struct Deployments {
     /// By slot, each slot at most once.
     #[serde(rename = "previews")]
-    instances: Vec<Instance>,
+    deployments: Vec<Deployment>,
 }
 
-/// One instance: what it is of, the commit it runs, and where it stands.
+/// One deployment: what it is of, the commit it runs, and where it stands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Instance {
+pub struct Deployment {
     pub slot: Slot,
     #[serde(rename = "key")]
-    pub source: Source,
+    pub trigger: Trigger,
     pub commit: Commit,
-    pub state: InstanceState,
+    pub state: DeploymentState,
 }
 
-/// What an instance is of, and so which commit it runs: an open pull
-/// request's head, followed while it is open, or a commit the operator
-/// asked for, until the ask is withdrawn. Each is run on a copy of
-/// production's history, every operator key a placeholder.
+/// What picks a deployment's commit: an open pull request's head,
+/// followed while it is ready, or a commit the operator chose, until the
+/// choice is withdrawn. Each is run on a copy of production's history,
+/// every operator key a placeholder. Written as previews wrote their key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Source {
-    Pull(PullNumber),
-    Commit(Commit),
+pub enum Trigger {
+    #[serde(rename = "pull")]
+    FollowsPull(PullNumber),
+    #[serde(rename = "commit")]
+    Chosen(Commit),
 }
 
-/// Where an instance stands.
+/// Where an deployment stands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
-pub enum InstanceState {
+pub enum DeploymentState {
     /// A pass is building and starting its commit; or, as a later pass
     /// reads it, one was and stopped before it said how that ended. That
     /// outcome is unknown, never taken for running: the pass starts it
@@ -59,7 +60,7 @@ pub enum InstanceState {
     Failed { detail: String },
 }
 
-/// Where a running instance is reached from.
+/// Where a running deployment is reached from.
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
@@ -70,15 +71,15 @@ pub enum Reach {
     Tailnet,
 }
 
-/// An instance that should run: the commit for its source, in priority
+/// An deployment that should run: the commit for its trigger, in priority
 /// order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wanted {
-    pub source: Source,
+    pub trigger: Trigger,
     pub commit: Commit,
 }
 
-/// What moves the instances on.
+/// What moves the deployments on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// A pass found these wanted, first first, with room for `capacity`.
@@ -110,7 +111,7 @@ pub enum Action {
     /// [`Event::Failed`].
     Start {
         slot: Slot,
-        source: Source,
+        trigger: Trigger,
         commit: Commit,
     },
 }
@@ -130,7 +131,7 @@ impl Wanted {
     pub fn pull(number: PullNumber, head: Commit, readiness: Readiness) -> Option<Self> {
         match readiness {
             Readiness::Ready => Some(Self {
-                source: Source::Pull(number),
+                trigger: Trigger::FollowsPull(number),
                 commit: head,
             }),
             Readiness::Draft => None,
@@ -138,23 +139,23 @@ impl Wanted {
     }
 }
 
-impl Instances {
+impl Deployments {
     /// Its file in production's data folder: still named for previews,
     /// which production's gateway reads it as.
     pub const FILE: &str = "previews.json";
 
-    pub fn instances(&self) -> &[Instance] {
-        &self.instances
+    pub fn deployments(&self) -> &[Deployment] {
+        &self.deployments
     }
 
-    /// The instance of `source`, if one holds a slot.
-    pub fn of(&self, source: &Source) -> Option<&Instance> {
-        self.instances
+    /// The deployment of `trigger`, if one holds a slot.
+    pub fn of(&self, trigger: &Trigger) -> Option<&Deployment> {
+        self.deployments
             .iter()
-            .find(|instance| &instance.source == source)
+            .find(|deployment| &deployment.trigger == trigger)
     }
 
-    /// The instances after `event`, and what to do to get there. A report
+    /// The deployments after `event`, and what to do to get there. A report
     /// that does not fit (a slot not building that commit) is refused, and
     /// nothing changes.
     pub fn step(self, event: Event) -> Result<(Self, Vec<Action>), StaleReport> {
@@ -165,24 +166,24 @@ impl Instances {
                 commit,
                 reach,
             } => self
-                .settle(slot, commit, InstanceState::Running { reach })
-                .map(|instances| (instances, Vec::new())),
+                .settle(slot, commit, DeploymentState::Running { reach })
+                .map(|deployments| (deployments, Vec::new())),
             Event::Failed {
                 slot,
                 commit,
                 detail,
             } => self
-                .settle(slot, commit, InstanceState::Failed { detail })
-                .map(|instances| (instances, Vec::new())),
+                .settle(slot, commit, DeploymentState::Failed { detail })
+                .map(|deployments| (deployments, Vec::new())),
         }
     }
 
-    /// The instances that should run now that `wanted` (in priority order)
+    /// The deployments that should run now that `wanted` (in priority order)
     /// is wanted, and what to do to get there. The first wants, as many as
-    /// `capacity` allows, hold slots; a source wanted twice counts once. An
-    /// instance whose source is still wanted keeps its slot: unchanged when
+    /// `capacity` allows, hold slots; a trigger wanted twice counts once. An
+    /// deployment whose trigger is still wanted keeps its slot: unchanged when
     /// it runs or failed at the same commit, started again when its
-    /// outcome is unknown (left building) or its source wants another
+    /// outcome is unknown (left building) or its trigger wants another
     /// commit. One no longer wanted is stopped; a new one takes the lowest
     /// free slot.
     fn want(self, wanted: &[Wanted], capacity: PreviewCapacity) -> (Self, Vec<Action>) {
@@ -191,54 +192,62 @@ impl Instances {
             if chosen.len() == capacity.get() {
                 break;
             }
-            if !chosen.iter().any(|kept| kept.source == want.source) {
+            if !chosen.iter().any(|kept| kept.trigger == want.trigger) {
                 chosen.push(want);
             }
         }
         let slots: Vec<Slot> = Slot::first(capacity.get()).collect();
         let mut stops = Vec::new();
         let mut starts = Vec::new();
-        let mut kept: Vec<Instance> = Vec::new();
-        for instance in self.instances {
-            let still = chosen.iter().find(|want| want.source == instance.source);
+        let mut kept: Vec<Deployment> = Vec::new();
+        for deployment in self.deployments {
+            let still = chosen
+                .iter()
+                .find(|want| want.trigger == deployment.trigger);
             match still {
-                Some(want) if slots.contains(&instance.slot) => {
-                    let current = want.commit == instance.commit;
-                    match (&instance.state, current) {
-                        (InstanceState::Running { .. } | InstanceState::Failed { .. }, true) => {
-                            kept.push(instance);
+                Some(want) if slots.contains(&deployment.slot) => {
+                    let current = want.commit == deployment.commit;
+                    match (&deployment.state, current) {
+                        (
+                            DeploymentState::Running { .. } | DeploymentState::Failed { .. },
+                            true,
+                        ) => {
+                            kept.push(deployment);
                         }
-                        (InstanceState::Building, true)
+                        (DeploymentState::Building, true)
                         | (
-                            InstanceState::Running { .. }
-                            | InstanceState::Building
-                            | InstanceState::Failed { .. },
+                            DeploymentState::Running { .. }
+                            | DeploymentState::Building
+                            | DeploymentState::Failed { .. },
                             false,
                         ) => {
                             starts.push(Action::Start {
-                                slot: instance.slot,
-                                source: want.source.clone(),
+                                slot: deployment.slot,
+                                trigger: want.trigger.clone(),
                                 commit: want.commit.clone(),
                             });
-                            kept.push(Instance {
+                            kept.push(Deployment {
                                 commit: want.commit.clone(),
-                                state: InstanceState::Building,
-                                ..instance
+                                state: DeploymentState::Building,
+                                ..deployment
                             });
                         }
                     }
                 }
-                Some(_) | None => stops.push(Action::Stop(instance.slot)),
+                Some(_) | None => stops.push(Action::Stop(deployment.slot)),
             }
         }
         for want in chosen {
-            if kept.iter().any(|instance| instance.source == want.source) {
+            if kept
+                .iter()
+                .any(|deployment| deployment.trigger == want.trigger)
+            {
                 continue;
             }
             let Some(slot) = slots
                 .iter()
                 .copied()
-                .find(|slot| kept.iter().all(|instance| instance.slot != *slot))
+                .find(|slot| kept.iter().all(|deployment| deployment.slot != *slot))
             else {
                 break;
             };
@@ -246,19 +255,19 @@ impl Instances {
             stops.retain(|stop| stop != &Action::Stop(slot));
             starts.push(Action::Start {
                 slot,
-                source: want.source.clone(),
+                trigger: want.trigger.clone(),
                 commit: want.commit.clone(),
             });
-            kept.push(Instance {
+            kept.push(Deployment {
                 slot,
-                source: want.source.clone(),
+                trigger: want.trigger.clone(),
                 commit: want.commit.clone(),
-                state: InstanceState::Building,
+                state: DeploymentState::Building,
             });
         }
-        kept.sort_by_key(|instance| instance.slot);
+        kept.sort_by_key(|deployment| deployment.slot);
         stops.extend(starts);
-        (Self { instances: kept }, stops)
+        (Self { deployments: kept }, stops)
     }
 
     /// `slot`'s build of `commit`, settled as `state`.
@@ -266,16 +275,16 @@ impl Instances {
         mut self,
         slot: Slot,
         commit: Commit,
-        state: InstanceState,
+        state: DeploymentState,
     ) -> Result<Self, StaleReport> {
-        let building = self.instances.iter_mut().find(|instance| {
-            instance.slot == slot
-                && instance.commit == commit
-                && instance.state == InstanceState::Building
+        let building = self.deployments.iter_mut().find(|deployment| {
+            deployment.slot == slot
+                && deployment.commit == commit
+                && deployment.state == DeploymentState::Building
         });
         match building {
-            Some(instance) => {
-                instance.state = state;
+            Some(deployment) => {
+                deployment.state = state;
                 Ok(self)
             }
             None => Err(StaleReport { slot, commit }),

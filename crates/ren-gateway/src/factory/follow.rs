@@ -17,7 +17,7 @@
 //! taken as current.
 
 use super::FactoryRequest;
-use crate::instance::Wanted;
+use crate::deployment::Wanted;
 use ren_github::{Observation, Oid, RepositorySlug};
 use ren_recorder::project::ProjectName;
 use std::collections::BTreeMap;

@@ -19,7 +19,7 @@ use crate::{
 };
 use ren_container::{Access, Mount};
 use ren_daemon::config::{Config, ConfigError, FactoryOptions, GithubOptions, RunsOptions};
-use ren_gateway::instance::{CommitAsks, Instances, Slot as PreviewSlot};
+use ren_gateway::deployment::{ChosenCommits, Deployments, Slot as PreviewSlot};
 use ren_gateway::release::{PromotionRequest, Release, ShotName};
 use ren_gateway::{
     ControlToken, Environment, InstanceOptions,
@@ -371,22 +371,22 @@ impl ProductionPlace {
     }
 
     /// The previews the factory last wrote here; none before the first.
-    pub fn previews(&self) -> Instances {
-        fs::read(self.data_dir.join(Instances::FILE))
+    pub fn previews(&self) -> Deployments {
+        fs::read(self.data_dir.join(Deployments::FILE))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default()
     }
 
     /// Writes the previews where production's gateway serves them from.
-    pub fn write_previews(&self, previews: &Instances) -> Result<(), ReplicaError> {
+    pub fn write_previews(&self, previews: &Deployments) -> Result<(), ReplicaError> {
         let json = serde_json::to_vec_pretty(previews).map_err(ReplicaError::Json)?;
-        Ok(FileMode::Private.write(&self.data_dir.join(Instances::FILE), &json)?)
+        Ok(FileMode::Private.write(&self.data_dir.join(Deployments::FILE), &json)?)
     }
 
     /// The commits the operator asked to preview; none when none were.
-    pub fn preview_requests(&self) -> CommitAsks {
-        fs::read(self.data_dir.join(CommitAsks::FILE))
+    pub fn preview_requests(&self) -> ChosenCommits {
+        fs::read(self.data_dir.join(ChosenCommits::FILE))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default()

@@ -307,17 +307,17 @@ dependencies under "Crates" below. Read the code for current module ownership.
   canary's checks found (`Verdict`), when production takes a build
   (`Policy`), and where a release stands with what promotion decided
   (`Release`, `Decision`). The gateway reports them; the factory writes them.
-- `ren-gateway`'s `instance` module: which instances of Ren the factory runs
-  (docs/plans/instances.md; today, the previews of docs/plans/self-build.md,
-  phase 9), sans-IO, in `Instances`: each `Instance` in its `Slot` (its
-  loopback and tailnet ports), of a `Source` (an open pull request, or a
-  commit the operator asked for, `CommitAsks`), at a commit, `Building`
+- `ren-gateway`'s `deployment` module: which deployments of Ren the factory
+  runs (docs/plans/deployments.md; today, the previews), in `Deployments`:
+  each `Deployment` in its `Slot` (its loopback and tailnet ports), picked by
+  a `Trigger` (`FollowsPull`, a ready pull request's head, or `Chosen`, a
+  commit the operator chose, `ChosenCommits`), at a commit, `Building`
   (whose outcome a later pass takes as unknown), `Running`, or `Failed`
-  (`InstanceState`). One step moves them on, `Instances::step`: an `Event`
-  (the `Wanted` instances in priority order with the
-  `release::PreviewCapacity`, or the factory's report that a start
-  ended) to the instances and the `Action`s that follow (stop a slot, start
-  a commit in one); a report that does not fit is refused (`StaleReport`)
+  (`DeploymentState`). One step moves them on, `Deployments::step`: an
+  `Event` (the `Wanted` deployments in priority order with the
+  `release::PreviewCapacity`, or the factory's report that a start ended)
+  to the deployments and the `Action`s that follow (stop a slot, start a
+  commit in one); a report that does not fit is refused (`StaleReport`)
   and changes nothing. A failed build is not tried again for its commit.
   A pull request wants a preview of its head unless it is a draft
   (`Wanted::pull`). `ren-gateway`'s `factory` module (pure, but the
@@ -327,7 +327,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   previews when pull requests move, the canary when a default branch moves
   from a head seen before. The daemon asks them of the factory service
   (`[factory] socket`, `xtask canary serve`).
-  The factory keeps it in production's data folder (`Instances::FILE`,
+  The factory keeps it in production's data folder (`Deployments::FILE`,
   still `previews.json`, in the shape production's gateway reads). The
   gateway's `src/purity.rs` keeps the module free of I/O.
 - `crates/ren-depot`: the packages Ren's agents run with, with `Depot` as its

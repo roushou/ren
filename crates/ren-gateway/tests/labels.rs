@@ -60,7 +60,7 @@ mod upstream {
     pub use ren_gateway::{AuthOverride, EntryIngress};
 }
 mod preview {
-    pub use ren_gateway::instance::Reach;
+    pub use ren_gateway::deployment::Reach;
 }
 
 #[test]

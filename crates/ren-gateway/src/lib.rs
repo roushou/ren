@@ -46,10 +46,10 @@
 pub mod api;
 pub mod build;
 pub mod control;
+pub mod deployment;
 pub mod factory;
 mod forward;
 pub mod github;
-pub mod instance;
 pub mod lifecycle;
 mod limits;
 pub mod operator;
