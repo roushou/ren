@@ -262,6 +262,12 @@ a move lands before the move that needs it.
   `main`, then `canary promote`), then `ren deployer canary enable`
   rewrites the timer and writes `ren-deployer.service` around the installed
   `ren`, and `[deployer] socket` goes into production's configuration.
+  Until then the timer's unit pins `RUSTUP_TOOLCHAIN=1.99.0` (set by hand on
+  2026-11-25): its pass runs a toolchain's cargo directly, so each `rustc`
+  went through rustup's proxy from the crate's own folder, and a crate
+  shipping a toolchain file (`atoi`, Rust 1.57) switched compilers mid-build.
+  `canary enable` drops the pin; the deployer's builds run the toolchain's
+  own `rustc` in their container and need none.
 - **Phase 1: checked by its pages, not side by side.** The history is
   invented afresh, not the scenarios' calls replayed, so the two seeds
   differ by design; the pages were checked against the new one.
