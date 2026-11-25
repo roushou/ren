@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { decisions, ManagementApi, type ReleaseView } from '../src/lib/api.ts';
 import {
+  BuildRows,
   Previewing,
   Promotion,
   PullChips,
@@ -59,6 +60,7 @@ test('a failed canary and an unknown decision read as such', () => {
     },
     policy: 'automatic',
     decision: 'failed',
+    passed: [],
   };
   const line = ReleaseLine.of(release);
   assert.equal(line.text, 'Production on main · canary failed');
@@ -114,6 +116,7 @@ test('the Release view promotes only a passed build production does not run, onc
     canary: { commit: 'b'.repeat(40), passed: true, checks: [] },
     policy: 'manual',
     decision: 'awaiting_operator',
+    passed: [],
   };
   const page = new ReleasePage(release, null);
   assert.equal(page.promotable, true);
@@ -253,4 +256,21 @@ test('the figures under the flow', async () => {
       ['Next', `Promote ${release.canary?.commit.slice(0, 12)}`],
     ],
   );
+});
+
+test("production may be given any build that passed: the canary's is promoted, another deployed", async () => {
+  const release = await new ManagementApi(pinned).release();
+  assert.ok(release);
+  const [canary, production, earlier] = release.passed;
+  assert.ok(canary && production && earlier);
+  assert.equal(canary, release.canary?.commit);
+  const page = new ReleasePage(release, earlier);
+  assert.deepEqual(
+    page.builds.map((build) => build.standing),
+    ['deployable', 'production', 'asked'],
+  );
+  assert.equal(page.verb(canary), 'Promote');
+  assert.equal(page.verb(earlier), 'Deploy');
+  const marks = new Set(page.builds.map((build) => BuildRows.chip(build.standing).mark));
+  assert.equal(marks.size, 3);
 });

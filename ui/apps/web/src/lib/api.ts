@@ -870,6 +870,8 @@ export interface ReleaseView {
   /** `manual`, `automatic`, or a daily window in UTC (`02:00-05:00`). */
   policy: string;
   decision: Stored<Decision>;
+  /** The kept builds production may be given, the newest first. */
+  passed: string[];
 }
 export interface Metrics {
   recorder: RecorderMetrics;
@@ -1185,6 +1187,7 @@ const releaseView = object<ReleaseView, WireReleaseView>({
   ),
   policy: string,
   decision: label(decisions),
+  passed: array(string),
 });
 const releaseBody = object<ReleaseBody, WireReleaseBody>({
   release: nullable(releaseView),

@@ -340,5 +340,7 @@ a move lands before the move that needs it.
 - **Phase 6: no xtask install.** `cargo xtask install-vps` went with phase
   3; the first install is `cargo run --release -p ren-rs -- deployer
   install-vps` from a checkout, as the docs already said.
-- **Phase 6: the Release view lists no earlier builds.** Rolling back is
-  `ren deploy <commit> --production`; the UI shows `passed` nowhere yet.
+- **Phase 6: the Release view lists the passed builds after the phase.**
+  At first rolling back was `ren deploy <commit> --production` alone; the
+  Release view now lists the passed builds (`passed` in the release API),
+  each but production's with Deploy, or Promote for the canary's.

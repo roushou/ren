@@ -118,6 +118,11 @@ fn release() -> ren_gateway::release::Release {
         Policy::Manual,
         "03:00".parse().unwrap(),
     )
+    .with_passed(vec![
+        main.parse().unwrap(),
+        "07f4bb7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708".parse().unwrap(),
+        "5b1d2c3e4f5061728394a5b6c7d8e9f0a1b2c3d4".parse().unwrap(),
+    ])
 }
 
 fn fixtures() -> PathBuf {

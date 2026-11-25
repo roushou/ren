@@ -221,6 +221,11 @@ pub struct ReleaseView {
     pub policy: Policy,
     #[ts(type = "string")]
     pub decision: Stored<Decision>,
+    /// The kept builds production may be given, the newest first: each
+    /// passed the canary's checks or ran production.
+    #[serde(default)]
+    #[ts(as = "Vec<String>")]
+    pub passed: Vec<Commit>,
 }
 
 /// The build on the canary and its checks.
@@ -276,6 +281,7 @@ impl From<&Release> for ReleaseView {
             }),
             policy: release.policy(),
             decision: release.decision().clone(),
+            passed: release.passed().to_vec(),
         }
     }
 }

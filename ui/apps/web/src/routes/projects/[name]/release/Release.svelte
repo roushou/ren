@@ -3,10 +3,11 @@
   into main, main onto the canary, the canary to production, and what
   promotion decides. Each pull request's chip says how it stands, its
   checks, or its preview. Under the flow, the figures that matter; then the
-  canary's checks, the pages it captured (Ren's canary captures them), the
-  factory's commit previews (Ren's alone), and the work production shipped
-  and the work on main waiting for it. Promote asks the factory's next
-  pass to install the canary's build (another project promotes with
+  canary's checks, the kept builds that passed, the pages it captured (Ren's
+  canary captures them), the factory's commit previews (Ren's alone), and
+  the work production shipped and the work on main waiting for it. Promote
+  asks the factory's next pass to install the canary's build, and Deploy
+  another build that passed, a rollback too (another project promotes with
   `ren project promote`).
 -->
 <script lang="ts">
@@ -19,6 +20,7 @@
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import {
+    BuildRows,
     Previewing,
     Promotion,
     PullChips,
@@ -48,6 +50,7 @@
   const previewRows = $derived(Previewing.rows(previews, pulls, page.url.hostname));
   const previewed = $derived(data.project.factory === 'ren');
   const figures = $derived(view ? ReleaseFigures.of(view, pulls) : []);
+  const builds = $derived(view ? view.builds : []);
   const control = $derived(!!page.data.runsControl);
 
   let mode = $state<PullMode>('status');
@@ -61,7 +64,7 @@
   const flowHeight = $derived(Math.max(1, pulls.length) * ROW - 12);
 
   let asking = $state(false);
-  /** The canary build the operator is asked to confirm promoting. */
+  /** The build the operator is asked to confirm for production. */
   let confirming = $state<string | null>(null);
   let wanted = $state('');
 
@@ -86,8 +89,8 @@
     confirming = null;
     void act(
       () => api.promote(commit),
-      `Promotion of ${ReleasePage.short(commit)} asked`,
-      'The promotion was not asked for',
+      `${ReleasePage.short(commit)} asked for production`,
+      'Production was not asked to take it',
     );
   }
   function ask(commit: string) {
@@ -276,6 +279,27 @@
         </section>
       {/if}
 
+      {#if builds.length}
+        <section class="panel builds" aria-labelledby="builds-title">
+          <header class="panel-head">
+            <h2 id="builds-title" class="cap">Passed builds · {builds.length}</h2>
+          </header>
+          {#each builds as build (build.commit)}
+            {@const chip = BuildRows.chip(build.standing)}
+            <div class="row build">
+              <Glyph mark={chip.mark} label={chip.label} />
+              <span class="mono">{ReleasePage.short(build.commit)}</span>
+              {#if build.standing === 'deployable' && data.project.factory === 'ren'}<button
+                  class="button small"
+                  disabled={asking || !control}
+                  title={control ? undefined : 'Read only'}
+                  onclick={() => (confirming = build.commit)}>{view.verb(build.commit)}</button
+                >{:else}<span></span>{/if}
+            </div>
+          {/each}
+        </section>
+      {/if}
+
       {#if shots.length}
         <section class="panel shots-panel" aria-labelledby="pages-title">
           <header class="panel-head">
@@ -393,9 +417,10 @@
 {#if confirming && view}
   {@const commit = confirming}
   {@const release = view.release}
+  {@const verb = view.verb(commit)}
   <Modal
-    eyebrow="Promote · {data.project.name} production"
-    title="Promote {ReleasePage.short(commit)} to production?"
+    eyebrow="{verb} · {data.project.name} production"
+    title="{verb} {ReleasePage.short(commit)} to production?"
     onclose={() => (confirming = null)}
   >
     <div class="promote-figures">
@@ -407,7 +432,7 @@
           title={release.behind === null ? `Production is ${view.behind}` : undefined}
           >{release.behind === null ? '—' : `↓${release.behind}`}</Figure
         >
-        {#if release.canary}
+        {#if release.canary && verb === 'Promote'}
           <Figure label="Canary" mark={release.canary.passed ? 'passed' : 'failed'}
             >{release.canary.checks.filter((c) => c.passed).length}/{release.canary.checks
               .length}</Figure
@@ -416,14 +441,14 @@
         <Figure label="Policy">{release.policy}</Figure>
       </Figures>
     </div>
-    {#if waiting.length}
+    {#if waiting.length && verb === 'Promote'}
       <ul class="promoting">
         {#each waiting as item (item.id)}<li>{item.title}</li>{/each}
       </ul>
     {/if}
     {#snippet actions()}
       <button class="button" onclick={() => (confirming = null)}>Cancel</button>
-      <button class="button primary" onclick={() => promote(commit)}>Promote</button>
+      <button class="button primary" onclick={() => promote(commit)}>{verb}</button>
     {/snippet}
   </Modal>
 {/if}
@@ -630,6 +655,7 @@
     background: var(--surface);
   }
   .checks,
+  .builds,
   .previews {
     flex: 1 1 340px;
   }
@@ -693,6 +719,10 @@
     object-fit: cover;
     object-position: top;
     background: var(--surface-inset);
+  }
+  .build {
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    min-height: 32px;
   }
   .preview {
     grid-template-columns: 20px 10px minmax(0, 1fr) auto;

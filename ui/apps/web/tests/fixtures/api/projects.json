@@ -47,7 +47,12 @@
           ]
         },
         "policy": "manual",
-        "decision": "awaiting_operator"
+        "decision": "awaiting_operator",
+        "passed": [
+          "62e9e9e0000000000000000000000000000000ff",
+          "07f4bb7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708",
+          "5b1d2c3e4f5061728394a5b6c7d8e9f0a1b2c3d4"
+        ]
       }
     },
     {
@@ -96,7 +101,12 @@
           ]
         },
         "policy": "manual",
-        "decision": "awaiting_operator"
+        "decision": "awaiting_operator",
+        "passed": [
+          "62e9e9e0000000000000000000000000000000ff",
+          "07f4bb7c1e2a3b4c5d6e7f8091a2b3c4d5e6f708",
+          "5b1d2c3e4f5061728394a5b6c7d8e9f0a1b2c3d4"
+        ]
       }
     }
   ]

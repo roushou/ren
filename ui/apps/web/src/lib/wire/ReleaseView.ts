@@ -22,4 +22,9 @@ behind: number | null, canary: CanaryView | null,
 /**
  * `manual`, `automatic`, or a daily window in UTC (`02:00-05:00`).
  */
-policy: string, decision: string, };
+policy: string, decision: string, 
+/**
+ * The kept builds production may be given, the newest first: each
+ * passed the canary's checks or ran production.
+ */
+passed: Array<string>, };

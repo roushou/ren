@@ -243,6 +243,25 @@ export class ReleasePage {
     return this.requested !== null && this.requested === this.release.canary?.commit;
   }
 
+  /** The kept builds production may be given, as rows, the newest first. */
+  get builds(): BuildRow[] {
+    return this.release.passed.map((commit) => ({
+      commit,
+      standing:
+        commit === this.production
+          ? 'production'
+          : commit === this.requested
+            ? 'asked'
+            : 'deployable',
+    }));
+  }
+
+  /** What confirming `commit` for production does: promote the canary's
+   * build, or deploy another that passed. */
+  verb(commit: string): 'Promote' | 'Deploy' {
+    return commit === this.release.canary?.commit ? 'Promote' : 'Deploy';
+  }
+
   /** How far behind main production is, in words. */
   get behind(): string {
     const { behind } = this.release;
@@ -270,6 +289,32 @@ export class ReleasePage {
   /** A commit as people read it. */
   static short(commit: string | null): string {
     return commit ? commit.slice(0, 12) : 'none';
+  }
+}
+
+/** A kept build that passed, as its row in the Release view. */
+export interface BuildRow {
+  commit: string;
+  standing: BuildStanding;
+}
+
+/** Where a passed build stands: production runs it, production was asked
+ * to take it, or it can be deployed. */
+export type BuildStanding = 'production' | 'asked' | 'deployable';
+
+export class BuildRows {
+  /** A build's glyph and what it says. */
+  static chip(standing: BuildStanding): PullChip {
+    switch (standing) {
+      case 'production':
+        return { mark: 'passed', label: 'Production runs it' };
+      case 'asked':
+        return { mark: 'queued', label: 'Production was asked to take it' };
+      case 'deployable':
+        return { mark: 'idle', label: 'Passed' };
+      default:
+        return assertNever(standing);
+    }
   }
 }
 
