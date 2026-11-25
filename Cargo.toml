@@ -3,6 +3,7 @@ members = [
   "crates/ren-cli",
   "crates/ren-container",
   "crates/ren-daemon",
+  "crates/ren-deployer",
   "crates/ren-depot",
   "crates/ren-gateway",
   "crates/ren-git",
@@ -23,6 +24,7 @@ default-members = [
   "crates/ren-container",
   "crates/ren-daemon",
   "crates/ren-depot",
+  "crates/ren-deployer",
   "crates/ren-gateway",
   "crates/ren-git",
   "crates/ren-github",
@@ -66,6 +68,7 @@ http-body-util = "0.1.5"
 proptest = { version = "1", default-features = false, features = ["std"] }
 ren-container = { path = "crates/ren-container", version = "0.1.0" }
 ren-daemon = { path = "crates/ren-daemon", version = "0.1.0" }
+ren-deployer = { path = "crates/ren-deployer", version = "0.1.0" }
 ren-depot = { path = "crates/ren-depot", version = "0.1.0" }
 ren-gateway = { path = "crates/ren-gateway", version = "0.1.0" }
 ren-git = { path = "crates/ren-git", version = "0.1.0" }

@@ -827,6 +827,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   unit-tested (`compat::contract`, `compat::api`), and the Compatibility
   workflow runs it on every pull
   request (again when its title or body is edited) and push to main.
+  The code behind `install-vps`, `preview`, and `canary` lives in
+  `crates/ren-deployer` (docs/plans/deployments.md, phase 3); xtask's
+  commands call it, and xtask keeps `compat` and `dev`.
   `cargo xtask install-vps` installs or upgrades Ren from a checkout as a
   systemd user service and can publish it with Tailscale Serve; it restarts a
   running daemon only between calls and between runs' turns, paused (a pause
@@ -904,24 +907,25 @@ dependencies under "Crates" below. Read the code for current module ownership.
 "Depends on" names the nearest crates below; a crate may also use lower ones
 directly.
 
-| Crate                                      | Primary type                                        | Depends on        |
-| ------------------------------------------ | --------------------------------------------------- | ----------------- |
-| `ren-protocol`                             | `CallInspector`                                     | none of ours      |
-| `ren-depot`                                | `Depot`, with its `ProgramHost` port                | none of ours      |
-| `ren-git`                                  | `Git`                                               | none of ours      |
-| `ren-container`                            | `Container`                                         | none of ours      |
-| `ren-network`                              | `Network`                                           | none of ours      |
-| `ren-github`                               | `Client`                                            | none of ours      |
-| `ren-relay`                                | `Relay`                                             | none of ours      |
-| `ren-manifest`                             | `Manifest`                                          | none of ours      |
-| `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`) | protocol, depot   |
-| `ren-recorder`                             | `Recorder`, with its `RecordSink` port              | protocol, harness |
-| `ren-store`                                | `Store`, which implements `RecordSink`              | recorder          |
-| `ren-supervisor`                           | `Supervisor`, with its `AgentHost` port             | recorder, harness |
-| `ren-gateway`                              | `Gateway`                                           | supervisor, store |
-| `ren-daemon`                               | `Daemon`                                            | gateway, store    |
-| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                               | daemon            |
-| `xtask` (unpublished)                      | `Xtask`                                             | daemon            |
+| Crate                                      | Primary type                                                                 | Depends on        |
+| ------------------------------------------ | ---------------------------------------------------------------------------- | ----------------- |
+| `ren-protocol`                             | `CallInspector`                                                              | none of ours      |
+| `ren-depot`                                | `Depot`, with its `ProgramHost` port                                         | none of ours      |
+| `ren-git`                                  | `Git`                                                                        | none of ours      |
+| `ren-container`                            | `Container`                                                                  | none of ours      |
+| `ren-network`                              | `Network`                                                                    | none of ours      |
+| `ren-github`                               | `Client`                                                                     | none of ours      |
+| `ren-relay`                                | `Relay`                                                                      | none of ours      |
+| `ren-manifest`                             | `Manifest`                                                                   | none of ours      |
+| `ren-harness`                              | `Harness` (`ClaudeCode`, `Codex`, `Pi`, `OpenCode`)                          | protocol, depot   |
+| `ren-recorder`                             | `Recorder`, with its `RecordSink` port                                       | protocol, harness |
+| `ren-store`                                | `Store`, which implements `RecordSink`                                       | recorder          |
+| `ren-supervisor`                           | `Supervisor`, with its `AgentHost` port                                      | recorder, harness |
+| `ren-gateway`                              | `Gateway`                                                                    | supervisor, store |
+| `ren-daemon`                               | `Daemon`                                                                     | gateway, store    |
+| `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                                                        | daemon            |
+| `ren-deployer`                             | none yet (the factory service, `canary::FactoryService`, becomes `Deployer`) | daemon            |
+| `xtask` (unpublished)                      | `Xtask`                                                                      | deployer          |
 
 `docs/architecture.md` lists what each crate owns. These rules apply to every
 crate:

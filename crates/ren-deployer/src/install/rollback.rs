@@ -25,7 +25,7 @@ pub(crate) struct Held {
 
 /// What an upgrade replaces.
 #[derive(Debug, Clone)]
-pub(crate) enum Part {
+pub enum Part {
     /// The daemon, whose data directory holds the history backup.
     Daemon {
         data_dir: PathBuf,

@@ -167,6 +167,7 @@ impl Preview {
         let worktree = PreviewPlace::read(env)?;
         let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
+            .and_then(Path::parent)
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         match self.action {
             PreviewAction::Up(args) => Self::up(env, &worktree, &repo, &args),

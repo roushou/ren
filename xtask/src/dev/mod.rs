@@ -11,17 +11,6 @@ mod seed;
 mod traffic;
 mod work;
 
-use crate::daemon_container::Contain;
-use crate::file::FileError;
-use crate::invocation::InvocationError;
-use crate::progress::Progress;
-use crate::shot::{Camera, Page, ShotError};
-use crate::tailscale::{Tailnet, TailscaleError};
-use crate::{
-    daemon::{RunPolicy, StillBusy},
-    install::publish::{Publish, PublishError},
-    ui::UiBuildError,
-};
 use agent::{
     AgentError, FakeAgent, FakeClaudeAuth, FakeCodexAuth, FakeOpenCodeAuth, FakePiAuth, Played,
 };
@@ -30,6 +19,17 @@ use clap::{Args, Subcommand};
 use index::DevIndex;
 use instance::{ClaimsFile, DevInstance, Preview, RunWait};
 use provider::{FakeProvider, ProviderError};
+use ren_deployer::daemon_container::Contain;
+use ren_deployer::file::FileError;
+use ren_deployer::invocation::InvocationError;
+use ren_deployer::progress::Progress;
+use ren_deployer::shot::{Camera, Page, ShotError};
+use ren_deployer::tailscale::{Tailnet, TailscaleError};
+use ren_deployer::{
+    daemon::{RunPolicy, StillBusy},
+    install::publish::{Publish, PublishError},
+    ui::UiBuildError,
+};
 use ren_harness::host::HostEnv;
 use ren_network::tailscale::Cli;
 use std::net::SocketAddr;
@@ -254,9 +254,9 @@ pub enum DevError {
     #[error(transparent)]
     Provider(#[from] ProviderError),
     #[error(transparent)]
-    DaemonContainer(#[from] crate::daemon_container::DaemonContainerError),
+    DaemonContainer(#[from] ren_deployer::daemon_container::DaemonContainerError),
     #[error(transparent)]
-    Gvisor(#[from] crate::gvisor_service::GvisorServiceError),
+    Gvisor(#[from] ren_deployer::gvisor_service::GvisorServiceError),
     #[error("{0} is not set")]
     MissingEnv(&'static str),
     #[error(transparent)]

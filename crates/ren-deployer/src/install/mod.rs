@@ -7,8 +7,8 @@
 //! wait), replaces the binary, checks that the daemon runs the new build, and
 //! resumes. Idle runs end with the old daemon; it names each, with how to
 //! continue its conversation.
-pub(crate) mod publish;
-pub(crate) mod rollback;
+pub mod publish;
+pub mod rollback;
 mod ui;
 
 use self::{
@@ -340,9 +340,10 @@ impl Layout {
         let bin_dir = home.join(".local/bin");
         Ok(Self {
             home: home.clone(),
-            // xtask/ sits at the root of the checkout.
+            // crates/ren-deployer/ sits two folders below the checkout's root.
             repo: Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
+                .and_then(Path::parent)
                 .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
             // `cargo xtask` sets CARGO to the cargo running it.
             cargo: env

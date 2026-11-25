@@ -14,11 +14,11 @@ repository.workspace = true
 aws-lc-rs.workspace = true
 axum.workspace = true
 base64.workspace = true
-blake3.workspace = true
 clap.workspace = true
 futures-util.workspace = true
 ren-container.workspace = true
 ren-daemon.workspace = true
+ren-deployer.workspace = true
 ren-gateway.workspace = true
 ren-git.workspace = true
 ren-github.workspace = true
@@ -27,18 +27,14 @@ ren-manifest.workspace = true
 ren-network.workspace = true
 ren-protocol.workspace = true
 ren-recorder.workspace = true
-ren-supervisor.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
-tokio-tungstenite.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
-ren-store.workspace = true
 uuid.workspace = true
 
 [lints]

@@ -32,7 +32,7 @@ pub struct Container {
 
 impl Pod {
     /// The image's recipe, which names it.
-    const CONTAINERFILE: &str = include_str!("../../deploy/instance/Containerfile");
+    const CONTAINERFILE: &str = include_str!("../../../deploy/instance/Containerfile");
     /// Seconds a container has to stop before it is killed: `ren` gives its
     /// requests 10, then drains capture.
     const STOP_SECONDS: u32 = 30;

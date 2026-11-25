@@ -232,9 +232,10 @@ impl Factory {
         Ok(Self {
             worktree: home.join(".local/share/ren/factory"),
             builds: Builds::new(&home),
-            // xtask/ sits at the root of the checkout.
+            // crates/ren-deployer/ sits two folders below the checkout's root.
             repo: Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
+                .and_then(Path::parent)
                 .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
             cargo: env
                 .absolute_path("CARGO")

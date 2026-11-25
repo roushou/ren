@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn renders_the_unit_with_this_hosts_node() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let rendered =
             UiDeploy::render_template(&repo.join("deploy/ren-ui.service"), Path::new(NODE))
                 .unwrap();
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn its_contained_unit_runs_the_ui_in_a_container() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let rendered =
             UiDeploy::render_template(&repo.join("deploy/ren-ui.service"), Path::new(NODE))
                 .unwrap();

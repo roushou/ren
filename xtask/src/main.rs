@@ -1,25 +1,9 @@
 //! `cargo xtask`: repository tasks, run from a checkout.
-mod build_job;
-mod builds;
-mod canary;
 mod compat;
-mod daemon;
-mod daemon_container;
 mod dev;
-mod file;
-mod gvisor_service;
-mod install;
-mod invocation;
-mod pod;
-mod preview;
-mod progress;
-mod replica;
-mod shot;
-mod tailscale;
-mod ui;
-mod unit;
 
 use clap::Parser;
+use ren_deployer::{canary, install, preview};
 use ren_harness::host::HostEnv;
 use std::process::ExitCode;
 
