@@ -1,5 +1,5 @@
 //! The gateway's state machines and decisions (`lifecycle`: `attempt`,
-//! `call`, `channel`, `retry`; `operator`, `user`, `instance`, and `factory`) stay pure: no runtime,
+//! `call`, `channel`, `retry`; `operator`, `user`, `instance`, and `deployer`) stay pure: no runtime,
 //! I/O, or dependency on the gateway's shell modules. The crate itself depends on Tokio and Axum, so this is checked on
 //! the sources rather than by the manifest.
 
@@ -12,15 +12,16 @@ fn pure_modules_stay_free_of_runtime_and_io_dependencies() {
         ("operator.rs", include_str!("operator.rs")),
         ("lifecycle/retry.rs", include_str!("lifecycle/retry.rs")),
         ("user.rs", include_str!("user.rs")),
-        ("instance/mod.rs", include_str!("instance/mod.rs")),
+        ("deployment/mod.rs", include_str!("deployment/mod.rs")),
         (
-            "instance/instances.rs",
-            include_str!("instance/instances.rs"),
+            "deployment/deployments.rs",
+            include_str!("deployment/deployments.rs"),
         ),
-        ("instance/asks.rs", include_str!("instance/asks.rs")),
-        ("factory/mod.rs", include_str!("factory/mod.rs")),
-        ("factory/follow.rs", include_str!("factory/follow.rs")),
-        ("instance/slot.rs", include_str!("instance/slot.rs")),
+        ("deployment/chosen.rs", include_str!("deployment/chosen.rs")),
+        ("deployer/mod.rs", include_str!("deployer/mod.rs")),
+        ("deployer/follow.rs", include_str!("deployer/follow.rs")),
+        ("deployment/slot.rs", include_str!("deployment/slot.rs")),
+        ("deployment/seed.rs", include_str!("deployment/seed.rs")),
     ];
     let forbidden = [
         "tokio",

@@ -261,14 +261,20 @@ From a checkout on the VPS, as the user that owns the service, with Rust and a
 connected Tailscale:
 
 ```sh
-cargo xtask install-vps --https-port 8443 --ui-https-port 8444
+cargo run --release -p ren-rs -- deployer install-vps --https-port 8443 --ui-https-port 8444
 ```
 
-It runs the steps below and is safe to repeat: run it again from the commit to
-deploy to upgrade. After a successful run it saves its publishing flags
-(`--https-port`, `--ui-https-port`, `--sudo-tailscale`) to
-`~/.config/ren/install-vps.toml`, so later runs need no flags:
-`cargo xtask install-vps`. Giving any publishing flag replaces the saved set. It refuses a checkout whose tracked files differ from the
+The first install has no `ren` yet, so cargo runs the checkout's own. It
+installs once: where `ren.service` exists it refuses. After it, production
+runs only builds the deployer made in a container and kept: the canary's
+promotion ([canary and promotion](#canary-and-promotion)), or a passed build
+chosen with `ren deploy <commit> --production`, each upgraded with the steps
+below. To change the publishing settings, `ren deployer settings` takes the
+same flags and runs those steps with the kept build production runs. After a
+successful run each saves its publishing flags
+(`--https-port`, `--ui-https-port`, `--sudo-tailscale`, `--contain`) to
+`~/.config/ren/install-vps.toml`, which promotions reuse. Giving any
+publishing flag replaces the saved set. The first install refuses a checkout whose tracked files differ from the
 commit (`--allow-dirty` installs a `-dirty` build) and warns when the commit is on
 no remote branch. It builds the release binary while the old daemon keeps
 serving, creates `~/.config/ren/ren.toml` only if missing, and checks the
@@ -333,128 +339,26 @@ and the install reports the failure. It then publishes the UI on that port
 under the same rules as the daemon's port. With no `--ui-https-port` given or saved,
 the UI is left untouched.
 
-### Dev instances
-
-`cargo xtask dev` runs a checkout's build beside the installed service, with
-fake providers and fake data, for development and for previewing a change before
-it is installed. Each checkout has an instance of its own: `dev up` claims the
-lowest free one of eight for the checkout it runs in, and every other `dev`
-command there acts on that one (`--instance <n>` picks another):
-
-```sh
-cargo xtask dev up --ui      # build, then start this checkout's instance and its UI, and publish them
-cargo xtask dev up --ui --scenario all   # and, the first time, seed its data with a scenario
-cargo xtask dev seed         # play a scenario once (sessions, users, long, errors, websocket, all)
-cargo xtask dev traffic      # show the live traffic settings
-cargo xtask dev traffic set --rate 60 --pace slow --replies tools=50,error=5
-cargo xtask dev traffic pause    # or resume; burst 20 sends 20 calls now
-cargo xtask dev shot         # screenshots of the UI's pages, in target/dev-shots
-cargo xtask dev status
-cargo xtask dev list         # every instance: its index, dev UI, and checkout
-cargo xtask dev reset        # remove the instance's data and start again
-cargo xtask dev down         # stop the instance and remove its routes; --release gives up its claim
-```
-
-Instance `n` (from 0) takes its places from its index; instance 0 is
-`ren-dev`, and instance `n` after it `ren-dev-<n>`:
-
-|          | Dev instance `n`                                                                               | Installed service                         |
-| -------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Units    | `<name>-provider`, `<name>-daemon`, `<name>-traffic`, `<name>-ui`                              | `ren`, `ren-ui`                           |
-| Loopback | fake provider `18999 + 10n`, daemon `18787 + 10n`, UI `13000 + 10n`, traffic API `13001 + 10n` | daemon `8787`, UI `3000`                  |
-| Tailnet  | `9443 + 100n` (gateway), `9444 + 100n` (UI), with `dev up --ui`                                | your `--https-port` and `--ui-https-port` |
-| Files    | `~/.config/<name>`, `~/.local/state/<name>`, `~/.local/share/<name>`                           | `~/.config/ren`, `~/.local/state/ren`     |
-
-The claims are kept in `~/.local/state/ren-dev-claims.json`; a checkout
-that no longer exists gives up its claim when another is made. The rest of
-this section names instance 0's places.
-
-The units are transient systemd user units, stopped by name. The dev
-configuration is regenerated on every `up`. It sets `[instance] environment =
-"development"`, which the gateway reports in `/health`: the UI's logo gets a dev
-badge, and `ren doctor` and `ren run` name the instance. Every
-provider in it is the fake one, which
-accepts any credentials and stores nothing, so no real credential or prompt
-reaches the slot. It names two users, `alice` (by the Tailscale login
-`alice@example.com`) and `ci` (by a fixed fake token), and two direct
-operator-key entries with a fake key: `team-key` (only `ci`) and `chat-key`
-(Chat Completions). Its UI's Redline sends to the fake `acme-web` project
-under the run root, standing in for Ren's checkout, so the slot's fake agents
-never work in the real one. Its replies read like real use: invented engineering answers
-about an invented project, with realistic model names, IDs, and error messages.
-The generated traffic picks a reply kind (tool work, a long or slow reply, a cut
-stream, an error, a rate limit) with an `x-dev-reply` request header, which the
-gateway forwards but never records; a request without it, as from a real client,
-gets an ordinary text answer. Tool work is a turn of several calls, sent one after
-another: each request declares its client's own tools (Claude Code's `Read`,
-`Edit`, `Write`, and `Bash`; Codex's `read_file`, `apply_patch`, and `shell`; Pi's
-and OpenCode's lowercase ones), the provider calls one of them, and the next
-request carries that call and its result back, so turns read files, write them,
-and run commands as real ones do. Like the real providers, it reports prompt-cache
-usage when a request asks for caching, thinks (Messages) or reasons
-(Responses) before answering when asked to, and stops at a request's
-`max_tokens`. The generated requests ask as coding agents do, and about one
-Claude Code call in ten is a side call with no turn (a title or a quota probe).
-So a real client can run against the slot, on the host or, after `dev up --ui`,
-from the tailnet:
-
-```sh
-ren run claude --gateway http://127.0.0.1:18787
-ren run claude --gateway https://<node>:9443
-```
-
-The slot always has live traffic: the `ren-dev-traffic` unit sends calls
-through the dev gateway as `~/.config/ren-dev/traffic.toml` says (running or
-paused, calls a minute, the fake provider's pace, and weights over replies,
-harnesses, and callers). The generator and the fake provider read the file again
-for every call, so `dev traffic set`, `pause`, and `resume` apply at once; an
-invalid file falls back to the defaults. The generator serves its controls on
-`127.0.0.1:13001`, never published, for `dev traffic`.
-
-The slot's daemon has runs on, with `~/.local/share/ren-dev/work` as its root
-(`acme-api` and `acme-web` in it), and the dev UI drives them. Its `codex`,
-`claude`, `pi`, and `opencode` are fakes (`cargo xtask dev agent`, first on the
-dev daemon's `PATH`), never the real clients: each speaks its client's protocol
-(Codex's app server, Claude Code's stream-json print mode, Pi's RPC mode,
-OpenCode's ACP mode), runs a command for prompts that mention testing, running,
-or building and changes files for ones that mention fixing, editing, changing,
-adding, or writing (Codex and Claude Code ask first; Pi asks for no approvals;
-OpenCode asks when the run's approval policy says so), and sends each
-turn's model call through the dev gateway to the fake provider, so a run's
-turns are recorded under its recording. The slot holds its runs as the
-installed service does ([runs through a restart](#runs-through-a-restart)), so
-`dev up` restarts its daemon with their turns going on. For runs bound to the
-daemon, `dev up` does as `install-vps` does: it waits for every one starting,
-working, or stopping (up to `--idle-timeout`, 300 seconds by default;
-`--drain-runs` does not wait), and names the idle ones that end with the
-restart, which can be continued. It does not wait for calls, since the fake
-traffic never stops. `dev down` and `dev reset` also stop the slot's run hosts.
-
-`--ui` publishes the preview with the same Serve step as `install-vps` (with
-`sudo -n` if it last did, or `--sudo-tailscale`); `--local` keeps it on
-loopback. `down` removes each preview route only while it still points at the
-slot. `shot` needs a headless Chromium: `REN_CHROME`, `chrome-headless-shell` or
-`chromium` on `PATH`, or Playwright's downloaded headless shell.
-
 ### Canary and promotion
 
-`cargo xtask canary` checks `main`'s tip before production takes it, and
+`ren deployer canary` checks `main`'s tip before production takes it, and
 promotes it as you decide ([the plan](plans/self-build.md), phase 4). One
 pass:
 
 ```sh
-cargo xtask canary run              # fetch main, build, check, promote by policy
-cargo xtask canary promote          # install the canary's build now, once it passed
+ren deployer canary run              # fetch main, build, check, promote by policy
+ren deployer canary promote          # install the canary's build now, once it passed
+ren deploy <commit> --production     # production runs a kept build that passed: a rollback too
 ren release                         # main, production, the canary, and the decision
-cargo xtask canary enable --every 10   # a pass every 10 minutes, on a user timer
-cargo xtask canary disable
-cargo xtask canary down             # stop the canary
+ren deployer canary enable --every 10   # a pass every 10 minutes, on a user timer
+ren deployer canary disable
+ren deployer canary down             # stop the canary
 ```
 
 A pass fetches `main` from `origin` and checks its tip out, detached, in
-Ren's own worktree, `~/.local/share/ren/factory`, then goes on with that
-commit's own xtask, so a commit is checked by its own checks. It builds the
-commit once into `~/.local/share/ren/builds/<commit>` (the release `ren`
+Ren's own worktree, `~/.local/share/ren/deployer/main` (moved there once from `~/.local/share/ren/factory`), builds it, then goes on
+with that build's own `ren deployer`, so a commit is checked by its own
+checks. It builds the commit once into `~/.local/share/ren/builds/<commit>` (the release `ren`
 and the UI's deployable copy; the newest few are kept). A commit may be a pull
 request's, so its build runs none of its code on the host: its dependencies
 are fetched by its lockfiles (`cargo fetch --locked`, `bun install
@@ -498,73 +402,75 @@ shows all of it: the three builds, each check, the pages the canary
 captured (kept in production's data folder, `release-shots`), what the
 policy decided, the work items production's build shipped and those on
 `main` waiting for it, and each project's release. The view's Promote asks
-for the canary's passed build; the factory installs it, as `canary
+for the canary's passed build; the deployer installs it, as `canary
 promote` would, and drops a request that is no longer the canary's passed
-build: at once when the factory service listens (below), else at the next
+build: at once when the deployer service listens (below), else at the next
 pass, within one timer period.
 
 When the build passed and follows production's commit, the policy in
 `~/.config/ren/release.toml` decides:
 
 ```toml
-promote = "manual" # the default: `cargo xtask canary promote`
+promote = "manual" # the default: `ren deployer canary promote`
 # promote = "automatic"      # as soon as it passes
 # promote = "02:00-05:00"    # as soon as it passes inside this daily UTC window
 ```
 
-Promoting runs `install-vps --build <commit>` with the saved publishing
+Promoting upgrades production to the kept build with the saved publishing
 flags: the install's own steps (the wait for calls and bound runs' turns, the
 pause, the backup, the build check, and the rollback on failure), with the
 kept build instead of building the checkout. No policy promotes a build that failed its checks, that production already runs, or that lacks commits production has, nor one over a production build that is not a clean commit of `main`; `canary promote` promotes any build that passed. A promotion that fails is rolled back by the install and marked on the build, and is not tried again unless you promote
-it. `install-vps --build <commit>` also installs a kept build by hand.
+it.
+
+Production runs the commit chosen for it: the policy's or the operator's
+promotion of the canary's build, or `ren deploy <commit> --production`
+(through the control API, as the Release page's Promote). That takes any
+kept build that passed the canary's checks or ran production, so choosing
+an earlier one rolls production back; a build that is not kept, or did not
+pass, is refused. Each build that passes or runs production is marked so
+in its folder, and `release.json` lists them (`passed`).
 
 Every pass also closes work items ([work items](api.md#work-items)): it
 lands each sent item that a commit in `main`'s recent history names in a
 `Work-Item: <id>` trailer, waits for production to store the landings, and
 ships each landed item whose commit production's clean build holds, through
 production's own control API with its control token (read from its data
-folder and handed to curl in a private file). `cargo xtask canary work` does
+folder and handed to curl in a private file). `ren deployer canary work` does
 only this, against this checkout's commit as `main` (or `--main <commit>`).
 A production whose daemon keeps no work items yet is left alone.
 
 `canary enable` writes `ren-canary.service` and `ren-canary.timer` to
-`~/.config/systemd/user`, running `cargo xtask canary run` from the checkout
-it was enabled in; follow a pass with `journalctl --user -u ren-canary`.
-`--of dev` rehearses all of it with the dev slot as production: its fake
-history, its `release.json`, and never a promotion.
+`~/.config/systemd/user`, running the installed `ren deployer canary run` on
+the checkout it was enabled in (a promotion upgrades it with production);
+each pass builds `main`'s tip and goes on with that build's own `ren
+deployer`; follow a pass with `journalctl --user -u ren-canary`.
 
 ### Previews
 
-`cargo xtask preview` runs one worktree's branch on a copy of production's
-history, so its change is judged on the page it was marked on, beside
-production's. It runs in a worktree Ren made: it reads `REN_WORKTREE`,
-which the worktree's runs are told, refuses a folder that is not one of
-Ren's worktrees named `<repo>-<slot>`, and takes the data folder and ports
-Ren gives that slot. A brief asks the agent to start one once its change is
-ready:
+A preview is a deployment of a commit: of each ready pull request's head,
+which it follows, and of each commit chosen with `ren deploy`. Each runs in
+a preview slot on a copy of production's latest backup, or, with `--seed`,
+on a history invented from that number (`ren seed`), every operator key a
+placeholder:
 
 ```sh
-cargo xtask preview up --publish   # build, copy production's history, start, record
-cargo xtask preview down --publish # stop, unpublish, take it off the work items
+ren deploy HEAD                      # this folder's commit, on a copy of production
+ren deploy HEAD --seed 7 --work <id> # on invented history 7; recorded on the work item
+ren deployments                      # each deployment in its slot, and the commits chosen
+ren deploy stop HEAD                 # withdraw the choice; its deployment stops
 ```
 
-`up` builds the branch (debug) into `<data>/preview`, backs up production's
-history with production's own `ren`, and starts the build as a replica, as
-the canary is: the pod `ren-preview-<worktree>`, its daemon on the slot's
-first port and its UI on the next, with production's configuration but
-`environment = "preview"`, no runs, no operator key, and a UI that only reads.
-`--publish` publishes both on the tailnet on the same port numbers, with the
-install's saved Tailscale choice. It then records the preview on every sent
-work item the branch's recent commits name (`Work-Item: <id>`), and on each
-`--work <id>`: a work item's page opens the marked page on it beside
-production's.
-`--of dev` copies the dev slot instead. Deleting the worktree's session
-stops its preview with it, and takes it off the session's work items.
+A commit this host's repository already holds (an agent's, in one of its
+worktrees) is built as it is; any other is fetched from `origin`. Once a
+deployment runs, its address is recorded on each `--work` item, so the
+item's page opens the marked page on it beside production's; when it stops,
+the record is taken off. A brief asks the agent to commit its change and
+deploy it this way once it is ready.
 
 #### Previews of pull requests and commits
 
-Every canary pass also brings the factory's own previews up to date
-(`cargo xtask canary previews` runs just that): one for each commit the
+Every canary pass also brings the deployer's own previews up to date
+(`ren deployer canary previews` runs just that): one for each commit the
 operator asked to preview, newest ask first, then one for each of Ren's
 open pull requests that is not a draft, as production last saw them on
 GitHub (`[github]`), most recently updated first. As many run as
@@ -578,11 +484,11 @@ Each runs in a slot: slot `n`'s daemon listens on loopback `18100 + 2n` and
 its UI on the next port, published on the tailnet on `9450 + 2n` and the next
 with `--publish`, in the pod `ren-preview-<n>`, with `~/.config/ren-previews/<n>`
 and `~/.local/state/ren-previews/<n>`. The canary timer publishes previews only when it was enabled with
-`--publish` (`cargo xtask canary enable --publish`); a preview started
+`--publish` (`ren deployer canary enable --publish`); a preview started
 without it answers on loopback alone, and says so. A pass fetches each new commit from
 `origin` by its id (a pull request's head included), builds it once into
 `~/.local/share/ren/builds` from its own worktree,
-`~/.local/share/ren/preview-factory`, and starts it on a fresh copy of
+`~/.local/share/ren/deployer/preview`, and starts it on a fresh copy of
 production's history, as the canary is. A pull request whose head moves is
 previewed again in its slot; one that closes, or a commit no longer asked
 for, is stopped. A build or start that fails is recorded with why, its slot
@@ -593,31 +499,31 @@ folder (`previews.json`); the commits asked for are read from
 `preview-requests.json` beside it.
 
 A preview asked for starts at once, not at the next timed pass, when the
-factory listens: `canary enable` also writes `ren-factory.service`, which
-runs `cargo xtask canary serve` on
-`$XDG_RUNTIME_DIR/ren-factory/factory.sock`, and production's daemon names
+deployer listens: `canary enable` also writes `ren-deployer.service`, which
+runs the installed `ren deployer serve` on
+`$XDG_RUNTIME_DIR/ren-deployer/deployer.sock`, and production's daemon names
 that socket:
 
 ```toml
-[factory]
-socket = "/run/user/1000/ren-factory/factory.sock"
+[deployer]
+socket = "/run/user/1000/ren-deployer/deployer.sock"
 ```
 
-An ask or a withdrawal then asks the factory for a previews pass, and is
+An ask or a withdrawal then asks the deployer for a previews pass, and is
 answered once the pass has given the commit its slot or taken it back (or
 after five seconds, while another pass runs). Passes run one at a time;
 asks that arrive during one are taken by the next. While the service
 listens, the timer's pass hands its previews pass to it. Follow it with
-`journalctl --user -u ren-factory`.
+`journalctl --user -u ren-deployer`.
 
 Previews of pull requests follow them the same way, and the canary follows
 `main`: when production's GitHub watch (`[github]`) sees a watched
 repository's pull requests that want a preview (open, not drafts) open,
 close, become ready or drafts, or move their heads, the daemon asks the
-factory for a previews pass; when it sees the repository's default branch
+deployer for a previews pass; when it sees the repository's default branch
 move from a head it saw before, it asks for a canary pass for each project
-watched on it, which the factory runs for the project it builds (`canary
-serve --project`, `ren` by default). A preview of a pull request starts,
+watched on it, which the deployer runs for the project it builds (`ren
+deployer serve --project`, `ren` by default). A preview of a pull request starts,
 moves, or stops, and a canary pass over a new `main` starts, within one
 poll (`poll_seconds`). A daemon's first sighting starts no canary pass, so
 a promotion's restart does not start another. The service runs one pass at
@@ -626,24 +532,10 @@ listens, the timer's pass hands the canary to it, and is left to catch up
 on what a stopped service missed; a lock keeps two canary passes from
 overlapping.
 
-Set `[factory] socket` in production's configuration only once production
+Set `[deployer] socket` in production's configuration only once production
 and `main` both know the section (after the promotion that ships it): a
 canary pass checks `main` against production's configuration, and a build
-that predates `[factory]` refuses it.
-
-In the dev slot, `~/.config/ren-dev/fake-github.toml` writes the fake
-`acme/ren` by hand, read at each poll: its `main` moved, and its pull
-requests opened, moved, and closed (what it leaves out stays invented;
-`pull = []` closes them all):
-
-```toml
-main = "<a commit of this repository>"
-
-[[pull]]
-number = 8
-head = "<a commit of this repository>"
-draft = false
-```
+that predates `[deployer]` refuses it.
 
 ### Projects
 
@@ -729,15 +621,12 @@ host's daemon. With `--publish` it publishes the port its page opens on, as
 for anything else, or exposes through Funnel, is refused; `down` removes
 the route only while it still points at the preview. Like Ren's, it works
 in a worktree read from `REN_WORKTREE` alone. Deleting the worktree's
-session stops it and takes it off its work items. The dev slot's fake
-projects declare one: a static page served by Python, deployed by copying
-it into a folder under the canary's data.
+session stops it and takes it off its work items.
 
 A project Ren builds is registered first, by name
 ([the plan](plans/hierarchy.md)); `install-vps` registers its checkout as
 `ren`, Ren itself, unless a project is already built as Ren (a promotion
-installs from the factory's own worktree), and the dev slot registers its
-fake projects:
+installs from the deployer's own worktree):
 
 ```sh
 ren project add --dir ~/dev/acme    # its folder's name unless --name; --factory contract by default
@@ -758,7 +647,7 @@ ren project promote --project acme  # deploy the canary's passed build now
 ren project release --project acme  # main, production, the canary, and the decision
 ```
 
-Ren itself (`--factory ren`) is refused there: its canary is `cargo xtask
+Ren itself (`--factory ren`) is refused there: its canary is `ren deployer
 canary`. Each pass and each promotion also closes the project's work items
 as Ren's canary does: a sent item lands when a commit on `main` names it
 (`Work-Item: <id>`), and a landed item ships once production runs a build

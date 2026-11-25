@@ -6,7 +6,7 @@
 //! storage.
 
 pub mod config;
-pub mod factory;
+pub mod deployer;
 pub mod host;
 pub mod packages;
 
@@ -17,10 +17,11 @@ use crate::host::{
 };
 use crate::packages::HostPrograms;
 use crate::packages::{HostPackages, PackageStore, fetch::ReqwestFetch};
+use ren_gateway::release::Build;
 use ren_gateway::{
     ControlToken, Gateway, ManagementSetup, ReleaseFolder, ReqwestUpstream, Shutdown, Stopped,
     control::Controls,
-    factory::{Factory, FactoryAnswer, FactoryRequest, Follower},
+    deployer::{Deployer, DeployerAnswer, DeployerRequest, Follower},
     github::PullBoard,
     operator::{OperatorState, Pause, RestoreError},
 };
@@ -34,7 +35,6 @@ use ren_recorder::CaptureOptionsError;
 use ren_recorder::secrets::SecretScanner;
 use ren_recorder::{Recorder, RecorderSetup, id::IdSource, time::Clock};
 use ren_relay::{Course, Passage, Relay, TunnelEnd};
-use ren_release::Build;
 use ren_store::StoreError;
 use ren_store::{Reader, Store, backup::Backup};
 use ren_supervisor::{Supervisor, SupervisorError, SupervisorOptions, SupervisorTask, Warmup};
@@ -286,11 +286,17 @@ impl Daemon {
             shutdown.clone(),
         );
         let packages = Self::packages(config, data_dir, &reader);
-        let factory = config.factory().map(|socket| -> Arc<dyn Factory> {
-            Arc::new(crate::factory::FactorySocket::new(socket.to_path_buf()))
+        let deployer = config.deployer().map(|socket| -> Arc<dyn Deployer> {
+            Arc::new(crate::deployer::DeployerSocket::new(socket.to_path_buf()))
         });
-        let pulls =
-            Self::watch_github(config, clock, &shutdown, projects, &reader, factory.clone());
+        let pulls = Self::watch_github(
+            config,
+            clock,
+            &shutdown,
+            projects,
+            &reader,
+            deployer.clone(),
+        );
         let ingress = gateway.into_ingress(
             listener,
             forwarding,
@@ -306,7 +312,7 @@ impl Daemon {
                 runs: runs.as_ref().map(|(supervisor, _)| supervisor.clone()),
                 release: ReleaseFolder::in_data(data_dir),
                 pulls: pulls.clone(),
-                factory,
+                deployer,
             },
         );
         // The gateway holds the only supervisor handles: the runs drain once
@@ -620,12 +626,12 @@ impl Daemon {
         shutdown: &Shutdown,
         projects: WatchedProjects,
         reader: &Reader,
-        factory: Option<Arc<dyn Factory>>,
+        deployer: Option<Arc<dyn Deployer>>,
     ) -> PullBoard {
         let Some(setup) = config.github() else {
             return PullBoard::default();
         };
-        let asks = factory.map(Self::follow);
+        let asks = deployer.map(Self::follow);
         let mut follower = Follower::watching(setup.projects.iter().cloned());
         Self::learn_folders(setup, projects.clone(), reader.clone(), shutdown.clone());
         let board = PullBoard::watching(setup.projects.iter().cloned());
@@ -665,15 +671,15 @@ impl Daemon {
         });
         board
     }
-    /// Asks the factory what the GitHub watch's sightings ask of it, one
+    /// Asks the deployer what the GitHub watch's sightings ask of it, one
     /// at a time (docs/plans/instances.md, phases 4 and 6): previews follow
     /// their pull requests, and the canary follows `main`, as the watch sees
-    /// them move, not at the factory's timer. Each ask waits a few seconds
-    /// for its answer: a busy factory takes it up after its pass. Ends when
+    /// them move, not at the deployer's timer. Each ask waits a few seconds
+    /// for its answer: a busy deployer takes it up after its pass. Ends when
     /// the watch, which holds the sender, ends.
-    fn follow(factory: Arc<dyn Factory>) -> tokio::sync::mpsc::Sender<FactoryRequest> {
+    fn follow(deployer: Arc<dyn Deployer>) -> tokio::sync::mpsc::Sender<DeployerRequest> {
         const ANSWER_WAIT: Duration = Duration::from_secs(5);
-        let (asks, mut asked) = tokio::sync::mpsc::channel::<FactoryRequest>(8);
+        let (asks, mut asked) = tokio::sync::mpsc::channel::<DeployerRequest>(8);
         #[expect(
             clippy::disallowed_methods,
             reason = "process wiring: the daemon owns the GitHub follower's task"
@@ -681,19 +687,19 @@ impl Daemon {
         tokio::spawn(async move {
             while let Some(request) = asked.recv().await {
                 let line = request.line();
-                match tokio::time::timeout(ANSWER_WAIT, factory.ask(request)).await {
-                    Ok(Ok(FactoryAnswer::Planned | FactoryAnswer::Started)) => {}
-                    Ok(Ok(FactoryAnswer::NotBuilt)) => {
+                match tokio::time::timeout(ANSWER_WAIT, deployer.ask(request)).await {
+                    Ok(Ok(DeployerAnswer::Planned | DeployerAnswer::Started)) => {}
+                    Ok(Ok(DeployerAnswer::NotBuilt)) => {
                         tracing::debug!(
                             request = line.trim_end(),
-                            "the factory does not build that project"
+                            "the deployer does not build that project"
                         );
                     }
-                    Ok(Ok(FactoryAnswer::Failed(why))) => {
-                        tracing::warn!(%why, request = line.trim_end(), "the factory could not take up what GitHub showed");
+                    Ok(Ok(DeployerAnswer::Failed(why))) => {
+                        tracing::warn!(%why, request = line.trim_end(), "the deployer could not take up what GitHub showed");
                     }
                     Ok(Err(error)) => {
-                        tracing::warn!(%error, "the factory was not asked to follow GitHub");
+                        tracing::warn!(%error, "the deployer was not asked to follow GitHub");
                     }
                     // Busy with a pass: it takes the ask up after.
                     Err(_) => {}

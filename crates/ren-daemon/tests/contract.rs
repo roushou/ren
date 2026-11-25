@@ -94,8 +94,8 @@ fn work_order() -> serde_json::Value {
 
 /// A release whose canary build passed, one commit ahead of production,
 /// waiting for the operator.
-fn release() -> ren_release::Release {
-    use ren_release::{
+fn release() -> ren_gateway::release::Release {
+    use ren_gateway::release::{
         Assessment, Attempt, Canary, Check, CheckKind, Lineage, Outcome, Policy, Release, Verdict,
     };
     let main = "62e9e9e0000000000000000000000000000000ff";
@@ -280,20 +280,20 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
                 serde_json::Value::Null
             );
             std::fs::write(
-                dir.path().join(ren_release::Release::FILE),
+                dir.path().join(ren_gateway::release::Release::FILE),
                 serde_json::to_vec(&release()).unwrap(),
             )
             .unwrap();
-            let shots = dir.path().join(ren_release::ShotName::FOLDER);
+            let shots = dir.path().join(ren_gateway::release::ShotName::FOLDER);
             std::fs::create_dir_all(&shots).unwrap();
             std::fs::write(shots.join("overview.png"), b"\x89PNG").unwrap();
             let project = dir
                 .path()
-                .join(ren_release::Release::PROJECTS)
+                .join(ren_gateway::release::Release::PROJECTS)
                 .join("acme-web");
             std::fs::create_dir_all(&project).unwrap();
             std::fs::write(
-                project.join(ren_release::Release::FILE),
+                project.join(ren_gateway::release::Release::FILE),
                 serde_json::to_vec(&release()).unwrap(),
             )
             .unwrap();
@@ -339,22 +339,26 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
             // Ren's previews, as the factory wrote them: a pull request's
             // running, and a commit asked for whose build failed.
             let wanted = [
-                ren_gateway::instance::Wanted {
-                    source: ren_gateway::instance::Source::Pull("12".parse().unwrap()),
+                ren_gateway::deployment::Wanted {
+                    trigger: ren_gateway::deployment::Trigger::FollowsPull("12".parse().unwrap()),
                     commit: "2222222222222222222222222222222222222222".parse().unwrap(),
+                    seed: ren_gateway::deployment::Seed::Copy,
+                    work: Vec::new(),
                 },
-                ren_gateway::instance::Wanted {
-                    source: ren_gateway::instance::Source::Commit(
+                ren_gateway::deployment::Wanted {
+                    trigger: ren_gateway::deployment::Trigger::Chosen(
                         "3333333333333333333333333333333333333333".parse().unwrap(),
                     ),
                     commit: "3333333333333333333333333333333333333333".parse().unwrap(),
+                    seed: ren_gateway::deployment::Seed::Copy,
+                    work: Vec::new(),
                 },
             ];
-            use ren_gateway::instance::{Action, Event, Instances, Reach};
-            let (mut previews, actions) = Instances::default()
+            use ren_gateway::deployment::{Action, Deployments, Event, Reach};
+            let (mut previews, actions) = Deployments::default()
                 .step(Event::Wanted {
                     wanted: wanted.to_vec(),
-                    capacity: ren_release::PreviewCapacity::DEFAULT,
+                    capacity: ren_gateway::release::PreviewCapacity::DEFAULT,
                 })
                 .unwrap();
             for (action, outcome) in actions.into_iter().zip([None, Some("the build failed")]) {
@@ -376,14 +380,17 @@ async fn the_read_api_answers_as_the_ui_fixtures_pin() {
                 previews = previews.step(event).unwrap().0;
             }
             std::fs::write(
-                dir.path().join(ren_gateway::instance::Instances::FILE),
+                dir.path().join(ren_gateway::deployment::Deployments::FILE),
                 serde_json::to_vec(&previews).unwrap(),
             )
             .unwrap();
-            let mut requests = ren_gateway::instance::CommitAsks::default();
-            requests.ask("3333333333333333333333333333333333333333".parse().unwrap());
+            let mut requests = ren_gateway::deployment::ChosenCommits::default();
+            requests.choose(ren_gateway::deployment::Chosen::copy(
+                "3333333333333333333333333333333333333333".parse().unwrap(),
+            ));
             std::fs::write(
-                dir.path().join(ren_gateway::instance::CommitAsks::FILE),
+                dir.path()
+                    .join(ren_gateway::deployment::ChosenCommits::FILE),
                 serde_json::to_vec(&requests).unwrap(),
             )
             .unwrap();

@@ -20,8 +20,8 @@ import {
 /**
  * Whose page a brief is about: Ren's own UI (every page Redline marks, and
  * every item from before projects), or another registered project's, by
- * name. Only Ren's has a route file and a build to name, and a preview by
- * `cargo xtask preview`; another project's is previewed by
+ * name. Only Ren's has a route file and a build to name, and is previewed
+ * by deploying a commit (`ren deploy`); another project's is previewed by
  * `ren project preview`.
  */
 export type BriefProject = { kind: 'ren' } | { kind: 'other'; name: string };
@@ -238,13 +238,16 @@ export class Briefing {
     return Redline.brief(page, marks, Briefing.framing(ren, marks, place));
   }
 
-  /** The command that previews a change to `project`'s pages. */
-  static preview(project: BriefProject): string {
+  /** How an agent previews a change to `project`'s pages, recorded on the
+   * work items `ids` names. */
+  static preview(project: BriefProject, ids: readonly string[]): string {
     switch (project.kind) {
-      case 'ren':
-        return 'cargo xtask preview up --publish';
+      case 'ren': {
+        const work = ids.length ? ids.map((id) => ` --work ${id}`).join('') : ' --work <item>';
+        return `commit it and run ${Redline.code(`ren deploy HEAD${work}`)} in the worktree: it deploys your commit on a copy of production's history and records its address on the work item, beside production's`;
+      }
       case 'other':
-        return 'ren project preview up --publish';
+        return `run ${Redline.code('ren project preview up --publish')} in the worktree: it shows the marked page on your branch beside production's`;
       default: {
         const never: never = project;
         return never;

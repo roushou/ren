@@ -4,6 +4,8 @@
 use super::{CheckId, Report, Status};
 use crate::Cli;
 use ren_gateway::Environment;
+use ren_gateway::release::{Build, Comparison};
+use ren_git::SourceRevision;
 use ren_harness::{
     endpoint::{GatewayEndpoint, UserToken},
     host::HostEnv,
@@ -11,7 +13,6 @@ use ren_harness::{
 use ren_protocol::label::Stored;
 use ren_recorder::caller::CallerKind;
 use ren_recorder::retention::RetentionPolicy;
-use ren_release::{Build, Comparison, Revision};
 use serde::{Deserialize, de::DeserializeOwned};
 use std::time::Duration;
 
@@ -132,7 +133,7 @@ impl Report {
     /// Whether the daemon runs the same build as this CLI. A mismatch is a
     /// warning: the API is versioned, but one of them needs an upgrade.
     fn build(&mut self, local: &Build, remote: ReportedBuild) {
-        let revision = match remote.revision.parse::<Revision>() {
+        let revision = match remote.revision.parse::<SourceRevision>() {
             Ok(revision) => revision,
             Err(_) => {
                 self.add(
@@ -255,20 +256,15 @@ impl Report {
 }
 
 impl Report {
-    /// Says so when the gateway is not a production instance, so a dev
-    /// slot is never mistaken for the installed service.
+    /// Says so when the gateway is not a production instance, so a
+    /// deployment is never mistaken for the installed service.
     fn instance(&mut self, instance: &ReportedInstance) {
         match instance.environment.as_ref().map(Stored::known) {
             None | Some(Some(Environment::Production)) => {}
-            Some(Some(Environment::Development)) => self.add(
-                CheckId::Instance,
-                Status::Ok,
-                "a development instance (such as the dev slot), not a production gateway",
-            ),
             Some(Some(Environment::Preview)) => self.add(
                 CheckId::Instance,
                 Status::Ok,
-                "a preview: one worktree's branch on a copy of production's history, not a production gateway",
+                "a preview: a chosen commit or a pull request's head, not a production gateway",
             ),
             Some(Some(Environment::Canary)) => self.add(
                 CheckId::Instance,

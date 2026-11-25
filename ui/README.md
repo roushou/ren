@@ -106,7 +106,6 @@ produces `apps/web/build/`. Cargo never builds or embeds the UI.
 | ------------------------ | -------------------------------- | ------------------------------------------------------------------------------- |
 | `REN_GATEWAY_URL`        | `http://127.0.0.1:8787`          | Daemon origin reached by the UI server                                          |
 | `REN_PUBLIC_GATEWAY_URL` | Same as `REN_GATEWAY_URL`        | Daemon origin displayed in the header and copied client commands                |
-| `REN_DEV_TRAFFIC_URL`    | Unset                            | Dev slot only: loopback origin of its traffic controls, for the dev toolbar     |
 | `REN_CONTROL_TOKEN_FILE` | Unset (read-only)                | The daemon's `control.token` (absolute path); set, the UI drives sessions       |
 | `REN_CONTROL_LOGINS`     | Unset (anyone reaching the UI)   | Comma-separated Tailscale logins allowed to drive sessions; set it behind Serve |
 | `REN_SOURCE_DIR`         | Unset (Redline cannot send)      | Ren's source checkout (absolute path, under `[runs]` roots), for Redline        |
@@ -186,7 +185,7 @@ says Queue); a new one, as its first. Below it, the approvals: the client's
 policies (Ask first, Edits alone, Auto, as each client offers them), which a new
 session starts under, or a running one runs under from its next turn when its
 client takes that mid-run. Send then opens the session. The checkout
-is `REN_SOURCE_DIR`, since the marks are on Ren's pages; `cargo xtask
+is `REN_SOURCE_DIR`, since the marks are on Ren's pages; `ren deployer
 install-vps` sets it to the checkout it installs from, and without it Redline
 marks but cannot send. The checkout must be under the daemon's `[runs]` roots.
 The brief asks the agent to answer questions without changing anything, to make
@@ -229,7 +228,7 @@ Use `ren inspect --body … --output …` for complete captured bytes.
 
 ## VPS service
 
-From a checkout on the VPS, `cargo xtask install-vps --https-port 8443 --ui-https-port 8444`
+From a checkout on the VPS, `ren deployer install-vps --https-port 8443 --ui-https-port 8444`
 performs the steps below and upgrades the UI along with the daemon (see
 [deployment](../docs/deployment.md#install-task)). To do it by hand:
 
@@ -279,6 +278,6 @@ bun run build
 ```
 
 `tests/*.test.ts` holds focused unit tests that Node runs directly. There is no
-browser integration suite: verify UI changes with synthetic traffic in your
-checkout's dev instance (`cargo xtask dev up --ui`, `dev seed`, `dev shot`; see
-[Deployment](../docs/deployment.md#dev-instances)).
+browser integration suite: verify UI changes in a preview of your commit on
+an invented history (`ren deploy HEAD --seed <n>`; see
+[Deployment](../docs/deployment.md#previews)).

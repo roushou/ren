@@ -1,0 +1,798 @@
+//! Ren on a copy of production's history: production, which a replica
+//! copies (a backup, through production's own `ren`), and a [`Replica`], a
+//! build started on that copy with a configuration derived from
+//! production's: its own loopback ports and data folder, its own
+//! `[instance] environment`, no runs, and a placeholder for each operator
+//! key, so it forwards no operator-keyed call. Its UI only reads. The
+//! canary is one (`ren deployer canary`); each deployment in a preview slot
+//! is another.
+
+use crate::{
+    file::{FileError, FileMode},
+    invocation::{Echo, Invocation, InvocationError},
+    pod::{Container, Pod},
+    progress::Progress,
+    tailscale::{Tailnet, TailscaleError},
+    ui::{UiBuild, UiBuildError},
+    unit::{KillMode, Listener, TransientUnit},
+};
+use ren_container::{Access, Mount};
+use ren_daemon::config::{Config, ConfigError, DeployerOptions, GithubOptions, RunsOptions};
+use ren_gateway::deployment::{ChosenCommits, Deployments, SeedNumber, Slot as PreviewSlot};
+use ren_gateway::release::{PromotionRequest, Release, ShotName};
+use ren_gateway::{
+    ControlToken, Environment, InstanceOptions,
+    api::control::request::{ControlRequest, WorkChange},
+};
+use ren_git::Commit;
+use ren_git::SourceRevision;
+use ren_github::Readiness;
+use ren_harness::host::HostEnv;
+use ren_protocol::label::Stored;
+use ren_recorder::{
+    id::WorkItemId,
+    work::{PreviewUrl, WorkStateKind},
+};
+use serde::Deserialize;
+use std::{
+    fs,
+    io::Write as _,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    os::unix::fs::DirBuilderExt,
+    path::{Path, PathBuf},
+};
+
+/// Where production is.
+pub struct ProductionPlace {
+    config: PathBuf,
+    pub data_dir: PathBuf,
+    binary: PathBuf,
+    listen: SocketAddr,
+}
+
+/// One replica: where it lives and listens.
+pub struct Replica {
+    /// Its units' middle name: `ren-<name>-daemon` and `ren-<name>-ui`.
+    name: String,
+    /// What it says it is (`/health`), and what it calls itself here.
+    environment: Environment,
+    daemon: SocketAddr,
+    ui: SocketAddr,
+    config: PathBuf,
+    /// Its data, replaced on every start; only this folder is removed.
+    data_dir: PathBuf,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReplicaError {
+    #[error("{0} is not set")]
+    MissingEnv(&'static str),
+    #[error("invalid configuration {}: {source}", path.display())]
+    Config {
+        path: PathBuf,
+        #[source]
+        source: ConfigError,
+    },
+    #[error("the replica's configuration does not write; this is a bug in xtask")]
+    Derive,
+    #[error("production does not answer on {0}; a replica copies a running production")]
+    ProductionDown(SocketAddr),
+    #[error("production's backup failed; see `journalctl --user -u ren`")]
+    Backup(PathBuf),
+    #[error(
+        "{name} did not answer on {address} in time; see `podman logs ren-{name}-daemon` and `podman logs ren-{name}-ui`"
+    )]
+    NotReady { name: String, address: SocketAddr },
+    #[error("Tailscale reports no MagicDNS name for this node")]
+    NoDnsName,
+    #[error("{} is not a replica's data folder; it is not removed", .0.display())]
+    NotOurs(PathBuf),
+    #[error("cannot write the release: {0}")]
+    Json(serde_json::Error),
+    #[error("production's work items: {0}")]
+    WorkAnswer(String),
+    #[error(transparent)]
+    Invocation(#[from] InvocationError),
+    #[error(transparent)]
+    Engine(#[from] ren_container::EngineError),
+    #[error(transparent)]
+    File(#[from] FileError),
+    #[error(transparent)]
+    Tailscale(#[from] TailscaleError),
+    #[error(transparent)]
+    Ui(#[from] UiBuildError),
+}
+
+/// One work item, as production's `/api/work` lists it, as far as xtask
+/// needs.
+#[derive(Debug, Deserialize)]
+pub struct ListedWork {
+    pub id: WorkItemId,
+    pub state: Stored<WorkStateKind>,
+    pub landed: Option<Commit>,
+    pub preview: Option<ListedPreview>,
+}
+
+/// A listed item's preview.
+#[derive(Debug, Deserialize)]
+pub struct ListedPreview {
+    pub ui: PreviewUrl,
+}
+
+#[derive(Deserialize)]
+struct WorkListing {
+    work: Vec<ListedWork>,
+}
+
+/// One open pull request, as production's `/api/projects/{name}/pulls`
+/// lists it, as far as the deployer needs.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListedPull {
+    pub number: u64,
+    pub head: Commit,
+    pub readiness: Stored<Readiness>,
+}
+
+/// Production's answer about a project's pull requests: a tolerant reader
+/// of `PullsBody`, keeping only the answer, current or not.
+#[derive(Deserialize)]
+struct ObservedPulls {
+    seen: Option<ListedSighting>,
+    last: Option<ListedSighting>,
+}
+
+#[derive(Deserialize)]
+struct ListedSighting {
+    pull_requests: Vec<ListedPull>,
+}
+
+impl ObservedPulls {
+    fn listed(self) -> Option<Vec<ListedPull>> {
+        self.seen
+            .or(self.last)
+            .map(|sighting| sighting.pull_requests)
+    }
+}
+
+/// Where a started replica is reached.
+pub struct Reached {
+    /// Its gateway, as clients reach it.
+    pub gateway: String,
+    /// Its UI's origin.
+    pub ui: String,
+}
+
+impl ProductionPlace {
+    pub fn new(env: &HostEnv) -> Result<Self, ReplicaError> {
+        let home = env
+            .absolute_path("HOME")
+            .ok_or(ReplicaError::MissingEnv("HOME"))?;
+        // The installed service, found by its folders; its gateway listens
+        // where its configuration says.
+        let config = home.join(".config/ren/ren.toml");
+        let listen = Config::load(Some(&config))
+            .map_err(|source| ReplicaError::Config {
+                path: config.clone(),
+                source,
+            })?
+            .listen;
+        Ok(Self {
+            config,
+            data_dir: home.join(".local/state/ren"),
+            binary: home.join(".local/bin/ren"),
+            listen,
+        })
+    }
+
+    fn ren(&self) -> Invocation {
+        Invocation::new(&self.binary)
+            .arg("--config")
+            .arg(&self.config)
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+    }
+
+    /// The build production runs, as its `/health` reports it.
+    pub fn revision(&self) -> Result<SourceRevision, ReplicaError> {
+        let health = Invocation::new("curl")
+            .args(["--silent", "--max-time", "10"])
+            .arg(format!("http://{}/health", self.listen))
+            .capture()?;
+        let health: serde_json::Value =
+            serde_json::from_str(&health).map_err(|_| ReplicaError::ProductionDown(self.listen))?;
+        health["build"]["revision"]
+            .as_str()
+            .and_then(|text| text.parse().ok())
+            .ok_or(ReplicaError::ProductionDown(self.listen))
+    }
+
+    /// A fresh backup of production's history, taken by the running daemon;
+    /// its folder holds `ren.sqlite3` and `blobs.sqlite3`.
+    pub fn backup(&self) -> Result<PathBuf, ReplicaError> {
+        Progress("Backing up production's history").show();
+        if !self
+            .ren()
+            .args(["control", "backup"])
+            .succeeds(Echo::Show)?
+        {
+            return Err(ReplicaError::Backup(self.data_dir.clone()));
+        }
+        Ok(self.data_dir.join("backup"))
+    }
+
+    /// The work items under way, or none when production's daemon does
+    /// not serve work items.
+    pub fn work_items(&self) -> Result<Option<Vec<ListedWork>>, ReplicaError> {
+        let answer = Invocation::new("curl")
+            .args([
+                "--silent",
+                "--max-time",
+                "20",
+                "--write-out",
+                "\n%{http_code}",
+            ])
+            .arg(format!("http://{}/api/work?limit=1000", self.listen))
+            .capture()?;
+        let (body, status) = answer.rsplit_once('\n').unwrap_or(("", answer.as_str()));
+        match status.trim() {
+            "200" => serde_json::from_str::<WorkListing>(body)
+                .map(|listing| Some(listing.work))
+                .map_err(|_| ReplicaError::WorkAnswer("/api/work".to_owned())),
+            "404" => Ok(None),
+            other => Err(ReplicaError::WorkAnswer(format!(
+                "/api/work answered {other}"
+            ))),
+        }
+    }
+
+    /// Moves `item` on through production's control API, with its control
+    /// token, as an operator would; production checks it against the
+    /// item's state.
+    pub fn move_work(&self, item: WorkItemId, change: WorkChange) -> Result<(), ReplicaError> {
+        let request = ControlRequest::Work { item, change };
+        let path = self.data_dir.join(ControlToken::FILE);
+        let token = fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| ControlToken::parse(&text))
+            .ok_or_else(|| {
+                ReplicaError::WorkAnswer(format!("no control token in {}", path.display()))
+            })?;
+        // The token goes in a private file curl reads, never on its command
+        // line, where any process could read it.
+        let mut header = tempfile::Builder::new()
+            .prefix(".ren-work.")
+            .tempfile()
+            .map_err(FileError::at(&path))?;
+        writeln!(header, "authorization: Bearer {}", token.expose())
+            .map_err(FileError::at(&path))?;
+        let body = request
+            .body()
+            .map_err(ReplicaError::Json)?
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_default();
+        let answer = Invocation::new("curl")
+            .args([
+                "--silent",
+                "--max-time",
+                "20",
+                "--write-out",
+                "\n%{http_code}",
+            ])
+            .args(["-X", "POST", "-H", "content-type: application/json"])
+            .arg("-H")
+            .arg(format!("@{}", header.path().display()))
+            .arg("--data")
+            .arg(body)
+            .arg(format!(
+                "http://{}/control/v1/{}",
+                self.listen,
+                request.path()
+            ))
+            .capture()?;
+        let status = answer
+            .rsplit_once('\n')
+            .map_or(answer.as_str(), |(_, status)| status);
+        match status.trim() {
+            "202" => Ok(()),
+            other => Err(ReplicaError::WorkAnswer(format!(
+                "{} answered {other}",
+                request.path()
+            ))),
+        }
+    }
+
+    /// Keeps the pages the canary captured in `shots` where the Release view
+    /// reads them, in place of the last pass's.
+    pub fn keep_shots(&self, shots: &Path) -> Result<(), ReplicaError> {
+        let kept = self.data_dir.join(ShotName::FOLDER);
+        if kept.exists() {
+            fs::remove_dir_all(&kept).map_err(FileError::at(&kept))?;
+        }
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&kept)
+            .map_err(FileError::at(&kept))?;
+        let Ok(entries) = fs::read_dir(shots) else {
+            return Ok(());
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name();
+            if name.to_str().and_then(ShotName::of_file).is_some() {
+                fs::copy(entry.path(), kept.join(&name)).map_err(FileError::at(&entry.path()))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The operator's promotion request, if one waits, taken: it is
+    /// carried out or dropped by the pass that reads it.
+    pub fn take_request(&self) -> Option<PromotionRequest> {
+        let path = self.data_dir.join(PromotionRequest::FILE);
+        let request = fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        let _ = fs::remove_file(&path);
+        request
+    }
+
+    /// The previews the deployer last wrote here; none before the first.
+    pub fn previews(&self) -> Deployments {
+        fs::read(self.data_dir.join(Deployments::FILE))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    /// Writes the previews where production's gateway serves them from.
+    pub fn write_previews(&self, previews: &Deployments) -> Result<(), ReplicaError> {
+        let json = serde_json::to_vec_pretty(previews).map_err(ReplicaError::Json)?;
+        Ok(FileMode::Private.write(&self.data_dir.join(Deployments::FILE), &json)?)
+    }
+
+    /// The commits the operator asked to preview; none when none were.
+    pub fn preview_requests(&self) -> ChosenCommits {
+        fs::read(self.data_dir.join(ChosenCommits::FILE))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    /// `project`'s open pull requests, as production last saw them on
+    /// GitHub (a failed poll's last answer included), each with its head
+    /// and whether it is a draft; none when production has not seen them.
+    pub fn pulls(&self, project: &str) -> Result<Option<Vec<ListedPull>>, ReplicaError> {
+        let path = format!("/api/projects/{project}/pulls");
+        let answer = Invocation::new("curl")
+            .args([
+                "--silent",
+                "--max-time",
+                "20",
+                "--write-out",
+                "\n%{http_code}",
+            ])
+            .arg(format!("http://{}{path}", self.listen))
+            .capture()?;
+        let (body, status) = answer.rsplit_once('\n').unwrap_or(("", answer.as_str()));
+        match status.trim() {
+            "200" => serde_json::from_str::<ObservedPulls>(body)
+                .map(ObservedPulls::listed)
+                .map_err(|_| ReplicaError::WorkAnswer(path)),
+            // A daemon that does not serve pull requests has seen none.
+            "404" => Ok(None),
+            other => Err(ReplicaError::WorkAnswer(format!("{path} answered {other}"))),
+        }
+    }
+
+    /// The release the deployer last wrote here, if it reads.
+    pub fn release(&self) -> Option<Release> {
+        let text = fs::read(self.data_dir.join(Release::FILE)).ok()?;
+        serde_json::from_slice(&text).ok()
+    }
+
+    /// Writes the release where production's gateway serves it from.
+    pub fn write_release(&self, release: &Release) -> Result<(), ReplicaError> {
+        let json = serde_json::to_vec_pretty(release).map_err(ReplicaError::Json)?;
+        Ok(FileMode::Private.write(&self.data_dir.join(Release::FILE), &json)?)
+    }
+
+    /// Production's configuration, which a replica's is derived from.
+    fn config(&self) -> Result<Config, ReplicaError> {
+        Config::load(Some(&self.config)).map_err(|source| ReplicaError::Config {
+            path: self.config.clone(),
+            source,
+        })
+    }
+}
+
+impl Replica {
+    /// What each operator key of a replica's configuration reads: no key.
+    const PLACEHOLDER_KEY: &str = "ren-replica-has-no-operator-key";
+    const LOOPBACK: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
+    /// The canary: loopback `17787` and `17000`, published on `9445` and
+    /// `9446`, in `~/.config/ren-canary` and `~/.local/state/ren-canary`.
+    pub fn canary(env: &HostEnv) -> Result<Self, ReplicaError> {
+        let home = env
+            .absolute_path("HOME")
+            .ok_or(ReplicaError::MissingEnv("HOME"))?;
+        Ok(Self {
+            name: "canary".to_owned(),
+            environment: Environment::Canary,
+            daemon: SocketAddr::new(Self::LOOPBACK, 17787),
+            ui: SocketAddr::new(Self::LOOPBACK, 17000),
+            config: home.join(".config/ren-canary/ren.toml"),
+            data_dir: home.join(".local/state/ren-canary"),
+        })
+    }
+
+    /// The preview in `slot` of the deployer's previews: its slot's ports,
+    /// in `~/.config/ren-previews/<slot>` and
+    /// `~/.local/state/ren-previews/<slot>`.
+    pub fn preview_slot(env: &HostEnv, slot: PreviewSlot) -> Result<Self, ReplicaError> {
+        let home = env
+            .absolute_path("HOME")
+            .ok_or(ReplicaError::MissingEnv("HOME"))?;
+        let (daemon, ui) = slot.ports();
+        let index = slot.index().to_string();
+        Ok(Self {
+            name: slot.name(),
+            environment: Environment::Preview,
+            daemon: SocketAddr::new(Self::LOOPBACK, daemon),
+            ui: SocketAddr::new(Self::LOOPBACK, ui),
+            config: home
+                .join(".config/ren-previews")
+                .join(&index)
+                .join("ren.toml"),
+            data_dir: home.join(".local/state/ren-previews").join(index),
+        })
+    }
+
+    pub fn daemon(&self) -> SocketAddr {
+        self.daemon
+    }
+
+    pub fn ui(&self) -> SocketAddr {
+        self.ui
+    }
+
+    /// Its pod, `ren-<name>`, with a container for the daemon and one for
+    /// the UI.
+    pub fn pod(&self) -> Pod {
+        Pod::new(&self.name)
+    }
+
+    /// Its configuration, from production's.
+    fn derive(&self, production: Config) -> Config {
+        Config {
+            listen: self.daemon,
+            data_dir: None,
+            instance: InstanceOptions {
+                environment: self.environment,
+            },
+            // Only production runs the deployer: a replica drives no runs.
+            runs: RunsOptions::default(),
+            // Production watches GitHub; a replica has no token to.
+            github: GithubOptions::default(),
+            // Only production asks the deployer for previews; a replica's
+            // asks would start production's passes.
+            deployer: DeployerOptions::default(),
+            ..production
+        }
+    }
+
+    /// Stops the replica and replaces its data with `backup`'s history.
+    pub fn replace_data(&self, backup: &Path) -> Result<(), ReplicaError> {
+        self.empty_data()?;
+        for file in ["ren.sqlite3", "blobs.sqlite3"] {
+            let (from, to) = (backup.join(file), self.data_dir.join(file));
+            fs::copy(&from, &to).map_err(FileError::at(&from))?;
+        }
+        Ok(())
+    }
+
+    /// Stops the replica and empties its data folder. Only a data folder a
+    /// replica names (the canary's, or a preview's) is ever removed.
+    pub fn empty_data(&self) -> Result<(), ReplicaError> {
+        let ours = self.data_dir.ends_with(".local/state/ren-canary")
+            || self
+                .data_dir
+                .parent()
+                .is_some_and(|parent| parent.ends_with(".local/state/ren-previews"));
+        if !ours {
+            return Err(ReplicaError::NotOurs(self.data_dir.clone()));
+        }
+        self.stop()?;
+        if self.data_dir.exists() {
+            fs::remove_dir_all(&self.data_dir).map_err(FileError::at(&self.data_dir))?;
+        }
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&self.data_dir)
+            .map_err(FileError::at(&self.data_dir))?;
+        Ok(())
+    }
+
+    /// Writes the history `number` invents into its empty data with `ren`,
+    /// the build it runs (`ren seed`), as configured.
+    pub fn seed(&self, ren: &Path, number: SeedNumber) -> Result<(), ReplicaError> {
+        Progress(&format!("Seeding {} with history {number}", self.name)).show();
+        Invocation::new(ren)
+            .arg("--config")
+            .arg(&self.config)
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+            .args(["seed", "--seed", &number.to_string()])
+            .run()?;
+        Ok(())
+    }
+
+    /// Writes its configuration, from production's, and returns the
+    /// operator key variables it names.
+    pub fn configure(&self, production: &ProductionPlace) -> Result<Vec<String>, ReplicaError> {
+        let config = self.derive(production.config()?);
+        let keys = config
+            .upstreams
+            .iter()
+            .map(|upstream| upstream.operator_key_env.clone())
+            .collect();
+        config.check().map_err(|source| ReplicaError::Config {
+            path: self.config.clone(),
+            source,
+        })?;
+        let text = toml::to_string(&config).map_err(|_| ReplicaError::Derive)?;
+        let dir = self.config.parent().unwrap_or(Path::new("/"));
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(FileError::at(dir))?;
+        FileMode::Private.write(
+            &self.config,
+            format!("# Generated by xtask from production's; rewritten on every start.\n{text}")
+                .as_bytes(),
+        )?;
+        Ok(keys)
+    }
+
+    /// Starts `ren` as its daemon on the copied history, then the UI in
+    /// `ui_dir`, read-only, published on the tailnet on `publish`'s ports
+    /// (the gateway's, then the UI's) when given; each in a container of
+    /// its pod that sees only the build it runs and the replica's own
+    /// configuration and data.
+    pub fn start(
+        &self,
+        repo: &Path,
+        ren: &Path,
+        ui_dir: &Path,
+        keys: &[String],
+        publish: Option<(Tailnet, u16, u16)>,
+    ) -> Result<Reached, ReplicaError> {
+        Pod::ensure_image(repo)?;
+        self.stop_units()?;
+        let pod = self.pod();
+        pod.create()?;
+        Progress(&format!(
+            "Starting {}'s daemon on {}, in pod {}",
+            self.name,
+            self.daemon,
+            pod.name()
+        ))
+        .show();
+        pod.start(&Container {
+            role: "daemon",
+            workdir: None,
+            mounts: vec![
+                Mount {
+                    path: ren.to_path_buf(),
+                    access: Access::ReadOnly,
+                },
+                Mount {
+                    path: self.config.clone(),
+                    access: Access::ReadOnly,
+                },
+                Mount {
+                    path: self.data_dir.clone(),
+                    access: Access::ReadWrite,
+                },
+            ],
+            environment: keys
+                .iter()
+                .map(|key| (key.clone(), Self::PLACEHOLDER_KEY.to_owned()))
+                .collect(),
+            command: vec![
+                ren.display().to_string(),
+                "--config".into(),
+                self.config.display().to_string(),
+                "--data-dir".into(),
+                self.data_dir.display().to_string(),
+                "serve".into(),
+            ],
+        })?;
+        self.answering(self.daemon)?;
+        let reached = match publish {
+            None => Reached {
+                gateway: format!("http://{}", self.daemon),
+                ui: format!("http://{}", self.ui),
+            },
+            Some((tailscale, gateway_port, _)) => {
+                let dns = tailscale
+                    .publish(gateway_port, &format!("http://{}", self.daemon))?
+                    .ok_or(ReplicaError::NoDnsName)?;
+                let ui_port = publish.map_or(0, |(_, _, ui)| ui);
+                Reached {
+                    gateway: format!("https://{dns}:{gateway_port}"),
+                    ui: format!("https://{dns}:{ui_port}"),
+                }
+            }
+        };
+        Progress(&format!("Starting {}'s UI on {}", self.name, self.ui)).show();
+        pod.start(&Container {
+            role: "ui",
+            workdir: Some(ui_dir.to_path_buf()),
+            mounts: vec![Mount {
+                path: ui_dir.to_path_buf(),
+                access: Access::ReadOnly,
+            }],
+            environment: [
+                ("HOST", self.ui.ip().to_string()),
+                ("PORT", self.ui.port().to_string()),
+                ("REN_GATEWAY_URL", format!("http://{}", self.daemon)),
+                ("REN_PUBLIC_GATEWAY_URL", reached.gateway.clone()),
+                ("ORIGIN", reached.ui.clone()),
+            ]
+            .map(|(name, value)| (name.to_owned(), value))
+            .into(),
+            command: vec!["node".into(), UiBuild::entry().display().to_string()],
+        })?;
+        self.answering(self.ui)?;
+        if let Some((tailscale, _, ui_port)) = publish {
+            tailscale.publish(ui_port, &format!("http://{}", self.ui))?;
+        }
+        Ok(reached)
+    }
+
+    fn answering(&self, address: SocketAddr) -> Result<(), ReplicaError> {
+        if Listener(address).answers_soon("/health") {
+            Ok(())
+        } else {
+            Err(ReplicaError::NotReady {
+                name: self.name.clone(),
+                address,
+            })
+        }
+    }
+
+    /// `ren` at `binary`, against the replica.
+    pub fn ren(&self, binary: &Path) -> Invocation {
+        Invocation::new(binary)
+            .arg("--config")
+            .arg(&self.config)
+            .arg("--data-dir")
+            .arg(&self.data_dir)
+    }
+
+    /// Removes its pod, giving the daemon time to drain.
+    pub fn stop(&self) -> Result<(), ReplicaError> {
+        self.stop_units()?;
+        Ok(self.pod().remove()?)
+    }
+
+    /// Stops the transient units a replica ran as before it ran in a pod
+    /// (`ren-<name>-ui`, `ren-<name>-daemon`), by their exact names, so a
+    /// canary or preview an older xtask started does not hold the ports
+    /// its pod takes.
+    fn stop_units(&self) -> Result<(), ReplicaError> {
+        for (role, kill) in [("ui", KillMode::ControlGroup), ("daemon", KillMode::Mixed)] {
+            TransientUnit {
+                name: format!("ren-{}-{role}", self.name),
+                description: String::new(),
+                kill,
+            }
+            .stop()?;
+        }
+        Ok(())
+    }
+
+    /// Removes its Serve routes on `ports` (the gateway's, then the UI's),
+    /// each only while it still points at this replica.
+    pub fn unpublish(&self, tailscale: Tailnet, ports: (u16, u16)) -> Result<(), ReplicaError> {
+        Ok(tailscale.unpublish(&[
+            (ports.0, format!("http://{}", self.daemon)),
+            (ports.1, format!("http://{}", self.ui)),
+        ])?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Replica;
+    use ren_daemon::config::{Config, DeployerOptions};
+    use ren_gateway::Environment;
+    use std::path::Path;
+
+    fn production() -> Config {
+        toml::from_str(
+            r#"
+listen = "127.0.0.1:8787"
+
+[instance]
+environment = "production"
+
+[runs]
+roots = ["/home/op/dev"]
+
+[[upstreams]]
+id = "team-key"
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+operator_key_env = "ACME_ANTHROPIC_KEY"
+
+[[github.repository]]
+project = "ren"
+github = "acme/ren"
+
+[deployer]
+socket = "/run/user/1000/ren-deployer/deployer.sock"
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_replica_takes_production_settings_but_its_own_listener_and_no_runs() {
+        let home = Path::new("/home/op");
+        let env = ren_harness::host::HostEnv::from_pairs([("HOME", home.to_str().unwrap())]);
+        let canary = Replica::canary(&env).unwrap();
+        let config = canary.derive(production());
+        assert_eq!(config.listen, canary.daemon());
+        assert_eq!(config.instance.environment, Environment::Canary);
+        assert!(config.runs.roots.is_empty());
+        assert_eq!(config.upstreams[0].operator_key_env, "ACME_ANTHROPIC_KEY");
+        assert!(config.github.repository.is_empty());
+        // Nor asks the deployer, and a build that predates `[deployer]` reads
+        // its configuration.
+        assert_eq!(config.deployer, DeployerOptions::default());
+        assert!(!toml::to_string(&config).unwrap().contains("[deployer]"));
+        config.check().unwrap();
+
+        let env = ren_harness::host::HostEnv::from_pairs([("HOME", "/home/op")]);
+        let slot = ren_gateway::deployment::Slot::first(2).last().unwrap();
+        let preview = Replica::preview_slot(&env, slot).unwrap();
+        let config = preview.derive(production());
+        assert_eq!(config.listen.port(), slot.ports().0);
+        assert_eq!(preview.ui().port(), slot.ports().1);
+        assert_eq!(config.instance.environment, Environment::Preview);
+        assert_eq!(
+            preview.data_dir,
+            Path::new("/home/op/.local/state/ren-previews/1")
+        );
+        // A data folder no replica names is never removed.
+        let stray = Replica {
+            data_dir: Path::new("/home/op").to_path_buf(),
+            ..Replica::preview_slot(&env, slot).unwrap()
+        };
+        assert!(matches!(
+            stray.replace_data(Path::new("/tmp/backup")),
+            Err(super::ReplicaError::NotOurs(_))
+        ));
+    }
+
+    #[test]
+    fn every_pod_is_named_for_its_replica() {
+        let env = ren_harness::host::HostEnv::from_pairs([("HOME", "/home/op")]);
+        let slot = ren_gateway::deployment::Slot::first(1).last().unwrap();
+        let preview = Replica::preview_slot(&env, slot).unwrap();
+        assert_eq!(preview.pod().name(), "ren-preview-0");
+        assert_eq!(
+            Replica::canary(&ren_harness::host::HostEnv::from_pairs([(
+                "HOME", "/home/op"
+            )]))
+            .unwrap()
+            .pod()
+            .name(),
+            "ren-canary"
+        );
+    }
+}

@@ -7,6 +7,7 @@ mod context;
 pub mod doctor;
 mod management;
 pub mod mcp;
+mod seed;
 mod service;
 pub mod style;
 mod tail;
@@ -15,8 +16,9 @@ use crate::context::Context;
 use crate::style::{Terminal, Tone};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use ren_gateway::release::Build;
+use ren_git::SourceRevision;
 use ren_harness::host::HostEnv;
-use ren_release::{Build, Revision};
 use std::{path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
@@ -61,8 +63,11 @@ enum Command {
     Packages(commands::packages::PackagesCmd),
     Mcp(commands::mcp::McpCmd),
     Release(commands::release::ReleaseCmd),
-    Preview(commands::preview::PreviewCmd),
+    Deploy(commands::deploy::DeployCmd),
+    Deployments(commands::deploy::DeploymentsCmd),
     Project(commands::project::ProjectCmd),
+    Deployer(commands::deployer::DeployerCmd),
+    Seed(commands::seed::SeedCmd),
     #[command(hide = true)]
     RunHost(commands::run_host::RunHostCmd),
     #[command(hide = true)]
@@ -78,7 +83,9 @@ impl Cli {
         // build.rs writes only `<commit>`, `<commit>-dirty`, or `unknown`
         // (pinned by a test), so a parse failure cannot happen; it would
         // still read as an unknown revision, never as a known one.
-        let revision = env!("REN_REVISION").parse().unwrap_or(Revision::Unknown);
+        let revision = env!("REN_REVISION")
+            .parse()
+            .unwrap_or(SourceRevision::Unknown);
         Build::new(env!("CARGO_PKG_VERSION"), revision)
     }
 
@@ -119,8 +126,11 @@ impl Cli {
             Command::Packages(cmd) => cmd.run(&ctx).await,
             Command::Mcp(cmd) => cmd.run(&ctx).await,
             Command::Release(cmd) => cmd.run(&ctx).await,
-            Command::Preview(cmd) => cmd.run(&ctx).await,
+            Command::Deploy(cmd) => cmd.run(&ctx).await,
+            Command::Deployments(cmd) => cmd.run(&ctx).await,
             Command::Project(cmd) => cmd.run(&ctx).await,
+            Command::Deployer(cmd) => cmd.run(&ctx),
+            Command::Seed(cmd) => cmd.run(&ctx).await,
             Command::RunHost(cmd) => cmd.run().await,
             Command::Credential(cmd) => cmd.run(&ctx.env).await,
         }
@@ -133,6 +143,6 @@ mod tests {
 
     #[test]
     fn the_recorded_revision_parses() {
-        assert!(env!("REN_REVISION").parse::<Revision>().is_ok());
+        assert!(env!("REN_REVISION").parse::<SourceRevision>().is_ok());
     }
 }

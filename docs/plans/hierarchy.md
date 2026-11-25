@@ -216,7 +216,7 @@ gate against `main`.
   Sessions and Release, and a work item has a page of its own
   (`/projects/<name>/work/<id>`), which Redline, the Pending panel, and the
   Release page link to. The pull requests and previews it listed are read
-  through the API and `ren preview` for now.
+  through the API and `ren deploy` for now.
 - **Phase 1: the remote and branch a canary follows stay flags.** The doc
   had the project record hold them. They stay `ren project canary
   --remote` and `--branch`, so `ren-recorder` takes no dependency on

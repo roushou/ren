@@ -6,41 +6,12 @@ license.workspace = true
 publish = false
 repository.workspace = true
 
-# Repository tasks run with `cargo xtask` (.cargo/config.toml): host setup
-# from a checkout, never shipped. It is a shell: it runs cargo, systemctl,
-# loginctl, the built ren, and tailscale (git through ren-git), and reads configuration through
-# ren-daemon's own parser.
+# Repository tasks run with `cargo xtask` (.cargo/config.toml): the
+# compatibility gate CI runs, from a checkout, never shipped.
 [dependencies]
-aws-lc-rs.workspace = true
-axum.workspace = true
-base64.workspace = true
-blake3.workspace = true
 clap.workspace = true
-futures-util.workspace = true
-ren-container.workspace = true
-ren-daemon.workspace = true
-ren-gateway.workspace = true
 ren-git.workspace = true
-ren-github.workspace = true
-ren-harness.workspace = true
-ren-manifest.workspace = true
-ren-network.workspace = true
-ren-protocol.workspace = true
-ren-recorder.workspace = true
-ren-release.workspace = true
-ren-supervisor.workspace = true
-reqwest.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-tempfile.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
-tokio-tungstenite.workspace = true
-toml.workspace = true
-
-[dev-dependencies]
-ren-store.workspace = true
-uuid.workspace = true
 
 [lints]
 workspace = true

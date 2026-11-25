@@ -1,28 +1,31 @@
-//! `POST /control/v1/release/promote`: the operator asks that production
-//! take the canary's build. The gateway records the request
-//! (`ren_release::PromotionRequest`); the factory carries it out with the
+//! `POST /control/v1/release/promote`: the operator chooses the commit
+//! production runs (`ren deploy <commit> --production`, or the Release
+//! view's Promote for the canary's build). The gateway records the request
+//! (`crate::release::PromotionRequest`); the deployer carries it out with the
 //! install's steps, since an install restarts the daemon that would
-//! otherwise run it: at once with a [`Factory`] on the host, which is asked
-//! to ([`FactoryRequest::Promote`]), else at its next timed pass. Refused,
-//! `409` `not_promotable`, unless the commit is the canary's and its build
-//! passed.
+//! otherwise run it: at once with a [`Deployer`] on the host, which is asked
+//! to ([`DeployerRequest::Promote`]), else at its next timed pass. Refused,
+//! `409` `not_promotable`, unless the commit's build is kept and passed the
+//! canary's checks or ran production (`Release::may_deploy`): the canary's,
+//! or an earlier one, which rolls production back.
 //!
 //! `POST /control/v1/previews/ask` and `/previews/withdraw`: the operator
 //! asks for a preview of a commit, or withdraws the ask
-//! (`crate::instance::CommitAsks`). With a [`Factory`] on the host, either
-//! is planned at once: the answer comes once the factory has given the
+//! (`crate::deployment::ChosenCommits`). With a [`Deployer`] on the host, either
+//! is planned at once: the answer comes once the deployer has given the
 //! commit its slot or taken it back (or after a few seconds, while it is
-//! busy); without one, the factory's next timed pass starts or stops it. Both answer the
+//! busy); without one, the deployer's next timed pass starts or stops it. Both answer the
 //! commits asked for, the newest first; a withdrawal of a commit not asked
 //! for is `404` `not_found`.
 
 use super::{
     ControlApi, ControlRefusal,
-    request::{PreviewAskRequest, PromoteRequest},
+    request::{PreviewAskRequest, PreviewWithdrawRequest, PromoteRequest},
 };
 use crate::api::release::ReleaseFolder;
-use crate::factory::{Factory, FactoryAnswer, FactoryRequest};
-use crate::instance::CommitAsks;
+use crate::deployer::{Deployer, DeployerAnswer, DeployerRequest};
+use crate::deployment::{Chosen, ChosenCommits, Seed};
+use crate::release::PromotionRequest;
 use axum::{
     Json, Router,
     extract::{State, rejection::JsonRejection},
@@ -30,18 +33,16 @@ use axum::{
     routing::post,
 };
 use http::{HeaderMap, StatusCode};
-use ren_git::Commit;
-use ren_release::PromotionRequest;
 use std::sync::Arc;
 
 pub(super) struct ReleaseApi {
     pub control: Arc<ControlApi>,
     pub folder: ReleaseFolder,
-    pub factory: Option<Arc<dyn Factory>>,
+    pub deployer: Option<Arc<dyn Deployer>>,
 }
 
 impl ReleaseApi {
-    /// How long an ask waits for the factory to take it up: a pass already
+    /// How long an ask waits for the deployer to take it up: a pass already
     /// building takes it only once it is done.
     const PLAN_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -75,10 +76,7 @@ impl ReleaseApi {
                 return ControlRefusal::Unreadable.into_response();
             }
         };
-        let checked = release
-            .canary()
-            .is_some_and(|canary| *canary.commit() == commit && canary.verdict().passed());
-        if !checked {
+        if !release.may_deploy(&commit) {
             return ControlRefusal::NotPromotable.into_response();
         }
         let request = PromotionRequest { commit };
@@ -86,8 +84,8 @@ impl ReleaseApi {
             tracing::warn!(%error, "the promotion request was not recorded");
             return ControlRefusal::Unavailable.into_response();
         }
-        if let Some(factory) = &api.factory {
-            api.ask(factory.as_ref(), FactoryRequest::Promote).await;
+        if let Some(deployer) = &api.deployer {
+            api.ask(deployer.as_ref(), DeployerRequest::Promote).await;
         }
         (StatusCode::ACCEPTED, ControlApi::answer(request)).into_response()
     }
@@ -97,26 +95,34 @@ impl ReleaseApi {
         headers: HeaderMap,
         body: Result<Json<PreviewAskRequest>, JsonRejection>,
     ) -> Response {
-        api.change_asks(&headers, body, |requests, commit| {
-            requests.ask(commit);
+        let Ok(Json(PreviewAskRequest { commit, seed, work })) = body else {
+            return ControlRefusal::InvalidRequest.into_response();
+        };
+        let chosen = Chosen {
+            commit,
+            seed: seed.map_or(Seed::Copy, Seed::Invented),
+            work,
+        };
+        api.change_asks(&headers, |requests| {
+            requests.choose(chosen);
             true
         })
         .await
     }
 
-    /// Asks the factory `request` now; what it answers is for the log
+    /// Asks the deployer `request` now; what it answers is for the log
     /// alone: the request is recorded either way, and a later pass takes it
     /// up.
-    async fn ask(&self, factory: &dyn Factory, request: FactoryRequest) {
-        match tokio::time::timeout(Self::PLAN_WAIT, factory.ask(request)).await {
-            Ok(Ok(FactoryAnswer::Planned | FactoryAnswer::Started)) => {}
-            Ok(Ok(FactoryAnswer::NotBuilt)) => {
-                tracing::warn!("the factory does not build what was asked of it");
+    async fn ask(&self, deployer: &dyn Deployer, request: DeployerRequest) {
+        match tokio::time::timeout(Self::PLAN_WAIT, deployer.ask(request)).await {
+            Ok(Ok(DeployerAnswer::Planned | DeployerAnswer::Started)) => {}
+            Ok(Ok(DeployerAnswer::NotBuilt)) => {
+                tracing::warn!("the deployer does not build what was asked of it");
             }
-            Ok(Ok(FactoryAnswer::Failed(why))) => {
-                tracing::warn!(%why, "the factory could not take up the request");
+            Ok(Ok(DeployerAnswer::Failed(why))) => {
+                tracing::warn!(%why, "the deployer could not take up the request");
             }
-            Ok(Err(error)) => tracing::warn!(%error, "the factory was not asked"),
+            Ok(Err(error)) => tracing::warn!(%error, "the deployer was not asked"),
             // Busy with a pass: the request waits for the next.
             Err(_) => {}
         }
@@ -125,37 +131,30 @@ impl ReleaseApi {
     async fn withdraw_preview(
         State(api): State<Arc<Self>>,
         headers: HeaderMap,
-        body: Result<Json<PreviewAskRequest>, JsonRejection>,
+        body: Result<Json<PreviewWithdrawRequest>, JsonRejection>,
     ) -> Response {
-        api.change_asks(&headers, body, |requests, commit| {
-            requests.withdraw(&commit)
-        })
-        .await
+        let Ok(Json(PreviewWithdrawRequest { commit })) = body else {
+            return ControlRefusal::InvalidRequest.into_response();
+        };
+        api.change_asks(&headers, |requests| requests.withdraw(&commit))
+            .await
     }
 
     /// Changes the preview requests with `change`, which says whether the
-    /// commit was one it could change; asks the factory to plan the change
+    /// commit was one it could change; asks the deployer to plan the change
     /// now, then answers the requests.
     async fn change_asks(
         &self,
         headers: &HeaderMap,
-        body: Result<Json<PreviewAskRequest>, JsonRejection>,
-        change: impl FnOnce(&mut CommitAsks, Commit) -> bool,
+        change: impl FnOnce(&mut ChosenCommits) -> bool,
     ) -> Response {
         if let Err(refusal) = self.control.authorize(headers) {
             return refusal.into_response();
         }
-        let Ok(Json(PreviewAskRequest { commit })) = body else {
-            return ControlRefusal::InvalidRequest.into_response();
-        };
-        match self
-            .folder
-            .change_preview_requests(|requests| change(requests, commit))
-            .await
-        {
+        match self.folder.change_preview_requests(change).await {
             Ok((true, requests)) => {
-                if let Some(factory) = &self.factory {
-                    self.ask(factory.as_ref(), FactoryRequest::Previews).await;
+                if let Some(deployer) = &self.deployer {
+                    self.ask(deployer.as_ref(), DeployerRequest::Previews).await;
                 }
                 (StatusCode::ACCEPTED, ControlApi::answer(requests)).into_response()
             }

@@ -1,0 +1,35 @@
+[package]
+name = "ren-deployer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Deploys builds of Ren: builds commits, runs the canary, previews, and production"
+
+# The deployer is a shell: it runs cargo, podman, systemctl, loginctl, the
+# built ren, and tailscale (git through ren-git), and reads configuration
+# through ren-daemon's own parser.
+[dependencies]
+blake3.workspace = true
+clap.workspace = true
+ren-container.workspace = true
+ren-daemon.workspace = true
+ren-gateway.workspace = true
+ren-git.workspace = true
+ren-github.workspace = true
+ren-harness.workspace = true
+ren-network.workspace = true
+ren-protocol.workspace = true
+ren-recorder.workspace = true
+ren-supervisor.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+ren-store.workspace = true
+
+[lints]
+workspace = true

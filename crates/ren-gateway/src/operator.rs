@@ -72,7 +72,7 @@ pub enum Pause {
 }
 
 /// Whether new calls are admitted, without what a pause carries: `Pause`'s
-/// `state` as it is written, which other tools read (`cargo xtask
+/// `state` as it is written, which other tools read (`ren deployer
 /// install-vps` waits on it).
 #[derive(Display, EnumString, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]

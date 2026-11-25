@@ -8,10 +8,11 @@ use crate::context::Context;
 use anyhow::{Result, bail};
 use clap::Args;
 use ren_gateway::api::release::{ReleaseBody, ReleaseView};
+use ren_gateway::release::{Decision, Policy};
+use ren_git::SourceRevision;
 use ren_git::Tree;
 use ren_protocol::label::Stored;
 use ren_recorder::project::{Factory, ProjectName};
-use ren_release::{Decision, Policy, Revision};
 use std::{fmt::Write as _, process::ExitCode};
 
 /// Show where a release stands: main, production, and the canary.
@@ -66,15 +67,15 @@ impl ReleaseCmd {
         let mut text = String::new();
         let _ = writeln!(text, "main        {}", release.main.short());
         let production = match &release.production {
-            Revision::Commit {
+            SourceRevision::Commit {
                 commit,
                 tree: Tree::Clean,
             } => commit.short().to_owned(),
-            Revision::Commit {
+            SourceRevision::Commit {
                 commit,
                 tree: Tree::Modified,
             } => format!("{}, modified", commit.short()),
-            Revision::Unknown => "unknown".to_owned(),
+            SourceRevision::Unknown => "unknown".to_owned(),
         };
         let behind = match release.behind {
             Some(0) => "up to date with main".to_owned(),
@@ -134,10 +135,10 @@ impl ReleaseCmd {
                 "production has commits the canary's build lacks; it is not taken"
             }
             Stored::Known(Decision::Unconfirmed) => {
-                "production runs a build the factory cannot place; promote it by hand"
+                "production runs a build the deployer cannot place; promote it by hand"
             }
             Stored::Known(Decision::AwaitingOperator) => {
-                "passed; promote it with `cargo xtask canary promote`"
+                "passed; promote it with `ren deployer canary promote`"
             }
             Stored::Known(Decision::OutsideWindow) => {
                 "passed; production takes it when the window opens"
@@ -167,7 +168,7 @@ mod tests {
             "main        62e9e9e00000\n\
              production  07f4bb7c1e2a (1 commit behind main)\n\
              canary      62e9e9e00000 passed (doctor passed, reads passed, pages passed)\n\
-             promotion   manual: passed; promote it with `cargo xtask canary promote`\n"
+             promotion   manual: passed; promote it with `ren deployer canary promote`\n"
         );
         let none: ReleaseBody = serde_json::from_str(r#"{ "release": null }"#).unwrap();
         assert!(ReleaseCmd::render(&none).starts_with("No release yet"));

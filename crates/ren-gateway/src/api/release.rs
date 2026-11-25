@@ -1,18 +1,17 @@
 //! What the factory keeps for the Release view: where each project's
 //! release stands, as its canary last wrote it to this instance's data
-//! folder (Ren's by `cargo xtask canary`, a contract project's by `ren
+//! folder (Ren's by `ren deployer canary`, a contract project's by `ren
 //! project canary`), and the pages Ren's canary captured. The gateway reads
 //! and reports them (`/api/projects/{name}/release`), and records the
-//! operator's promotion request for the factory; the CLI reads these same
+//! operator's promotion request for the deployer; the CLI reads these same
 //! views back.
 
-use crate::instance::{CommitAsks, Instances};
+use crate::deployment::{ChosenCommits, Deployments};
+use crate::release::{CheckKind, Decision, Outcome, Policy, PromotionRequest, Release, ShotName};
 use ren_git::Commit;
+use ren_git::SourceRevision;
 use ren_protocol::label::Stored;
 use ren_recorder::project::Factory;
-use ren_release::{
-    CheckKind, Decision, Outcome, Policy, PromotionRequest, Release, Revision, ShotName,
-};
 use ren_store::view::ProjectView;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -21,7 +20,7 @@ use std::{
 };
 use ts_rs::TS;
 
-/// What the factory keeps in a data folder for the Release view: Ren's
+/// What the deployer keeps in a data folder for the Release view: Ren's
 /// release ([`Release::FILE`]), the pages its canary captured
 /// ([`ShotName::FOLDER`]), the operator's promotion request
 /// ([`PromotionRequest::FILE`]), and each project's release
@@ -60,13 +59,13 @@ impl ReleaseFolder {
         }
     }
 
-    /// Ren's release, or none while the factory has written none.
+    /// Ren's release, or none while the deployer has written none.
     pub(super) async fn read(&self) -> Result<Option<Release>, ReleaseFileError> {
         Self::json(&self.data.join(Release::FILE)).await
     }
 
     /// `project`'s release, or none while its canary has written none:
-    /// Ren's where `cargo xtask canary` keeps it, a contract project's in
+    /// Ren's where `ren deployer canary` keeps it, a contract project's in
     /// its folder of [`Release::PROJECTS`], by its registered name.
     pub(super) async fn release_of(
         &self,
@@ -109,13 +108,13 @@ impl ReleaseFolder {
         }
     }
 
-    /// The build the operator asked production to take, until the factory
+    /// The build the operator asked production to take, until the deployer
     /// takes it up.
     pub(super) async fn requested(&self) -> Result<Option<PromotionRequest>, ReleaseFileError> {
         Self::json(&self.data.join(PromotionRequest::FILE)).await
     }
 
-    /// Records the operator's request, for the factory's next pass.
+    /// Records the operator's request, for the deployer's next pass.
     pub(super) async fn request(&self, request: &PromotionRequest) -> Result<(), ReleaseFileError> {
         let path = self.data.join(PromotionRequest::FILE);
         let bytes = serde_json::to_vec(request).map_err(|source| ReleaseFileError::Shape {
@@ -127,16 +126,16 @@ impl ReleaseFolder {
             .map_err(|source| ReleaseFileError::Io { path, source })
     }
 
-    /// The previews the factory runs; none before its first previews pass.
-    pub(super) async fn previews(&self) -> Result<Instances, ReleaseFileError> {
-        Ok(Self::json(&self.data.join(Instances::FILE))
+    /// The previews the deployer runs; none before its first previews pass.
+    pub(super) async fn previews(&self) -> Result<Deployments, ReleaseFileError> {
+        Ok(Self::json(&self.data.join(Deployments::FILE))
             .await?
             .unwrap_or_default())
     }
 
     /// The commits the operator asked to preview.
-    pub(super) async fn preview_requests(&self) -> Result<CommitAsks, ReleaseFileError> {
-        Ok(Self::json(&self.data.join(CommitAsks::FILE))
+    pub(super) async fn preview_requests(&self) -> Result<ChosenCommits, ReleaseFileError> {
+        Ok(Self::json(&self.data.join(ChosenCommits::FILE))
             .await?
             .unwrap_or_default())
     }
@@ -145,12 +144,12 @@ impl ReleaseFolder {
     /// one change at a time; answers what `change` answered.
     pub(super) async fn change_preview_requests<T>(
         &self,
-        change: impl FnOnce(&mut CommitAsks) -> T,
-    ) -> Result<(T, CommitAsks), ReleaseFileError> {
+        change: impl FnOnce(&mut ChosenCommits) -> T,
+    ) -> Result<(T, ChosenCommits), ReleaseFileError> {
         let _held = self.asks.lock().await;
         let mut requests = self.preview_requests().await?;
         let answer = change(&mut requests);
-        let path = self.data.join(CommitAsks::FILE);
+        let path = self.data.join(ChosenCommits::FILE);
         let bytes = serde_json::to_vec(&requests).map_err(|source| ReleaseFileError::Shape {
             path: path.clone(),
             source,
@@ -196,7 +195,7 @@ pub struct ReleaseBody {
     #[ts(as = "Vec<String>")]
     pub shots: Vec<ShotName>,
     /// The build the operator asked production to take, until the
-    /// factory's next pass takes it up.
+    /// deployer's next pass takes it up.
     #[serde(default)]
     #[ts(as = "Option<String>")]
     pub promotion_requested: Option<Commit>,
@@ -206,13 +205,13 @@ pub struct ReleaseBody {
 #[derive(Debug, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ReleaseView {
-    /// `main`'s tip as the factory last fetched it.
+    /// `main`'s tip as the deployer last fetched it.
     #[ts(type = "string")]
     pub main: Commit,
     /// The build production ran then: `<commit>`, `<commit>-dirty`, or
     /// `unknown`.
     #[ts(type = "string")]
-    pub production: Revision,
+    pub production: SourceRevision,
     /// Commits `main` has that production does not; null when production's
     /// revision is not a commit of `main`'s history.
     pub behind: Option<u64>,

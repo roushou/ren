@@ -3,6 +3,7 @@
 //! as it was sent.
 
 use ren_git::Commit;
+use ren_git::SourceRevision;
 use ren_protocol::label::Stored;
 use ren_recorder::{
     id::{ProjectId, SessionId, WorkItemId},
@@ -12,7 +13,6 @@ use ren_recorder::{
         WorkStateKind,
     },
 };
-use ren_release::Revision;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -51,7 +51,7 @@ pub struct WorkItemView {
     pub landed: Option<Commit>,
     /// The build production ran with its change.
     #[ts(as = "Option<String>")]
-    pub shipped: Option<Revision>,
+    pub shipped: Option<SourceRevision>,
     /// A preview of its change, while one is up.
     pub preview: Option<WorkPreviewBody>,
 }
@@ -67,7 +67,7 @@ pub struct WorkPreviewBody {
     pub ui: PreviewUrl,
     /// The build it runs: `<commit>`, `<commit>-dirty`, or `unknown`.
     #[ts(as = "String")]
-    pub revision: Revision,
+    pub revision: SourceRevision,
 }
 
 /// What was marked: the page, its marks, and what else was on screen.
@@ -99,7 +99,7 @@ pub struct MarkedPageBody {
     /// What the daemon serving the page was built from: `<commit>`,
     /// `<commit>-dirty`, or `unknown`.
     #[ts(as = "Option<String>")]
-    pub revision: Option<Revision>,
+    pub revision: Option<SourceRevision>,
 }
 
 /// One mark.

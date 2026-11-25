@@ -7,10 +7,12 @@ pub mod agent;
 
 use axum::Router;
 use ren_daemon::config::Config;
+use ren_gateway::release::Build;
 use ren_gateway::{
     ControlToken, Gateway, Ingress, IngressError, ManagementSetup, ReleaseFolder, ReqwestUpstream,
     Shutdown, Stopped, Upstream, control::Controls, github::PullBoard,
 };
+use ren_git::SourceRevision;
 use ren_harness::{endpoint::GatewayEndpoint, lines::LineLimit};
 use ren_protocol::{direction::Direction, label::Stored};
 use ren_recorder::{
@@ -19,7 +21,6 @@ use ren_recorder::{
     id::{CallId, SequentialIds},
     time::{ManualClock, UnixMillis},
 };
-use ren_release::{Build, Revision};
 use ren_store::{
     Reader, Store, StoreError,
     backup::Backup,
@@ -85,7 +86,7 @@ pub fn config(mock: &Mock) -> Config {
 
 /// The build `/health` reports in tests.
 pub fn build() -> Build {
-    Build::new("0.0.0-test", Revision::Unknown)
+    Build::new("0.0.0-test", SourceRevision::Unknown)
 }
 
 pub fn client() -> reqwest::Client {
@@ -347,7 +348,7 @@ impl TestGateway {
             packages,
             release: ReleaseFolder::in_data(dir),
             pulls: pulls.clone(),
-            factory: None,
+            deployer: None,
         });
         let ingress = Ingress::new(listener, router.clone()).with_runs(runs_listener, forwarding);
         let server = tokio::spawn(ingress.serve(shutdown.clone(), Self::DRAIN_DEADLINE));

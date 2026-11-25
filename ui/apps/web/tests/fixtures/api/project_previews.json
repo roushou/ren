@@ -12,6 +12,8 @@
         "state": "running",
         "reach": "tailnet"
       },
+      "seed": null,
+      "work": [],
       "ui_port": 18101,
       "published_ui_port": 9451
     },
@@ -25,6 +27,8 @@
         "state": "failed",
         "detail": "the build failed"
       },
+      "seed": null,
+      "work": [],
       "ui_port": 18103,
       "published_ui_port": 9453
     }

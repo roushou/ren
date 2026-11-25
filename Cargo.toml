@@ -3,6 +3,7 @@ members = [
   "crates/ren-cli",
   "crates/ren-container",
   "crates/ren-daemon",
+  "crates/ren-deployer",
   "crates/ren-depot",
   "crates/ren-gateway",
   "crates/ren-git",
@@ -13,7 +14,6 @@ members = [
   "crates/ren-protocol",
   "crates/ren-recorder",
   "crates/ren-relay",
-  "crates/ren-release",
   "crates/ren-store",
   "crates/ren-supervisor",
   "xtask",
@@ -24,6 +24,7 @@ default-members = [
   "crates/ren-container",
   "crates/ren-daemon",
   "crates/ren-depot",
+  "crates/ren-deployer",
   "crates/ren-gateway",
   "crates/ren-git",
   "crates/ren-github",
@@ -33,7 +34,6 @@ default-members = [
   "crates/ren-relay",
   "crates/ren-protocol",
   "crates/ren-recorder",
-  "crates/ren-release",
   "crates/ren-store",
   "crates/ren-supervisor",
 ]
@@ -68,6 +68,7 @@ http-body-util = "0.1.5"
 proptest = { version = "1", default-features = false, features = ["std"] }
 ren-container = { path = "crates/ren-container", version = "0.1.0" }
 ren-daemon = { path = "crates/ren-daemon", version = "0.1.0" }
+ren-deployer = { path = "crates/ren-deployer", version = "0.1.0" }
 ren-depot = { path = "crates/ren-depot", version = "0.1.0" }
 ren-gateway = { path = "crates/ren-gateway", version = "0.1.0" }
 ren-git = { path = "crates/ren-git", version = "0.1.0" }
@@ -78,7 +79,6 @@ ren-network = { path = "crates/ren-network", version = "0.1.0" }
 ren-protocol = { path = "crates/ren-protocol", version = "0.1.0" }
 ren-recorder = { path = "crates/ren-recorder", version = "0.1.0" }
 ren-relay = { path = "crates/ren-relay", version = "0.1.0" }
-ren-release = { path = "crates/ren-release", version = "0.1.0" }
 ren-store = { path = "crates/ren-store", version = "0.1.0" }
 ren-supervisor = { path = "crates/ren-supervisor", version = "0.1.0" }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "http2"] }

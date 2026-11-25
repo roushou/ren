@@ -37,7 +37,7 @@ pub enum Status {
 }
 
 /// What a check looks at. Its label is the name `ren doctor` prints and
-/// reports in JSON, which other tools read (`cargo xtask install-vps` reads
+/// reports in JSON, which other tools read (`ren deployer install-vps` reads
 /// `build`).
 #[derive(
     Display,

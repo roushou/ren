@@ -31,7 +31,7 @@ pub struct RepositoryPath(String);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SerializeDisplay, DeserializeFromStr)]
 pub enum Factory {
     /// Ren itself: its canary checks a build against a replica of
-    /// production's data (`cargo xtask canary`), and `install-vps`
+    /// production's data (`ren deployer canary`), and `install-vps`
     /// promotes it. Its release is kept in `<data>/release.json`.
     Ren,
     /// A repository that declares its contract in `.ren/project.toml`:

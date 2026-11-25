@@ -60,12 +60,14 @@ mod upstream {
     pub use ren_gateway::{AuthOverride, EntryIngress};
 }
 mod preview {
-    pub use ren_gateway::instance::Reach;
+    pub use ren_gateway::deployment::Reach;
 }
 
 #[test]
 fn every_label_is_pinned() {
-    use ren_gateway::{WebSocketMode, api, lifecycle::retry, operator, packages, policy, reply};
+    use ren_gateway::{
+        WebSocketMode, api, lifecycle::retry, operator, packages, policy, release, reply,
+    };
     let table = table![
         api::HealthStatus,
         api::ErrorCode,
@@ -89,6 +91,9 @@ fn every_label_is_pinned() {
         packages::ChangeOutcome,
         packages::ChangeKind,
         preview::Reach,
+        release::CheckKind,
+        release::Suite,
+        release::Decision,
     ];
     let pinned = include_str!("fixtures/labels.txt");
     assert!(

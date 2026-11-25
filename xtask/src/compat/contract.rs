@@ -87,6 +87,25 @@ impl Snapshot {
         types
     }
 
+    /// Every crate's label table in this snapshot, as one.
+    fn labels(&self) -> Labels {
+        let mut labels = Labels::default();
+        for (path, bytes) in &self.0 {
+            match Surface::of(path) {
+                Some(Surface::Labels) => labels.read(path, bytes),
+                Some(
+                    Surface::Pins
+                    | Surface::StoreFixture
+                    | Surface::Migration
+                    | Surface::Wire
+                    | Surface::Requests,
+                )
+                | None => {}
+            }
+        }
+        labels
+    }
+
     /// Keep `bytes` as the file at `path`, when the contract watches it.
     pub fn keep(&mut self, path: String, bytes: Vec<u8>) {
         if Surface::of(&path).is_some() {
@@ -327,36 +346,12 @@ impl Comparison {
                 // Compared together, below: a wire type's direction depends
                 // on the others.
                 Surface::Wire | Surface::Requests => {}
-                Surface::Labels => {
-                    let (before, after) = (Labels::read(before), Labels::read(after));
-                    for (vocabulary, labels) in &before.0 {
-                        let Some(now) = after.0.get(vocabulary) else {
-                            found(Change::VocabularyRemoved {
-                                vocabulary: vocabulary.clone(),
-                            });
-                            continue;
-                        };
-                        for label in labels.difference(now) {
-                            found(Change::LabelRemoved {
-                                vocabulary: vocabulary.clone(),
-                                label: label.clone(),
-                            });
-                        }
-                        for label in now.difference(labels) {
-                            found(Change::LabelAdded {
-                                vocabulary: vocabulary.clone(),
-                                label: label.clone(),
-                            });
-                        }
-                    }
-                    for vocabulary in after.0.keys().filter(|v| !before.0.contains_key(*v)) {
-                        found(Change::VocabularyAdded {
-                            vocabulary: vocabulary.clone(),
-                        });
-                    }
-                }
+                // Compared together, below: a vocabulary may move from one
+                // crate's table to another's.
+                Surface::Labels => {}
             }
         }
+        findings.extend(Labels::compare(&base.labels(), &head.labels()));
         let (old, new) = (base.wire_types(), head.wire_types());
         findings.extend(
             WireTypes::compare(&old, &new)
@@ -407,25 +402,73 @@ impl Pins {
     }
 }
 
-/// One label table: each vocabulary with its labels.
-struct Labels(BTreeMap<String, BTreeSet<String>>);
+/// Every crate's label tables together: each vocabulary with its labels and
+/// the table that holds them.
+#[derive(Default)]
+struct Labels(BTreeMap<String, (String, BTreeSet<String>)>);
 
 impl Labels {
-    fn read(bytes: Option<&Vec<u8>>) -> Self {
-        let text = bytes.map(|bytes| String::from_utf8_lossy(bytes).into_owned());
-        Self(
-            text.iter()
-                .flat_map(|text| text.lines())
-                .filter_map(|line| {
-                    // Vocabularies are paths (`chunk::Codec`); labels hold no colon.
-                    let (vocabulary, labels) = line.rsplit_once(':')?;
-                    Some((
-                        vocabulary.trim().to_owned(),
-                        labels.split_whitespace().map(str::to_owned).collect(),
-                    ))
-                })
-                .collect(),
-        )
+    fn read(&mut self, path: &str, bytes: &[u8]) {
+        for line in String::from_utf8_lossy(bytes).lines() {
+            // Vocabularies are paths (`chunk::Codec`); labels hold no colon.
+            let Some((vocabulary, labels)) = line.rsplit_once(':') else {
+                continue;
+            };
+            let (_, kept) = self
+                .0
+                .entry(vocabulary.trim().to_owned())
+                .or_insert_with(|| (path.to_owned(), BTreeSet::new()));
+            kept.extend(labels.split_whitespace().map(str::to_owned));
+        }
+    }
+
+    /// What became of `before`'s labels in `after`.
+    fn compare(before: &Self, after: &Self) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        let mut found = |path: &str, change| {
+            findings.push(Finding {
+                path: path.to_owned(),
+                change,
+            });
+        };
+        for (vocabulary, (path, labels)) in &before.0 {
+            let Some((now_path, now)) = after.0.get(vocabulary) else {
+                found(
+                    path,
+                    Change::VocabularyRemoved {
+                        vocabulary: vocabulary.clone(),
+                    },
+                );
+                continue;
+            };
+            for label in labels.difference(now) {
+                found(
+                    now_path,
+                    Change::LabelRemoved {
+                        vocabulary: vocabulary.clone(),
+                        label: label.clone(),
+                    },
+                );
+            }
+            for label in now.difference(labels) {
+                found(
+                    now_path,
+                    Change::LabelAdded {
+                        vocabulary: vocabulary.clone(),
+                        label: label.clone(),
+                    },
+                );
+            }
+        }
+        for (vocabulary, (path, _)) in after.0.iter().filter(|(v, _)| !before.0.contains_key(*v)) {
+            found(
+                path,
+                Change::VocabularyAdded {
+                    vocabulary: vocabulary.clone(),
+                },
+            );
+        }
+        findings
     }
 }
 
@@ -582,6 +625,36 @@ mod tests {
                 )]
             )
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_vocabulary_moved_to_another_crates_table_is_kept() {
+        const OTHER: &str = "crates/ren-gateway/tests/fixtures/labels.txt";
+        let base = [
+            (
+                LABELS,
+                "chunk::Codec: raw zstd\nrelease::Decision: promote current\n",
+            ),
+            (OTHER, "api::HealthStatus: ok\n"),
+        ];
+        let moved = [
+            (LABELS, "chunk::Codec: raw zstd\n"),
+            (
+                OTHER,
+                "api::HealthStatus: ok\nrelease::Decision: current promote\n",
+            ),
+        ];
+        assert!(changes(&base, &moved).is_empty());
+        let lost = [
+            (LABELS, "chunk::Codec: raw zstd\n"),
+            (OTHER, "api::HealthStatus: ok\n"),
+        ];
+        assert_eq!(
+            changes(&base, &lost),
+            [Change::VocabularyRemoved {
+                vocabulary: "release::Decision".into()
+            }]
         );
     }
 

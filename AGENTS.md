@@ -154,7 +154,7 @@ Modules carry no lint headers of their own. A module with submodules lives in
   `--version` probes), and the daemon's server
   and supervisor task spawns. Outside the daemon, `ren-git`'s `Git` (the one place
   Ren runs git, which `ren-cli`'s build script reads its revision with) and
-  xtask's `Invocation` (a shell) run commands. Starting a process
+  `ren-deployer`'s `Invocation` (a shell) run commands. Starting a process
   in any way (`spawn`, `status`, `output`) is disallowed. The recorder runs on `ObservationThread` (`ren_daemon::host`), a
   thread with its own runtime.
 - Integration-test crates (`crates/*/tests/*.rs`) act as a shell: each has one
@@ -214,7 +214,9 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `Git::add_worktree` and `remove_worktree`, a branch deleted only once
   merged, `delete_merged`, and `commit_all`, as a fixed `Author`), and a folder's
   repository read from disk without it (`Git::repository`: its `HEAD`,
-  through a linked worktree's `.git` file). It is the one place Ren reads or
+  through a linked worktree's `.git` file), and the source a binary was
+  compiled from (`SourceRevision`: a commit and its `Tree`, written
+  `<commit>`, `<commit>-dirty`, or `unknown`). It is the one place Ren reads or
   runs git, and the one `disallowed_methods` exemption for it. It performs
   filesystem and process I/O but has no async runtime, HTTP, database, or
   CLI dependency.
@@ -233,10 +235,6 @@ dependencies under "Crates" below. Read the code for current module ownership.
   previews a worktree of it, and runs its canary and promotion
   (`commands/project/canary.rs`: `ProjectFactory`, with its release in
   `<data>/projects/<name>`).
-- `crates/ren-release`: how a build of Ren moves from `main` to production,
-  sans-IO: which build an instance runs (`Build`, its `Revision` of a
-  `ren_git::Commit` and `Tree`, and how two compare, `Comparison`). Its
-  manifest allows only pure dependencies and `ren-git`, for those two types.
 - `crates/ren-container`: containers as Ren runs them, with `Container`
   as its primary type. It depends on none of Ren's crates. A
   `Container` is what one sees of the host (`Mount`, read-only or
@@ -252,10 +250,10 @@ dependencies under "Crates" below. Read the code for current module ownership.
   says (from a systemd scope of its own, or through the API socket, whose
   service must run the container's `Runtime`, checked before each start;
   a caller's setting is a `Reach`), gives the arguments of an API service
-  that runs its containers under a `Runtime` (`service_args`, xtask's
+  that runs its containers under a `Runtime` (`service_args`, the deployer's
   `ren-gvisor` units), and creates and removes pods, removes
   containers, and builds images, failing with `EngineError`. The daemon's
-  run hosts, and xtask's daemon container and pods, are built and started
+  run hosts, and the deployer's daemon container and pods, are built and started
   with it.
 - `crates/ren-network`: the network Ren is reached through, with
   `Network` as its primary type (one variant, `Tailscale`, and the header
@@ -265,7 +263,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   report (`NodeStatus`, `ServeStatus`, and a port's `Route`), and `Cli`,
   the one place Ren runs `tailscale` (as the user, or through `sudo -n`):
   a `Publication` planned from those reports, then applied with Serve, and
-  a Serve port turned off. xtask and `ren project preview` publish through
+  a Serve port turned off. The deployer and `ren project preview` publish through
   it.
 - `crates/ren-relay`: a forward proxy that lets a sandboxed run's
   connections out only to where its policy lists, with `Relay` as its
@@ -303,27 +301,33 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ren_daemon::host::Grants`, which a relayed run's git asks through
   `ren credential`; the gateway's `PullBoard` keeps its
   observations by project and serves them.
-- `ren-gateway`'s `instance` module: which instances of Ren the factory runs
-  (docs/plans/instances.md; today, the previews of docs/plans/self-build.md,
-  phase 9), sans-IO, in `Instances`: each `Instance` in its `Slot` (its
-  loopback and tailnet ports), of a `Source` (an open pull request, or a
-  commit the operator asked for, `CommitAsks`), at a commit, `Building`
+- `ren-gateway`'s `release` module: how a build of Ren moves from `main` to
+  production: which build an instance runs (`Build`, its
+  `ren_git::SourceRevision`, and how two compare, `Comparison`), what the
+  canary's checks found (`Verdict`), when production takes a build
+  (`Policy`), and where a release stands with what promotion decided
+  (`Release`, `Decision`). The gateway reports them; the factory writes them.
+- `ren-gateway`'s `deployment` module: which deployments of Ren the factory
+  runs (docs/plans/deployments.md; today, the previews), in `Deployments`:
+  each `Deployment` in its `Slot` (its loopback and tailnet ports), picked by
+  a `Trigger` (`FollowsPull`, a ready pull request's head, or `Chosen`, a
+  commit the operator chose, `ChosenCommits`), at a commit, `Building`
   (whose outcome a later pass takes as unknown), `Running`, or `Failed`
-  (`InstanceState`). One step moves them on, `Instances::step`: an `Event`
-  (the `Wanted` instances in priority order with the
-  `ren_release::PreviewCapacity`, or the factory's report that a start
-  ended) to the instances and the `Action`s that follow (stop a slot, start
-  a commit in one); a report that does not fit is refused (`StaleReport`)
+  (`DeploymentState`). One step moves them on, `Deployments::step`: an
+  `Event` (the `Wanted` deployments in priority order with the
+  `release::PreviewCapacity`, or the factory's report that a start ended)
+  to the deployments and the `Action`s that follow (stop a slot, start a
+  commit in one); a report that does not fit is refused (`StaleReport`)
   and changes nothing. A failed build is not tried again for its commit.
   A pull request wants a preview of its head unless it is a draft
-  (`Wanted::pull`). `ren-gateway`'s `factory` module (pure, but the
-  `Factory` trait) is the factory's one-line protocol (`FactoryRequest`:
-  previews, a project's canary, a promotion; `FactoryAnswer`) and the
+  (`Wanted::pull`). `ren-gateway`'s `deployer` module (pure, but the
+  `Deployer` trait) is the deployer's one-line protocol (`DeployerRequest`:
+  previews, a project's canary, a promotion; `DeployerAnswer`) and the
   `Follower`, which turns what the daemon's GitHub watch sees into requests:
   previews when pull requests move, the canary when a default branch moves
-  from a head seen before. The daemon asks them of the factory service
-  (`[factory] socket`, `xtask canary serve`).
-  The factory keeps it in production's data folder (`Instances::FILE`,
+  from a head seen before. The daemon asks them of the deployer service
+  (`[deployer] socket`, `ren deployer serve`).
+  The factory keeps it in production's data folder (`Deployments::FILE`,
   still `previews.json`, in the shape production's gateway reads). The
   gateway's `src/purity.rs` keeps the module free of I/O.
 - `crates/ren-depot`: the packages Ren's agents run with, with `Depot` as its
@@ -601,7 +605,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   1024, which every configured limit is; `TimeoutSecs`, in `timeout`, is
   every configured timeout, 1 to 3600 seconds), the `Controls` that hold
   it with the running-call registry (`control`), the instance's
-  environment that `/health` reports beside its `ren_release::Build`
+  environment that `/health` reports beside its `release::Build`
   (`build`), what the factory keeps for the Release page (`api::release`:
   `ReleaseFolder`, Ren's release, the canary's shots, project releases, and
   the operator's promotion request), and
@@ -823,8 +827,13 @@ dependencies under "Crates" below. Read the code for current module ownership.
   unit-tested (`compat::contract`, `compat::api`), and the Compatibility
   workflow runs it on every pull
   request (again when its title or body is edited) and push to main.
-  `cargo xtask install-vps` installs or upgrades Ren from a checkout as a
-  systemd user service and can publish it with Tailscale Serve; it restarts a
+  Deploying lives in `crates/ren-deployer`, run as `ren deployer`
+  (docs/plans/deployments.md); xtask keeps only `compat`.
+  `ren deployer install-vps` installs Ren from a checkout, once, as a
+  systemd user service and can publish it with Tailscale Serve; after that
+  production is upgraded only to a kept build (a promotion, `ren deploy
+  --production`, or `ren deployer settings` with the build it runs), with
+  the same steps: an upgrade restarts a
   running daemon only between calls and between runs' turns, paused (a pause
   it marks, so one it could not lift is lifted by the next), and checks the
   new build; started inside `ren.service` it carries on in the background as the unit
@@ -833,7 +842,7 @@ dependencies under "Crates" below. Read the code for current module ownership.
   `ren-daemon`'s `Config`. install-vps's own parts are under `install`
   (its saved flags, `install::publish`; putting back what an upgrade
   replaced, `install::rollback`; deploying the UI, `install::ui`). What it
-  shares with the dev slot sits beside it, each with its own error:
+  shares with the canary and previews sits beside it, each with its own error:
   running commands (`invocation`), writing files (`file`), progress lines
   (`progress`), Tailscale (`tailscale`: `Tailnet`, publishing a port
   through `ren-network` with Serve or removing one that still points where it did), the daemon a
@@ -841,7 +850,8 @@ dependencies under "Crates" below. Read the code for current module ownership.
   the runs that end), building the UI (`ui`), transient user units and the
   listeners they answer on (`unit`: `TransientUnit`, `Listener`), and builds
   made once per commit (`builds`: `Builds`, `StoredBuild`, which
-  `install-vps --build` installs): a commit's dependencies fetched by its
+  a promotion and `ren deploy --production` install, and which are marked
+  once they pass the canary's checks or run production): a commit's dependencies fetched by its
   lockfiles on the host, running none of its code, into the builds' own
   caches (`~/.local/share/ren/build-cache`), and each step that runs its
   code in a container of its own (`build_job`: `BuildJob`, with no network
@@ -849,45 +859,28 @@ dependencies under "Crates" below. Read the code for current module ownership.
   caches).
   `replica`: Ren on a copy of production's history (`ProductionPlace`,
   production and its work item API, and `Replica`, the canary's and each
-  preview's instance). `cargo xtask preview` (`preview`) runs a worktree's
-  branch as a replica on the worktree's ports and records it on the work
-  items the branch names; `ren_supervisor::Worktree::preview_pod` names
-  its pod, which removing the worktree removes. `pod` is how a replica
+  preview slot's instance); a deployment chosen with `ren deploy` starts in
+  a slot on a copy of production or on a history `ren seed` invents
+  (`Replica::seed`), and the previews pass records its address on the work
+  items it was chosen for. `pod` is how a replica
   runs: a rootless Podman pod (`Pod`), one `ren-container` `Container` per process, each
   seeing only the kept build it runs (read-only) and the replica's own
   configuration and data at their host paths, on the host's network, from
   the image `deploy/instance/Containerfile` describes.
-  `cargo xtask canary` is the factory's canary and promotion (`canary`;
+  `ren deployer canary` is the factory's canary and promotion (`canary`;
   `docs/deployment.md#canary-and-promotion`, `docs/plans/self-build.md`,
   phase 4): a pass fetches `main` into Ren's own worktree and goes on with
-  that commit's xtask, builds it once, starts it in the pod `ren-canary` on a
-  fresh backup of production's history (`canary::instance`: production, or
-  with `--of dev` the dev slot, and the canary's derived configuration),
+  that commit's own `ren deployer`, builds it once, starts it in the pod `ren-canary` on a
+  fresh backup of production's history (`replica`: production, and the
+  canary's derived configuration),
   checks it (`canary::checks`: doctor, a sweep of every read, kept whole by a
-  test that matches every `ReadRequest`, and every page through the dev
-  slot's camera), writes the `ren_release::Release` to production's data
+  test that matches every `ReadRequest`, and every page through the page
+  camera, `shot`), writes the `ren_gateway::release::Release` to production's data
   folder, and promotes under the operator's policy; `enable` runs it on a
   timer. Its parsing of Tailscale status and of the installed `ren`'s
   output, its UI unit rendering, its saved flags, and the upgrade's wait,
   pause, and build-check decisions are unit-tested; the commands it runs
   are exercised only by running it.
-  `cargo xtask dev` runs dev instances (`dev`,
-  `docs/deployment.md#dev-instances`, `docs/plans/instances.md` phase 5):
-  each checkout claims one (`dev::claims`, pure, kept under a lock) whose
-  `DevIndex` places it (`dev::index`: ports, folders, unit and container
-  names; index 0 keeps the old slot's), and `dev::instance` runs it: the
-  checkout's build beside the installed service, with its own config,
-  data, and ports, against a fake provider (`dev::provider`, whose replies are
-  the pure, tested `script`), seeded with fake traffic (`dev::seed`, scenarios
-  as pure data), as `ren-dev-*` transient units, runs driven against a fake `codex`, `claude`, `pi`, and `opencode`
-  (`dev::agent`: the shell, and `script`, `claude`, `pi`, and `opencode`, the pure
-  conversations it plays as each client), with live traffic whose
-  settings both the generator and the fake provider reread (`dev::traffic`,
-  with its loopback control API for the dev UI's toolbar), a fake GitHub
-  whose `acme/ren` can be written by hand (its `main` and pull requests,
-  in `fake-github.toml` beside the config, reread at each poll), an optional private
-  preview on the tailnet, and
-  headless screenshots (`dev::shot`).
 - `deploy`: systemd units, and in `deploy/container` the compose file, Podman
   Quadlet files, and Tailscale Serve route for the root `Dockerfile`
   (`docs/deployment.md#containers`), and in `deploy/apparmor` the profile that
@@ -905,7 +898,6 @@ directly.
 | `ren-protocol`                             | `CallInspector`                                     | none of ours      |
 | `ren-depot`                                | `Depot`, with its `ProgramHost` port                | none of ours      |
 | `ren-git`                                  | `Git`                                               | none of ours      |
-| `ren-release`                              | `Release`                                           | protocol, git     |
 | `ren-container`                            | `Container`                                         | none of ours      |
 | `ren-network`                              | `Network`                                           | none of ours      |
 | `ren-github`                               | `Client`                                            | none of ours      |
@@ -918,7 +910,8 @@ directly.
 | `ren-gateway`                              | `Gateway`                                           | supervisor, store |
 | `ren-daemon`                               | `Daemon`                                            | gateway, store    |
 | `ren-cli` (package `ren-rs`, binary `ren`) | `Cli`                                               | daemon            |
-| `xtask` (unpublished)                      | `Xtask`                                             | daemon            |
+| `ren-deployer`                             | `Deployer`                                          | daemon            |
+| `xtask` (unpublished)                      | `Xtask`                                             | git               |
 
 `docs/architecture.md` lists what each crate owns. These rules apply to every
 crate:
@@ -981,9 +974,9 @@ allowance is SvelteKit's route announcer style, by hash, pinned by `tests/csp.te
 Use the toolchain pinned in `rust-toolchain.toml` and don't update it incidentally.
 New crates inherit workspace settings and lints. Cargo builds only Rust: never run
 frontend tooling from Cargo or embed UI assets. The daemon is headless and works
-with no UI checkout, build, or server. The exceptions are deployment and dev steps, not
-a build: `cargo xtask install-vps --ui-https-port` and `cargo xtask dev up --ui`
-run Bun to build and run the UI on the host.
+with no UI checkout, build, or server. The exceptions are deployment steps, not
+a build: `ren deployer install-vps --ui-https-port` and the deployer's builds
+run Bun to build the UI.
 
 Markdown, JSON, and TOML formatting, from the repository root (dprint 0.56.0,
 matching CI):
@@ -1023,15 +1016,13 @@ bun install --frozen-lockfile
 bun run format:check && bun run check && bun run test && bun run build
 ```
 
-Verify changed UI interactions with synthetic traffic in your checkout's dev
-instance before they reach the installed service: `cargo xtask dev up --ui`,
-`cargo xtask dev seed`, then `cargo xtask dev shot` for screenshots and the
-private preview (`dev up --ui` prints it: `https://<node>:9444` for instance 0,
-`9444 + 100n` for instance `n`) for a browser. Keep focused unit tests and don't add a
-browser integration suite yet. UI changes don't require rebuilding Rust.
-Never stop processes by a name pattern: an instance's units are stopped by name
-(`cargo xtask dev down`), and the installed `ren` and `ren-ui` services must keep
-running.
+Verify changed UI interactions in a preview of your commit before they reach
+production: commit, then `ren deploy HEAD --seed <n>` (an invented history;
+`--work <id>` records it on a work item), and open the address `ren
+deployments` names; `ren deploy stop HEAD` stops it. Keep focused unit tests
+and don't add a browser integration suite yet. UI changes don't require
+rebuilding Rust. Never stop processes by a name pattern: the installed `ren`
+and `ren-ui` services must keep running.
 
 Pi integration changes: `node --test crates/ren-harness/pi/ren.test.mjs`. When Pi is
 installed, build Ren and run `python3 scripts/smoke-pi.py`; it uses isolated config

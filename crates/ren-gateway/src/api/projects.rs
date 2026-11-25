@@ -13,6 +13,7 @@
 //! writes, so they are served here rather than as a store read.
 
 use super::{ApiError, ApiState, release::ReleaseBody, release::ReleaseView};
+use crate::release::ShotName;
 use axum::{
     extract::{Path, State},
     response::{IntoResponse, Response},
@@ -24,7 +25,6 @@ use ren_recorder::{
     project::{Factory, ProjectName, RepositoryPath},
     time::UnixMillis,
 };
-use ren_release::ShotName;
 use ren_store::view::{ProjectActivity, ProjectView, WorkCounts};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

@@ -9,7 +9,7 @@
 
 use super::HealthStatus;
 use crate::{build, operator};
-use ren_release::Revision;
+use ren_git::SourceRevision;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -20,7 +20,7 @@ pub(super) struct Health {
     #[ts(type = "string")]
     pub(super) status: HealthStatus,
     pub(super) build: Build,
-    /// Production or development, as configured.
+    /// Production, the canary, or a preview, as configured.
     pub(super) instance: InstanceOptions,
     /// Whether new calls are admitted, read-only: changing it takes the
     /// control API.
@@ -35,11 +35,11 @@ pub(super) struct Build {
     version: String,
     /// `<commit>`, `<commit>-dirty`, or `unknown`.
     #[ts(type = "string")]
-    revision: Revision,
+    revision: SourceRevision,
 }
 
-impl From<&ren_release::Build> for Build {
-    fn from(build: &ren_release::Build) -> Self {
+impl From<&crate::release::Build> for Build {
+    fn from(build: &crate::release::Build) -> Self {
         Self {
             version: build.version().to_owned(),
             revision: build.revision().clone(),

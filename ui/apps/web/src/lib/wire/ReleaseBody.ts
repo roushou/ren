@@ -17,6 +17,6 @@ release: ReleaseView | null,
 shots: Array<string>, 
 /**
  * The build the operator asked production to take, until the
- * factory's next pass takes it up.
+ * deployer's next pass takes it up.
  */
 promotion_requested: string | null, };

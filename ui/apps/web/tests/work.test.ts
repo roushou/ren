@@ -66,7 +66,7 @@ test('a brief names its work item and what else was on screen', async () => {
   // knows when it lands.
   assert.match(brief, new RegExp(`End each commit message with \`Work-Item: ${item.id}\``));
   assert.match(preview, /the work item's `Work-Item:` line/);
-  assert.match(brief, /run `cargo xtask preview up --publish` in the worktree/);
+  assert.match(brief, /commit it and run `ren deploy HEAD --work [0-9a-f-]+` in the worktree/);
   assert.equal(Work.previewed(item), null);
   assert.equal(
     Work.previewed({
@@ -165,7 +165,7 @@ test("an item for another project is briefed as that project's page", async () =
   assert.doesNotMatch(other, /served by a build of commit/);
   assert.match(other, /It is a page of the project `acme-web`, not of Ren's own UI\./);
   assert.match(other, /run `ren project preview up --publish` in the worktree/);
-  assert.doesNotMatch(other, /cargo xtask preview/);
+  assert.doesNotMatch(other, /ren deploy/);
 });
 
 test("an item's project decides its brief", () => {

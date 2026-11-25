@@ -28,6 +28,7 @@ pub use control::{ControlOptions, ControlRefusal, ControlToken};
 pub use release::ReleaseFolder;
 pub use route::ApiRead;
 
+use crate::release::Build;
 use crate::{build::InstanceOptions, control::Controls, github::PullBoard, user::Users};
 use axum::{
     Json, Router,
@@ -47,7 +48,6 @@ use release::ReleaseFileError;
 use ren_protocol::direction::Direction;
 use ren_recorder::time::Clock;
 use ren_recorder::{Recorder, id::CallId, retention::RetentionPolicy};
-use ren_release::Build;
 use ren_store::{Reader, StoreError, backup::Backup, query::QueryError, search::SearchError};
 use serde::Serialize;
 use std::sync::Arc;
@@ -73,13 +73,13 @@ pub struct ManagementSetup {
     pub runs: Option<ren_supervisor::Supervisor>,
     /// The host's packages; the packages routes answer `packages_disabled` without.
     pub packages: Option<std::sync::Arc<dyn crate::packages::Packages>>,
-    /// Where the factory writes the release, which `/api/release` reports.
+    /// Where the deployer writes the release, which `/api/release` reports.
     pub release: ReleaseFolder,
     /// What the daemon's poller last saw of each watched GitHub repository.
     pub pulls: PullBoard,
-    /// The factory on the host, asked to plan the previews when one is
-    /// asked for; without it, the factory's next timed pass does.
-    pub factory: Option<std::sync::Arc<dyn crate::factory::Factory>>,
+    /// The deployer on the host, asked to plan the previews when one is
+    /// asked for; without it, the deployer's next timed pass does.
+    pub deployer: Option<std::sync::Arc<dyn crate::deployer::Deployer>>,
 }
 
 /// What the read API reads and reports, from the management setup.

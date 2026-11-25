@@ -6,7 +6,7 @@ import type { CanaryView } from "./CanaryView.ts";
  */
 export type ReleaseView = { 
 /**
- * `main`'s tip as the factory last fetched it.
+ * `main`'s tip as the deployer last fetched it.
  */
 main: string, 
 /**

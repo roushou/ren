@@ -31,7 +31,7 @@
 //!   configuration revision, buffer, policy, upstream entries);
 //! - capabilities: an [`Upstream`], a [`Recorder`], the shared [`Controls`],
 //!   a [`Clock`], and the `Reader` and `Backup` in [`ManagementSetup`],
-//!   which also names the running [`ren_release::Build`] that `/health` reports;
+//!   which also names the running [`crate::release::Build`] that `/health` reports;
 //! - inputs: inference requests on the upstream table's routes, management reads, and controls;
 //! - outputs: provider responses, management data, and HTTP error responses;
 //! - lifecycle: [`Shutdown`] drains, then aborts, through [`Ingress`].
@@ -46,10 +46,10 @@
 pub mod api;
 pub mod build;
 pub mod control;
-pub mod factory;
+pub mod deployer;
+pub mod deployment;
 mod forward;
 pub mod github;
-pub mod instance;
 pub mod lifecycle;
 mod limits;
 pub mod operator;
@@ -57,6 +57,7 @@ pub mod packages;
 pub mod policy;
 #[cfg(test)]
 mod purity;
+pub mod release;
 pub mod reply;
 mod timeout;
 pub mod user;
@@ -212,7 +213,7 @@ impl<U: Upstream> Gateway<U> {
                 management.runs,
                 management.packages,
                 release,
-                management.factory,
+                management.deployer,
                 feeds_end,
             ))
     }

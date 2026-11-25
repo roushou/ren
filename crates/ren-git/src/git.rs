@@ -281,6 +281,20 @@ impl Git {
         }
     }
 
+    /// Whether `dir`'s repository holds `commit` (any of its worktrees
+    /// shares it), whether or not a remote does.
+    pub fn has_commit(&self, dir: &Path, commit: &Commit) -> Result<bool, GitError> {
+        let object = format!("{}^{{commit}}", commit.as_str());
+        match self.answer(dir, &["cat-file", "-e", &object]) {
+            Ok(_) => Ok(true),
+            Err(GitError::Failed {
+                exit: Exit::Code(1 | 128),
+                ..
+            }) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     /// How many commits `to` has that `from` does not.
     pub fn commits_between(&self, dir: &Path, from: &Commit, to: &Commit) -> Result<u64, GitError> {
         let range = format!("{from}..{to}");
@@ -298,6 +312,15 @@ impl Git {
         let main = self.main_worktree(path)?;
         let path = Self::text(path)?;
         self.answer(&main, &["worktree", "remove", path]).map(drop)
+    }
+
+    /// Move the worktree at `from` to `to`, which must not exist yet; its
+    /// folder above must.
+    pub fn move_worktree(&self, from: &Path, to: &Path) -> Result<(), GitError> {
+        let main = self.main_worktree(from)?;
+        let (from, to) = (Self::text(from)?, Self::text(to)?);
+        self.answer(&main, &["worktree", "move", from, to])
+            .map(drop)
     }
 
     /// The main worktree of the repository `path` is a worktree of: the

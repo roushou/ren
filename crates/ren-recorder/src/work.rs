@@ -8,7 +8,7 @@
 
 use crate::id::{SessionId, WorkItemId};
 use ren_git::Commit;
-use ren_release::Revision;
+use ren_git::SourceRevision;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray};
@@ -36,7 +36,7 @@ pub struct MarkedPage {
     pub height: u32,
     pub theme: PageTheme,
     /// What the daemon serving the page was built from, as `/health` said.
-    pub revision: Option<Revision>,
+    pub revision: Option<SourceRevision>,
 }
 
 /// The page's color theme.
@@ -150,7 +150,7 @@ pub struct WorkPreview {
     /// The preview's UI.
     pub ui: PreviewUrl,
     /// The build it runs.
-    pub revision: Revision,
+    pub revision: SourceRevision,
 }
 
 /// An `http` or `https` origin a preview's UI is reached at, such as
@@ -265,7 +265,7 @@ pub enum WorkState {
     Shipped {
         session: SessionId,
         commit: Commit,
-        revision: Revision,
+        revision: SourceRevision,
     },
     /// Not to be done. It stays so.
     Dismissed,
@@ -283,7 +283,7 @@ pub enum WorkEvent {
         commit: Commit,
     },
     Ship {
-        revision: Revision,
+        revision: SourceRevision,
     },
     Dismiss,
     /// A preview of its change, or none any longer. Only a sent item has

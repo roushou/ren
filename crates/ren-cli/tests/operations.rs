@@ -12,12 +12,12 @@ use ren_cli::{
     doctor::{CheckId, CheckName, Report, Status},
 };
 use ren_daemon::{Daemon, config::Config};
+use ren_git::SourceRevision;
 use ren_git::Tree;
 use ren_harness::{
     endpoint::{GatewayEndpoint, UserToken},
     host::HostEnv,
 };
-use ren_release::Revision;
 use std::{
     process::{Command, Stdio},
     sync::{
@@ -217,16 +217,16 @@ async fn reports_whether_the_daemon_runs_this_build() {
     let ours = Cli::build();
     let commit = "0123456789abcdef0123456789abcdef01234567";
     let same = match ours.revision() {
-        Revision::Commit {
+        SourceRevision::Commit {
             tree: Tree::Clean, ..
         } => Status::Ok,
         // A test binary built from a modified or untracked tree cannot be
         // confirmed to match anything.
-        Revision::Commit {
+        SourceRevision::Commit {
             tree: Tree::Modified,
             ..
         }
-        | Revision::Unknown => Status::Warning,
+        | SourceRevision::Unknown => Status::Warning,
     };
     let cases = [
         (

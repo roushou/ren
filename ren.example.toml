@@ -64,9 +64,9 @@ openai = 536870912 # 512 MiB (OpenAI: 512 MB per request)
 deepseek = 33554432 # 32 MiB (no documented limit; Anthropic Messages' is used)
 
 [instance]
-# "production" (the default) or "development". /health reports it; the UI
-# marks a development gateway with a dev badge on its logo, and `ren doctor` and `ren run`
-# name it. `cargo xtask dev` sets "development" for the dev slot.
+# "production" (the default), "canary", or "preview". /health reports it;
+# the UI tags any other than production beside its logo, and `ren doctor` and
+# `ren run` name it. The deployer sets it for the canary and each preview.
 environment = "production"
 
 [control]
@@ -213,9 +213,9 @@ prompt_bytes = 20971520
 # key_file = "/home/you/.config/ren/github-app.pem" # its private key, as GitHub gave it
 # api = "https://api.github.com"
 
-# Optional: where the factory on the host listens (`cargo xtask canary
-# serve`, which `canary enable` runs as ren-factory.service). A preview asked
+# Optional: where the deployer on the host listens (`ren deployer serve`,
+# which `canary enable` runs as ren-deployer.service). A preview asked
 # for or withdrawn is then planned at once, not at the canary's next timed
 # pass (docs/deployment.md).
-# [factory]
-# socket = "/run/user/1000/ren-factory/factory.sock"
+# [deployer]
+# socket = "/run/user/1000/ren-deployer/deployer.sock"
